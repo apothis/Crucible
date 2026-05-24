@@ -248,9 +248,12 @@ function libDesc(it: LibItem): string {
   if (it.mode === "backing") return `guitar-less backing${p.source ? " · from " + String(p.source).slice(0, 22) : ""}`;
   if (it.mode === "guitar") return `amped guitar (${p.preset || "?"})${p.source ? " · " + String(p.source).slice(0, 22) : ""}`;
   if (it.mode === "guitardi") return `clean guitar DI${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
-  const neg = (it.mode === "generate" || it.mode === "restyle") && (p.negative_tags || "").trim() ? " · NEG" : "";
-  const smp = (it.mode === "generate" || it.mode === "restyle") && p.sampler_name ? ` · ${p.sampler_name}/${p.scheduler || "simple"}` : "";
-  return (p.tags || p.voice || p.source || "—") + smp + neg;
+  const genlike = it.mode === "generate" || it.mode === "restyle";
+  const variant = genlike && p.variant ? ` · ${p.variant}` : "";
+  const cs = genlike && (p.cfg || p.steps) ? ` · cfg${p.cfg ?? "?"}/${p.steps ?? "?"}st` : "";
+  const neg = genlike && (p.negative_tags || "").trim() ? " · NEG" : "";
+  const smp = genlike && p.sampler_name ? ` · ${p.sampler_name}/${p.scheduler || "simple"}` : "";
+  return (p.tags || p.voice || p.source || "—") + variant + smp + cs + neg;
 }
 
 function hhmm(epoch?: number): string {
