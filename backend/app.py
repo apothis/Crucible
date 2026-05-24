@@ -117,6 +117,13 @@ def on_complete(pid):
                 path = os.path.join(LIBRARY, f"{pid}.mp3")
                 with open(path, "wb") as f:
                     f.write(data)
+                try:                                  # auto-fix ACE end-burst/clipping (only when needed)
+                    fixed = postfx_mod.tidy_ending(path)
+                    if fixed and fixed != path:
+                        os.remove(path)
+                        path = fixed
+                except Exception:
+                    pass
                 with LOCK:
                     JOBS[pid]["audio_file"] = path
                     JOBS[pid]["status"] = "done"

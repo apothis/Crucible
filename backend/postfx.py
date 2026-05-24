@@ -14,6 +14,46 @@ isn't — so the default chains deliberately do not "add an amp".
 import io
 import os
 
+
+def tidy_ending(in_path):
+    """Clean up an ACE-Step end-of-song artifact (a loud clipping burst right at
+    the end of the musical content — pronounced on xl_sft). Applied ONLY when the
+    take actually clips or has an end-burst, so clean takes pass through untouched.
+
+    When triggered: trim the trailing near-silence, fade out the last ~0.4 s (so a
+    terminal spike can't pop), then peak-limit to −1 dBFS. Writes a WAV beside the
+    input and returns its path; returns None if no fix was needed (no rewrite).
+    Pure numpy/soundfile — no pedalboard.
+    """
+    import numpy as np
+    import soundfile as sf
+    x, sr = sf.read(in_path, always_2d=True)
+    n = len(x)
+    if n < sr:                                   # < 1 s — leave it
+        return None
+    aenv = np.abs(x).max(axis=1)
+    peak = float(aenv.max())
+    ploc = int(np.argmax(aenv))
+    body_peak = float(aenv[:int(n * 0.85)].max()) if int(n * 0.85) else peak
+    clipping = peak >= 0.985
+    end_burst = ploc >= n * 0.80 and peak > body_peak * 1.25
+    if not (clipping or end_burst):
+        return None
+    thr = max(1e-3, body_peak * 0.02)            # trim trailing near-silence
+    above = np.where(aenv > thr)[0]
+    if above.size:
+        x = x[: int(above[-1]) + 1]
+    f = min(int(0.4 * sr), len(x))               # fade out the tail (tames a terminal spike)
+    if f > 0:
+        x[-f:] = x[-f:] * np.linspace(1.0, 0.0, f)[:, None]
+    pk = float(np.max(np.abs(x))) if x.size else 0.0
+    if pk > 0.891:                               # peak-limit to ~ -1 dBFS
+        x = x * (0.891 / pk)
+    out = os.path.splitext(in_path)[0] + ".wav"
+    sf.write(out, x, sr, subtype="PCM_16")
+    return out
+
+
 # Native pedalboard presets. Each is a list of (effect_name, kwargs). Effects are
 # resolved against pedalboard at build time so importing this module never
 # requires pedalboard to be installed.
