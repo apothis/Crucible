@@ -584,7 +584,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
       </div>
       {source === "song" ? (
         <p className="text-xs text-[var(--color-muted)]">
-          Per-section riffs from your Song arrangement ({song?.blocks.length ?? 0} sections, {song?.key}, {song?.bpm} BPM): verse chugs, chorus power-chords, breakdown drops an octave, intro/outro sparse. Pick a matching backing below.
+          Per-section riffs from your Song arrangement ({song?.blocks.length ?? 0} sections, {song?.key}, {song?.bpm} BPM): verse chugs, chorus power-chords, breakdown drops an octave, intro/outro sparse, <em>solo sections get a lead line over a quieter bed</em>. Pick a matching backing below.
         </p>
       ) : source === "riff" ? (
         <>

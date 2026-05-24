@@ -173,9 +173,10 @@ _Mac Ollama also has embedding models (`bge-large`, `mxbai-embed-large`) — can
 - **UI redesign:** grouped sidebar + inline results + library drawer.
 - Honest finding: a generated/separated guitar can't be cleanly de-amped (RemFx too weak; prompting-for-clean fails) — so amp-sims run on a *generated clean-DI* (symbolic→DI→amp) rather than on the ACE output.
 
-**Next up (pending):** download `xl_sft` → base-vs-sft A/B; GPU A/B of negative prompts (default thinned the mix); solos inside Song arrangements; refine genre solo prompts; LoRAs (Civitai via user VPN); custom metal LoRA.
+**Next up (pending):** download `xl_sft` → base-vs-sft A/B; GPU A/B of negative prompts (default thinned the mix); refine genre solo prompts; LoRAs (Civitai via user VPN); custom metal LoRA.
 
 **Done (2026-05-24):** ▶ **Align guitar to a backing's real sections** — `backend/sections.py` (librosa) detects the backing's actual section boundaries and either re-times a Song arrangement onto them (`align_blocks`, labels kept) or auto-builds one (`auto_blocks`, roles by energy). Wired to `/api/guitar/render-amp` (`align_backing`) + Guitar-tab toggle. Removes the prior "arrangement matches the backing by order/seconds" assumption.
+**Done (2026-05-24):** ▶ **Solos in Song arrangements** — a `Solo` section now renders a genre-aware high-register lead line over a quieter power-chord bed (`generate_riff_arrangement` in `backend/guitar.py`), instead of power-chords-only.
 
 **Then (secondary):** verify SoulX/DiffSinger on the 3090; `xl_turbo`; reproducibility "regenerate with tweak"; voice cloning/training.
 

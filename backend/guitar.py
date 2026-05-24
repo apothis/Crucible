@@ -309,7 +309,7 @@ SECTION_PROFILE = {
     "prechorus":  ("gallop",      0.95, 0),
     "chorus":     ("powerchords", 1.10, 0),
     "bridge":     ("pedal",       0.90, 0),
-    "solo":       ("powerchords", 0.80, 0),   # sustained rhythm bed under a lead
+    "solo":       ("powerchords", 0.80, 0),   # lead line over a quieter bed (see generate_riff_arrangement)
     "breakdown":  ("chug",        1.05, -12),  # drop an octave, heavy
     "outro":      ("powerchords", 0.70, 0),
 }
@@ -457,9 +457,19 @@ def generate_riff_arrangement(blocks, key="E minor", bpm=160, seed=None,
         secs = float(b.get("seconds", 8) or 8)
         typ = str(b.get("type", "verse")).lower().replace(" ", "").replace("-", "")
         style, vscale, octv = SECTION_PROFILE.get(typ, ("gallop", 1.0, 0))
-        seg = compose_riff(brain, key, bpm, duration_s=secs, style=style, genre=genre,
-                           provider=provider, model=model,
-                           seed=(None if seed is None else seed + i))
+        if typ == "solo":
+            # A real solo section = a high-register LEAD line over a quieter
+            # rhythm bed (both in one DI; the renderer sums overlapping notes).
+            bed = generate_riff(key, bpm, duration_s=secs, style="powerchords",
+                                seed=(None if seed is None else seed + i))
+            lead = compose_riff(brain, key, bpm, duration_s=secs, part="solo", genre=genre,
+                                provider=provider, model=model,
+                                seed=(None if seed is None else seed + 1009 + i))
+            seg = [(p, st, d, int(v * 0.55)) for (p, st, d, v) in bed] + list(lead)
+        else:
+            seg = compose_riff(brain, key, bpm, duration_s=secs, style=style, genre=genre,
+                               provider=provider, model=model,
+                               seed=(None if seed is None else seed + i))
         for (p, st, d, v) in seg:
             notes.append((p + octv, t0 + st, d, max(1, min(127, int(v * vscale)))))
         t0 += secs
