@@ -196,7 +196,7 @@ def config():
     # Guitar riff/solo genre pickers. bpm/key are SUGGESTIONS, not forced.
     genres = [{"id": g["id"], "label": g["label"], "tags": g["tags"],
                "bpm": g["bpm"], "key": g["key"], "scale": g["scale"],
-               "lead": bool(g.get("lead"))} for g in genres_mod.GENRES]
+               "lead": bool(g.get("lead")), "parent": g.get("parent")} for g in genres_mod.GENRES]
     return {"comfy_host": HOST, "variants": C.available_variants(),
             "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER,
             "genres": genres}

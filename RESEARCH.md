@@ -430,7 +430,7 @@ Two complementary layers ("more options always better"):
 - **Halestorm (modern hard rock):** `"modern hard rock, powerful female vocal, high-gain rhythm guitar, punchy modern production, radio rock, driving tempo"`
 - **Black Stone Cherry (southern hard rock):** `"southern hard rock, bluesy thick overdriven guitar riffs, groovy, soulful gritty male vocal, mid tempo"`
 
-**Modern power-metal bands (added to the genre registry 2026-05-24, web-researched):**
+**Modern power-metal bands (added to the genre registry 2026-05-24, web-researched).** _Bands are nested under a parent genre via the `parent` field (they stay in the flat registry so riff/solo lookup is unchanged, but the UI shows them under their genre — "Artist style" dropdown on the chips, `<optgroup>` in the Guitar picker — to keep the top-level genre list manageable). Battle Beast + Beast in Black → `power`; AC/DC → `hard_rock`._
 - **Battle Beast** (Finnish) — power/heavy metal with strong **80s hard-rock swagger** + symphonic touches; **keytar/synthesizer** layers (Janne Björkroth); anthemic fist-pump choruses; fast/mid tempos, driving riffs; **powerful high belting female vocals** (Noora Louhimo, operatic range w/ shrieks). Registry id `battle_beast` (~155 BPM, E minor).
 - **Beast in Black** (Finnish, Anton Kabanen ex-Battle Beast) — **power metal fused with 80s synthwave / Italo-disco**; bright retro synths over **tight palm-muted galloping** guitars; very **hooky/danceable**; **soaring high Halford-like male vocals** (Yannis Papadopoulos). Registry id `beast_in_black` (~165 BPM, E minor). Both are essentially '80s-tribute-leaning modern power metal — synth-forward, melodic leads, palm-muted gallops. (Band emulation = personal-use, see PLAN §7 risks.)
 

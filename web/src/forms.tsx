@@ -93,17 +93,36 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
 }
 
 function PresetBar({ genres, onApply }: { genres: Genre[]; onApply: (p: Preset) => void }) {
+  const tops = genres.filter((g) => !g.parent);                       // top-level genres = the chips
+  const bands = genres.filter((g) => g.parent);                       // band/artist styles = nested
+  const labelOf = (id: string) => genres.find((g) => g.id === id)?.label || id;
+  const apply = (g: Genre) => onApply({ name: g.label, tags: g.tags, bpm: g.bpm, key: g.key });
+  // group bands under their parent genre for the dropdown
+  const byParent: Record<string, Genre[]> = {};
+  bands.forEach((b) => { (byParent[b.parent as string] ||= []).push(b); });
   return (
     <div>
       <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Subgenre presets <span className="text-[10px]">(sets style tags · suggests {genres.length ? "BPM/key" : "…"})</span></span>
-      <div className="flex flex-wrap gap-1.5">
-        {genres.map((g) => (
+      <div className="flex flex-wrap items-center gap-1.5">
+        {tops.map((g) => (
           <button key={g.id} title={`suggested: ${g.bpm} BPM · ${g.key}`}
-            onClick={() => onApply({ name: g.label, tags: g.tags, bpm: g.bpm, key: g.key })}
+            onClick={() => apply(g)}
             className="rounded-full border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-1 text-xs text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-ink)]">
             {g.label}
           </button>
         ))}
+        {bands.length > 0 && (
+          <select title="apply a specific band/artist style (grouped by genre)" value=""
+            onChange={(e) => { const b = bands.find((x) => x.id === e.target.value); if (b) apply(b); }}
+            className="rounded-full border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-1 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)]">
+            <option value="">Artist style…</option>
+            {Object.keys(byParent).map((pid) => (
+              <optgroup key={pid} label={labelOf(pid)}>
+                {byParent[pid].map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        )}
       </div>
     </div>
   );
@@ -671,7 +690,15 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
       {source !== "midi" && brain !== "algorithmic" && (
         <Field label="Genre feel" hint={sug ? `${sug.scale} · suggests ${sug.bpm} BPM` : "shapes the AI riff + modal scale"}>
           <select className={inp} value={genre} onChange={(e) => setGenre(e.target.value)}>
-            {genres.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+            {genres.filter((g) => !g.parent).map((g) => {
+              const kids = genres.filter((k) => k.parent === g.id);
+              return kids.length ? (
+                <optgroup key={g.id} label={g.label}>
+                  <option value={g.id}>{g.label} (genre)</option>
+                  {kids.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+                </optgroup>
+              ) : <option key={g.id} value={g.id}>{g.label}</option>;
+            })}
           </select>
           {sug && String(sug.bpm) !== bpm && (
             <button onClick={() => setBpm(String(sug.bpm))}

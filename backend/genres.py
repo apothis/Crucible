@@ -8,6 +8,10 @@ used everywhere it's needed:
 - `solo`  → LLM prompt feel for a lead solo
 - `lead`  → riff renders single notes (shred) instead of power chords (optional)
 - `reg`   → register offset in semitones for the riff/solo (optional)
+- `parent`→ id of the genre this entry is a BAND/artist style under (optional). Band
+            entries stay in the same flat registry (so riff/solo lookup by id is
+            unchanged) but the UI nests them under their parent genre instead of
+            cluttering the top-level genre list. Top-level genres have no `parent`.
 
 Exposed to the frontend via /api/config ("genres") and consumed by guitar.py
 for symbolic riff/solo generation. Add a genre here once → it appears in the
@@ -25,11 +29,11 @@ GENRES = [
      "tags": "power metal, galloping double-bass drums, fast palm-muted distorted guitars, twin lead guitar harmonies, soaring clean operatic male vocals, orchestral keyboards, triumphant, epic, fast tempo",
      "riff": "fast galloping, melodic and uplifting; mostly root chugs with soaring runs up to 5/8 and harmonised-sounding leaps",
      "solo": "fast triumphant legato runs that climb high (degrees to 12-15) and resolve onto held, singable peaks; mostly continuous with short breaths between phrases; melodic upward leaps, major-leaning"},
-    {"id": "battle_beast", "label": "Battle Beast", "bpm": 155, "key": "E minor", "scale": "minor",
+    {"id": "battle_beast", "label": "Battle Beast", "parent": "power", "bpm": 155, "key": "E minor", "scale": "minor",
      "tags": "modern power metal, 80s hard rock influence, anthemic fist-pumping choruses, driving palm-muted distorted guitars, galloping double-bass drums, 80s synthesizer and keytar layers, powerful high belting female vocals, symphonic touches, catchy, energetic, Battle Beast style",
      "riff": "driving mid-fast power-metal riffing with 80s hard-rock swagger; galloping palm-muted root chugs with melodic moves up the minor scale, anthemic and punchy",
      "solo": "melodic 80s-flavoured lead — fast singable runs resolving onto held high notes around a hooky repeated motif; energetic with balanced rests"},
-    {"id": "beast_in_black", "label": "Beast in Black", "bpm": 165, "key": "E minor", "scale": "minor",
+    {"id": "beast_in_black", "label": "Beast in Black", "parent": "power", "bpm": 165, "key": "E minor", "scale": "minor",
      "tags": "power metal fused with 80s synthwave, bright retro synthesizers, tight palm-muted galloping distorted guitars, double-bass drums, soaring high melodic male vocals, hooky danceable choruses, 80s Italo-disco influence, catchy, energetic, Beast in Black style",
      "riff": "tight palm-muted galloping chugs locked to a danceable beat under bright synthwave; catchy, melodic minor, driving",
      "solo": "hooky melodic shred lead — fast scalar runs and a catchy repeated motif climbing to held high notes; energetic 80s synthwave phrasing"},
@@ -106,7 +110,7 @@ GENRES = [
      "tags": "hard rock, crunchy overdriven guitars, driving backbeat drums, punchy bass, powerful rock vocals, energetic, anthemic",
      "riff": "mid-tempo driving power chords with swagger and space; pentatonic, punchy, not too busy",
      "solo": "tasteful pentatonic rock lead — bluesy medium-fast phrases and a repeated lick with plenty of space; swaggering, mid register, leave rests"},
-    {"id": "accdc", "label": "AC/DC crunch", "bpm": 120, "key": "A major", "scale": "pentatonic_minor",
+    {"id": "accdc", "label": "AC/DC", "parent": "hard_rock", "bpm": 120, "key": "A major", "scale": "pentatonic_minor",
      "tags": "hard rock, AC/DC style, crunchy overdriven Marshall guitars, swinging backbeat, gang-shout backing vocals, raspy male vocal, mid tempo, live-room production",
      "riff": "mid-tempo big OPEN power chords with space and swing between hits; simple, pentatonic, swaggering — leave rests for groove",
      "solo": "simple swaggering pentatonic blues-rock licks — short punchy phrases with big rests and a repeated hook; attitude over speed, mid register"},
