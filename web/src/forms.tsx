@@ -37,6 +37,9 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
   const [sampler, setSampler] = useState("euler");
   const [scheduler, setScheduler] = useState("simple");
   const [shift, setShift] = useState("");
+  const [apg, setApg] = useState(false);
+  const [apgNorm, setApgNorm] = useState("1.3");
+  const [apgEta, setApgEta] = useState("1.05");
   const v = cfg.variants.find((x) => x.id === variant);
 
   const node = expert ? (
@@ -74,6 +77,16 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
         </Field>
         <Field label="Shift" hint="AuraFlow; def 3"><input className={inp} type="number" step="0.5" placeholder="3" value={shift} onChange={(e) => setShift(e.target.value)} /></Field>
       </div>
+      <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+        <input type="checkbox" checked={apg} onChange={(e) => setApg(e.target.checked)} />
+        Adaptive Projected Guidance (APG) <span className="text-[10px]">— cleaner high-CFG, less mud/oversaturation</span>
+      </label>
+      {apg && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="APG norm" hint="main knob; lower = more (def 1.3)"><input className={inp} type="number" step="0.1" value={apgNorm} onChange={(e) => setApgNorm(e.target.value)} /></Field>
+          <Field label="APG eta" hint="def 1.05 (1 = plain CFG)"><input className={inp} type="number" step="0.05" value={apgEta} onChange={(e) => setApgEta(e.target.value)} /></Field>
+        </div>
+      )}
     </>
   ) : hideDuration ? null : (
     <Field label="Duration (s)"><input className={inp} type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
@@ -86,6 +99,7 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
     if (seed) o.seed = parseInt(seed);
     if (sampler !== "euler" || scheduler !== "simple") { o.sampler_name = sampler; o.scheduler = scheduler; }
     if (shift) o.shift = parseFloat(shift);
+    if (apg) { o.apg = true; o.apg_norm = parseFloat(apgNorm) || 1.3; o.apg_eta = parseFloat(apgEta) || 1.05; }
     return o;
   };
   const applyPreset = (p: Preset) => { setBpm(String(p.bpm)); setKeyscale(p.key); };

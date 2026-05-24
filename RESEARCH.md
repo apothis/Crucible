@@ -416,7 +416,13 @@ Two complementary layers ("more options always better"):
 - **cfg / steps.** Base cfg 6 / 50 steps; SFT cfg 7(.3) / 46–50. Try cfg 5–8 and steps 50–80 for guitar detail (diminishing returns + time cost on the single 3090).
 - **Internal LM sampling params** (hardcoded in `_text_encode`: `cfg_scale 2.0, temperature 0.85, top_p 0.9`) — these drive the **audio-codes LM** (structure/coherence), separate from KSampler cfg. Expose + sweep.
 - **Multi-pass / refiner.** Feed an output back through a **low-denoise** second pass (like restyle on its own output) to tighten/add detail; lower denoise each pass for extreme shifts (cf. §8 restyle).
-- **Prereqs:** download **`xl_sft`** (APG + refined detail) and **`xl_turbo`** (fast iteration for sweeps) — only `xl_base` is installed.
+- **Prereqs:** download **`xl_sft`** (APG + refined detail) and **`xl_turbo`** (fast iteration for sweeps) — ✅ xl_sft now installed (2026-05-25); turbo not.
+
+**Community ACE-in-ComfyUI usage (2026-05-25, ongoing — capture what others actually run, not just the official workflow):**
+- **Adaptive Projected Guidance (APG)** — native ComfyUI node (`APG`, category sampling/custom_sampling), a **model patch** (`model → APG → KSampler`); params `eta` (1 = plain CFG; ~1.05), `norm_threshold` (main knob, lower = more normalization; ~1.3 for ACE), `momentum` (0). **The recommended fix for ACE-Step's high-CFG oversaturation/muddiness** (ComfyUI issue #8026 "ACE-Step Support APG … to reduce vocal oversaturated"): lets you keep strong cfg (6–7.3) for prompt adherence *without* the mud, instead of just dropping cfg. Community ACE-XL-SFT recipe: euler (or res_2s), scheduler `normal`, ~46 steps, **cfg 7.3 + APG eta 1.05 / norm_thresh 1.3 / momentum 0**. ✅ **WIRED** into `comfy.py` `_apg_model` as an optional stage (`apg`+`apg_eta`/`apg_norm`/`apg_momentum`; Expert UI toggle) — GPU A/B pending.
+- **Other guidance nodes present on the box** (worth trying / from community workflows): `CFGZeroStar`, `RescaleCFG`, `RenormCFG`, `CFGNorm`, `PerpNegGuider`, `PerturbedAttentionGuidance`, `TCFG`, `DualCFGGuider`, `SkipLayerGuidance*` — several target the same oversaturation/quality axis as APG.
+- **Custom node pack:** **JK-AceStep-Nodes** (`github.com/jeankassio/JK-AceStep-Nodes`) — "advanced sampling nodes optimized for ACE-Step audio." **Guidance interval** (apply CFG only over a step range) is another community lever to reduce oversaturation (issue #8026). Community XL workflow w/ these: Civitai 2375403 (geoblocked here).
+- _TODO (per user, 2026-05-25): keep mining how people run ACE in ComfyUI — samplers/guidance tricks, node packs, settings — and fold the good ones in. User is also relaying tips from a YouTube walkthrough._
 
 ### 10d. Prompt engineering per (sub)genre + models/LoRAs (Track D+E)
 

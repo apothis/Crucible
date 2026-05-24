@@ -166,6 +166,26 @@ def _negative_node(p):
     return {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
 
 
+def _apg_model(g, p):
+    """Optional Adaptive Projected Guidance (ComfyUI native `APG` node). It patches
+    the model so strong CFG stops oversaturating / muddying ACE-Step output — the
+    recommended fix for ACE's high-guidance fuzziness (it lets us keep cfg ~6-7.3
+    for prompt adherence without the mud, instead of just dropping cfg). Returns
+    the model ref the KSampler should read. OFF unless p['apg'] — backward compatible.
+
+    Defaults follow the community ACE-XL-SFT recommendation (eta 1.05, norm 1.3,
+    momentum 0); `norm_threshold` is the main knob (lower = more normalization)."""
+    if not p.get("apg"):
+        return ["7", 0]
+    g["16"] = {"class_type": "APG", "inputs": {
+        "model": ["7", 0],
+        "eta": float(p.get("apg_eta", 1.05)),
+        "norm_threshold": float(p.get("apg_norm", 1.3)),
+        "momentum": float(p.get("apg_momentum", 0.0)),
+    }}
+    return ["16", 0]
+
+
 def _resolve(p):
     """Fill in seed + per-variant default steps/cfg if not overridden."""
     v = VARIANTS.get(p.get("variant", "xl_base"), VARIANTS["xl_base"])
@@ -187,7 +207,7 @@ def build_t2m(p):
     g["10"] = {"class_type": "EmptyAceStep1.5LatentAudio",
                "inputs": {"seconds": float(p.get("duration", 60.0)), "batch_size": 1}}
     g["11"] = {"class_type": "KSampler", "inputs": {
-        "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["10", 0],
+        "model": _apg_model(g, p), "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["10", 0],
         "seed": p["seed"], "steps": p["_steps"], "cfg": p["_cfg"],
         "sampler_name": p.get("sampler_name", "euler"),
         "scheduler": p.get("scheduler", "simple"), "denoise": 1.0}}
@@ -208,7 +228,7 @@ def build_restyle(p, audio_ref):
     # denoise = "restyle amount": higher transforms more (further from source).
     denoise = float(p.get("restyle_amount", 0.7))
     g["11"] = {"class_type": "KSampler", "inputs": {
-        "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["15", 0],
+        "model": _apg_model(g, p), "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["15", 0],
         "seed": p["seed"], "steps": p["_steps"], "cfg": p["_cfg"],
         "sampler_name": p.get("sampler_name", "euler"),
         "scheduler": p.get("scheduler", "simple"), "denoise": denoise}}
