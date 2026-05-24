@@ -177,6 +177,7 @@ _Mac Ollama also has embedding models (`bge-large`, `mxbai-embed-large`) — can
 
 **Done (2026-05-24):** ▶ **Align guitar to a backing's real sections** — `backend/sections.py` (librosa) detects the backing's actual section boundaries and either re-times a Song arrangement onto them (`align_blocks`, labels kept) or auto-builds one (`auto_blocks`, roles by energy). Wired to `/api/guitar/render-amp` (`align_backing`) + Guitar-tab toggle. Removes the prior "arrangement matches the backing by order/seconds" assumption.
 **Done (2026-05-24):** ▶ **Solos in Song arrangements** — a `Solo` section now renders a genre-aware high-register lead line over a quieter power-chord bed (`generate_riff_arrangement` in `backend/guitar.py`), instead of power-chords-only.
+**Done (2026-05-24):** ▶ **Refined per-genre solo prompts** — all 22 `solo` descriptions in `backend/genres.py` rewritten around renderable directives (density/register/contour/scale-tones/phrasing); `_algorithmic_solo` made tempo-aware (slow=sparse/sustained, fast=busy runs).
 
 **Then (secondary):** verify SoulX/DiffSinger on the 3090; `xl_turbo`; reproducibility "regenerate with tweak"; voice cloning/training.
 

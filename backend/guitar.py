@@ -409,24 +409,35 @@ def llm_riff(key="E minor", bpm=160, duration_s=None, bars=8, style="gallop", ge
 
 
 def _algorithmic_solo(key, bpm, duration_s, genre="", seed=None):
-    """Deterministic fallback lead: a meandering single-note scalar line in a
-    high register (used if the LLM is unavailable for a solo)."""
+    """Deterministic fallback lead (used if the LLM is unavailable for a solo):
+    a single-note scalar line in a high register, with density/phrasing/contour
+    shaped by tempo — fast genres get busy scalar runs with few rests, slow ones
+    get sparse, sustained, more-repetitive phrasing. Uses the genre's scale +
+    register."""
     import numpy as np
     parts = key.split()
     root_pc = _ROOTS.get(parts[0], 4)
     g = RIFF_GENRES.get(genre or "")
     scale = SCALES.get(g["scale"]) if g else _MINOR
-    base = 28 + root_pc + 24
+    reg = max((g.get("reg", 0) if g else 0), 24)         # solos sit in a high register
+    base = 28 + root_pc + reg
     spb = 60.0 / float(bpm); sixt = spb / 4.0
     n = max(8, int(round(float(duration_s or 8) / sixt)))
     rng = np.random.default_rng(seed)
+    rest_prob = float(np.clip(0.55 - bpm * 0.0026, 0.08, 0.45))   # fast → busier, slow → spacious
+    top = len(scale) * 2
+    steps = np.array([-5, -2, -1, 0, 1, 2, 5])
+    w_fast = np.array([1, 2, 5, 1, 6, 3, 1], dtype=float)        # scalar runs, few repeats
+    w_slow = np.array([1, 2, 3, 4, 3, 2, 1], dtype=float)        # more repeats/space
+    mix = float(np.clip((bpm - 80) / 100.0, 0.0, 1.0))           # 0=slow .. 1=fast
+    w = w_slow * (1 - mix) + w_fast * mix; w /= w.sum()
+    held = 1.5 if bpm < 100 else 1.0                            # slow solos sustain longer
     notes, deg = [], 1
     for i in range(n):
-        if rng.random() < 0.15:                     # occasional phrasing rest
-            deg = max(1, deg)
-        else:
-            notes.append((_degree_to_pitch(deg, base, scale), i * sixt, sixt * 0.95, 108))
-        deg = max(1, min(len(scale) * 2, deg + int(rng.integers(-2, 3))))
+        if rng.random() >= rest_prob:
+            dur = sixt * (held if rng.random() < 0.25 else 0.95)
+            notes.append((_degree_to_pitch(deg, base, scale), i * sixt, dur, 108))
+        deg = int(np.clip(deg + int(rng.choice(steps, p=w)), 1, top))
     return notes or [(_degree_to_pitch(1, base, scale), 0, sixt, 100)]
 
 
