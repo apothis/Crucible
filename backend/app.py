@@ -28,6 +28,7 @@ from . import guitar as guitar_mod
 from . import sections as sections_mod
 from . import genres as genres_mod
 from . import llm as llm_mod
+from . import lyrics as lyrics_mod
 from . import melody as melody_mod
 from . import voicegen as voicegen_mod
 
@@ -913,6 +914,23 @@ def llm_chat(body: dict):
     except Exception as e:
         raise HTTPException(500, f"LLM failed: {e}")
     return {"text": text}
+
+
+@app.post("/api/lyrics/song")
+def lyrics_song(body: dict):
+    """Structure-aware lyrics for a Song-Constructor arrangement: distinct verses,
+    one repeated chorus hook, optional pre-chorus/bridge; instrumental sections
+    left wordless. Returns lyrics keyed by block index. Runs on the Mac (Ollama)."""
+    blocks = body.get("blocks") or []
+    if not blocks:
+        raise HTTPException(400, "provide the arrangement blocks")
+    try:
+        return lyrics_mod.write_song_lyrics(
+            blocks, body.get("theme", ""), body.get("style", ""),
+            body.get("provider", ""), body.get("model", ""),
+            CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+    except Exception as e:
+        raise HTTPException(500, f"lyric generation failed: {e}")
 
 
 @app.get("/api/sources")

@@ -11,6 +11,15 @@ type FormProps = { cfg: Config; busy: boolean } & RunCtx;
 const fail = (ctx: RunCtx, msg: string) =>
   ctx.setResults([{ id: rid(), title: "Can’t run", status: "error", pct: 0, err: msg }]);
 
+// Is the Claude provider available (API key configured)? Used to offer it for AI lyrics.
+function useClaudeAvail() {
+  const [claude, setClaude] = useState(false);
+  useEffect(() => { api.llmProviders().then((p: any) => setClaude(!!p.claude)).catch(() => {}); }, []);
+  return claude;
+}
+
+const lyrProvOf = (v: string) => (v === "claude" ? "claude" : "ollama");
+
 // shared tuning controls for Generate + Restyle. `expert` reveals the full grid;
 // otherwise only Duration shows and the rest use presets/defaults.
 const SAMPLERS = ["euler", "dpmpp_2m", "res_multistep", "er_sde", "dpmpp_2m_sde", "heun", "uni_pc"];
@@ -114,6 +123,21 @@ function ModeToggle({ expert, setExpert }: { expert: boolean; setExpert: (b: boo
 }
 
 function PromptFields({ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }: any) {
+  const [theme, setTheme] = useState("");
+  const [prov, setProv] = useState("local");
+  const [lbusy, setLbusy] = useState(false);
+  const claude = useClaudeAvail();
+  async function writeLyrics() {
+    setLbusy(true);
+    try {
+      const r: any = await api.llm({
+        provider: lyrProvOf(prov), model: "", task: "lyrics",
+        input: `Theme: ${theme || tags || "an epic metal song"}\nStyle: ${tags}`,
+      });
+      if (r.text) setLyrics(r.text);
+    } catch (e) { alert("Lyric generation failed: " + (e as Error).message); }
+    finally { setLbusy(false); }
+  }
   return (
     <>
       <Field label="Style tags" hint="comma-separated; name instruments & tone">
@@ -125,6 +149,18 @@ function PromptFields({ tags, setTags, instrumental, setInstrumental, lyrics, se
       {!instrumental && (
         <Field label="Lyrics" hint="use [Verse] [Chorus] section tags">
           <textarea className={inp} rows={4} value={lyrics} onChange={(e) => setLyrics(e.target.value)} placeholder={"[Verse]\n...\n[Chorus]\n..."} />
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <input className={`${inp} flex-1 py-1.5 text-xs`} placeholder="theme for AI lyrics (blank = use style tags)" value={theme} onChange={(e) => setTheme(e.target.value)} />
+            {claude && (
+              <select className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-2 py-1.5 text-xs" value={prov} onChange={(e) => setProv(e.target.value)}>
+                <option value="local">Gemma</option><option value="claude">Claude</option>
+              </select>
+            )}
+            <button onClick={writeLyrics} disabled={lbusy}
+              className="whitespace-nowrap rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-1.5 text-xs text-[var(--color-ink)] hover:border-[var(--color-accent)] disabled:opacity-50">
+              {lbusy ? "Writing…" : "✨ Write lyrics"}
+            </button>
+          </div>
         </Field>
       )}
     </>
@@ -889,6 +925,10 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
   const [expert, setExpert] = useState(false);
   const [tpl, setTpl] = useState("");
   const [dirty, setDirty] = useState(false); // arrangement edited since last template/default
+  const [lyrTheme, setLyrTheme] = useState("");
+  const [lyrProv, setLyrProv] = useState("local");
+  const [lyrBusy, setLyrBusy] = useState(false);
+  const claude = useClaudeAvail();
   const tuning = useTuning(cfg, expert, true); // duration is computed from blocks
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -919,6 +959,22 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
   };
   const remove = (id: string) => { setBlocks((bs) => bs.filter((b) => b.id !== id)); setDirty(true); };
   const add = (type: string) => { setBlocks((bs) => [...bs, newBlock(type)]); setDirty(true); };
+
+  async function writeSectionLyrics() {
+    setLyrBusy(true);
+    try {
+      const r: any = await api.songLyrics({
+        blocks: blocks.map((b) => ({ type: b.type })),
+        theme: lyrTheme || tags, style: tags, provider: lyrProvOf(lyrProv), model: "",
+      });
+      const byIdx: Record<number, string> = {};
+      (r.sections || []).forEach((s: any) => { byIdx[s.index] = s.lyrics; });
+      if (!Object.keys(byIdx).length) { alert("No sung sections to write (add Verse/Chorus blocks)."); return; }
+      setBlocks((bs) => bs.map((b, i) => (byIdx[i] !== undefined ? { ...b, lyrics: byIdx[i] } : b)));
+      setDirty(true);
+    } catch (e) { alert("Section lyrics failed: " + (e as Error).message); }
+    finally { setLyrBusy(false); }
+  }
 
   const onDragEnd = (e: DragEndEvent) => {
     const { active, over } = e;
@@ -993,6 +1049,27 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
       <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
         <input type="checkbox" checked={instrumental} onChange={(e) => setInstrumental(e.target.checked)} /> Instrumental (section tags still guide the arrangement)
       </label>
+
+      {!instrumental ? (
+        <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
+          <div className="text-xs font-medium text-[var(--color-ink)]">✨ AI lyrics for this arrangement</div>
+          <div className="flex items-center gap-1.5">
+            <input className={`${inp} flex-1 py-1.5 text-xs`} placeholder="theme (blank = use style tags)" value={lyrTheme} onChange={(e) => setLyrTheme(e.target.value)} />
+            {claude && (
+              <select className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-2 py-1.5 text-xs" value={lyrProv} onChange={(e) => setLyrProv(e.target.value)}>
+                <option value="local">Gemma</option><option value="claude">Claude</option>
+              </select>
+            )}
+            <button onClick={writeSectionLyrics} disabled={lyrBusy || !blocks.length}
+              className="whitespace-nowrap rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-1.5 text-xs text-[var(--color-ink)] hover:border-[var(--color-accent)] disabled:opacity-50">
+              {lyrBusy ? "Writing…" : "Write section lyrics"}
+            </button>
+          </div>
+          <p className="text-[11px] text-[var(--color-muted)]">Distinct verses that advance the story, one repeated chorus hook, plus pre-chorus/bridge; instrumental sections (intro/solo/breakdown/outro) stay wordless. Fills each block below.</p>
+        </div>
+      ) : (
+        <p className="text-[11px] text-[var(--color-muted)]">Uncheck “Instrumental” to auto-write sung lyrics per section with AI.</p>
+      )}
 
       <SectionTitle>Arrangement · {blocks.length} sections · {total}s total</SectionTitle>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>

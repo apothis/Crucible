@@ -107,8 +107,9 @@ Produce vocals separately, then mix. **The vocal pipeline has 4 stages:**
 - [x] **LLM provider abstraction (D4)** — `backend/llm.py`: local Ollama (`gemma4_4b`/`gemma4_2b`) + Claude (if `ANTHROPIC_API_KEY` set), selectable per request.
 - [x] **Lyric writer** — Assistant "Lyrics" task ([Verse]/[Chorus] structure, metal themes).
 - [x] **Style/idea assistant** — Assistant "Style tags" + "Ideas" tasks.
+- [x] **In-form lyric generation** — "✨ Write lyrics" button in Generate/Restyle (theme + Local/Claude → fills the Lyrics field), and **structure-aware section lyrics** in the Song builder: `backend/lyrics.py` + `POST /api/lyrics/song` writes distinct verses, one repeated chorus hook, optional pre-chorus/bridge, leaving instrumental sections wordless, and drops each lyric onto its block. Mac-side (local Gemma) or Claude.
 - [ ] **Naming** — track/album/concept titles (add as another assistant task).
-- [ ] **Send-to-form handoff** — one click to push assistant output into the prompt/lyrics fields (currently copy-paste).
+- [~] **Send-to-form handoff** — DONE for lyrics (the in-form generators above auto-populate the fields); the Assistant dock's tags/ideas outputs still copy-paste.
 
 ### Phase 6 — Advanced generation & polish
 - [x] **Song Constructor (block builder)** — BUILT. Visual arrangement of draggable section blocks (Intro/Verse/Pre-Chorus/Chorus/Bridge/Solo/Breakdown/Outro) with editable per-section + total length, optional per-block lyrics. Drive (a) compile blocks → ACE-Step structured lyrics + total duration → `/api/generate` (order/lyrics exact, section length approximate); drive (b) generate each block to exact length + crossfade-stitch via `backend/mix.py:stitch` (`POST /api/stitch`) — exact lengths, per-block re-roll, lockable blocks, saved as mode `song`. Reorder via **@dnd-kit** (smooth animated drag). Also: `comfy.py` now preserves bracketed structure tags in lyrics for instrumental generations so arrangement is honored without vocals. Mode (a) verified end-to-end (instrumental 60s gen). (See `UI_DESIGN.md` §4.10.)

@@ -52,6 +52,7 @@ export const api = {
   voiceInstall: (body: unknown) => jpost("/api/voices/install", body),
   llmProviders: () => jget("/api/llm/providers"),
   llm: (body: unknown) => jpost("/api/llm", body),
+  songLyrics: (body: unknown) => jpost("/api/lyrics/song", body),
   vocalEngines: () => jget("/api/vocal/engines"),
   soulxVoices: () => jget("/api/vocal/soulx/voices"),
   soulxPrep: (fd: FormData) => jform("/api/vocal/soulx/prep", fd),
