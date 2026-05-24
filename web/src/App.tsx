@@ -252,9 +252,10 @@ function libDesc(it: LibItem): string {
   const genlike = it.mode === "generate" || it.mode === "restyle";
   const variant = genlike && p.variant ? ` · ${p.variant}` : "";
   const cs = genlike && (p.cfg || p.steps) ? ` · cfg${p.cfg ?? "?"}/${p.steps ?? "?"}st` : "";
+  const apg = genlike && p.apg ? " · APG" : "";
   const neg = genlike && (p.negative_tags || "").trim() ? " · NEG" : "";
   const smp = genlike && p.sampler_name ? ` · ${p.sampler_name}/${p.scheduler || "simple"}` : "";
-  return (p.tags || p.voice || p.source || "—") + variant + smp + cs + neg;
+  return (p.tags || p.voice || p.source || "—") + variant + smp + cs + apg + neg;
 }
 
 function hhmm(epoch?: number): string {
