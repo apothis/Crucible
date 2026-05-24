@@ -430,6 +430,10 @@ Two complementary layers ("more options always better"):
 - **Halestorm (modern hard rock):** `"modern hard rock, powerful female vocal, high-gain rhythm guitar, punchy modern production, radio rock, driving tempo"`
 - **Black Stone Cherry (southern hard rock):** `"southern hard rock, bluesy thick overdriven guitar riffs, groovy, soulful gritty male vocal, mid tempo"`
 
+**Modern power-metal bands (added to the genre registry 2026-05-24, web-researched):**
+- **Battle Beast** (Finnish) — power/heavy metal with strong **80s hard-rock swagger** + symphonic touches; **keytar/synthesizer** layers (Janne Björkroth); anthemic fist-pump choruses; fast/mid tempos, driving riffs; **powerful high belting female vocals** (Noora Louhimo, operatic range w/ shrieks). Registry id `battle_beast` (~155 BPM, E minor).
+- **Beast in Black** (Finnish, Anton Kabanen ex-Battle Beast) — **power metal fused with 80s synthwave / Italo-disco**; bright retro synths over **tight palm-muted galloping** guitars; very **hooky/danceable**; **soaring high Halford-like male vocals** (Yannis Papadopoulos). Registry id `beast_in_black` (~165 BPM, E minor). Both are essentially '80s-tribute-leaning modern power metal — synth-forward, melodic leads, palm-muted gallops. (Band emulation = personal-use, see PLAN §7 risks.)
+
 **Tone descriptors for the prompt-vocabulary layer (10b):** amp/era (`Marshall`, `Mesa Boogie`, `Orange`, `5150`, `Plexi`, `70s`, `80s`, `modern`), cab/mic (`4x12 cab`, `close-mic'd`, `SM57`), pickups (`humbucker`, `single-coil`), gain/feel (`high-gain`, `overdriven`, `crunchy`, `palm-muted`, `chugging`, `saturated`), production (`polished`, `live recording`, `bedroom`, `analog warmth`, `tight low end`).
 
 **Reference-audio (Cover/Audio2Audio):** 0.3–0.5 strength for big jumps + guidance 9–10 so the prompt dominates; multi-pass for extreme shifts (cf. §8).
