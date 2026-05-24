@@ -74,6 +74,49 @@ Last updated: 2026-05-23 (sources at bottom)
 - Keep the library reproducible and searchable as it grows; lineage matters for tuning work.
 - Don't block the UI on slow GPU jobs; queue + async everywhere.
 
+## 7. 2026 REDESIGN — fixing tab-sprawl, wasted workspace, cramped panes (IMPLEMENTED 2026-05-24)
+
+**Why revisit:** since Phase 2 the app grew to **13 flat top tabs** (Generate, Song, Voc. Builder, Import, Restyle, Vocals, Voice Swap, Stems, Tone, Backing, Guitar, Master, Mix) and a big guitar/tone pipeline. The current `400px / 1fr / 340px` layout gives the **empty Workspace pane the most space** while the Controls (where you actually work) and Library stay pinned narrow — backwards for real usage. (User feedback, 2026-05-24.)
+
+**2026 research consensus** (feature-rich creative tools): a **collapsible left sidebar with grouped/expandable sections** (icons + labels, ~200–260px) is the dependable IA — scales far better than flat tabs; keep the **main working area clean and focused**; put **secondary content (library/inspector) in a collapsible drawer/panel** that augments rather than hijacks; **progressive disclosure**; "**calm**" interfaces (gentle flow, less theatrics) to cut overwhelm.
+
+**Diagnosis of the 3 problems → fixes:**
+1. *13 flat tabs* → **grouped collapsible left sidebar** (4 stages, each with its tools).
+2. *Empty Workspace hogs space* → **results render inline beneath the active tool's form** in a generous central working column (the user-preferred "results inline" model); no separate always-on empty pane.
+3. *Cramped Controls + Library* → working column is wide/flexible; **Library becomes a collapsible right drawer** (toggle in the header), wide when open, reclaimed when closed.
+
+**Proposed IA — group the 13 modes by workflow stage:**
+- **Create** — Generate · Song · Restyle
+- **Guitar** — Backing · Guitar · Tone
+- **Vocals** — Voc. Builder · Vocals · Voice Swap · Import
+- **Finish** — Stems · Mix · Master
+
+**Proposed layout:**
+```
+┌ Header: Crucible · status chips · GPU/queue · [Library ▸ toggle] ────────────┐
+├───────────┬────────────────────────────────────────────────┬────────────────┤
+│ SIDEBAR    │  WORKING AREA (the active tool — the star)      │ LIBRARY        │
+│ grouped    │  ┌ controls / form (generous width) ─────────┐  │ (collapsible   │
+│ collapsible│  │  active mode's form                        │  │  right drawer; │
+│ nav        │  └────────────────────────────────────────────┘  │  grouped       │
+│ ~220px     │  ┌ results (waveform/result cards) inline ───┐  │  sections;     │
+│ Create ▾   │  │  appear here when a run produces output     │  │  open when     │
+│  Generate  │  └────────────────────────────────────────────┘  │  needed)       │
+│  Song …    │                                                  │                │
+│ Guitar ▸   │                                                  │                │
+│ Vocals ▸   │                                                  │                │
+│ Finish ▸   │                                                  │                │
+├───────────┴────────────────────────────────────────────────┴────────────────┤
+│ Assistant (LLM) dock — collapsible (unchanged)                                │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+- Keep the existing **HowItWorks** pipeline strip (Song→Voc.Builder→Import→Mix) as an onboarding ribbon, or fold it into the sidebar group order.
+- **Calm dark studio** aesthetic retained; sidebar uses icon+label rows, active state highlighted; groups remember expand/collapse.
+- Library drawer default-open on wide screens, toggle to reclaim space; remains the grouped/collapsible sections already built.
+- **Low-risk, incremental:** the forms/results/library components are unchanged — this is a **shell/layout refactor** (App.tsx: replace ModeTabs+3-col grid with sidebar + working column + drawer; move result cards under the form). Tool components stay as-is.
+
+**Open choices for the user:** sidebar group names/assignments (esp. where Restyle, Import, Stems live); Library default open vs closed; whether to keep the HowItWorks ribbon.
+
 ## Sources
 - [How to Create Music with AI in 2026: Suno, Udio — Bertoproduction](https://bertoproduction.com/en/blog/how-to-create-music-with-ai-2026-suno-udio-guide.html)
 - [Suno Hub — Create Music with AI](https://suno.com/hub/create-music-with-ai)
@@ -84,3 +127,8 @@ Last updated: 2026-05-23 (sources at bottom)
 - [Mureka AI](https://www.mureka.ai/)
 - [Moises AI Studio](https://help.moises.ai/hc/en-us/articles/21745204066076-Moises-AI-Studio-Your-All-in-One-AI-Music-Creation-Platform)
 - [Suno vs Udio 2026 — Neuronad](https://neuronad.com/suno-vs-udio/)
+- [Designing for Complex UIs in 2026 — Vitaly Friedman / Maven](https://maven.com/p/69113d/designing-for-complex-u-is-in-2026)
+- [Best Sidebar Menu Design Examples 2026 — Navbar Gallery](https://www.navbar.gallery/blog/best-side-bar-navigation-menu-design-examples)
+- [10 UI Patterns Users Still Love in 2026 — Design Shack](https://designshack.net/articles/ux-design/best-ui-patterns/)
+- [UX/UI trends 2026: calm interfaces, transparent AI — Envato](https://elements.envato.com/learn/ux-ui-design-trends)
+- [12 UI/UX Design Trends for AI Apps 2026 — GroovyWeb](https://www.groovyweb.co/blog/ui-ux-design-trends-ai-apps-2026)

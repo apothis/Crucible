@@ -376,3 +376,166 @@ Huge free community libraries exist; download a `.pth` (+ matching `.index`) ins
 - OpenUtau (+ DiffSinger): https://github.com/stakira/OpenUtau
 - DiffSinger: https://github.com/openvpi/DiffSinger
 - SoulX-Singer (zero-shot SVS): https://github.com/Soul-AILab/SoulX-Singer
+
+---
+
+## 10. MUSIC-QUALITY PUSH — research findings (2026-05-24)
+
+_Scope: heavy/power/symphonic/folk **metal** AND **heavy rock** (Bon Jovi, Halestorm, Black Stone Cherry, AC/DC). Goal: make the generated audio itself better, especially the weak distorted-guitar tone. Four research tracks below; a prioritized experiment list closes the section. **Nothing here has been run on the GPU yet** — confirm before generating/installing._
+
+### 10a. Post-processing & re-amp (Track B) — biggest near-term lever, runs on the Mac
+
+**The honest caveat first.** True "re-amping" (NAM / amp-sim) expects a **clean DI** (un-amped) guitar signal. Our generated guitar — and any Demucs-separated guitar stem — is **already distorted and cabinet-coloured**. You cannot cleanly re-amp an already-amped signal. So on a generated/separated distorted stem the realistic, effective chain is **reshape**, not re-amp:
+
+1. **Surgical EQ** — high-pass the sub-lows (~80–100 Hz) for tightness; narrow cuts on fizz/harshness (commonly ~3–6 kHz); a high shelf/low-pass above ~8–10 kHz to kill digital fizz. (EQ alone gets you most of the way; post-IR EQ is the standard fizz fix.)
+2. **IR cab convolution ("re-cab")** — convolve the stem with a guitar **cabinet impulse response** to re-shape cab character and smooth fizz. ⚠️ Risk of "double-cab" mud since the stem already has a cab baked in — use a darker IR + high-cut, or treat IR as optional/parallel.
+3. **Saturation / tightening** — gentle tape/tube saturation, light multiband, transient tightening for perceived power. A lot of "power" is mix, not model.
+4. **Alternative to IR** — a synthesized "analog cab" (parametric EQ + a touch of reverb) is more editable than an IR and avoids double-cab artifacts.
+
+**Tools (all Python, Mac, run in parallel to the 3090 like Demucs already does):**
+- **Spotify `pedalboard`** (PyPI `pedalboard`; GPLv3 — verify, fine for local/personal use) — the core post-FX engine. Native blocks: `Convolution` (IR cab), `Distortion`, `LowpassFilter`/`HighpassFilter`/`PeakFilter`/`LadderFilter` (EQ), `Compressor`, `Gain`, `Limiter`, `Reverb`, `Chain`/`Pedalboard`. Also hosts **VST3/AU** via `load_plugin(path, parameter_values={...})`, params settable as attributes. macOS supported. → builds our guitar-stem tone chain and a master bus chain entirely in Python.
+- **Neural Amp Modeler (`neural-amp-modeler`, MIT)** — thousands of free amp/pedal captures (`.nam`) at tone3000 / ToneHub. Two host paths: (a) load the **NAM VST3/AU plugin inside pedalboard** and point it at a `.nam`; ⚠️ **VERIFY** whether the model-file path is exposed as a settable plugin parameter (NAM loads models via its own file picker — may require a saved plugin **state/preset** rather than a param). (b) standalone. **But NAM needs a clean DI** → only useful if we ever produce/extract a clean DI (we don't today). **Lower priority for generated audio; IR + EQ + saturation is the practical win.** Revisit NAM if we add a DI-producing path (e.g. a clean-tone generation + re-amp workflow).
+- **Matchering 2.0 (`matchering`, GPLv3)** — reference-based mastering: matches the target's RMS, frequency response, peak and stereo width to a **reference master** you supply (a Halestorm / AC-DC / Bon Jovi track you own). One `mg.process(target, reference, results=[...])` call. Mac-side. Great for (a) making a mix sit like a pro master and (b) consistency across a batch. Personal-use for copyrighted references.
+- **Free cab IRs** — tone3000 and many CC/free packs (verify license per pack).
+
+**Pipeline fit:** generate → **Demucs `htdemucs_6s`** (6-stem, *includes a guitar stem*) on the Mac → apply the **guitar-tone chain** (pedalboard) to the guitar stem → recombine via the existing in-app **mixer** → optional **Matchering** master on the final bounce. New module e.g. `backend/postfx.py` + endpoints; UI "Tone / Master" controls. (Note: current Demucs default is 2-/4-stem; need `htdemucs_6s` for a guitar stem.)
+
+### 10b. Guitar / amp tone feature design (Track C)
+
+Two complementary layers ("more options always better"):
+- **Prompt-vocabulary layer** (free, only the normal gen cost) — curated **tone descriptors** injected into the tags: amp/era/cab/pickup/recording words (see 10d list). Steers what the model *renders*. Add as preset chips in `web/src/presets.ts`.
+- **Post-process tone layer** (Mac, from 10a) — a **"Guitar Tone" stage** = a `pedalboard` chain on the *separated guitar stem*, exposed as named presets, each = `{EQ curve, IR cab choice, saturation amount, noise gate}`. Examples: **Modern High-Gain**, **AC/DC Crunch**, **80s Hot-Rodded Marshall**, **Doom Fuzz**, **Southern Overdrive**. **Primary engine = the user's licensed Line 6 Helix Native** hosted via `pedalboard` (cab/EQ/comp/FX preset with the amp block bypassed — see §10f); **NAM plugin slot** as the alternative; native `pedalboard` EQ+IR+saturation as the no-plugin fallback.
+
+**Honest scope to set in the UI:** the prompt vocabulary steers the model's rendered tone; the post-FX stage *reshapes* the already-rendered tone (EQ / IR / saturation) — it does **not** fully re-amp from a clean DI. Frame it as "tone shaping," not "amp re-amping."
+
+### 10c. ACE-Step / ComfyUI workflow tuning (Track A) — experiment matrix
+
+- **Real negative prompts.** The standard XL workflow's `ConditioningZeroOut` is only the **empty-negative fallback** (confirmed on the official comfy.org XL Base workflow page). A genuine negative prompt = a **second `TextEncodeAceStepAudio1.5`** (negative tags) → `KSampler.negative` (replacing `ConditioningZeroOut`). The XL **SFT** community pipeline adds an **Adaptive Projected Guidance (APG)** node + first-class negative support. Candidate negatives to test: `"muddy, lo-fi, harsh fizz, digital clipping, thin weak guitars, out of tune, low quality, mono, distorted vocals"`. Plain negative conditioning works on **base**; APG needs **xl_sft** (not installed). **Currently we use neither — this is the cheapest GPU experiment.**
+- **Sampler / scheduler.** We hardcode `euler`/`simple`. Community-reported best for XL: **SFT** → `euler` or `res_2s`, scheduler `normal`, ~46 steps, cfg ~7.3; **Turbo-SFT merges** → `er_sde` + `beta57`, ~22 steps. For **restyle/source-change**, `beta` / `normal` / `linear_quadratic` / `ddim_uniform` are reported stronger. Sweep: `{euler, res_2s, er_sde} × {simple, normal, beta, beta57}`.
+- **AuraFlow `shift`** (fixed at 3.0). Sweep ~1–5; shifts the timestep distribution → detail vs. coherence trade-off.
+- **cfg / steps.** Base cfg 6 / 50 steps; SFT cfg 7(.3) / 46–50. Try cfg 5–8 and steps 50–80 for guitar detail (diminishing returns + time cost on the single 3090).
+- **Internal LM sampling params** (hardcoded in `_text_encode`: `cfg_scale 2.0, temperature 0.85, top_p 0.9`) — these drive the **audio-codes LM** (structure/coherence), separate from KSampler cfg. Expose + sweep.
+- **Multi-pass / refiner.** Feed an output back through a **low-denoise** second pass (like restyle on its own output) to tighten/add detail; lower denoise each pass for extreme shifts (cf. §8 restyle).
+- **Prereqs:** download **`xl_sft`** (APG + refined detail) and **`xl_turbo`** (fast iteration for sweeps) — only `xl_base` is installed.
+
+### 10d. Prompt engineering per (sub)genre + models/LoRAs (Track D+E)
+
+**Tag structure (official guide):** `genre + era → key instruments → mood/adjectives → tempo/BPM`; 3–7 tags is the sweet spot, but instrument-rich captions also work well. Lead with genre. Avoid contradictory tags (e.g. `ambient, metal`). Bracketed structure tags in lyrics (`[Verse]`, `[Chorus]` = "emotional peak, highest energy", etc.) steer dynamics.
+
+**Verbatim official metal example:** `"heavy metal rock with heavily distorted electric guitars, aggressive double bass drumming, powerful screaming vocals, fast tempo, high energy, intense dark atmosphere"`.
+
+**Heavy-rock vocabulary (new scope — drafts to A/B):**
+- **AC/DC:** `"hard rock, crunchy overdriven Marshall guitars, swinging backbeat, gang-shout backing vocals, raspy male vocal, 4/4, mid tempo, live-room production"`
+- **Bon Jovi (arena rock):** `"80s arena rock, anthemic, big layered guitars, huge hooky chorus, polished production, gated-reverb drums, soaring male vocal"`
+- **Halestorm (modern hard rock):** `"modern hard rock, powerful female vocal, high-gain rhythm guitar, punchy modern production, radio rock, driving tempo"`
+- **Black Stone Cherry (southern hard rock):** `"southern hard rock, bluesy thick overdriven guitar riffs, groovy, soulful gritty male vocal, mid tempo"`
+
+**Tone descriptors for the prompt-vocabulary layer (10b):** amp/era (`Marshall`, `Mesa Boogie`, `Orange`, `5150`, `Plexi`, `70s`, `80s`, `modern`), cab/mic (`4x12 cab`, `close-mic'd`, `SM57`), pickups (`humbucker`, `single-coil`), gain/feel (`high-gain`, `overdriven`, `crunchy`, `palm-muted`, `chugging`, `saturated`), production (`polished`, `live recording`, `bedroom`, `analog warmth`, `tight low end`).
+
+**Reference-audio (Cover/Audio2Audio):** 0.3–0.5 strength for big jumps + guidance 9–10 so the prompt dominates; multi-pass for extreme shifts (cf. §8).
+
+**Models:** ACE-Step 1.5 stays primary (fast, ComfyUI-native, restyle built-in). **YuE** is the only open model explicitly noted as *metal-resilient* (handles low vocal-to-accompaniment ratios) but is slow/VRAM-heavy → only worth it if we want harsh-vocal full songs, out of scope for guitar **tone**. **DiffRhythm** (fast latent-diffusion full songs) is an alternate engine to watch, not a tone fix. Conclusion: tone work belongs in ACE-Step tuning + post-FX, not a model swap.
+
+**LoRAs (ACE-Step, Civitai/HF):** found **"Epic Music v1.0"** (symphonic/orchestral — useful for symphonic-metal beds), **"Psychedelic Rock/Funk v1.1"**, and HF **`ACE-Step-v1.5-acoustic-guitar`**. ⚠️ Civitai is **geoblocked** from this research environment (UK Online Safety Act) so **base-version compatibility (v1 vs v1.5 XL) is UNVERIFIED** — LoRA architecture differs by base model; verify before loading. **No dedicated metal / high-gain rhythm-guitar LoRA found.** ACE-Step supports easy LoRA training ("from a few songs," one-click in the Gradio UI) → **a custom heavy-rock / metal rhythm-guitar LoRA is the highest-ceiling (and highest-effort) lever.**
+
+### 10f. Helix Native as the tone engine + the clean-DI ("de-amp") question
+
+**The user owns a licensed Line 6 Helix Native** (pro amp/cab/effects modeler, VST3/AU/AAX on Mac). This is the **preferred tone engine** for the Track B/C guitar stage — it beats hand-rolled EQ/IR chains and NAM-capture wrangling, and it's already paid for.
+
+**Hosting it from `pedalboard`:**
+- `pedalboard.load_plugin("/path/Helix Native.vst3")` loads it; parameters are settable as Python attributes and via `raw_value` ∈ [0,1]. macOS AU/VST3 supported.
+- ⚠️ **Preset loading is the rough edge.** `load_preset` only handles `.fxp`/`.vstpreset` and is plugin-dependent; Helix's own `.hlx` preset format and full internal state are **not** guaranteed to load cleanly, and pedalboard's save/restore of arbitrary plugin **state** is an open/under-developed area (issues #11, #187, #245). Robust plan: (a) dial tones in Helix's editor (pedalboard can open it via `plugin.show_editor()` on macOS) and/or (b) set the exposed parameters programmatically per named preset we define; verify state persistence on first integration. Treat "load my existing .hlx presets verbatim" as **unverified** until tested.
+- **Block-level reality:** Helix **cab / IR / EQ / compressor / effects** blocks work fine on already-distorted audio (this is the realistic *reshape* path — build a "cab + EQ + comp" preset with the **amp block bypassed**). Helix **amp** blocks, like NAM, expect a **clean DI** and will sound wrong stacked on an already-amped stem.
+
+**The clean-DI / "de-amp" path (worth the time — user asked to investigate).** To make amp blocks (Helix or NAM) truly usable on generated guitar, we'd need a *clean DI*. There's an active research line for exactly this — **guitar effect / distortion removal**:
+- arXiv **2202.01664** (Sony, "Learning How to Recover the Clean Signal") — frames de-distortion as a source-separation/effect-modeling task; fast NN inference.
+- arXiv **2407.16639** (DAFx 2024, "Distortion Recovery: A Two-Stage Method for Guitar Effect Removal") — Mel-spectrogram stage + neural vocoder (HiFi-GAN); trained on **EGDB** rendered with commercial VST FX; demos at y10ab1.github.io/guitar_effect_removal.
+- **Honest reality check:** these work best where the clean signal is *superimposed* (overdrive/crunch) and are trained on relatively clean/single-instrument guitar (EGDB), **not** dense high-gain metal walls. So: plausibly useful for **AC/DC-style crunch** re-amp experiments; **unreliable/lossy for full high-gain metal**. No turnkey `pip` tool — would require adapting research code + checkpoints. **Experimental, medium–high effort, uncertain payoff for the hardest cases.**
+- **If pursued, the pipeline:** generate → Demucs `htdemucs_6s` guitar stem → **de-amp model → estimated clean DI** → Helix/NAM **amp + cab** → recombine. Best built as an *optional* experimental stage, gated behind "this works better for crunch than for metal."
+
+**Net recommendation:** make **Helix Native (cab/EQ/comp/FX preset, amp bypassed)** the default reshape tone engine; offer a **NAM plugin slot** as an alternative; build the **clean-DI de-amp stage as an experimental opt-in** so amp blocks become viable for lighter-gain (heavy-rock) material — with expectations set that high-gain metal may not recover cleanly.
+
+### 10g. DI research batch — getting a clean DI so amp-sims become valid (2026-05-24)
+
+**Why this is its own batch:** amp models (Helix amp blocks, NAM) only sound right on a **clean DI**. Guitar/amp FX must go **only on the guitar stem**, and amp-*sims* specifically need a de-amped signal. A generated/separated stem is already distorted, so today our Tone presets are *reshape only* (amp bypassed). To unlock true re-amping we need a clean DI by one of two routes:
+
+**Route A — "reverse DI" / de-amp an existing distorted guitar (effect removal):**
+- **RemFx** (`github.com/mhrice/RemFx`, **Apache 2.0**) — general-purpose audio-effect removal; **pretrained checkpoints on Zenodo** (`scripts/download_ckpts.sh`), `scripts/remfx_detect.sh in.wav -o dry.wav`; removes **distortion** (+ chorus/delay/compression/reverb), HF Space + Colab. **Most directly usable today.** Caveat: trained on GuitarSet-style (relatively clean) sources with effects added; the paper notes "examples with many effects remain challenging" → expect decent results on **crunch**, poor on dense **high-gain metal walls**.
+- **Distortion Recovery** (DAFx 2024, arXiv 2407.16639; demos `y10ab1.github.io/guitar_effect_removal`) — Mel-spectrogram stage + neural vocoder, trained on EGDB w/ commercial VST FX. Research code; same clean-bias caveat.
+- **Sony "recover the clean signal"** (arXiv 2202.01664) — earlier source-separation framing.
+- Reality: **de-amping is reliable for overdrive/crunch, lossy/unreliable for high-gain.** Good enough for the heavy-rock end (AC/DC/BSC), weak for metal.
+
+**Route B — generate/derive a clean DI instead of recovering one (often better):**
+- **B1 — Generate CLEAN, then amp (recommended to try first).** Models render *clean* guitar far better than high-gain. Prompt ACE-Step for **"clean electric guitar, direct input, no distortion"** (or lightly-driven), separate that guitar stem, then apply a **Helix high-gain amp + cab** → full, controllable metal tone with a *real* DI-like source. Flips the pipeline: stop fighting the model's weak high-gain render; let it do the easy part and do the amping ourselves. Novel + low-risk; no new ML.
+- **B2 — Audio→MIDI→render DI→re-amp.** Demucs guitar stem → **Basic Pitch / NeuralNote** (Spotify's open model; `basic-pitch` already planned, RESEARCH §4) → MIDI → render a **clean DI** with a sampled/virtual guitar → Helix amp. Caveat: polyphonic guitar transcription is **best on clean/lightly-distorted** input and **loses performance nuance** (it's a re-creation, not the original take); pitch-bend/vibrato capture varies. Commercial transcribers (Jam Origin **MIDI Guitar**, **Prism**) are stronger but paid. Useful as an *alternative render*, not a faithful DI.
+- **B3 — MIDI-first guitar.** Compose/extract the riff as MIDI up front (we already have a melody/MIDI stack in `melody.py`) and render a clean DI to amp — most control, least "AI guitar," but most departure from text-to-music.
+
+**The amp/cab side (forward direction) is solved:** Helix Native (owned, wired) + NAM (GuitarML **PedalNet/PedalNetRT** are the emulation side) + IRs. The missing piece is purely the **clean DI input** — Route B1 is the cheapest meaningful unlock; RemFx (A) is the quickest thing to *try* on crunch.
+
+**Proposed DI experiments (add to §10e as #11–#13):** #11 RemFx de-amp on a separated guitar stem → Helix amp (crunch first); #12 generate-clean-then-amp (B1); #13 Basic Pitch → DI render → amp (B2). All Mac-side except the generation step. **Gate amp-sim presets behind "DI present"** so amps never land on an already-distorted stem.
+
+### 10h. Other ways to generate guitar (beyond ACE-Step) — research batch (2026-05-24)
+
+_Context: we ruled out getting a clean DI from ACE-Step (won't render clean on prompt) and from RemFx de-amp (too weak on high-gain — confirmed by ear). So: what other guitar-generation paths exist? Three families._
+
+**Family 1 — Stem-output / multi-track audio models (native isolated guitar, no Demucs).** These generate an *isolated guitar stem* directly, avoiding Demucs separation artifacts (the "vague noises" problem), and some can generate a guitar **conditioned on existing drums/bass** (arrangement):
+- **MSG-LD** (`github.com/karchkha/MSG-LD`) — latent-diffusion multi-track; joint separation+generation; stems = bass/drums/guitar/piano; can generate a guitar track given the others.
+- **MusicGen-Stem** (arXiv 2501.01757) — first open-source multi-stem autoregressive model; good quality + coherent per-stem editing.
+- **StemGen** (arXiv 2312.08723), **Multi-Track MusicLDM** (2409.02845), **Jen-1 Composer**, **MSDM** — related multi-stem approaches.
+- *Pros:* clean isolated guitar (better raw material for the reshape chain; no separation artifacts), arrangement control. *Cons:* still **distorted audio** (not a DI — doesn't unlock amp-sims), unknown metal strength, training/setup, mostly research-grade. **Verdict:** a *quality* upgrade to the reshape pipeline, not a tone-control unlock.
+
+**Family 2 — Symbolic / tablature generation → render a clean DI → amp (THE clean-DI solution for metal).** Generate the guitar as **GuitarPro/MIDI**, render it through a clean DI guitar instrument, then amp with Helix. This is the one path that gives metal-appropriate playing AND a true clean DI with full tone control:
+- **DadaGP** (`github.com/dada-bots/dadaGP`, **code public**) — encoder/decoder GuitarPro↔token (gp3/4/5), the tokenizer for LM-based gen. 26k songs/739 genres (dataset by request).
+- **ProgGP** (`github.com/otnemrasordep/ProgGP`) — 173 **progressive-metal** songs in DadaGP tokens + a fine-tuned Transformer that generates guitar/bass/drums/piano/orchestral. **Metal-specific.**
+- **GTR-CTRL** (arXiv 2302.05393) — genre+instrument-conditioned guitar tab generation; **ShredGP** (2307.05324) — guitarist-style-conditioned. 
+- **Render the MIDI to a clean DI:** free DI-recorded guitar instruments — **Shreddage 3 Stratus FREE** (recorded DI through the neck pickup, *designed to be amped*, runs in free Kontakt Player), **Cute Emily** (clean/dry SG), Spitfire **LABS Peel**. `pedalboard` can host an instrument VST3 + feed MIDI (≥0.9 supports instrument plugins), so the render can stay in our Python pipeline → then the existing Helix amp stage is finally valid (real clean DI in).
+- *Pros:* true clean DI, metal-appropriate riffs, total tone control (Helix amp/cab), reproducible/editable (it's symbolic). *Cons:* different paradigm from text-to-music; the gen models are 2023-era (Transformer-XL) and need setup; MIDI→DI render via Kontakt/VST is fiddly; symbolic gen ≠ ACE's "vibe." **Verdict:** highest ceiling for *guitar tone* specifically; biggest build.
+
+**Family 3 — Neural guitar synthesis (DDSP).** arXiv 2309.07658 — string-wise MIDI → guitar waveform via DDSP; demos at erl-j.github.io/neural-guitar-web-supplement. Research-grade, acoustic-leaning, not production-ready. Watch.
+
+**Bottom line / recommendation.** Two tiers:
+- **Near-term (improve the source, low effort):** stick with ACE-Step but make its output better — download **xl_sft** + run a sampler/scheduler/cfg/steps sweep (§10c), and consider a **Family-1 stem model** later to get a clean (artifact-free) guitar stem for the reshape chain.
+- **High-ceiling (real tone control, big build):** the **Family-2 symbolic route** — generate metal guitar as MIDI (ProgGP/DadaGP/GTR-CTRL) → render a clean DI (Shreddage 3 Stratus FREE) → Helix amp. This is the only path that makes the owned Helix amp genuinely useful for metal, and gives reproducible, editable riffs. Worth prototyping once the near-term source work is done.
+
+### 10e. Proposed prioritized experiments (confirm before any GPU run / install)
+
+| # | Experiment | Track | Expected impact | Effort | GPU? |
+|---|---|---|---|---|---|
+| 1 | **Guitar post-FX chain** — `pedalboard` hosting **Helix Native** (cab/EQ/comp, amp bypassed) + IR/saturation on the `htdemucs_6s` guitar stem, recombine via mixer | B/C | **High** (direct fix for the weak guitar) | Med | No (Mac) |
+| 2 | **Matchering master stage** — reference-master the final bounce | B | Med–High (cohesion/loudness) | Low | No (Mac) |
+| 3 | **Real negative prompt on `xl_base`** — 2nd TextEncode → KSampler.negative | A | Med | Low | Yes (small) |
+| 3✅ | _**WIRED 2026-05-24**: `comfy.py` `_negative_node` + `DEFAULT_NEGATIVE`; Generate UI Expert "Negative tags" field → `negative_tags`. Backward compatible (blank = ConditioningZeroOut). **GPU A/B test pending user OK.**_ | A | — | done | — |
+| 10 | **Clean-DI "de-amp" stage** (experimental) — distortion-removal NN on the guitar stem → clean DI → Helix/NAM **amp** block. Better for crunch than high-gain metal (§10f) | B/C | Med (crunch) / Low (metal) | High | Maybe (Mac/GPU) |
+| 11 | **RemFx de-amp** → Helix amp (Apache-2.0, pretrained ckpts; try on crunch first) — §10g Route A | B/C | Med (crunch) | Med | No (Mac) |
+| 12 | **Generate-clean-then-amp** — prompt ACE-Step for clean/DI guitar, separate, apply Helix high-gain amp+cab — §10g Route B1 (recommended) | A/B/C | **High** | Med | Gen on GPU, amp on Mac |
+| 13 | **Basic Pitch → DI render → amp** — guitar stem → MIDI → clean virtual-guitar DI → Helix — §10g Route B2 | B/C | Med | Med | No (Mac) |
+| 14 | **Symbolic guitar → clean DI → amp** — ProgGP/DadaGP/GTR-CTRL generate metal MIDI → render Shreddage 3 Stratus FREE (clean DI) → Helix amp — §10h Family 2. The real tone-control path. | new gen | **High (tone control)** | High | Mostly Mac |
+| 15 | **Stem-output model** (MSG-LD / MusicGen-Stem) for a native isolated guitar stem (no Demucs artifacts) feeding the reshape chain — §10h Family 1 | quality | Med | Med–High | GPU |
+| 4 | **Tone-vocabulary presets** — amp/cab/era tags as chips | C/D | Med | Low | No (prompt only) |
+| 5 | **Sampler/scheduler + shift + cfg/steps sweep** — structured A/B grid | A | Med | Med | Yes (batch) |
+| 6 | **Download `xl_sft` (+ `xl_turbo`)** → APG negative + base-vs-sft quality compare | A | Med–High | Med | Yes + download |
+| 7 | **Expose internal LM sampling params** (cfg_scale/temp/top_p) + sweep | A | Low–Med | Low | Yes |
+| 8 | **Try Epic Music LoRA** (if XL-compatible) for symphonic beds | E | Med | Low–Med | Yes + download |
+| 9 | **Train a custom metal/hard-rock rhythm-guitar LoRA** | E | **High ceiling** | High | GPU-heavy |
+
+**Recommended order:** start with the **Mac-side, no-GPU-contention** wins (#1, #2, #4) — they're the biggest bang for the buck and can be built/verified without touching the 3090 — then the cheap GPU experiments (#3, #5, #7), then the downloads/bigger bets (#6, #8, #9).
+
+**Music-quality sources (2026-05-24):**
+- Spotify pedalboard: https://github.com/spotify/pedalboard · docs https://spotify.github.io/pedalboard/
+- Neural Amp Modeler: https://github.com/sdatkinson/neural-amp-modeler · https://www.neuralampmodeler.com/ · captures https://www.tone3000.com/
+- Matchering: https://github.com/sergree/matchering
+- ACE-Step Musician's Guide: https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/ace_step_musicians_guide.md
+- ACE-Step prompt guide (Ambience AI): https://www.ambienceai.com/tutorials/ace-step-music-prompting-guide
+- ComfyUI XL Base workflow (confirms ConditioningZeroOut = empty-negative fallback): https://www.comfy.org/workflows/audio_ace_step1_5_xl_base-536dc32faee1/
+- Community XL workflow w/ sampler/APG notes: https://civitai.com/models/2375403 (Civitai — geoblocked here)
+- ACE-Step LoRAs: https://civitai.com/models/1962774 (Epic Music) · https://huggingface.co/DisturbingTheField/ACE-Step-v1.5-acoustic-guitar-and-a-merge-LoRA
+- YuE: https://github.com/multimodal-art-projection/YuE · DiffRhythm: https://github.com/ASLP-lab/DiffRhythm
+- Line 6 Helix Native (VST3/AU): https://line6.com/helix/helixnative.html
+- pedalboard external plugins / preset limits: https://spotify.github.io/pedalboard/reference/pedalboard.html · issues #11/#187/#245
+- Guitar effect / distortion removal (clean-DI recovery): https://arxiv.org/abs/2202.01664 · https://arxiv.org/abs/2407.16639 (demos: https://y10ab1.github.io/guitar_effect_removal/ , https://joimort.github.io/distortionremoval/ )
+- RemFx general audio-effect removal (Apache-2.0, pretrained ckpts): https://github.com/mhrice/RemFx
+- Audio→MIDI (clean-DI render route): https://github.com/spotify/basic-pitch · NeuralNote · Jam Origin MIDI Guitar https://www.jamorigin.com/ · Prism
+- GuitarML (amp/pedal emulation, forward direction): https://github.com/GuitarML/PedalNetRT
+- Stem-output music models: https://github.com/karchkha/MSG-LD · MusicGen-Stem https://arxiv.org/pdf/2501.01757 · StemGen https://arxiv.org/abs/2312.08723
+- Symbolic guitar/tab gen: https://github.com/dada-bots/dadaGP · https://github.com/otnemrasordep/ProgGP · GTR-CTRL https://arxiv.org/abs/2302.05393 · ShredGP https://arxiv.org/html/2307.05324
+- MIDI→clean DI render (free DI instruments): Shreddage 3 Stratus FREE https://impactsoundworks.com/product/shreddage-3-stratus-free-kp/ · DDSP guitar synth https://arxiv.org/abs/2309.07658

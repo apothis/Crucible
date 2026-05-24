@@ -67,7 +67,7 @@ The "tuning the music is a lot of work" workstream. Goal: reliably get GOOD meta
 - [ ] **Tuning presets** — save/load named setting bundles (variant + steps + cfg + shift + tags).
 - [ ] **Parameter exposure** — add AuraFlow `shift`, sampler/scheduler choice, cfg_scale/temperature (currently fixed in `comfy.py`).
 - [ ] **Reproducibility surfacing** — every track stores full params + seed (✅ stored); add "regenerate with tweak"/"branch from here" in the UI.
-- [ ] **Post-processing** — loudness normalization, basic master; later guitar re-amp / EQ.
+- [~] **Post-processing** — guitar **Tone** stage DONE (`backend/postfx.py` + "Tone" tab: pedalboard EQ/cab/saturation presets + optional Helix Native on the `htdemucs_6s` guitar stem → recombine, mode `tone`; verified end-to-end Mac-side). TODO: loudness normalization / `matchering` master (§10e #2).
 
 ### Phase 2 — UI/UX redesign ★ (modern look & feel) — _IN PROGRESS_
 The classic UI is a functional vanilla-JS placeholder (still at `:8000`). New app being built in `web/`.
@@ -166,7 +166,7 @@ _Mac Ollama also has embedding models (`bge-large`, `mxbai-embed-large`) — can
 
 **Done (2026-05-24):** ▶ **Song Constructor** (Phase 6 / Phase 2 flagship) — draggable section-block builder, both drive modes (compile + per-block stitch). Song tab + `SongForm`, `backend/mix.py:stitch`, `POST /api/stitch`.
 
-**Next up — MUSIC QUALITY PUSH (primary):** make the generated audio genuinely better within the target genres (now incl. **heavy rock** — Bon Jovi / Halestorm / Black Stone Cherry / AC/DC — not just metal). Broad research encouraged: alternative ComfyUI/ACE-Step workflows (samplers, scheduler, AuraFlow `shift`, cfg/steps sweeps, multi-pass, latent tricks), other/newer models, prompt engineering per (sub)genre, reference-audio conditioning / LoRAs, batch-and-curate, and **post-processing / re-amp / mastering** to fix distorted guitars. **Feature idea — guitar/amp tone control:** specify guitars/amps/cabs (prompt vocabulary and/or a post-process amp-sim / IR / Neural-Amp-Modeler stage on the guitar stem).
+**Next up — MUSIC QUALITY PUSH (primary):** make the generated audio genuinely better within the target genres (now incl. **heavy rock** — Bon Jovi / Halestorm / Black Stone Cherry / AC/DC — not just metal). **Research DONE 2026-05-24 → `RESEARCH.md §10`** (Tracks A–E + prioritized experiment table §10e). Headline: the biggest near-term win is **Mac-side post-processing** — a `pedalboard` guitar-tone chain (EQ + IR re-cab + saturation) on the `htdemucs_6s` guitar stem + a `matchering` reference-master, no GPU contention; honest caveat that this *reshapes* tone (true NAM re-amp needs a clean DI we don't have). Then cheap GPU experiments: real **negative prompts** (currently unused — `ConditioningZeroOut` is just the empty fallback), sampler/scheduler/`shift`/cfg/steps sweep, exposing the hardcoded LM sampling params. Bigger bets: download `xl_sft` (APG negatives) / `xl_turbo`, ACE-Step LoRAs (Civitai geoblocked — compat unverified), custom metal-guitar LoRA. **Feature idea — guitar/amp tone control (Track C):** prompt vocabulary (amps/cabs/eras) + a post-process tone stage with named presets on the guitar stem. Confirm §10e priorities with the user before any GPU run/install.
 
 **Then (secondary):** verify SoulX/DiffSinger on the 3090; model variants (`xl_sft`/`xl_turbo` download); guide-vocal generation (D2 lyric2vocal); reproducibility "regenerate with tweak"; voice cloning/training.
 
