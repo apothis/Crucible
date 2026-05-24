@@ -11,7 +11,7 @@ Last updated: 2026-05-23
 
 ## 1. Vision
 
-A local, private music-generation studio focused on **rock & metal subgenres** (heavy / power / symphonic / folk metal). It should:
+A local, private music-generation studio focused on **rock & metal** — heavy / power / symphonic / folk metal **and heavy rock** (e.g. Bon Jovi, Halestorm, Black Stone Cherry, AC/DC). It should:
 
 - Generate full instrumental tracks from a text prompt.
 - Restyle an existing track into a new genre.
@@ -166,6 +166,8 @@ _Mac Ollama also has embedding models (`bge-large`, `mxbai-embed-large`) — can
 
 **Done (2026-05-24):** ▶ **Song Constructor** (Phase 6 / Phase 2 flagship) — draggable section-block builder, both drive modes (compile + per-block stitch). Song tab + `SongForm`, `backend/mix.py:stitch`, `POST /api/stitch`.
 
-**Next up:** model variants (`xl_sft`/`xl_turbo` download), guide-vocal generation in-app (D2 lyric2vocal), reproducibility "regenerate with tweak", post-processing/master, voice cloning/training.
+**Next up — MUSIC QUALITY PUSH (primary):** make the generated audio genuinely better within the target genres (now incl. **heavy rock** — Bon Jovi / Halestorm / Black Stone Cherry / AC/DC — not just metal). Broad research encouraged: alternative ComfyUI/ACE-Step workflows (samplers, scheduler, AuraFlow `shift`, cfg/steps sweeps, multi-pass, latent tricks), other/newer models, prompt engineering per (sub)genre, reference-audio conditioning / LoRAs, batch-and-curate, and **post-processing / re-amp / mastering** to fix distorted guitars. **Feature idea — guitar/amp tone control:** specify guitars/amps/cabs (prompt vocabulary and/or a post-process amp-sim / IR / Neural-Amp-Modeler stage on the guitar stem).
+
+**Then (secondary):** verify SoulX/DiffSinger on the 3090; model variants (`xl_sft`/`xl_turbo` download); guide-vocal generation (D2 lyric2vocal); reproducibility "regenerate with tweak"; voice cloning/training.
 
 _Last updated: 2026-05-23._

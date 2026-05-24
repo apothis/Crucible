@@ -5,7 +5,9 @@ _App name: **Crucible** (AI metal studio). Repo folder is still `MusicGen` and t
 
 _Read this first when picking up the project in a fresh context. It's the index to everything and a snapshot of where we are._
 
-Last updated: 2026-05-23
+Last updated: 2026-05-24
+
+**Repository:** on GitHub at `git@github.com:apothis/Crucible.git` (public, `main`). `app_config.json` is gitignored (copy from `app_config.example.json`).
 
 ## Guiding principle (applies to the WHOLE app)
 **Research, take good ideas, and enhance.** For every feature, look at how others do it, borrow what's good, but don't be constrained by it — improve on it. We are building a power-user, metal-focused local studio, not a clone of any one tool.
@@ -89,7 +91,13 @@ A new **Voc. Builder** tab (`web/src/VocalBuilder.tsx`) that **composes a vocal 
   - **SoulX voices are zero-shot** (the reference clip *is* the voice). A **named voice library** (`web/src/VocalBuilder.tsx` picker + `POST /api/vocal/soulx/prep` → server preprocess) lets you prep a clip once and reuse it. The **Import tab** (`web/src/Import.tsx`) is the full song→voice pipeline: import a song → drag a region on the waveform → `POST /api/import/extract` (trim + Demucs vocal on the Mac) → preview → save as a SoulX voice. Don't need metal/solo refs — SoulX gives the performance/vibrato, RVC sets the final identity, and Demucs isolates a vocal from any mix. _Note: do NOT install `preprocess/requirements.txt` — it pins torch 2.10/numpy 2 and would clobber the working CUDA torch; its deps are already in the main env._
   - **Shared-GPU safety:** the SoulX server loads its model **on demand and unloads after each synth** (default; `MG_SOULX_KEEP_RESIDENT=1` to keep it loaded), and `backend/app.py` calls ComfyUI `POST /free` before any GPU vocal build (host engine or RVC re-timbre) so models don't collide on the 3090. Verify SoulX's actual footprint with `nvidia-smi` on first load.
 
-## Immediate next
-Verify the SoulX (and DiffSinger) servers on the 3090: run the installers, set the hosts, confirm VRAM + English/metal quality, iterate `note_type`/prompt. Then: model variants (`xl_sft`/`xl_turbo`), reproducibility "regenerate with tweak", post-processing/master.
+## Immediate next — MUSIC QUALITY PUSH (primary focus)
+The next initiative is making the **generated music itself better** within the target genres. **Scope expanded** beyond metal to include **heavy rock** — e.g. Bon Jovi, Halestorm, Black Stone Cherry, AC/DC — alongside heavy/power/symphonic/folk metal. Broad research is encouraged:
+- Alternative **ComfyUI workflows** for ACE-Step (samplers/schedulers, AuraFlow `shift`, cfg/steps, multi-pass, latent tricks), and **other/newer models** worth trying.
+- **Prompt engineering** for heavy rock + metal (instrumentation/era/production tags), **batch-and-curate**, reference-audio conditioning, LoRAs.
+- **Post-processing / re-amp / mastering** to fix the weak distorted-guitar problem.
+- **Guitar & amp simulation feature idea:** let the user specify guitar/amp/cab tone — either via prompt vocabulary (name amps/pickups/eras) and/or a post-processing amp-sim / impulse-response (IR) / Neural Amp Modeler (NAM) stage on the rendered guitar stem.
+
+Then (secondary): verify SoulX/DiffSinger on the 3090; model variants (`xl_sft`/`xl_turbo`); reproducibility "regenerate with tweak".
 
 _Note: the Song Constructor's `/api/stitch` endpoint + the instrumental structure-tag change in `comfy.py` require a backend restart (`./run.sh`) to take effect on a long-running `:8000` server._
