@@ -1,0 +1,836 @@
+"""MusicGen app backend — drives ComfyUI (ACE-Step 1.5) for a thin web UI.
+
+Run:  python -m backend.app   (from the repo root)
+"""
+import json
+import os
+import shutil
+import sqlite3
+import threading
+import time
+import uuid
+
+import requests
+import websocket  # websocket-client
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from . import comfy
+from . import rvc as rvc_mod
+from . import rvc_py
+from . import voices as voices_mod
+from . import stems as stems_mod
+from . import mix as mix_mod
+from . import llm as llm_mod
+from . import melody as melody_mod
+from . import voicegen as voicegen_mod
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_WEB_DIST = os.path.join(ROOT, "web", "dist")
+FRONTEND = _WEB_DIST if os.path.isdir(_WEB_DIST) else os.path.join(ROOT, "frontend")
+LIBRARY = os.path.join(ROOT, "library")
+STEMS_DIR = os.path.join(LIBRARY, "stems")
+DB = os.path.join(LIBRARY, "library.db")
+os.makedirs(LIBRARY, exist_ok=True)
+os.makedirs(STEMS_DIR, exist_ok=True)
+
+_CFG_PATH = os.path.join(ROOT, "app_config.json")
+if not os.path.exists(_CFG_PATH):  # fresh clone: fall back to the committed example
+    _CFG_PATH = os.path.join(ROOT, "app_config.example.json")
+CFG = json.load(open(_CFG_PATH))
+HOST = CFG["comfy_host"]
+CLIENT_ID = "musicgen-app"
+C = comfy.Comfy(HOST)
+
+
+def make_rvc():
+    """Choose the RVC driver. 'auto' prefers the clean rvc-python API server,
+    falling back to the legacy Gradio WebUI driver if it isn't reachable."""
+    driver = CFG.get("rvc_driver", "auto")
+    gradio = rvc_mod.RVC(CFG.get("rvc_host", ""), C, CFG.get("comfy_input_dir", ""))
+    pyapi = rvc_py.RVCPython(CFG.get("rvc_python_host", ""))
+    if driver == "gradio":
+        return gradio, "gradio"
+    if driver == "rvc_python":
+        return pyapi, "rvc_python"
+    return (pyapi, "rvc_python") if pyapi.reachable() else (gradio, "gradio")
+
+
+R, RVC_DRIVER = make_rvc()
+
+# in-memory live job state keyed by prompt_id
+JOBS = {}
+LOCK = threading.Lock()
+
+
+# ---------------- SQLite library ----------------
+def db():
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with db() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS jobs(
+            id TEXT PRIMARY KEY, created REAL, mode TEXT, params TEXT,
+            audio TEXT, status TEXT, error TEXT)""")
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()]
+        if "bucket" not in cols:  # filing bucket: "" (auto by mode) or "tests"
+            conn.execute("ALTER TABLE jobs ADD COLUMN bucket TEXT DEFAULT ''")
+
+
+def save_job(pid):
+    j = JOBS.get(pid)
+    if not j:
+        return
+    with db() as conn:
+        conn.execute(
+            "REPLACE INTO jobs(id,created,mode,params,audio,status,error) VALUES(?,?,?,?,?,?,?)",
+            (pid, j["created"], j["mode"], json.dumps(j["params"]),
+             j.get("audio_file"), j["status"], j.get("error")))
+
+
+def save_done_row(jid, mode, params, audio_path, bucket=""):
+    with db() as conn:
+        conn.execute(
+            "REPLACE INTO jobs(id,created,mode,params,audio,status,error,bucket) VALUES(?,?,?,?,?,?,?,?)",
+            (jid, time.time(), mode, json.dumps(params), audio_path, "done", None, bucket))
+
+
+# ---------------- WebSocket progress listener ----------------
+def on_complete(pid):
+    """Fetch history, download the produced audio into the library."""
+    try:
+        h = C.history(pid)
+        if pid not in h:
+            return
+        for _, out in h[pid].get("outputs", {}).items():
+            for a in out.get("audio", []):
+                data = C.view_bytes(a["filename"], a.get("subfolder", ""), a.get("type", "output"))
+                path = os.path.join(LIBRARY, f"{pid}.mp3")
+                with open(path, "wb") as f:
+                    f.write(data)
+                with LOCK:
+                    JOBS[pid]["audio_file"] = path
+                    JOBS[pid]["status"] = "done"
+                save_job(pid)
+                return
+    except Exception as e:
+        with LOCK:
+            JOBS[pid]["status"] = "error"
+            JOBS[pid]["error"] = f"download failed: {e}"
+        save_job(pid)
+
+
+def handle_msg(d):
+    t = d.get("type")
+    data = d.get("data", {})
+    pid = data.get("prompt_id")
+    if t == "progress":
+        # progress events may omit prompt_id; apply to the running job in that case
+        with LOCK:
+            target = pid if pid in JOBS else next(
+                (k for k, v in JOBS.items() if v["status"] == "running"), None)
+            if target:
+                JOBS[target]["progress"] = data.get("value", 0)
+                JOBS[target]["max"] = data.get("max", 0)
+    elif t == "executing":
+        if pid in JOBS:
+            with LOCK:
+                if data.get("node") is None:
+                    if JOBS[pid]["status"] == "running":
+                        JOBS[pid]["status"] = "finalizing"
+                else:
+                    JOBS[pid]["status"] = "running"
+            if data.get("node") is None and JOBS[pid]["status"] == "finalizing":
+                on_complete(pid)
+    elif t == "execution_error" and pid in JOBS:
+        with LOCK:
+            JOBS[pid]["status"] = "error"
+            JOBS[pid]["error"] = data.get("exception_message", "execution error")
+        save_job(pid)
+
+
+def ws_loop():
+    url = f"ws://{HOST}/ws?clientId={CLIENT_ID}"
+    while True:
+        try:
+            ws = websocket.create_connection(url, timeout=10)
+            while True:
+                msg = ws.recv()
+                if isinstance(msg, (bytes, bytearray)):
+                    continue  # binary preview frames
+                handle_msg(json.loads(msg))
+        except Exception:
+            time.sleep(2)
+
+
+# ---------------- API ----------------
+app = FastAPI(title="MusicGen")
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+    threading.Thread(target=ws_loop, daemon=True).start()
+
+
+@app.get("/api/config")
+def config():
+    return {"comfy_host": HOST, "variants": C.available_variants(),
+            "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER}
+
+
+def _new_job(resolved, mode):
+    return {"created": time.time(), "mode": mode, "status": "pending",
+            "progress": 0, "max": 0, "params": {k: v for k, v in resolved.items()
+                                                 if not k.startswith("_")}}
+
+
+@app.post("/api/generate")
+def generate(p: dict):
+    if not (p.get("tags") or "").strip():
+        raise HTTPException(400, "style tags are required (an empty prompt produces noise)")
+    try:
+        graph, resolved = comfy.build_t2m(p)
+        res = C.submit(graph, CLIENT_ID)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "generate")
+    save_job(pid)
+    return {"job_id": pid, "seed": resolved["seed"]}
+
+
+@app.post("/api/restyle")
+async def restyle(file: UploadFile = File(...), params: str = Form(...)):
+    p = json.loads(params)
+    if not (p.get("tags") or "").strip():
+        raise HTTPException(400, "style tags are required to restyle toward a target style")
+    try:
+        ref = C.upload_audio(await file.read(), file.filename)
+        graph, resolved = comfy.build_restyle(p, ref)
+        res = C.submit(graph, CLIENT_ID)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "restyle")
+        JOBS[pid]["params"]["source"] = file.filename
+    save_job(pid)
+    return {"job_id": pid, "seed": resolved["seed"]}
+
+
+@app.get("/api/job/{pid}")
+def job(pid: str):
+    with LOCK:
+        j = JOBS.get(pid)
+        if j:
+            return {"id": pid, "status": j["status"], "progress": j.get("progress", 0),
+                    "max": j.get("max", 0), "error": j.get("error"),
+                    "audio_url": f"/api/audio/{pid}" if j.get("audio_file") else None}
+    # fall back to persisted library row (e.g. after a restart)
+    with db() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (pid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "unknown job")
+    return {"id": pid, "status": row["status"], "error": row["error"],
+            "audio_url": f"/api/audio/{pid}" if row["audio"] else None}
+
+
+@app.post("/api/cancel")
+def cancel():
+    C.interrupt()
+    return {"ok": True}
+
+
+@app.get("/api/library")
+def library():
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE status='done' ORDER BY created DESC LIMIT 500").fetchall()
+    return [{"id": r["id"], "created": r["created"], "mode": r["mode"],
+             "params": json.loads(r["params"]), "audio_url": f"/api/audio/{r['id']}",
+             "bucket": (r["bucket"] if "bucket" in r.keys() else "") or ""}
+            for r in rows]
+
+
+@app.post("/api/library/{jid}/bucket")
+def set_library_bucket(jid: str, body: dict):
+    """Move an item into a filing bucket ('' = auto by type, 'tests' = Tests)."""
+    with db() as conn:
+        conn.execute("UPDATE jobs SET bucket=? WHERE id=?", (body.get("bucket", ""), os.path.basename(jid)))
+    return {"ok": True}
+
+
+@app.delete("/api/library/{jid}")
+def delete_library_item(jid: str):
+    jid = os.path.basename(jid)  # guard against path traversal
+    removed = []
+    for ext in (".mp3", ".wav"):
+        p = os.path.join(LIBRARY, jid + ext)
+        if os.path.exists(p):
+            os.remove(p)
+            removed.append(ext)
+    with db() as conn:
+        conn.execute("DELETE FROM jobs WHERE id=?", (jid,))
+    with LOCK:
+        JOBS.pop(jid, None)
+    return {"ok": True, "removed": removed}
+
+
+@app.get("/api/rvc/voices")
+def rvc_voices():
+    return R.voices()
+
+
+@app.get("/api/voices/search")
+def voices_search(q: str, sort: str = "likes", limit: int = 25):
+    try:
+        return {"results": voices_mod.search(q, sort, min(limit, 50))}
+    except Exception as e:
+        raise HTTPException(502, f"search failed: {e}")
+
+
+@app.get("/api/voices/repo")
+def voices_repo(id: str):
+    try:
+        return {"voices": voices_mod.repo_voices(id)}
+    except Exception as e:
+        raise HTTPException(502, f"repo lookup failed: {e}")
+
+
+@app.post("/api/voices/install")
+def voices_install(body: dict):
+    base = f"http://{CFG.get('rvc_python_host', '')}" if CFG.get("rvc_python_host") else ""
+    if not base:
+        raise HTTPException(400, "rvc-python host not configured (voice install requires rvc-python)")
+    try:
+        if body.get("url"):
+            res = voices_mod.install_from_url(base, body["url"], body.get("name"))
+        elif body.get("zip"):
+            res = voices_mod.install_from_hf(base, body["repo"], zip=body["zip"], name=body.get("name"))
+        else:
+            res = voices_mod.install_from_hf(base, body["repo"], pth=body["pth"],
+                                             index=body.get("index"), name=body.get("name"))
+    except Exception as e:
+        raise HTTPException(500, f"install failed (is the rvc-python server running on the PC?): {e}")
+    return res
+
+
+@app.post("/api/rvc/convert")
+async def rvc_convert(file: UploadFile = File(...), params: str = Form(...)):
+    p = json.loads(params)
+    if not p.get("voice"):
+        raise HTTPException(400, "no voice selected")
+    try:
+        wav = R.convert(
+            await file.read(), file.filename, p["voice"],
+            transpose=int(p.get("transpose", 0)),
+            f0_method=p.get("f0_method", "rmvpe"),
+            index_rate=float(p.get("index_rate", 0.75)),
+            rms_mix_rate=float(p.get("rms_mix_rate", 0.25)),
+            protect=float(p.get("protect", 0.33)))
+    except Exception as e:
+        raise HTTPException(500, f"RVC convert failed: {e}")
+    jid = uuid.uuid4().hex
+    path = os.path.join(LIBRARY, f"{jid}.wav")
+    with open(path, "wb") as f:
+        f.write(wav)
+    save_done_row(jid, "vocal", {"voice": p["voice"], "transpose": p.get("transpose", 0),
+                                 "index_rate": p.get("index_rate", 0.75),
+                                 "source": file.filename}, path)
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}", "status": "done"}
+
+
+@app.post("/api/stems/separate")
+async def stems_separate(mode: str = Form("vocals"),
+                         job_id: str = Form(None),
+                         file: UploadFile = File(None)):
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+    if file is not None:
+        ext = os.path.splitext(file.filename)[1] or ".wav"
+        inp = os.path.join(work, "input" + ext)
+        with open(inp, "wb") as f:
+            f.write(await file.read())
+    elif job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "library track not found")
+        inp = os.path.join(work, job_id + os.path.splitext(src)[1])
+        shutil.copy(src, inp)
+    else:
+        raise HTTPException(400, "provide a file or job_id")
+    try:
+        files = stems_mod.separate(inp, work, mode=mode)
+    except Exception as e:
+        raise HTTPException(500, f"separation failed: {e}")
+    try:
+        os.remove(inp)
+    except Exception:
+        pass
+    stems = [{"name": os.path.splitext(os.path.basename(f))[0],
+              "url": f"/api/stem/{sid}/{os.path.basename(f)}"} for f in files]
+    for f in files:  # register each stem in the library (Stems section)
+        save_done_row(uuid.uuid4().hex, "stem",
+                      {"source": job_id or (file.filename if file else "upload"),
+                       "kind": os.path.splitext(os.path.basename(f))[0]}, f)
+    return {"id": sid, "stems": stems}
+
+
+@app.post("/api/import/fetch")
+def import_fetch(body: dict):
+    """Download audio from a URL (YouTube etc.) via yt-dlp → mp3 in the library
+    (no DB row; scratch). Returns a playable URL + an import_id for /extract.
+    Personal-use: respects the same rights caveat as the cloning features."""
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(400, "provide a URL")
+    import shutil as _sh
+    try:
+        import yt_dlp
+    except Exception:
+        raise HTTPException(500, "yt-dlp not installed on the Mac (pip install yt-dlp)")
+    iid = uuid.uuid4().hex
+    opts = {"format": "bestaudio/best", "noplaylist": True, "quiet": True, "no_warnings": True,
+            "outtmpl": os.path.join(LIBRARY, iid + ".%(ext)s"),
+            # alternate player clients help dodge YouTube 403s (no cookies needed)
+            "extractor_args": {"youtube": {"player_client": ["tv", "ios", "web_safari", "mweb", "android"]}},
+            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3",
+                                "preferredquality": "192"}]}
+    ffloc = _sh.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    if os.path.exists(ffloc):
+        opts["ffmpeg_location"] = ffloc
+    # use the user's YouTube login (cookies) to dodge bot-detection 403s
+    if CFG.get("ytdlp_cookies_file"):
+        opts["cookiefile"] = CFG["ytdlp_cookies_file"]
+    elif CFG.get("ytdlp_cookies_from_browser"):
+        opts["cookiesfrombrowser"] = (CFG["ytdlp_cookies_from_browser"],)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as e:
+        raise HTTPException(502, f"download failed: {e}")
+    if not os.path.exists(os.path.join(LIBRARY, iid + ".mp3")):
+        raise HTTPException(500, "no audio produced — is ffmpeg installed? (brew install ffmpeg)")
+    title = (info.get("title") or "")[:80]
+    save_done_row(iid, "source", {"source": title or "url-import", "url": url[:200]},
+                  os.path.join(LIBRARY, iid + ".mp3"))
+    return {"import_id": iid, "audio_url": f"/api/audio/{iid}", "title": title}
+
+
+@app.get("/api/archive/search")
+def archive_search(q: str, rows: int = 24):
+    """Search the Internet Archive for audio items (free, no auth)."""
+    try:
+        r = requests.get("https://archive.org/advancedsearch.php", params={
+            "q": f"({q}) AND mediatype:audio", "rows": min(rows, 50), "output": "json",
+            "fl[]": ["identifier", "title", "creator", "year"]}, timeout=20)
+        docs = r.json().get("response", {}).get("docs", [])
+    except Exception as e:
+        raise HTTPException(502, f"archive search failed: {e}")
+
+    def one(v):
+        return (v[0] if isinstance(v, list) and v else (v or ""))
+    return {"results": [{"identifier": d.get("identifier"),
+                         "title": str(one(d.get("title")))[:90],
+                         "creator": str(one(d.get("creator")))[:60],
+                         "year": one(d.get("year"))} for d in docs if d.get("identifier")]}
+
+
+@app.get("/api/archive/item")
+def archive_item(id: str):
+    """List an Archive item's audio files, grouped per track with the available
+    formats/qualities (FLAC > WAV > AAC > MP3 > Ogg) + sizes + download URLs."""
+    import urllib.parse
+    try:
+        m = requests.get(f"https://archive.org/metadata/{os.path.basename(id)}", timeout=20).json()
+    except Exception as e:
+        raise HTTPException(502, f"archive metadata failed: {e}")
+    AUDIO = ("mp3", "flac", "ogg", "vorbis", "wav", "aac", "aiff", "m4a")
+    order = {"flac": 0, "wav": 1, "aiff": 1, "aac": 2, "m4a": 2, "mp3": 3, "ogg": 4, "vorbis": 4}
+    groups = {}
+    for f in m.get("files", []):
+        name = f.get("name", "")
+        fmt = f.get("format") or ""
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if not (any(k in fmt.lower() for k in AUDIO) or ext in AUDIO):
+            continue
+        base = name.rsplit(".", 1)[0]
+        groups.setdefault(base, []).append({
+            "format": fmt or ext.upper(), "size": int(f.get("size", 0) or 0), "name": name,
+            "url": f"https://archive.org/download/{os.path.basename(id)}/" + urllib.parse.quote(name)})
+    tracks = [{"title": b, "files": sorted(fs, key=lambda x: order.get(x["name"].rsplit(".", 1)[-1].lower(), 9))}
+              for b, fs in groups.items()]
+    tracks.sort(key=lambda t: t["title"])
+    md = m.get("metadata", {})
+    title = md.get("title", "")
+    return {"id": id, "title": str(title[0] if isinstance(title, list) else title)[:90], "tracks": tracks}
+
+
+@app.post("/api/import/extract")
+async def import_extract(file: UploadFile = File(None), import_id: str = Form(None),
+                         start: float = Form(0.0), end: float = Form(0.0)):
+    """Trim a [start,end] region of a song (uploaded OR previously fetched by URL)
+    and extract its vocal with Demucs (Mac MPS). Returns the isolated vocal URL."""
+    import soundfile as sf
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+    if file is not None:
+        ext = os.path.splitext(file.filename or "")[1] or ".wav"
+        src_id = uuid.uuid4().hex
+        raw = os.path.join(LIBRARY, src_id + ext)  # persist uploaded song as a source
+        with open(raw, "wb") as f:
+            f.write(await file.read())
+        save_done_row(src_id, "source", {"source": file.filename or "upload"}, raw)
+    elif import_id:
+        raw = next((os.path.join(LIBRARY, import_id + e) for e in (".mp3", ".wav")
+                    if os.path.exists(os.path.join(LIBRARY, import_id + e))), None)
+        if not raw:
+            raise HTTPException(404, "fetched audio not found (re-fetch the URL)")
+    else:
+        raise HTTPException(400, "provide a file or import_id (fetch a URL first)")
+    try:
+        data, sr = sf.read(raw, dtype="float32", always_2d=True)
+    except Exception as ex:
+        raise HTTPException(400, f"could not read audio: {ex}")
+    s0 = max(0, int(start * sr))
+    s1 = int(end * sr) if end > start else len(data)
+    s1 = min(s1, len(data))
+    if s1 - s0 < int(0.5 * sr):
+        raise HTTPException(400, "selection too short (need at least ~0.5s)")
+    trimmed = os.path.join(work, "trimmed.wav")
+    sf.write(trimmed, data[s0:s1], sr)
+    try:
+        files = stems_mod.separate(trimmed, work, mode="vocals")
+    except Exception as ex:
+        raise HTTPException(500, f"vocal extraction failed: {ex}")
+    voc = next((f for f in files if os.path.basename(f).startswith("vocals")), None)
+    if not voc:
+        raise HTTPException(500, "no vocal stem produced")
+    stem_id = uuid.uuid4().hex
+    save_done_row(stem_id, "stem", {"source": "import-extract", "kind": "vocals"}, voc)
+    return {"sid": sid, "vocal_url": f"/api/stem/{sid}/{os.path.basename(voc)}",
+            "duration": round((s1 - s0) / sr, 2)}
+
+
+@app.get("/api/llm/providers")
+def llm_providers():
+    return {"ollama": llm_mod.ollama_models(), "claude": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+
+
+@app.post("/api/llm")
+def llm_chat(body: dict):
+    try:
+        text = llm_mod.chat(body.get("provider", "ollama"), body.get("model", ""),
+                            body.get("task", "ideas"), body.get("input", ""),
+                            CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+    except Exception as e:
+        raise HTTPException(500, f"LLM failed: {e}")
+    return {"text": text}
+
+
+@app.get("/api/sources")
+def sources():
+    """All mixable audio: library items + stem outputs (for the mixer dropdowns)."""
+    out = []
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,mode,params FROM jobs WHERE status='done' ORDER BY created DESC LIMIT 100").fetchall()
+    for r in rows:
+        p = json.loads(r["params"])
+        label = f"{r['mode']}: " + (p.get("tags") or p.get("voice") or p.get("source") or "")[:36]
+        out.append({"label": label, "url": f"/api/audio/{r['id']}"})
+    if os.path.isdir(STEMS_DIR):
+        for sid in sorted(os.listdir(STEMS_DIR), reverse=True)[:30]:
+            d = os.path.join(STEMS_DIR, sid)
+            if os.path.isdir(d):
+                for f in sorted(os.listdir(d)):
+                    if f.endswith(".wav"):
+                        out.append({"label": f"stem {f[:-4]} ({sid[:6]})",
+                                    "url": f"/api/stem/{sid}/{f}"})
+    return out
+
+
+@app.post("/api/mix")
+def mix_tracks(body: dict):
+    tracks = body.get("tracks", [])
+    if not tracks:
+        raise HTTPException(400, "add at least one track")
+    try:
+        wav = mix_mod.mix(tracks, LIBRARY, STEMS_DIR, normalize=body.get("normalize", True))
+    except Exception as e:
+        raise HTTPException(500, f"mix failed: {e}")
+    jid = uuid.uuid4().hex
+    with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
+        f.write(wav)
+    save_done_row(jid, "mix", {"sources": [t.get("src") for t in tracks]},
+                  os.path.join(LIBRARY, f"{jid}.wav"))
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+@app.post("/api/stitch")
+def stitch_tracks(body: dict):
+    """Concatenate per-block clips into one song with a crossfade (Song Constructor)."""
+    tracks = body.get("tracks", [])
+    if not tracks:
+        raise HTTPException(400, "no tracks to stitch")
+    try:
+        wav = mix_mod.stitch(tracks, LIBRARY, STEMS_DIR,
+                             crossfade_s=float(body.get("crossfade_s", 1.0)))
+    except Exception as e:
+        raise HTTPException(500, f"stitch failed: {e}")
+    jid = uuid.uuid4().hex
+    with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
+        f.write(wav)
+    save_done_row(jid, "song", {"tags": body.get("tags", ""),
+                                "sections": body.get("sections", ""),
+                                "crossfade_s": body.get("crossfade_s", 1.0),
+                                "blocks": len(tracks)},
+                  os.path.join(LIBRARY, f"{jid}.wav"))
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+# ---------------- Vocal Builder (AI melody → singing → re-timbre → mix) ----------------
+@app.get("/api/vocal/engines")
+def vocal_engines():
+    return {"engines": voicegen_mod.engines(CFG)}
+
+
+@app.post("/api/melody/compose")
+def melody_compose(body: dict):
+    """Compose a note-per-syllable melody from a Song Constructor song
+    (blocks + key + bpm). Returns the score for the piano-roll + synthesis."""
+    if not body.get("blocks"):
+        raise HTTPException(400, "no sections to compose for")
+    if not any((b.get("lyrics") or "").strip() for b in body["blocks"]):
+        raise HTTPException(400, "add lyrics to at least one section to compose a melody")
+    try:
+        score = melody_mod.compose(
+            body, provider=body.get("provider", ""), model=body.get("model", ""),
+            claude_model=CFG.get("claude_model", "claude-3-5-sonnet-latest"),
+            seed=body.get("seed"))
+    except Exception as e:
+        raise HTTPException(500, f"compose failed: {e}")
+    return {"score": score}
+
+
+@app.post("/api/melody/midi")
+def melody_midi(body: dict):
+    score = body.get("score")
+    if not score:
+        raise HTTPException(400, "no score")
+    data = melody_mod.to_midi(score)
+    return Response(content=data, media_type="audio/midi",
+                    headers={"Content-Disposition": "attachment; filename=melody.mid"})
+
+
+@app.post("/api/vocal/build")
+def vocal_build(body: dict):
+    """Synthesize the composed melody into a sung vocal via the chosen engine,
+    optionally re-timbre it through RVC, and save it to the library."""
+    score = body.get("score")
+    engine = body.get("engine", "guide")
+    if not score or not score.get("notes"):
+        raise HTTPException(400, "compose a melody first (no notes in score)")
+    ref = None
+    if body.get("reference_src"):
+        try:
+            ref = open(mix_mod._resolve(body["reference_src"], LIBRARY, STEMS_DIR), "rb").read()
+        except Exception as e:
+            raise HTTPException(400, f"reference clip not found: {e}")
+    # Quality defaults for SoulX (the sweep winner: fp32 + more steps clears the
+    # crackle and tightens pitch); still overridable per request via body.opts.
+    opts = dict(body.get("opts") or {})
+    if engine == "soulx":
+        opts = {"n_steps": 200, "fp16": False, "cfg": 3, **opts}
+    # Shared 3090: if this build will use the GPU (a host engine or RVC
+    # re-timbre), free ComfyUI's VRAM first so models don't collide.
+    if engine != "guide" or body.get("retimbre"):
+        C.free()
+    try:
+        wav = voicegen_mod.synthesize(engine, score, CFG, reference=ref, opts=opts)
+    except Exception as e:
+        raise HTTPException(500, f"synthesis failed ({engine}): {e}")
+    voice = body.get("voice")
+    if body.get("retimbre") and voice:
+        try:
+            wav = R.convert(wav, "vocal.wav", voice,
+                            transpose=int(body.get("transpose", 0)),
+                            f0_method=body.get("f0_method", "rmvpe"),
+                            index_rate=float(body.get("index_rate", 0.75)),
+                            protect=float(body.get("protect", 0.33)))
+        except Exception as e:
+            raise HTTPException(500, f"RVC re-timbre failed (is the RVC API running?): {e}")
+    jid = uuid.uuid4().hex
+    path = os.path.join(LIBRARY, f"{jid}.wav")
+    with open(path, "wb") as f:
+        f.write(wav)
+    save_done_row(jid, "vocal", {"source": "vocal-builder", "engine": engine,
+                                 "voice": voice if body.get("retimbre") else None,
+                                 "key": score.get("key"), "bpm": score.get("bpm"),
+                                 "notes": len(score.get("notes", [])),
+                                 "opts": opts}, path)
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}", "status": "done"}
+
+
+@app.get("/api/vocal/soulx/voices")
+def soulx_voices():
+    host = CFG.get("soulx_host", "")
+    if not host:
+        raise HTTPException(400, "soulx_host not configured")
+    try:
+        return requests.get(f"http://{host}/voices", timeout=10).json()
+    except Exception as e:
+        raise HTTPException(502, f"SoulX unreachable: {e}")
+
+
+@app.post("/api/vocal/soulx/prep")
+async def soulx_prep(name: str = Form(...), language: str = Form("English"),
+                     vocal_sep: bool = Form(True), job_id: str = Form(None),
+                     stem_src: str = Form(None), file: UploadFile = File(None)):
+    """Register a SoulX reference voice from an uploaded clip, a library track,
+    or an already-extracted vocal stem (forwards to the SoulX preprocess
+    pipeline). Heavy / one-time."""
+    host = CFG.get("soulx_host", "")
+    if not host:
+        raise HTTPException(400, "soulx_host not configured")
+    if file is not None:
+        data = await file.read()
+        fname = file.filename or "ref.wav"
+    elif stem_src:
+        try:
+            data = open(mix_mod._resolve(stem_src, LIBRARY, STEMS_DIR), "rb").read()
+        except Exception as ex:
+            raise HTTPException(404, f"stem not found: {ex}")
+        fname = "vocal.wav"
+    elif job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "library track not found")
+        data = open(src, "rb").read()
+        fname = os.path.basename(src)
+    else:
+        raise HTTPException(400, "provide a file or job_id")
+    C.free()  # free ComfyUI VRAM; preprocess is GPU-heavy
+    try:
+        r = requests.post(f"http://{host}/voices/prep",
+                          data={"name": name, "language": language,
+                                "vocal_sep": str(vocal_sep).lower()},
+                          files={"file": (fname, data, "application/octet-stream")},
+                          timeout=1800)
+        d = r.json()
+    except Exception as e:
+        raise HTTPException(502, f"prep failed: {e}")
+    if not r.ok:
+        raise HTTPException(500, f"preprocess failed: {d.get('error', 'unknown')}")
+    return d
+
+
+@app.post("/api/voiceswap")
+async def voiceswap(voice: str = Form(...), job_id: str = Form(None),
+                    file: UploadFile = File(None), transpose: int = Form(0),
+                    vocal_gain: float = Form(0.0), instr_gain: float = Form(0.0),
+                    f0_method: str = Form("rmvpe"), index_rate: float = Form(0.75),
+                    protect: float = Form(0.33)):
+    """One-click: split a vocal song → re-timbre the vocal via RVC → remix over
+    its own instrumental. Everything stays in sync (all from one source)."""
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+    # resolve source song
+    if file is not None:
+        inp = os.path.join(work, "input" + (os.path.splitext(file.filename)[1] or ".wav"))
+        with open(inp, "wb") as f:
+            f.write(await file.read())
+    elif job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "source song not found")
+        inp = os.path.join(work, "input" + os.path.splitext(src)[1])
+        shutil.copy(src, inp)
+    else:
+        raise HTTPException(400, "provide a song (job_id or file)")
+
+    # 1) split into vocals + no_vocals (Mac MPS)
+    try:
+        stem_files = stems_mod.separate(inp, work, mode="vocals")
+    except Exception as e:
+        raise HTTPException(500, f"split failed: {e}")
+    voc = next((f for f in stem_files if os.path.basename(f).startswith("vocals")), None)
+    inst = next((f for f in stem_files if "no_vocals" in os.path.basename(f)), None)
+    if not voc or not inst:
+        raise HTTPException(500, "split did not produce vocal + instrumental stems")
+
+    # 2) re-timbre the vocal via RVC
+    try:
+        with open(voc, "rb") as f:
+            conv = R.convert(f.read(), "vocals.wav", voice, transpose=transpose,
+                             f0_method=f0_method, index_rate=index_rate, protect=protect)
+    except Exception as e:
+        raise HTTPException(500, f"voice conversion failed (is the RVC API running?): {e}")
+    with open(os.path.join(work, "vocals_converted.wav"), "wb") as f:
+        f.write(conv)
+
+    # 3) remix converted vocal over the original instrumental
+    try:
+        tracks = [{"src": f"/api/stem/{sid}/{os.path.basename(inst)}", "gain_db": instr_gain},
+                  {"src": f"/api/stem/{sid}/vocals_converted.wav", "gain_db": vocal_gain}]
+        mixed = mix_mod.mix(tracks, LIBRARY, STEMS_DIR, normalize=True)
+    except Exception as e:
+        raise HTTPException(500, f"remix failed: {e}")
+
+    jid = uuid.uuid4().hex
+    with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
+        f.write(mixed)
+    save_done_row(jid, "voiceswap", {"source": job_id or (file.filename if file else ""),
+                                     "voice": voice, "transpose": transpose},
+                  os.path.join(LIBRARY, f"{jid}.wav"))
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}",
+            "stems": {"converted_vocal": f"/api/stem/{sid}/vocals_converted.wav",
+                      "instrumental": f"/api/stem/{sid}/{os.path.basename(inst)}"}}
+
+
+@app.get("/api/stem/{sid}/{name}")
+def get_stem(sid: str, name: str):
+    path = os.path.join(STEMS_DIR, os.path.basename(sid), os.path.basename(name))
+    if not os.path.exists(path):
+        raise HTTPException(404, "no stem")
+    return FileResponse(path, media_type="audio/wav")
+
+
+@app.get("/api/audio/{pid}")
+def audio(pid: str):
+    for ext, mt in ((".mp3", "audio/mpeg"), (".wav", "audio/wav")):
+        path = os.path.join(LIBRARY, f"{pid}{ext}")
+        if os.path.exists(path):
+            return FileResponse(path, media_type=mt)
+    # fall back to the stored path (e.g. stems registered from STEMS_DIR)
+    with db() as conn:
+        row = conn.execute("SELECT audio FROM jobs WHERE id=?", (pid,)).fetchone()
+    if row and row["audio"] and os.path.exists(row["audio"]):
+        mt = "audio/wav" if row["audio"].endswith(".wav") else "audio/mpeg"
+        return FileResponse(row["audio"], media_type=mt)
+    raise HTTPException(404, "no audio")
+
+
+# static frontend at root (registered last so /api/* wins)
+app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=CFG.get("server_port", 8000))

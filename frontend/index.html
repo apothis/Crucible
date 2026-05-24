@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MusicGen</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>MusicGen <span class="sub">ACE-Step 1.5 · metal</span></h1>
+  <div id="host" class="host"></div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="tabs">
+      <button class="tab active" data-mode="generate">Generate</button>
+      <button class="tab" data-mode="restyle">Restyle</button>
+      <button class="tab" data-mode="vocals">Vocals (RVC)</button>
+      <button class="tab" data-mode="swap">Voice Swap</button>
+      <button class="tab" data-mode="stems">Stems</button>
+      <button class="tab" data-mode="mix">Mix</button>
+    </div>
+
+    <div id="restyle-input" class="field hidden">
+      <label>Source track</label>
+      <input type="file" id="source" accept="audio/*">
+      <label>Restyle amount <span class="hint">(higher = more transformation)</span>
+        <output id="restyleOut">0.70</output></label>
+      <input type="range" id="restyle_amount" min="0.2" max="0.95" step="0.05" value="0.7">
+    </div>
+
+    <div id="gen-fields">
+      <div class="field">
+        <label>Style tags <span class="hint">comma-separated; name instruments &amp; tone</span></label>
+        <textarea id="tags" rows="3" placeholder="symphonic power metal, heavily distorted electric guitars, double-bass drums, orchestral strings, fast tempo, heroic"></textarea>
+      </div>
+
+      <div class="field">
+        <label><input type="checkbox" id="instrumental"> Instrumental (no vocals)</label>
+      </div>
+
+      <div class="field" id="lyrics-field">
+        <label>Lyrics <span class="hint">use [Verse] [Chorus] section tags</span></label>
+        <textarea id="lyrics" rows="4" placeholder="[Verse]&#10;Steel and thunder light the sky&#10;[Chorus]&#10;Raise your blades to the burning sun"></textarea>
+      </div>
+
+      <h3 class="tune">Guided tuning</h3>
+      <div class="grid">
+        <div class="field"><label>Model</label><select id="variant"></select></div>
+        <div class="field"><label>Steps <span class="hint" id="stepsDef"></span></label><input type="number" id="steps" placeholder="default"></div>
+        <div class="field"><label>CFG <span class="hint" id="cfgDef"></span></label><input type="number" id="cfg" step="0.5" placeholder="default"></div>
+        <div class="field"><label>Duration (s)</label><input type="number" id="duration" value="40"></div>
+        <div class="field"><label>BPM</label><input type="number" id="bpm" value="170"></div>
+        <div class="field"><label>Key</label><select id="keyscale"></select></div>
+        <div class="field"><label>Time sig</label><select id="timesignature"><option>2</option><option>3</option><option selected>4</option><option>6</option></select></div>
+        <div class="field"><label>Seed <span class="hint">blank = random</span></label><input type="number" id="seed" placeholder="random"></div>
+      </div>
+    </div>
+
+    <div id="vocals-fields" class="hidden">
+      <div class="field">
+        <label>Guide vocal <span class="hint">a sung take to convert (recording or generated)</span></label>
+        <input type="file" id="vocalsrc" accept="audio/*">
+      </div>
+      <div class="field"><label>Target voice <span class="hint" id="voiceStatus"></span></label><select id="voice" class="voicesel"></select></div>
+
+      <details class="addvoices">
+        <summary>＋ Add / download voices</summary>
+        <p class="hint">Installs land on the Windows PC via rvc-python; zips are unpacked automatically. Browse a catalog, then search here or paste a download link:</p>
+        <p class="links">Find voices →
+          <a href="https://voice-models.com/" target="_blank" rel="noopener">voice-models.com</a> ·
+          <a href="https://rvc-models.com/c/singers/6" target="_blank" rel="noopener">rvc-models.com (singers)</a> ·
+          <a href="https://huggingface.co/models?other=rvc" target="_blank" rel="noopener">Hugging Face</a>
+        </p>
+        <div class="field">
+          <label>Search Hugging Face</label>
+          <div class="searchrow">
+            <input type="text" id="voiceSearch" placeholder="e.g. metal, dickinson, rock singer">
+            <select id="voiceSort"><option value="likes">Top</option><option value="downloads">Downloads</option><option value="lastModified">Newest</option></select>
+            <button id="voiceSearchBtn" class="ghost">Search</button>
+          </div>
+          <div id="voiceResults"></div>
+        </div>
+        <div class="field">
+          <label>Install from URL <span class="hint">.zip or .pth (e.g. voice-models.com download)</span></label>
+          <div class="searchrow">
+            <input type="text" id="voiceUrl" placeholder="https://…/voice.zip">
+            <input type="text" id="voiceUrlName" placeholder="name (optional)" style="max-width:140px">
+            <button id="voiceUrlBtn" class="ghost">Install</button>
+          </div>
+        </div>
+        <div id="voiceAddStatus" class="status"></div>
+      </details>
+      <div class="grid">
+        <div class="field"><label>Transpose <span class="hint">semitones; +12/-12 = octave</span></label><input type="number" id="transpose" value="0"></div>
+        <div class="field"><label>Pitch method</label><select id="f0_method"><option selected>rmvpe</option><option>crepe</option><option>harvest</option><option>pm</option></select></div>
+        <div class="field"><label>Index rate <output id="irOut">0.75</output></label><input type="range" id="index_rate" min="0" max="1" step="0.05" value="0.75"></div>
+        <div class="field"><label>Volume envelope <output id="rmsOut">0.25</output></label><input type="range" id="rms_mix_rate" min="0" max="1" step="0.05" value="0.25"></div>
+        <div class="field"><label>Protect <output id="protOut">0.33</output></label><input type="range" id="protect" min="0" max="0.5" step="0.01" value="0.33"></div>
+      </div>
+    </div>
+
+    <div id="swap-fields" class="hidden">
+      <p class="hint">One-click: take a vocal song, swap the singer, keep it in sync. It splits → re-timbres the vocal → remixes over the original instrumental automatically.</p>
+      <div class="field"><label>Vocal song (from library)</label><select id="swapJob"><option value="">— choose —</option></select></div>
+      <div class="field"><label>…or upload a song</label><input type="file" id="swapsrc" accept="audio/*"></div>
+      <div class="field"><label>Target voice <span class="hint" id="swapVoiceStatus"></span></label><select id="swapVoice" class="voicesel"></select></div>
+      <div class="grid">
+        <div class="field"><label>Transpose <span class="hint">semitones</span></label><input type="number" id="swapTranspose" value="0"></div>
+        <div class="field"><label>Vocal level (dB)</label><input type="number" id="swapVocalGain" value="0" step="1"></div>
+        <div class="field"><label>Instrumental level (dB)</label><input type="number" id="swapInstrGain" value="0" step="1"></div>
+      </div>
+    </div>
+
+    <div id="stems-fields" class="hidden">
+      <p class="hint">Split a track into stems on the Mac GPU (runs in parallel with the 3090). Use it to isolate a vocal (CREATE→ISOLATE) or for restyling.</p>
+      <div class="field">
+        <label>From a library track</label>
+        <select id="stemJob"><option value="">— choose —</option></select>
+      </div>
+      <div class="field">
+        <label>…or upload a track</label>
+        <input type="file" id="stemsrc" accept="audio/*">
+      </div>
+      <div class="field">
+        <label>Split mode</label>
+        <select id="stemMode">
+          <option value="vocals">Vocals + instrumental (2-stem)</option>
+          <option value="all">Full split (vocals / drums / bass / other)</option>
+        </select>
+      </div>
+      <div id="stemResults"></div>
+    </div>
+
+    <div id="mix-fields" class="hidden">
+      <p class="hint">Layer tracks into a finished song — e.g. an instrumental + a converted vocal. Set level (dB) and start offset (s) per track.</p>
+      <div id="mixRows"></div>
+      <div class="actions">
+        <button id="mixAdd" class="ghost">+ add track</button>
+        <label style="margin:0 0 0 auto;align-self:center"><input type="checkbox" id="mixNorm" checked> normalize</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="go" class="primary">Generate</button>
+      <button id="cancel" class="ghost" disabled>Cancel</button>
+    </div>
+
+    <div id="progress" class="progress hidden">
+      <div class="bar"><div id="barfill"></div></div>
+      <div id="status" class="status"></div>
+    </div>
+
+    <div id="now" class="now hidden">
+      <h3>Result <span id="nowMeta" class="hint"></span></h3>
+      <audio id="player" controls></audio>
+    </div>
+  </section>
+
+  <section class="panel library">
+    <h2>Library</h2>
+    <div id="lib"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
