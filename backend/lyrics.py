@@ -33,7 +33,7 @@ def _parse(text):
     VERSE1/VERSE2/…/CHORUS/PRECHORUS/BRIDGE. Tolerant of inline or own-line
     headers and stray markdown."""
     text = re.sub(r"```[a-z]*", "", text or "")
-    pat = re.compile(r"(VERSE\s*\d+|CHORUS|PRE[\s-]?CHORUS|BRIDGE)\s*:?", re.I)
+    pat = re.compile(r"(VERSE\s*\d+|CHORUS|PRE[\s-]?CHORUS|BRIDGE|INTRO|OUTRO)\s*:?", re.I)
     matches = list(pat.finditer(text))
     out = {}
     for j, m in enumerate(matches):
@@ -47,22 +47,29 @@ def _parse(text):
 
 
 def write_song_lyrics(blocks, theme, style="", provider="", model="",
-                      claude_model="claude-3-5-sonnet-latest"):
+                      claude_model="claude-3-5-sonnet-latest", extra_sung=None):
     """Generate lyrics fitting the arrangement. `blocks` = [{type, …}] in order.
     Returns {"sections": [{"index", "type", "lyrics"}], "raw": <llm text>} with one
     entry per SUNG block (instrumental blocks omitted). Choruses share one hook;
-    verses are distinct and ordered."""
+    verses are distinct and ordered. `extra_sung` (e.g. ["intro","outro"]) opts those
+    normally-instrumental roles into getting lyrics too."""
+    extra = {_norm(r) for r in (extra_sung or [])}
     roles = [_norm(b.get("type")) for b in blocks]
     verse_idx = [i for i, r in enumerate(roles) if r == "verse"]
     chorus_idx = [i for i, r in enumerate(roles) if r in ("chorus", "refrain", "hook")]
     pre_idx = [i for i, r in enumerate(roles) if r == "prechorus"]
     bridge_idx = [i for i, r in enumerate(roles) if r == "bridge"]
-    if not (verse_idx or chorus_idx or pre_idx or bridge_idx):
+    intro_idx = [i for i, r in enumerate(roles) if r == "intro"] if "intro" in extra else []
+    outro_idx = [i for i, r in enumerate(roles) if r == "outro"] if "outro" in extra else []
+    if not (verse_idx or chorus_idx or pre_idx or bridge_idx or intro_idx or outro_idx):
         return {"sections": [], "raw": ""}              # nothing sung in this arrangement
 
     provider = provider or llm_mod.best_provider()
     nv = len(verse_idx)
     wants, fmt = [], []
+    if intro_idx:
+        wants.append("a short INTRO — 1-2 atmospheric opening lines")
+        fmt.append("INTRO:\n<1-2 lines>")
     if nv:
         wants.append(f"{nv} VERSE section(s), each DIFFERENT and advancing the story/imagery")
         fmt += [f"VERSE {k + 1}:\n<2-4 lines>" for k in range(nv)]
@@ -75,6 +82,9 @@ def write_song_lyrics(blocks, theme, style="", provider="", model="",
     if bridge_idx:
         wants.append("1 BRIDGE — a contrasting lyrical turn")
         fmt.append("BRIDGE:\n<2-3 lines>")
+    if outro_idx:
+        wants.append("an OUTRO — a closing refrain or fading final lines")
+        fmt.append("OUTRO:\n<1-2 lines>")
 
     system = (
         "You are a skilled rock/metal lyricist. Write vivid, singable lyrics that fit "
@@ -95,6 +105,8 @@ def write_song_lyrics(blocks, theme, style="", provider="", model="",
         if lyric:
             sections.append({"index": idx, "type": typ, "lyrics": lyric})
 
+    for i in intro_idx:
+        add(i, "Intro", res.get("INTRO"))
     # verses: VERSE 1..n in order; if a slot is missing reuse any available verse
     any_verse = next((res[f"VERSE{k + 1}"] for k in range(nv) if res.get(f"VERSE{k + 1}")), "")
     for n, i in enumerate(verse_idx):
@@ -105,11 +117,13 @@ def write_song_lyrics(blocks, theme, style="", provider="", model="",
         add(i, "Pre-Chorus", res.get("PRECHORUS"))
     for i in bridge_idx:
         add(i, "Bridge", res.get("BRIDGE"))
+    for i in outro_idx:
+        add(i, "Outro", res.get("OUTRO"))
 
     # Fallback: if nothing parsed but the model produced text, drop it on the first
     # sung block so the user still gets something to edit.
     if not sections and (text or "").strip():
-        first = (verse_idx or chorus_idx or pre_idx or bridge_idx)[0]
+        first = (verse_idx or chorus_idx or pre_idx or bridge_idx or intro_idx or outro_idx)[0]
         sections = [{"index": first, "type": str(blocks[first].get("type", "Verse")),
                      "lyrics": text.strip()}]
 

@@ -38,6 +38,7 @@ export default function App() {
   const [library, setLibrary] = useState<LibItem[]>([]);
   const [results, setResults] = useState<Result[]>([]);
   const [song, setSong] = useState<SongDraft | null>(null);
+  const [handoff, setHandoff] = useState<{ tags?: string; lyrics?: string } | null>(null);
   const [libOpen, setLibOpen] = useState(true);
   const [openGroups, setOpenGroups] = useState<string[]>(GROUPS.map((g) => g.name));
 
@@ -61,7 +62,7 @@ export default function App() {
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
           <div className="max-w-2xl">
-            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} {...ctx} />
+            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
           {results.length > 0 && (
@@ -111,11 +112,11 @@ function Sidebar({ mode, setMode, openGroups, setOpenGroups }: {
   );
 }
 
-function Controls({ mode, cfg, busy, song, setSong, goTo, ...ctx }: { mode: string; cfg: Config; busy: boolean; song: SongDraft | null; setSong: (s: SongDraft) => void; goTo: (m: string) => void } & RunCtx) {
+function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, ...ctx }: { mode: string; cfg: Config; busy: boolean; song: SongDraft | null; setSong: (s: SongDraft) => void; goTo: (m: string) => void; handoff: { tags?: string; lyrics?: string } | null; setHandoff: (h: { tags?: string; lyrics?: string } | null) => void } & RunCtx) {
   const p = { cfg, busy, ...ctx };
   switch (mode) {
-    case "generate": return <GenerateForm {...p} />;
-    case "song": return <SongForm {...p} onSong={setSong} />;
+    case "generate": return <GenerateForm {...p} handoff={handoff} clearHandoff={() => setHandoff(null)} />;
+    case "song": return <SongForm {...p} onSong={setSong} onSendToGenerate={(h: { tags?: string; lyrics?: string }) => { setHandoff(h); goTo("generate"); }} />;
     case "vocalbuilder": return <VocalBuilderForm {...p} song={song} />;
     case "import": return <ImportForm goTo={goTo} />;
     case "restyle": return <RestyleForm {...p} />;

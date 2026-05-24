@@ -167,7 +167,7 @@ function PromptFields({ tags, setTags, instrumental, setInstrumental, lyrics, se
   );
 }
 
-export function GenerateForm({ cfg, busy, ...ctx }: FormProps) {
+export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormProps & { handoff?: { tags?: string; lyrics?: string } | null; clearHandoff?: () => void }) {
   const [tags, setTags] = useState("symphonic power metal, heavily distorted electric guitars, double-bass drums, orchestral strings, fast tempo, heroic");
   const [instrumental, setInstrumental] = useState(true);
   const [lyrics, setLyrics] = useState("");
@@ -176,6 +176,14 @@ export function GenerateForm({ cfg, busy, ...ctx }: FormProps) {
   const [neg, setNeg] = useState("");
   const tuning = useTuning(cfg, expert);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
+
+  // accept a "send to Generate" handoff from the Song builder (tags + compiled lyrics)
+  useEffect(() => {
+    if (!handoff) return;
+    if (handoff.tags) setTags(handoff.tags);
+    if (handoff.lyrics !== undefined) { setLyrics(handoff.lyrics); setInstrumental(false); }
+    clearHandoff?.();
+  }, [handoff]);
 
   async function run() {
     if (!tags.trim()) return fail(ctx, "Add style tags first — an empty prompt produces noise.");
@@ -915,7 +923,7 @@ function SortableBlock({ b, drive, instrumental, upd, remove }: {
   );
 }
 
-export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (s: SongDraft) => void }) {
+export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormProps & { onSong?: (s: SongDraft) => void; onSendToGenerate?: (h: { tags: string; lyrics: string }) => void }) {
   const [blocks, setBlocks] = useState<Block[]>(() =>
     ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Solo", "Chorus", "Outro"].map(newBlock));
   const [tags, setTags] = useState("");
@@ -928,6 +936,7 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
   const [lyrTheme, setLyrTheme] = useState("");
   const [lyrProv, setLyrProv] = useState("local");
   const [lyrBusy, setLyrBusy] = useState(false);
+  const [sungEnds, setSungEnds] = useState(false);
   const claude = useClaudeAvail();
   const tuning = useTuning(cfg, expert, true); // duration is computed from blocks
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
@@ -966,6 +975,7 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
       const r: any = await api.songLyrics({
         blocks: blocks.map((b) => ({ type: b.type })),
         theme: lyrTheme || tags, style: tags, provider: lyrProvOf(lyrProv), model: "",
+        extra_sung: sungEnds ? ["intro", "outro"] : [],
       });
       const byIdx: Record<number, string> = {};
       (r.sections || []).forEach((s: any) => { byIdx[s.index] = s.lyrics; });
@@ -1065,7 +1075,14 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
               {lyrBusy ? "Writing…" : "Write section lyrics"}
             </button>
           </div>
-          <p className="text-[11px] text-[var(--color-muted)]">Distinct verses that advance the story, one repeated chorus hook, plus pre-chorus/bridge; instrumental sections (intro/solo/breakdown/outro) stay wordless. Fills each block below.</p>
+          <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+            <input type="checkbox" checked={sungEnds} onChange={(e) => setSungEnds(e.target.checked)} /> Also write lyrics for intro &amp; outro (otherwise they stay wordless)
+          </label>
+          <p className="text-[11px] text-[var(--color-muted)]">Distinct verses that advance the story, one repeated chorus hook, plus pre-chorus/bridge; solo/breakdown stay wordless. Fills each block below.</p>
+          {onSendToGenerate && (
+            <button onClick={() => onSendToGenerate({ tags, lyrics: compileLyrics(blocks) })}
+              className="text-[11px] text-[var(--color-accent2)] hover:underline">Send these lyrics + style → Generate tab →</button>
+          )}
         </div>
       ) : (
         <p className="text-[11px] text-[var(--color-muted)]">Uncheck “Instrumental” to auto-write sung lyrics per section with AI.</p>

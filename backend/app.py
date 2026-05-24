@@ -928,7 +928,8 @@ def lyrics_song(body: dict):
         return lyrics_mod.write_song_lyrics(
             blocks, body.get("theme", ""), body.get("style", ""),
             body.get("provider", ""), body.get("model", ""),
-            CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+            CFG.get("claude_model", "claude-3-5-sonnet-latest"),
+            extra_sung=body.get("extra_sung"))
     except Exception as e:
         raise HTTPException(500, f"lyric generation failed: {e}")
 

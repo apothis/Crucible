@@ -25,6 +25,11 @@ SYSTEM = {
         "You are a creative metal music collaborator. Brainstorm concise song concepts, "
         "themes, titles, or arrangement ideas for the user's prompt. Keep it tight and usable."
     ),
+    "names": (
+        "You name songs, albums, and bands for a rock/metal artist. Given a theme, style, "
+        "or lyrics, output a short list of evocative, fitting titles (up to 8), one per line, "
+        "with no numbering, quotes, or commentary."
+    ),
 }
 
 

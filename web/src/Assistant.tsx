@@ -6,6 +6,7 @@ const TASKS = [
   { id: "lyrics", label: "Lyrics" },
   { id: "tags", label: "Style tags" },
   { id: "ideas", label: "Ideas" },
+  { id: "names", label: "Titles" },
 ];
 
 export function Assistant() {
@@ -66,7 +67,7 @@ export function Assistant() {
               )}
             </div>
             <textarea className={inp} rows={4} value={input} onChange={(e) => setInput(e.target.value)}
-              placeholder={task === "lyrics" ? "theme, e.g. a doomed voyage across a frozen sea" : task === "tags" ? "an idea, e.g. epic folk metal drinking song" : "what do you want ideas for?"} />
+              placeholder={task === "lyrics" ? "theme, e.g. a doomed voyage across a frozen sea" : task === "tags" ? "an idea, e.g. epic folk metal drinking song" : task === "names" ? "theme, style, or paste lyrics to title" : "what do you want ideas for?"} />
             <GhostButton onClick={run}>{busy ? "Thinking…" : "Generate"}</GhostButton>
           </div>
           <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
