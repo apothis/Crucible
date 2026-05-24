@@ -9,5 +9,10 @@
   "diffsinger_host": "",
   "ytdlp_cookies_from_browser": "",
   "ytdlp_cookies_file": "",
+  "helix_vst3_path": "",
+  "helix_default_preset": "",
+  "guitar_ir_path": "",
+  "guitar_soundfont": "",
+  "kontakt_vst3_path": "",
   "server_port": 8000
 }
