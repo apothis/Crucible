@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type LibItem, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, VocalsForm, SwapForm, StemsForm, MixForm, SongForm } from "./forms";
+import { GenerateForm, RestyleForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { ImportForm } from "./Import";
 import { Assistant } from "./Assistant";
@@ -16,8 +16,21 @@ const MODES = [
   { id: "vocals", label: "Vocals" },
   { id: "swap", label: "Voice Swap" },
   { id: "stems", label: "Stems" },
+  { id: "tone", label: "Tone" },
+  { id: "backing", label: "Backing" },
+  { id: "guitar", label: "Guitar" },
+  { id: "master", label: "Master" },
   { id: "mix", label: "Mix" },
 ] as const;
+
+// Grouped navigation (replaces the flat tab row) — by workflow stage.
+const GROUPS: { name: string; modes: string[] }[] = [
+  { name: "Create", modes: ["generate", "song", "restyle"] },
+  { name: "Guitar", modes: ["backing", "guitar", "tone"] },
+  { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
+  { name: "Finish", modes: ["stems", "mix", "master"] },
+];
+const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
 
 export default function App() {
   const [cfg, setCfg] = useState<Config | null>(null);
@@ -25,6 +38,8 @@ export default function App() {
   const [library, setLibrary] = useState<LibItem[]>([]);
   const [results, setResults] = useState<Result[]>([]);
   const [song, setSong] = useState<SongDraft | null>(null);
+  const [libOpen, setLibOpen] = useState(true);
+  const [openGroups, setOpenGroups] = useState<string[]>(GROUPS.map((g) => g.name));
 
   const refreshLib = () => api.library().then(setLibrary).catch(() => {});
   useEffect(() => { api.config().then(setCfg).catch(() => {}); refreshLib(); }, []);
@@ -39,28 +54,60 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <Header cfg={cfg} />
-      <main className="grid flex-1 min-h-0 gap-4 p-4 lg:grid-cols-[400px_1fr_340px]">
-        <section className="min-h-0 overflow-y-auto rounded-2xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
-          <ModeTabs mode={mode} setMode={setMode} />
+      <Header cfg={cfg} libOpen={libOpen} toggleLib={() => setLibOpen((v) => !v)} />
+      <main className="flex flex-1 min-h-0">
+        <Sidebar mode={mode} setMode={setMode} openGroups={openGroups} setOpenGroups={setOpenGroups} />
+
+        <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} {...ctx} />
-               : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
+          <div className="max-w-2xl">
+            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} {...ctx} />
+                 : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
+          </div>
+          {results.length > 0 && (
+            <div className="mt-6 border-t border-[var(--color-line)] pt-5">
+              <Workspace results={results} />
+            </div>
+          )}
         </section>
 
-        <section className="min-h-0 overflow-y-auto rounded-2xl border border-[var(--color-line)] bg-[var(--color-panel)] p-5">
-          <Workspace results={results} />
-        </section>
-
-        <section className="min-h-0 overflow-y-auto rounded-2xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
-          <Library items={library}
-            onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100, url: it.audio_url + "?t=" + Date.now() }])}
-            onDelete={(id) => api.deleteLib(id).then(refreshLib).catch(() => {})}
-            onBucket={(id, b) => api.setBucket(id, b).then(refreshLib).catch(() => {})} />
-        </section>
+        {libOpen && (
+          <aside className="w-[360px] flex-none min-h-0 overflow-y-auto border-l border-[var(--color-line)] bg-[var(--color-panel)] p-4">
+            <Library items={library}
+              onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100, url: it.audio_url + "?t=" + Date.now() }])}
+              onDelete={(id) => api.deleteLib(id).then(refreshLib).catch(() => {})}
+              onBucket={(id, b) => api.setBucket(id, b).then(refreshLib).catch(() => {})} />
+          </aside>
+        )}
       </main>
       <Assistant />
     </div>
+  );
+}
+
+function Sidebar({ mode, setMode, openGroups, setOpenGroups }: {
+  mode: string; setMode: (m: string) => void; openGroups: string[]; setOpenGroups: (f: (g: string[]) => string[]) => void;
+}) {
+  const toggle = (n: string) => setOpenGroups((g) => (g.includes(n) ? g.filter((x) => x !== n) : [...g, n]));
+  return (
+    <nav className="w-52 flex-none min-h-0 overflow-y-auto border-r border-[var(--color-line)] bg-[var(--color-panel)] p-2">
+      {GROUPS.map((grp) => (
+        <div key={grp.name} className="mb-1.5">
+          <button onClick={() => toggle(grp.name)}
+            className="flex w-full items-center justify-between rounded px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-muted)] hover:text-[var(--color-ink)]">
+            <span>{grp.name}</span><span className="text-[9px]">{openGroups.includes(grp.name) ? "▾" : "▸"}</span>
+          </button>
+          {openGroups.includes(grp.name) && grp.modes.map((id) => (
+            <button key={id} onClick={() => setMode(id)}
+              className={`mb-0.5 block w-full rounded-lg px-3 py-1.5 text-left text-sm transition ${
+                mode === id ? "border border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]"
+                            : "text-[var(--color-muted)] hover:bg-[var(--color-panel2)] hover:text-[var(--color-ink)]"}`}>
+              {LABELS[id]}
+            </button>
+          ))}
+        </div>
+      ))}
+    </nav>
   );
 }
 
@@ -75,21 +122,29 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, ...ctx }: { mode: stri
     case "vocals": return <VocalsForm {...p} />;
     case "swap": return <SwapForm {...p} />;
     case "stems": return <StemsForm {...p} />;
+    case "tone": return <ToneForm {...p} />;
+    case "backing": return <BackingForm {...p} />;
+    case "guitar": return <GuitarForm {...p} song={song} />;
+    case "master": return <MasterForm {...p} />;
     case "mix": return <MixForm {...p} />;
     default: return null;
   }
 }
 
-function Header({ cfg }: { cfg: Config | null }) {
+function Header({ cfg, libOpen, toggleLib }: { cfg: Config | null; libOpen: boolean; toggleLib: () => void }) {
   return (
     <header className="flex items-center justify-between border-b border-[var(--color-line)] px-5 py-3">
       <div className="flex items-baseline gap-2">
         <span className="bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent2)] bg-clip-text text-lg font-bold tracking-tight text-transparent">Crucible</span>
         <span className="text-xs text-[var(--color-muted)]">AI metal studio</span>
       </div>
-      <div className="flex gap-2 text-[11px]">
+      <div className="flex items-center gap-2 text-[11px]">
         <Chip label={`ComfyUI ${cfg ? "· " + cfg.comfy_host : "…"}`} ok={!!cfg} />
         <Chip label={`RVC ${cfg ? "· " + cfg.rvc_driver : "…"}`} ok={!!cfg && cfg.rvc_driver !== "gradio"} />
+        <button onClick={toggleLib}
+          className={`rounded-lg border px-2.5 py-1 transition ${libOpen ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+          {libOpen ? "Library ▸" : "◂ Library"}
+        </button>
       </div>
     </header>
   );
@@ -125,21 +180,6 @@ function HowItWorks({ goTo }: { goTo: (m: string) => void }) {
           <li className="text-[#5a5f6e]">Supporting: Generate / Restyle (instrumentals) · Stems (split a track) · Voice Swap (re-sing an existing track).</li>
         </ol>
       )}
-    </div>
-  );
-}
-
-function ModeTabs({ mode, setMode }: { mode: string; setMode: (m: string) => void }) {
-  return (
-    <div className="mb-5 grid grid-cols-3 gap-1.5">
-      {MODES.map((m) => (
-        <button key={m.id} onClick={() => setMode(m.id)}
-          className={`rounded-lg border px-2 py-2 text-xs font-medium transition ${
-            mode === m.id ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]"
-                          : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
-          {m.label}
-        </button>
-      ))}
     </div>
   );
 }
@@ -203,7 +243,14 @@ function libDesc(it: LibItem): string {
   }
   if (it.mode === "stem") return `${p.kind || "stem"}${p.source ? " · from " + String(p.source).slice(0, 28) : ""}`;
   if (it.mode === "source") return String(p.source || p.title || "imported audio").slice(0, 40);
-  return p.tags || p.voice || p.source || "—";
+  if (it.mode === "tone") return `tone: ${p.preset || "?"}${p.source ? " · from " + String(p.source).slice(0, 24) : ""}`;
+  if (it.mode === "master") return `mastered${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
+  if (it.mode === "backing") return `guitar-less backing${p.source ? " · from " + String(p.source).slice(0, 22) : ""}`;
+  if (it.mode === "guitar") return `amped guitar (${p.preset || "?"})${p.source ? " · " + String(p.source).slice(0, 22) : ""}`;
+  if (it.mode === "guitardi") return `clean guitar DI${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
+  const neg = (it.mode === "generate" || it.mode === "restyle") && (p.negative_tags || "").trim() ? " · NEG" : "";
+  const smp = (it.mode === "generate" || it.mode === "restyle") && p.sampler_name ? ` · ${p.sampler_name}/${p.scheduler || "simple"}` : "";
+  return (p.tags || p.voice || p.source || "—") + smp + neg;
 }
 
 function hhmm(epoch?: number): string {
@@ -218,6 +265,11 @@ const LIB_SECTIONS = [
   { key: "voiceswap", label: "Voice swaps" },
   { key: "mix", label: "Mixes" },
   { key: "restyle", label: "Restyled" },
+  { key: "tone", label: "Re-toned" },
+  { key: "backing", label: "Backing (no guitar)" },
+  { key: "guitar", label: "Amped guitar" },
+  { key: "guitardi", label: "Guitar DI" },
+  { key: "master", label: "Mastered" },
   { key: "stem", label: "Stems" },
   { key: "source", label: "Source audio" },
 ];

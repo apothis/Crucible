@@ -9,9 +9,16 @@ export function WavePlayer({ url, height = 52 }: { url: string; height?: number 
 
   useEffect(() => {
     if (!ref.current) return;
+    // Play through a real <audio> MediaElement (reliable) rather than wavesurfer's
+    // default WebAudio backend, whose AudioContext can stay suspended → silent
+    // playback even though the waveform renders.
+    const audio = new Audio();
+    audio.crossOrigin = "anonymous";
+    audio.preload = "auto";
+    audio.src = url;
     const w = WaveSurfer.create({
       container: ref.current,
-      url,
+      media: audio,
       height,
       waveColor: "#3a3f4d",
       progressColor: "#e0512f",

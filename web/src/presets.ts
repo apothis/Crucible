@@ -1,91 +1,13 @@
-// Curated metal-subgenre prompt presets (tag bundles + suggested BPM/key).
-// Tweaked toward what ACE-Step responds to: name instruments, vocal type,
-// energy/atmosphere. Vocal descriptors are ignored when Instrumental is on.
+// Subgenre style presets now live in the UNIFIED backend registry
+// (backend/genres.py), delivered via /api/config as `cfg.genres` and shown as
+// the preset chips. This file only keeps the Song-Constructor templates, which
+// carry their own bespoke arrangement + style.
 export type Preset = { name: string; tags: string; bpm: number; key: string };
-
-export const PRESETS: Preset[] = [
-  {
-    name: "Power",
-    tags: "power metal, galloping double-bass drums, fast palm-muted distorted guitars, twin lead guitar harmonies, soaring clean operatic male vocals, orchestral keyboards, triumphant, epic, fast tempo",
-    bpm: 170, key: "E minor",
-  },
-  {
-    name: "Symphonic",
-    tags: "symphonic metal, lush orchestral strings, epic choir, heavily distorted guitars, double-bass drums, soaring operatic female vocals, cinematic, dramatic, grand",
-    bpm: 150, key: "D minor",
-  },
-  {
-    name: "Folk",
-    tags: "folk metal, distorted electric guitars, double-bass drums, folk melody, violin, flute, accordion, anthemic gang vocals, festive, energetic",
-    bpm: 160, key: "E minor",
-  },
-  {
-    name: "Heavy",
-    tags: "heavy metal, crunchy distorted electric guitars, twin guitar harmonies, driving drums, powerful melodic male vocals, classic, high energy",
-    bpm: 140, key: "E minor",
-  },
-  {
-    name: "Thrash",
-    tags: "thrash metal, fast aggressive palm-muted riffs, rapid double-bass drumming, shredding lead solos, gritty aggressive male vocals, intense, dark",
-    bpm: 180, key: "E minor",
-  },
-  {
-    name: "Doom",
-    tags: "doom metal, slow heavy downtuned distorted guitars, crushing drums, mournful clean vocals, thick, dark, atmospheric, heavy",
-    bpm: 80, key: "C minor",
-  },
-  {
-    name: "Black",
-    tags: "black metal, fast tremolo-picked guitars, relentless blast beats, shrieking raspy vocals, cold raw atmosphere, icy, lo-fi, dark",
-    bpm: 180, key: "F# minor",
-  },
-  {
-    name: "Melodeath",
-    tags: "melodic death metal, harmonized twin guitar leads, fast double-bass drums, growled vocals, melodic aggressive riffs, driving",
-    bpm: 170, key: "E minor",
-  },
-  {
-    name: "Progressive",
-    tags: "progressive metal, intricate technical riffs, shifting time signatures, atmospheric keyboards, dynamic builds, powerful clean vocals, expansive",
-    bpm: 140, key: "C# minor",
-  },
-  {
-    name: "Gothic",
-    tags: "gothic metal, melancholic brooding atmosphere, lush keyboards, downtuned guitars, deep clean vocals, female operatic vocals, dark romantic",
-    bpm: 110, key: "D minor",
-  },
-  {
-    name: "Groove",
-    tags: "groove metal, heavy syncopated mid-tempo riffs, punchy downtuned guitars, pounding drums, aggressive shouted vocals, bouncy, powerful",
-    bpm: 125, key: "C minor",
-  },
-  {
-    name: "Djent",
-    tags: "djent, polyrhythmic palm-muted riffs, extended-range guitars, tight syncopated grooves, ambient clean sections, percussive, modern production",
-    bpm: 120, key: "F# minor",
-  },
-  {
-    name: "Industrial",
-    tags: "industrial metal, mechanical rhythms, distorted guitars, electronic beats, cold synth textures, harsh vocals, aggressive, machine-like",
-    bpm: 130, key: "E minor",
-  },
-  {
-    name: "Viking",
-    tags: "viking metal, epic folk melodies, choir chants, distorted guitars, double-bass drums, anthemic gang vocals, orchestral, heroic, battle atmosphere",
-    bpm: 150, key: "E minor",
-  },
-  {
-    name: "Pirate",
-    tags: "pirate metal, fast galloping power metal riffs, accordion and keytar leads, jaunty folk melodies, double-bass drums, gruff rowdy gang vocals, sea shanty energy, festive, anthemic, swashbuckling",
-    bpm: 175, key: "E minor",
-  },
-];
 
 // Song templates = a ready-made arrangement (section layout + per-section
 // lengths) plus a bespoke style (its OWN tags/BPM/key, tuned to that song
-// type — not borrowed from PRESETS). Picking one fills the block lane AND
-// applies the style — all still editable afterward. `instrumental` (optional)
-// presets the vocals toggle.
+// type). Picking one fills the block lane AND applies the style — all still
+// editable afterward. `instrumental` (optional) presets the vocals toggle.
 export type SongTemplate = {
   name: string;
   description: string;

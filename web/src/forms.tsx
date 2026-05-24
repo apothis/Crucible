@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { api, type Config, type LibItem, type SongDraft } from "./api";
+import { api, type Config, type Genre, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, Slider, pollJob, waitJob, runSync, rid, type RunCtx } from "./ui";
-import { PRESETS, SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
+import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
 
 type FormProps = { cfg: Config; busy: boolean } & RunCtx;
 
@@ -13,6 +13,9 @@ const fail = (ctx: RunCtx, msg: string) =>
 
 // shared tuning controls for Generate + Restyle. `expert` reveals the full grid;
 // otherwise only Duration shows and the rest use presets/defaults.
+const SAMPLERS = ["euler", "dpmpp_2m", "res_multistep", "er_sde", "dpmpp_2m_sde", "heun", "uni_pc"];
+const SCHEDULERS = ["simple", "beta", "normal", "karras", "ddim_uniform"];
+
 function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
   const firstAvail = cfg.variants.find((v) => v.available);
   const [variant, setVariant] = useState(firstAvail?.id ?? "xl_base");
@@ -22,6 +25,9 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
   const [bpm, setBpm] = useState("170");
   const [keyscale, setKeyscale] = useState("E minor");
   const [seed, setSeed] = useState("");
+  const [sampler, setSampler] = useState("euler");
+  const [scheduler, setScheduler] = useState("simple");
+  const [shift, setShift] = useState("");
   const v = cfg.variants.find((x) => x.id === variant);
 
   const node = expert ? (
@@ -47,6 +53,17 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
           </select>
         </Field>
         <Field label="Seed" hint="blank = random"><input className={inp} type="number" placeholder="random" value={seed} onChange={(e) => setSeed(e.target.value)} /></Field>
+        <Field label="Sampler">
+          <select className={inp} value={sampler} onChange={(e) => setSampler(e.target.value)}>
+            {SAMPLERS.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field label="Scheduler">
+          <select className={inp} value={scheduler} onChange={(e) => setScheduler(e.target.value)}>
+            {SCHEDULERS.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field label="Shift" hint="AuraFlow; def 3"><input className={inp} type="number" step="0.5" placeholder="3" value={shift} onChange={(e) => setShift(e.target.value)} /></Field>
       </div>
     </>
   ) : hideDuration ? null : (
@@ -58,21 +75,24 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
     if (steps) o.steps = parseInt(steps);
     if (cfgScale) o.cfg = parseFloat(cfgScale);
     if (seed) o.seed = parseInt(seed);
+    if (sampler !== "euler" || scheduler !== "simple") { o.sampler_name = sampler; o.scheduler = scheduler; }
+    if (shift) o.shift = parseFloat(shift);
     return o;
   };
   const applyPreset = (p: Preset) => { setBpm(String(p.bpm)); setKeyscale(p.key); };
   return { node, params, applyPreset, bpm: parseInt(bpm) || 120, keyscale };
 }
 
-function PresetBar({ onApply }: { onApply: (p: Preset) => void }) {
+function PresetBar({ genres, onApply }: { genres: Genre[]; onApply: (p: Preset) => void }) {
   return (
     <div>
-      <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Subgenre presets</span>
+      <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Subgenre presets <span className="text-[10px]">(sets style tags · suggests {genres.length ? "BPM/key" : "…"})</span></span>
       <div className="flex flex-wrap gap-1.5">
-        {PRESETS.map((p) => (
-          <button key={p.name} onClick={() => onApply(p)}
+        {genres.map((g) => (
+          <button key={g.id} title={`suggested: ${g.bpm} BPM · ${g.key}`}
+            onClick={() => onApply({ name: g.label, tags: g.tags, bpm: g.bpm, key: g.key })}
             className="rounded-full border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-1 text-xs text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-ink)]">
-            {p.name}
+            {g.label}
           </button>
         ))}
       </div>
@@ -117,8 +137,9 @@ export function GenerateForm({ cfg, busy, ...ctx }: FormProps) {
   const [lyrics, setLyrics] = useState("");
   const [count, setCount] = useState(1);
   const [expert, setExpert] = useState(false);
+  const [neg, setNeg] = useState("");
   const tuning = useTuning(cfg, expert);
-  const applyPreset = (p: Preset) => { setTags(p.tags); tuning.applyPreset(p); };
+  const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
 
   async function run() {
     if (!tags.trim()) return fail(ctx, "Add style tags first — an empty prompt produces noise.");
@@ -126,7 +147,7 @@ export function GenerateForm({ cfg, busy, ...ctx }: FormProps) {
     ctx.setResults(cards);
     for (const c of cards) {
       try {
-        const { job_id, seed } = await api.generate({ ...tuning.params(), tags, instrumental, lyrics });
+        const { job_id, seed } = await api.generate({ ...tuning.params(), tags, instrumental, lyrics, negative_tags: neg });
         ctx.patch(c.id, { title: `seed ${seed}`, status: "running", pct: 5 });
         pollJob(job_id, c.id, ctx);
       } catch (e) { ctx.patch(c.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -136,8 +157,14 @@ export function GenerateForm({ cfg, busy, ...ctx }: FormProps) {
   return (
     <div className="space-y-4">
       <ModeToggle expert={expert} setExpert={setExpert} />
-      <PresetBar onApply={applyPreset} />
+      <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
+      {expert && (
+        <Field label="Negative tags" hint="steer away from these — blank = off">
+          <textarea className={inp} rows={2} value={neg} onChange={(e) => setNeg(e.target.value)}
+            placeholder="muddy, lo-fi, harsh fizz, digital clipping, thin weak guitars, out of tune, low quality" />
+        </Field>
+      )}
       {tuning.node}
       <Field label="Variations" hint="generate several takes to compare">
         <div className="flex gap-1.5">
@@ -160,7 +187,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const [lyrics, setLyrics] = useState("");
   const [expert, setExpert] = useState(true);
   const tuning = useTuning(cfg, expert);
-  const applyPreset = (p: Preset) => { setTags(p.tags); tuning.applyPreset(p); };
+  const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
 
   async function run() {
     if (!file) return fail(ctx, "Choose a source track to restyle.");
@@ -182,7 +209,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
       <ModeToggle expert={expert} setExpert={setExpert} />
       <Field label="Source track"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
       <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />
-      <PresetBar onApply={applyPreset} />
+      <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Restyling…" : "Restyle"}</PrimaryButton>
@@ -397,6 +424,328 @@ export function StemsForm({ busy, ...ctx }: FormProps) {
   );
 }
 
+export function ToneForm({ busy, ...ctx }: FormProps) {
+  const tracks = useLibrary((it) => ["generate", "restyle", "song", "mix", "tone"].includes(it.mode));
+  const [job, setJob] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preset, setPreset] = useState("tighten_highgain");
+  const [presets, setPresets] = useState<{ id: string; label: string; desc: string }[]>([]);
+  const [helixOn, setHelixOn] = useState(false);
+  const [capName, setCapName] = useState("");
+  const [capStatus, setCapStatus] = useState("");
+  const loadPresets = (selectFirst = false) => api.tonePresets().then((d) => {
+    setPresets(d.presets); setHelixOn(d.helix_available);
+    if (selectFirst && d.presets[0]) setPreset(d.presets[0].id);
+  }).catch(() => {});
+  useEffect(() => { loadPresets(true); }, []);
+  const cur = presets.find((p) => p.id === preset);
+
+  async function capture() {
+    if (!capName.trim()) { setCapStatus("name the tone first"); return; }
+    setCapStatus("Helix window opening — dial your tone, then CLOSE the window to save…");
+    try {
+      const d = await api.helixCapture(capName.trim());
+      setCapStatus(`saved "${d.saved}" — now in the preset list`);
+      setCapName("");
+      await loadPresets();
+      setPreset(`helix:${d.saved}`);
+    } catch (e) { setCapStatus("capture failed: " + (e as Error).message); }
+  }
+
+  async function run() {
+    if (!file && !job) return fail(ctx, "Choose a track to re-tone.");
+    const id = rid();
+    ctx.setResults([{ id, title: "splitting + re-toning the guitar… (Mac)", status: "running", pct: 35 }]);
+    try {
+      const fd = new FormData();
+      fd.append("preset", preset);
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      const d = await api.tone(fd);
+      ctx.setResults([
+        { id: rid(), title: `re-toned (${preset})`, status: "done", pct: 100, url: d.audio_url },
+        { id: rid(), title: "guitar stem (processed)", status: "done", pct: 100, url: d.guitar_url },
+      ]);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        Reshape the distorted guitar: split off the guitar stem (Mac/Demucs 6-stem), run it through a tone chain, and recombine.
+        This <em>reshapes</em> the existing tone (EQ / cab / saturation) — it doesn't re-amp from a clean DI.
+      </p>
+      <Field label="From a library track">
+        <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
+          <option value="">— choose —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.preset || "").slice(0, 36)}</option>)}
+        </select>
+      </Field>
+      <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      <Field label="Tone preset" hint={helixOn ? "Helix Native detected" : "set helix_vst3_path to add Helix"}>
+        <select className={inp} value={preset} onChange={(e) => setPreset(e.target.value)}>
+          {presets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+      </Field>
+      {cur && <p className="text-xs text-[var(--color-muted)]">{cur.desc}</p>}
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : "Re-tone guitar"}</PrimaryButton>
+      {helixOn && (
+        <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
+          <div className="text-xs font-medium text-[var(--color-muted)]">Capture a Helix tone</div>
+          <p className="text-[11px] text-[var(--color-muted)]">Dial any tone in Helix once and save it — reusable here + in the Guitar tab with no UI fiddling.</p>
+          <div className="flex gap-1.5">
+            <input className={inp} placeholder="tone name (e.g. Modern Rhythm)" value={capName} onChange={(e) => setCapName(e.target.value)} />
+            <button onClick={capture} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 text-sm text-[var(--color-ink)] hover:border-[var(--color-accent)]">Open + capture</button>
+          </div>
+          {capStatus && <p className="text-[11px] text-[var(--color-accent2)]">{capStatus}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: SongDraft | null }) {
+  const backings = useLibrary((it) => it.mode === "backing");
+  const [source, setSource] = useState<"riff" | "song" | "midi">("riff");
+  const [file, setFile] = useState<File | null>(null);
+  const [key, setKey] = useState("E minor");
+  const [bpm, setBpm] = useState("160");
+  const [bars, setBars] = useState("8");
+  const [style, setStyle] = useState("gallop");
+  const [brain, setBrain] = useState("algorithmic");
+  const [genre, setGenre] = useState(cfg.genres[0]?.id || "thrash");
+  const [part, setPart] = useState("riff");
+  const [preset, setPreset] = useState("helix");
+  const [presets, setPresets] = useState<{ id: string; label: string }[]>([]);
+  const [backing, setBacking] = useState("");
+  const [sfOn, setSfOn] = useState(false);
+  const [diEngine, setDiEngine] = useState("ks");
+  const [kontaktReady, setKontaktReady] = useState(false);
+  const [kontaktAvail, setKontaktAvail] = useState(false);
+  const [kStatus, setKStatus] = useState("");
+  const genres = cfg.genres;                                 // unified registry from /api/config
+  const sug = genres.find((g) => g.id === genre);            // selected genre → suggested bpm/scale
+  const loadEngines = () => api.tonePresets().then((d) => {
+    setPresets(d.presets); setSfOn(!!d.guitar_soundfont);
+    setKontaktReady(!!d.kontakt_ready); setKontaktAvail(!!d.kontakt_available);
+  }).catch(() => {});
+  useEffect(() => { loadEngines(); }, []);
+
+  async function setupKontakt() {
+    setKStatus("Kontakt opening (~25s) — load Shreddage 3 Stratus FREE + pick a patch, then CLOSE the window…");
+    try { await api.kontaktCapture(); await loadEngines(); setDiEngine("kontakt"); setKStatus("Shreddage/Kontakt ready — selected as the DI engine."); }
+    catch (e) { setKStatus("setup failed: " + (e as Error).message); }
+  }
+
+  async function run() {
+    if (source === "midi" && !file) return fail(ctx, "Upload a MIDI file.");
+    if (source === "song" && !(song && song.blocks.length)) return fail(ctx, "Build a song arrangement in the Song tab first.");
+    const id = rid();
+    ctx.setResults([{ id, title: "rendering DI → amp…", status: "running", pct: 40 }]);
+    try {
+      const fd = new FormData();
+      if (source === "riff") { fd.append("riff", "true"); fd.append("key", key); fd.append("bpm", bpm); fd.append("bars", bars); fd.append("style", style); }
+      else if (source === "song") {
+        fd.append("sections", JSON.stringify(song!.blocks.map((b) => ({ type: b.type, seconds: b.seconds }))));
+        fd.append("key", song!.key); fd.append("bpm", String(song!.bpm));
+      } else fd.append("midi", file as File);
+      if (source !== "midi") { fd.append("riff_brain", brain); if (brain !== "algorithmic") fd.append("genre", genre); }
+      if (source === "riff") fd.append("part", part);
+      fd.append("preset", preset);
+      fd.append("di_engine", diEngine);
+      if (backing) fd.append("backing_job_id", backing);
+      const d = await api.guitarRender(fd);
+      const cards = [
+        { id: rid(), title: "clean DI", status: "done" as const, pct: 100, url: d.di_url },
+        { id: rid(), title: `amped (${preset})`, status: "done" as const, pct: 100, url: d.amped_url },
+      ];
+      if (d.mix_url) cards.push({ id: rid(), title: "guitar + backing", status: "done" as const, pct: 100, url: d.mix_url });
+      ctx.setResults(cards);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  const tabBtn = (v: "riff" | "song" | "midi", label: string, disabled = false) => (
+    <button disabled={disabled} onClick={() => setSource(v)}
+      className={`flex-1 rounded-lg border py-1.5 ${source === v ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"} ${disabled ? "opacity-40" : ""}`}>{label}</button>
+  );
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        Symbolic-guitar route: a generated/MIDI guitar part → <em>clean DI</em> (plucked-string synth) → your Helix/tone amp (valid on a clean DI!) → optionally mixed onto a guitar-less backing. Render quality is a prototype; a sampled/Shreddage DI can slot in later.
+      </p>
+      <div className="flex gap-1.5 text-sm">
+        {tabBtn("riff", "Test riff")}
+        {tabBtn("song", "Song arrangement", !(song && song.blocks.length))}
+        {tabBtn("midi", "Upload MIDI")}
+      </div>
+      {source === "song" ? (
+        <p className="text-xs text-[var(--color-muted)]">
+          Per-section riffs from your Song arrangement ({song?.blocks.length ?? 0} sections, {song?.key}, {song?.bpm} BPM): verse chugs, chorus power-chords, breakdown drops an octave, intro/outro sparse. Pick a matching backing below.
+        </p>
+      ) : source === "riff" ? (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Key"><select className={inp} value={key} onChange={(e) => setKey(e.target.value)}>{cfg.keys.map((k) => <option key={k}>{k}</option>)}</select></Field>
+            <Field label="BPM"><input className={inp} type="number" value={bpm} onChange={(e) => setBpm(e.target.value)} /></Field>
+            <Field label="Bars" hint="ignored if mixing onto a backing"><input className={inp} type="number" value={bars} onChange={(e) => setBars(e.target.value)} /></Field>
+          </div>
+          <Field label="Riff style">
+            <select className={inp} value={style} onChange={(e) => setStyle(e.target.value)}>
+              <option value="gallop">Gallop (1/8+1/16+1/16)</option>
+              <option value="chug">Chug (palm-mute)</option>
+              <option value="powerchords">Power chords (held, i–VI–VII)</option>
+              <option value="pedal">Pedal-tone</option>
+            </select>
+          </Field>
+        </>
+      ) : (
+        <Field label="MIDI file"><input className={inp} type="file" accept=".mid,.midi" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      )}
+      {source === "riff" && (
+        <Field label="Part" hint="rhythm riff or a lead solo line">
+          <div className="flex gap-1.5">
+            {[["riff", "Riff"], ["solo", "Solo (lead)"]].map(([v, l]) => (
+              <button key={v} onClick={() => setPart(v)}
+                className={`flex-1 rounded-lg border py-1.5 text-sm ${part === v ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{l}</button>
+            ))}
+          </div>
+        </Field>
+      )}
+      {source !== "midi" && (
+        <Field label="Riff brain" hint="how the notes are chosen">
+          <select className={inp} value={brain} onChange={(e) => setBrain(e.target.value)}>
+            <option value="algorithmic">Algorithmic (instant, music-theory)</option>
+            <option value="local">AI · local Gemma (musical, ~slower)</option>
+            <option value="claude">AI · Claude (if API key set)</option>
+          </select>
+        </Field>
+      )}
+      {source !== "midi" && brain !== "algorithmic" && (
+        <Field label="Genre feel" hint={sug ? `${sug.scale} · suggests ${sug.bpm} BPM` : "shapes the AI riff + modal scale"}>
+          <select className={inp} value={genre} onChange={(e) => setGenre(e.target.value)}>
+            {genres.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+          {sug && String(sug.bpm) !== bpm && (
+            <button onClick={() => setBpm(String(sug.bpm))}
+              className="mt-1 text-[11px] text-[var(--color-accent2)] hover:underline">use suggested {sug.bpm} BPM</button>
+          )}
+        </Field>
+      )}
+      <Field label="DI render engine" hint={kontaktReady ? "Shreddage = best" : sfOn ? "SoundFont = sampled" : "KS = synth"}>
+        <select className={inp} value={diEngine} onChange={(e) => setDiEngine(e.target.value)}>
+          <option value="ks">Karplus-Strong (synth, no deps)</option>
+          {sfOn && <option value="soundfont">SoundFont (sampled, higher fidelity)</option>}
+          {kontaktReady && <option value="kontakt">Shreddage / Kontakt (best, sampled)</option>}
+        </select>
+      </Field>
+      {kontaktAvail && !kontaktReady && (
+        <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
+          <div className="text-xs font-medium text-[var(--color-muted)]">Set up Shreddage (one-time)</div>
+          <p className="text-[11px] text-[var(--color-muted)]">Kontakt is installed. Click below — it opens Kontakt (~25s); load <em>Shreddage 3 Stratus FREE</em> + pick a patch, then close the window. Saved for reuse.</p>
+          <button onClick={setupKontakt} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-1 text-sm text-[var(--color-ink)] hover:border-[var(--color-accent)]">Open Kontakt + capture Shreddage</button>
+        </div>
+      )}
+      {kStatus && <p className="text-[11px] text-[var(--color-accent2)]">{kStatus}</p>}
+      <Field label="Amp / tone">
+        <select className={inp} value={preset} onChange={(e) => setPreset(e.target.value)}>
+          {presets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+      </Field>
+      <Field label="Mix onto backing (optional)">
+        <select className={inp} value={backing} onChange={(e) => setBacking(e.target.value)}>
+          <option value="">— DI + amp only —</option>
+          {backings.map((b) => <option key={b.id} value={b.id}>{(b.params.source || b.id).slice(0, 36)}</option>)}
+        </select>
+      </Field>
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Rendering…" : "Render → amp"}</PrimaryButton>
+    </div>
+  );
+}
+
+export function BackingForm({ busy, ...ctx }: FormProps) {
+  const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix"].includes(it.mode));
+  const [job, setJob] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+
+  async function run() {
+    if (!file && !job) return fail(ctx, "Choose a track to strip the guitar from.");
+    const id = rid();
+    ctx.setResults([{ id, title: "splitting + removing guitar… (Mac)", status: "running", pct: 40 }]);
+    try {
+      const fd = new FormData();
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      const d = await api.stripGuitar(fd);
+      ctx.setResults([{ id: rid(), title: "guitar-less backing", status: "done", pct: 100, url: d.audio_url }]);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        Remove the guitar from a track (6-stem split on the Mac, recombine without the guitar stem) → a <em>guitar-less backing</em>.
+        Foundation for the symbolic-guitar route: drop the model's distorted guitar so a clean-DI, properly-amped guitar can sit on top.
+        Demucs isn't perfect — some guitar bleed may remain.
+      </p>
+      <Field label="From a library track">
+        <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
+          <option value="">— choose —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || "").slice(0, 36)}</option>)}
+        </select>
+      </Field>
+      <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : "Strip guitar → backing"}</PrimaryButton>
+    </div>
+  );
+}
+
+export function MasterForm({ busy, ...ctx }: FormProps) {
+  const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "voiceswap"].includes(it.mode));
+  const refs = useLibrary(() => true);  // any track can be a reference, esp. imported "source" songs
+  const [job, setJob] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [refJob, setRefJob] = useState("");
+  const [refFile, setRefFile] = useState<File | null>(null);
+
+  async function run() {
+    if (!file && !job) return fail(ctx, "Choose a track to master.");
+    if (!refFile && !refJob) return fail(ctx, "Choose a reference master (a pro track whose sound you want to match).");
+    const id = rid();
+    ctx.setResults([{ id, title: "matching to reference… (Mac)", status: "running", pct: 45 }]);
+    try {
+      const fd = new FormData();
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob);
+      const d = await api.master(fd);
+      ctx.setResults([{ id: rid(), title: "mastered", status: "done", pct: 100, url: d.audio_url }]);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  const opts = (list: any[]) => list.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.source || t.params.preset || "").slice(0, 32)}</option>);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        Reference mastering (Matchering): match a track's loudness, EQ balance, peak & stereo width to a <em>reference</em> master you own. Mac-side. Personal use — the reference is only analysed.
+      </p>
+      <div className="text-xs font-medium text-[var(--color-muted)]">Target (the track to master)</div>
+      <Field label="From a library track">
+        <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
+          <option value="">— choose —</option>{opts(targets)}
+        </select>
+      </Field>
+      <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      <div className="text-xs font-medium text-[var(--color-muted)]">Reference (the sound to match — e.g. an imported pro track)</div>
+      <Field label="From a library track">
+        <select className={inp} value={refJob} onChange={(e) => setRefJob(e.target.value)}>
+          <option value="">— choose —</option>{opts(refs)}
+        </select>
+      </Field>
+      <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setRefFile(e.target.files?.[0] ?? null)} /></Field>
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Mastering…" : "Master to reference"}</PrimaryButton>
+    </div>
+  );
+}
+
 export function MixForm({ busy, ...ctx }: FormProps) {
   const [sources, setSources] = useState<{ label: string; url: string }[]>([]);
   const [rows, setRows] = useState([{ src: "", gain: "0", offset: "0" }, { src: "", gain: "0", offset: "0" }]);
@@ -518,7 +867,7 @@ function SortableBlock({ b, drive, instrumental, upd, remove }: {
 export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (s: SongDraft) => void }) {
   const [blocks, setBlocks] = useState<Block[]>(() =>
     ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Solo", "Chorus", "Outro"].map(newBlock));
-  const [tags, setTags] = useState(PRESETS[0].tags);
+  const [tags, setTags] = useState("");
   const [instrumental, setInstrumental] = useState(false);
   const [drive, setDrive] = useState<"compile" | "stitch">("compile");
   const [crossfade, setCrossfade] = useState(1);
@@ -526,7 +875,7 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
   const [tpl, setTpl] = useState("");
   const [dirty, setDirty] = useState(false); // arrangement edited since last template/default
   const tuning = useTuning(cfg, expert, true); // duration is computed from blocks
-  const applyPreset = (p: Preset) => { setTags(p.tags); tuning.applyPreset(p); };
+  const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const applyTemplate = (t: SongTemplate) => {
@@ -622,7 +971,7 @@ export function SongForm({ cfg, busy, onSong, ...ctx }: FormProps & { onSong?: (
       <ModeToggle expert={expert} setExpert={setExpert} />
       <p className="text-xs text-[var(--color-muted)]">Start from a template, then arrange — drag to reorder, set each length, add optional per-section lyrics.</p>
       <TemplateGrid active={tpl} onPick={applyTemplate} />
-      <PresetBar onApply={applyPreset} />
+      <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <Field label="Style tags" hint="shared across the whole song">
         <textarea className={inp} rows={3} value={tags} onChange={(e) => setTags(e.target.value)} />
       </Field>

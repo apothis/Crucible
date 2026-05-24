@@ -36,6 +36,13 @@ export const api = {
   rvcConvert: (fd: FormData) => jform("/api/rvc/convert", fd),
   voiceswap: (fd: FormData) => jform("/api/voiceswap", fd),
   stems: (fd: FormData) => jform("/api/stems/separate", fd),
+  tonePresets: () => jget("/api/tone/presets"),
+  tone: (fd: FormData) => jform("/api/tone/apply", fd),
+  master: (fd: FormData) => jform("/api/master/apply", fd),
+  stripGuitar: (fd: FormData) => jform("/api/backing/strip-guitar", fd),
+  guitarRender: (fd: FormData) => jform("/api/guitar/render-amp", fd),
+  helixCapture: (name: string) => jpost("/api/helix/capture", { name }),
+  kontaktCapture: () => jpost("/api/guitar/kontakt/capture", {}),
   sources: () => jget("/api/sources"),
   mix: (p: unknown) => jpost("/api/mix", p),
   stitch: (p: unknown) => jpost("/api/stitch", p),
@@ -66,7 +73,8 @@ export const api = {
 };
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
-export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string };
+export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean };
+export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; genres: Genre[] };
 export type LibItem = { id: string; created: number; mode: string; params: Record<string, any>; audio_url: string; bucket?: string };
 // Arrangement shared from the Song Constructor to the Vocal Builder.
 export type SongDraft = { blocks: { type: string; seconds: number; lyrics: string }[]; key: string; bpm: number; tags: string };
