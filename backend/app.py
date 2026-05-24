@@ -22,6 +22,10 @@ from . import rvc_py
 from . import voices as voices_mod
 from . import stems as stems_mod
 from . import mix as mix_mod
+from . import postfx as postfx_mod
+from . import master as master_mod
+from . import guitar as guitar_mod
+from . import genres as genres_mod
 from . import llm as llm_mod
 from . import melody as melody_mod
 from . import voicegen as voicegen_mod
@@ -179,8 +183,14 @@ def startup():
 
 @app.get("/api/config")
 def config():
+    # unified genre registry (single source) → drives the preset chips + the
+    # Guitar riff/solo genre pickers. bpm/key are SUGGESTIONS, not forced.
+    genres = [{"id": g["id"], "label": g["label"], "tags": g["tags"],
+               "bpm": g["bpm"], "key": g["key"], "scale": g["scale"],
+               "lead": bool(g.get("lead"))} for g in genres_mod.GENRES]
     return {"comfy_host": HOST, "variants": C.available_variants(),
-            "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER}
+            "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER,
+            "genres": genres}
 
 
 def _new_job(resolved, mode):
@@ -386,6 +396,342 @@ async def stems_separate(mode: str = Form("vocals"),
                       {"source": job_id or (file.filename if file else "upload"),
                        "kind": os.path.splitext(os.path.basename(f))[0]}, f)
     return {"id": sid, "stems": stems}
+
+
+CFG["helix_presets_dir"] = os.path.join(LIBRARY, "helix_presets")
+_SF_DEFAULT = os.path.join(ROOT, "soundfonts", "eguitar_clean.sf2")
+if not CFG.get("guitar_soundfont") and os.path.exists(_SF_DEFAULT):
+    CFG["guitar_soundfont"] = _SF_DEFAULT
+# Kontakt (for Shreddage DI): auto-detect the VST3; state captured via the editor.
+if not CFG.get("kontakt_vst3_path"):
+    for _k in ("/Library/Audio/Plug-Ins/VST3/Kontakt 7.vst3",
+               "/Library/Audio/Plug-Ins/VST3/Kontakt 8.vst3"):
+        if os.path.exists(_k):
+            CFG["kontakt_vst3_path"] = _k
+            break
+KONTAKT_STATE = os.path.join(ROOT, "soundfonts", "kontakt_guitar.state")
+
+
+def _kontakt_ready():
+    return bool(CFG.get("kontakt_vst3_path") and os.path.exists(CFG["kontakt_vst3_path"])
+                and os.path.exists(KONTAKT_STATE))
+
+
+@app.get("/api/tone/presets")
+def tone_presets():
+    """Guitar-tone presets + engine availability (pedalboard, Helix Native, DI engines)."""
+    d = postfx_mod.presets(CFG)
+    d["guitar_soundfont"] = bool(CFG.get("guitar_soundfont") and os.path.exists(CFG["guitar_soundfont"]))
+    d["kontakt_available"] = bool(CFG.get("kontakt_vst3_path") and os.path.exists(CFG["kontakt_vst3_path"]))
+    d["kontakt_ready"] = _kontakt_ready()
+    d["riff_genres"] = [{"id": k, "label": v["label"]} for k, v in guitar_mod.RIFF_GENRES.items()]
+    return d
+
+
+@app.post("/api/guitar/kontakt/capture")
+def kontakt_capture():
+    """Open Kontakt's editor (BLOCKS until you close it) — load Shreddage 3
+    Stratus FREE + pick a patch, then close — and save its state for the DI
+    render engine. Mac-only (needs the GUI). One-time setup."""
+    kp = CFG.get("kontakt_vst3_path")
+    if not (kp and os.path.exists(kp)):
+        raise HTTPException(400, "Kontakt VST3 not found")
+    os.makedirs(os.path.dirname(KONTAKT_STATE), exist_ok=True)
+    try:
+        # run in a separate process so show_editor() is on the main thread (it
+        # fails from this FastAPI worker thread). Blocks until the user closes it.
+        import subprocess
+        import sys as _sys
+        r = subprocess.run([_sys.executable, "-m", "backend.plugin_capture", kp, KONTAKT_STATE],
+                           cwd=ROOT, capture_output=True, text=True, timeout=1800)
+    except Exception as e:
+        raise HTTPException(500, f"Kontakt capture failed: {e}")
+    if not os.path.exists(KONTAKT_STATE):
+        raise HTTPException(500, f"capture produced no state: {(r.stderr or r.stdout or '')[-400:]}")
+    return {"ready": _kontakt_ready()}
+
+
+@app.post("/api/helix/capture")
+def helix_capture(body: dict):
+    """Open Helix Native's editor (blocks until you close it), then save its
+    full state as a named, reusable tone. Mac-only (needs the GUI)."""
+    import re
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "provide a name for the tone")
+    hp = postfx_mod._helix_path(CFG)
+    if not hp:
+        raise HTTPException(400, "Helix Native not configured (helix_vst3_path)")
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "tone"
+    out = os.path.join(CFG["helix_presets_dir"], name + ".helixstate")
+    os.makedirs(CFG["helix_presets_dir"], exist_ok=True)
+    try:
+        # separate process → show_editor() on its main thread (fails from a worker thread)
+        import subprocess
+        import sys as _sys
+        r = subprocess.run([_sys.executable, "-m", "backend.plugin_capture", hp, out],
+                           cwd=ROOT, capture_output=True, text=True, timeout=1800)
+    except Exception as e:
+        raise HTTPException(500, f"capture failed: {e}")
+    if not os.path.exists(out):
+        raise HTTPException(500, f"capture produced no state: {(r.stderr or r.stdout or '')[-400:]}")
+    return {"saved": name, "states": postfx_mod.list_helix(CFG)}
+
+
+@app.post("/api/tone/apply")
+async def tone_apply(preset: str = Form("tighten_highgain"),
+                     job_id: str = Form(None),
+                     file: UploadFile = File(None),
+                     normalize: bool = Form(True)):
+    """Reshape the distorted guitar in a track: 6-stem split (Mac/Demucs) →
+    tone chain on the guitar stem (pedalboard / Helix Native) → recombine."""
+    if not postfx_mod.available():
+        raise HTTPException(500, "pedalboard not installed on the Mac (pip install pedalboard)")
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+    src_label = "upload"
+    if file is not None:
+        ext = os.path.splitext(file.filename)[1] or ".wav"
+        inp = os.path.join(work, "input" + ext)
+        with open(inp, "wb") as f:
+            f.write(await file.read())
+        src_label = file.filename
+    elif job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "library track not found")
+        inp = os.path.join(work, job_id + os.path.splitext(src)[1])
+        shutil.copy(src, inp)
+        src_label = job_id
+    else:
+        raise HTTPException(400, "provide a file or job_id")
+
+    try:
+        stem_files = stems_mod.separate(inp, work, mode="guitar")
+    except Exception as e:
+        raise HTTPException(500, f"separation failed: {e}")
+    by_name = {os.path.splitext(os.path.basename(f))[0]: f for f in stem_files}
+    guitar = by_name.get("guitar")
+    if not guitar:
+        raise HTTPException(500, "no guitar stem produced (htdemucs_6s)")
+
+    processed = os.path.join(work, "guitar_tone.wav")
+    try:
+        postfx_mod.process_stem(guitar, processed, preset, cfg=CFG)
+    except Exception as e:
+        raise HTTPException(500, f"tone processing failed: {e}")
+
+    # Layer only the guitar tone-delta onto the pristine original mix, so the
+    # drums/bass keep their original quality (no Demucs re-sum artifacts).
+    try:
+        wav = postfx_mod.recombine_delta(inp, guitar, processed, normalize=normalize)
+    except Exception as e:
+        raise HTTPException(500, f"recombine failed: {e}")
+
+    try:
+        os.remove(inp)
+    except Exception:
+        pass
+    jid = uuid.uuid4().hex
+    with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
+        f.write(wav)
+    save_done_row(jid, "tone", {"source": src_label, "preset": preset}, os.path.join(LIBRARY, f"{jid}.wav"))
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}",
+            "guitar_url": f"/api/stem/{sid}/guitar_tone.wav", "preset": preset}
+
+
+def _stash_input(work, label, file_bytes=None, filename=None, job_id=None):
+    """Write an uploaded file or copy a library track into `work`, returning the
+    local path. Used by tone/master endpoints."""
+    if file_bytes is not None:
+        ext = os.path.splitext(filename or "")[1] or ".wav"
+        p = os.path.join(work, label + ext)
+        with open(p, "wb") as f:
+            f.write(file_bytes)
+        return p, (filename or "upload")
+    if job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, f"library track not found: {job_id}")
+        p = os.path.join(work, label + os.path.splitext(src)[1])
+        shutil.copy(src, p)
+        return p, job_id
+    raise HTTPException(400, f"provide a file or job_id for {label}")
+
+
+@app.post("/api/master/apply")
+async def master_apply(job_id: str = Form(None),
+                       ref_job_id: str = Form(None),
+                       file: UploadFile = File(None),
+                       ref_file: UploadFile = File(None),
+                       bit_depth: int = Form(16)):
+    """Reference-master a target track toward a reference master (Matchering, Mac)."""
+    if not master_mod.available():
+        raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")
+    work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
+    os.makedirs(work, exist_ok=True)
+    tgt, tgt_label = _stash_input(work, "target",
+                                  await file.read() if file else None,
+                                  file.filename if file else None, job_id)
+    ref, _ = _stash_input(work, "reference",
+                          await ref_file.read() if ref_file else None,
+                          ref_file.filename if ref_file else None, ref_job_id)
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.wav")
+    try:
+        master_mod.master(tgt, ref, out, bit_depth=int(bit_depth))
+    except Exception as e:
+        raise HTTPException(500, f"mastering failed: {e}")
+    shutil.rmtree(work, ignore_errors=True)
+    save_done_row(jid, "master", {"source": tgt_label, "reference": ref_job_id or "upload"}, out)
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+@app.post("/api/backing/strip-guitar")
+async def backing_strip_guitar(job_id: str = Form(None),
+                               file: UploadFile = File(None),
+                               normalize: bool = Form(True)):
+    """6-stem split (Mac/Demucs) → recombine every stem EXCEPT guitar → a
+    guitar-less backing. Foundation for the symbolic→DI→amp guitar route: drop
+    the model's distorted guitar so our own clean-DI-then-amped guitar can sit
+    on a clean backing. (Demucs separation is imperfect — some guitar bleed into
+    'other' may remain.)"""
+    work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
+    os.makedirs(work, exist_ok=True)
+    inp, src_label = _stash_input(work, "input",
+                                  await file.read() if file else None,
+                                  file.filename if file else None, job_id)
+    try:
+        stem_files = stems_mod.separate(inp, work, mode="guitar")
+    except Exception as e:
+        raise HTTPException(500, f"separation failed: {e}")
+    others = [f for f in stem_files
+              if os.path.splitext(os.path.basename(f))[0] != "guitar"]
+    if not others:
+        raise HTTPException(500, "no non-guitar stems produced")
+    try:
+        wav = postfx_mod.recombine(others, normalize=normalize)
+    except Exception as e:
+        raise HTTPException(500, f"recombine failed: {e}")
+    jid = uuid.uuid4().hex
+    with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
+        f.write(wav)
+    save_done_row(jid, "backing", {"source": src_label}, os.path.join(LIBRARY, f"{jid}.wav"))
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+@app.post("/api/guitar/render-amp")
+async def guitar_render_amp(midi: UploadFile = File(None),
+                            riff: bool = Form(False),
+                            key: str = Form("E minor"),
+                            bpm: int = Form(160),
+                            bars: int = Form(8),
+                            style: str = Form("gallop"),
+                            riff_brain: str = Form("algorithmic"),
+                            genre: str = Form(""),
+                            part: str = Form("riff"),
+                            sections: str = Form(None),
+                            di_engine: str = Form("ks"),
+                            duration: float = Form(None),
+                            seed: int = Form(None),
+                            preset: str = Form("helix"),
+                            backing_job_id: str = Form(None),
+                            guitar_gain_db: float = Form(0.0)):
+    """Symbolic-route render step: MIDI guitar → clean DI (Karplus-Strong) →
+    tone/amp (Helix on a *clean* DI is finally valid) → optionally mix onto a
+    guitar-less backing. Either upload `midi` or set `riff=true` (music-theory
+    metal riff). When mixing onto a backing, the riff auto-matches its length."""
+    if not postfx_mod.available():
+        raise HTTPException(500, "pedalboard not installed on the Mac")
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+
+    # if mixing onto a backing and no explicit duration, match the backing length
+    backing_path = None
+    if backing_job_id:
+        backing_path = next((os.path.join(LIBRARY, backing_job_id + e) for e in (".wav", ".mp3")
+                             if os.path.exists(os.path.join(LIBRARY, backing_job_id + e))), None)
+        if backing_path and not duration:
+            try:
+                import soundfile as _sf
+                duration = float(_sf.info(backing_path).duration)
+            except Exception:
+                pass
+
+    if midi is not None:
+        mp = os.path.join(work, "in.mid")
+        with open(mp, "wb") as f:
+            f.write(await midi.read())
+        try:
+            notes = guitar_mod.midi_to_notes(mp)
+        except Exception as e:
+            raise HTTPException(400, f"could not read MIDI: {e}")
+        src_label = midi.filename
+    else:
+        # riff brain → (brain, provider): algorithmic | auto/local/claude (LLM)
+        brain, prov = "algorithmic", ""
+        if riff_brain in ("auto", "local", "claude"):
+            brain = "llm"
+            prov = {"local": "ollama", "claude": "claude"}.get(riff_brain, "")
+        btag = "" if brain == "algorithmic" else f" · {riff_brain} AI"
+        if sections:
+            try:
+                blocks = json.loads(sections)
+            except Exception:
+                raise HTTPException(400, "sections must be JSON [{type,seconds}]")
+            notes = guitar_mod.generate_riff_arrangement(blocks, key, int(bpm), seed,
+                                                         brain=brain, provider=prov, genre=genre)
+            gtag = f" {genre}" if (brain == "llm" and genre) else ""
+            src_label = f"arrangement riff{gtag} {key} {bpm}bpm ({len(blocks)} sections){btag}"
+        elif riff:
+            notes = guitar_mod.compose_riff(brain, key, int(bpm), duration_s=duration,
+                                            bars=int(bars), style=style, genre=genre,
+                                            part=part, provider=prov, seed=seed)
+            gtag = genre if (brain == "llm" and genre) else style
+            src_label = f"{gtag} {part} {key} {bpm}bpm{btag}"
+        else:
+            raise HTTPException(400, "upload a MIDI file, set riff=true, or pass sections")
+    if not notes:
+        raise HTTPException(400, "no notes found")
+
+    di = os.path.join(work, "di.wav")
+    guitar_mod.render_di_file(notes, di, engine=di_engine,
+                              sf2_path=CFG.get("guitar_soundfont"),
+                              kontakt_path=CFG.get("kontakt_vst3_path"),
+                              kontakt_state=KONTAKT_STATE)
+    amped = os.path.join(work, "amped.wav")
+    try:
+        postfx_mod.process_stem(di, amped, preset, cfg=CFG)
+    except Exception as e:
+        raise HTTPException(500, f"amp failed: {e}")
+
+    def _save(mode, params, src_path):
+        j = uuid.uuid4().hex
+        shutil.copy(src_path, os.path.join(LIBRARY, f"{j}.wav"))
+        save_done_row(j, mode, params, os.path.join(LIBRARY, f"{j}.wav"))
+        return j
+    di_j = _save("guitardi", {"source": src_label, "kind": "clean DI"}, di)
+    amp_j = _save("guitar", {"source": src_label, "preset": preset}, amped)
+    out = {"di_url": f"/api/audio/{di_j}", "amped_url": f"/api/audio/{amp_j}", "preset": preset}
+
+    if backing_job_id:
+        tracks = [{"src": f"/api/audio/{amp_j}", "gain_db": float(guitar_gain_db)},
+                  {"src": f"/api/audio/{backing_job_id}", "gain_db": 0.0}]
+        try:
+            wav = mix_mod.mix(tracks, LIBRARY, STEMS_DIR, normalize=True)
+        except Exception as e:
+            raise HTTPException(500, f"mix onto backing failed: {e}")
+        mj = uuid.uuid4().hex
+        with open(os.path.join(LIBRARY, f"{mj}.wav"), "wb") as f:
+            f.write(wav)
+        save_done_row(mj, "song", {"tags": f"symbolic guitar ({preset}) + backing", "source": src_label},
+                      os.path.join(LIBRARY, f"{mj}.wav"))
+        out["mix_url"] = f"/api/audio/{mj}"
+    return out
 
 
 @app.post("/api/import/fetch")

@@ -29,3 +29,9 @@ cookies.txt
 # OS / editor / tooling
 .DS_Store
 .claude/
+
+# RemFx de-amp experiment (large checkpoints, external clone)
+RemFx/
+
+# SoundFonts for the fluidsynth DI renderer (large, CC0)
+soundfonts/

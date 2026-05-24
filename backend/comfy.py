@@ -28,6 +28,13 @@ VARIANTS = {
 KEYS = [f"{n} {m}" for m in ("major", "minor")
         for n in ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")]
 
+# Suggested starting negative prompt for rock/metal (steers away from the usual
+# generated-guitar artifacts). Not applied automatically — pass p["negative_tags"]
+# to use it (empty = the original ConditioningZeroOut behavior, fully backward
+# compatible). See RESEARCH.md §10c.
+DEFAULT_NEGATIVE = ("muddy, lo-fi, harsh fizz, digital clipping, thin weak guitars, "
+                    "out of tune, low quality, mono, distorted vocals, noise")
+
 
 class Comfy:
     def __init__(self, host: str):
@@ -94,14 +101,15 @@ class Comfy:
 
 
 # ---- shared node fragments ----
-def _loaders(variant_file):
+def _loaders(variant_file, shift=3.0):
     return {
         "4": {"class_type": "UNETLoader",
               "inputs": {"unet_name": variant_file, "weight_dtype": "default"}},
         "5": {"class_type": "DualCLIPLoader",
               "inputs": {"clip_name1": CLIP1, "clip_name2": CLIP2, "type": "ace"}},
         "6": {"class_type": "VAELoader", "inputs": {"vae_name": VAE}},
-        "7": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["4", 0], "shift": 3.0}},
+        "7": {"class_type": "ModelSamplingAuraFlow",
+              "inputs": {"model": ["4", 0], "shift": float(shift)}},
     }
 
 
@@ -130,6 +138,34 @@ def _text_encode(p, generate_audio_codes):
     }}
 
 
+def _neg_encode(p):
+    """Real negative-prompt conditioning. The stock ACE-Step workflow uses
+    ConditioningZeroOut (an empty negative); supplying actual negative tags can
+    steer the sampler away from muddy/fizzy/low-quality artifacts. Lyrics are
+    left empty — only the style tags act as the negative."""
+    return {"class_type": "TextEncodeAceStepAudio1.5", "inputs": {
+        "clip": ["5", 0],
+        "tags": p.get("negative_tags", ""),
+        "lyrics": "",
+        "seed": p["seed"],
+        "bpm": int(p.get("bpm", 120)),
+        "duration": float(p.get("duration", 60.0)),
+        "timesignature": str(p.get("timesignature", "4")),
+        "language": p.get("language", "en"),
+        "keyscale": p.get("keyscale", "E minor"),
+        "generate_audio_codes": False,
+        "cfg_scale": 2.0, "temperature": 0.85, "top_p": 0.9, "top_k": 0, "min_p": 0.0,
+    }}
+
+
+def _negative_node(p):
+    """Node '9' fed to KSampler.negative: a real negative encode when
+    negative_tags are given, else the original zero-out (backward compatible)."""
+    if (p.get("negative_tags") or "").strip():
+        return _neg_encode(p)
+    return {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
+
+
 def _resolve(p):
     """Fill in seed + per-variant default steps/cfg if not overridden."""
     v = VARIANTS.get(p.get("variant", "xl_base"), VARIANTS["xl_base"])
@@ -145,15 +181,16 @@ def _resolve(p):
 
 def build_t2m(p):
     p = _resolve(p)
-    g = _loaders(p["_file"])
+    g = _loaders(p["_file"], p.get("shift", 3.0))
     g["8"] = _text_encode(p, generate_audio_codes=True)
-    g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
+    g["9"] = _negative_node(p)
     g["10"] = {"class_type": "EmptyAceStep1.5LatentAudio",
                "inputs": {"seconds": float(p.get("duration", 60.0)), "batch_size": 1}}
     g["11"] = {"class_type": "KSampler", "inputs": {
         "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["10", 0],
         "seed": p["seed"], "steps": p["_steps"], "cfg": p["_cfg"],
-        "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}}
+        "sampler_name": p.get("sampler_name", "euler"),
+        "scheduler": p.get("scheduler", "simple"), "denoise": 1.0}}
     g["12"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["11", 0], "vae": ["6", 0]}}
     g["13"] = {"class_type": "SaveAudioMP3",
                "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/t2m", "quality": "320k"}}
@@ -162,10 +199,10 @@ def build_t2m(p):
 
 def build_restyle(p, audio_ref):
     p = _resolve(p)
-    g = _loaders(p["_file"])
+    g = _loaders(p["_file"], p.get("shift", 3.0))
     # For restyle we give the model an audio reference, so audio codes are OFF.
     g["8"] = _text_encode(p, generate_audio_codes=False)
-    g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
+    g["9"] = _negative_node(p)
     g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
     g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
     # denoise = "restyle amount": higher transforms more (further from source).
@@ -173,7 +210,8 @@ def build_restyle(p, audio_ref):
     g["11"] = {"class_type": "KSampler", "inputs": {
         "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["15", 0],
         "seed": p["seed"], "steps": p["_steps"], "cfg": p["_cfg"],
-        "sampler_name": "euler", "scheduler": "simple", "denoise": denoise}}
+        "sampler_name": p.get("sampler_name", "euler"),
+        "scheduler": p.get("scheduler", "simple"), "denoise": denoise}}
     g["12"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["11", 0], "vae": ["6", 0]}}
     g["13"] = {"class_type": "SaveAudioMP3",
                "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/restyle", "quality": "320k"}}
