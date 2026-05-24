@@ -11,6 +11,7 @@ g2p_en>=2.1   ; for the DiffSinger driver's English phonemes (Vocal Builder)
 yt-dlp>=2025.10   ; Import-from-URL (needs ffmpeg on PATH: brew install ffmpeg)
 pedalboard>=0.9   ; guitar-tone post-FX stage (EQ/IR/saturation + VST3/AU host for Helix Native)
 matchering>=2.0   ; reference-based mastering stage (match loudness/EQ/width to a reference master)
+librosa>=0.10,<0.11   ; structural segmentation — align a symbolic guitar arrangement to a backing's real sections (Guitar tab)
 # SoundFont DI render engine (Guitar tab, optional) uses the fluidsynth BINARY, not a
 # python pkg: `brew install fluid-synth`, then drop a guitar .sf2 in soundfonts/ (CC0
 # FreePats EGuitar). Karplus-Strong is the zero-dep default; no install needed for it.

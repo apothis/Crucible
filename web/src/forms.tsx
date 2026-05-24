@@ -517,6 +517,8 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
   const [preset, setPreset] = useState("helix");
   const [presets, setPresets] = useState<{ id: string; label: string }[]>([]);
   const [backing, setBacking] = useState("");
+  const [align, setAlign] = useState(false);
+  const [alignAvail, setAlignAvail] = useState(false);
   const [sfOn, setSfOn] = useState(false);
   const [diEngine, setDiEngine] = useState("ks");
   const [kontaktReady, setKontaktReady] = useState(false);
@@ -527,6 +529,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
   const loadEngines = () => api.tonePresets().then((d) => {
     setPresets(d.presets); setSfOn(!!d.guitar_soundfont);
     setKontaktReady(!!d.kontakt_ready); setKontaktAvail(!!d.kontakt_available);
+    setAlignAvail(!!d.align_available);
   }).catch(() => {});
   useEffect(() => { loadEngines(); }, []);
 
@@ -553,6 +556,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
       fd.append("preset", preset);
       fd.append("di_engine", diEngine);
       if (backing) fd.append("backing_job_id", backing);
+      if (backing && align && source !== "midi") fd.append("align_backing", "true");
       const d = await api.guitarRender(fd);
       const cards = [
         { id: rid(), title: "clean DI", status: "done" as const, pct: 100, url: d.di_url },
@@ -657,6 +661,17 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
           {backings.map((b) => <option key={b.id} value={b.id}>{(b.params.source || b.id).slice(0, 36)}</option>)}
         </select>
       </Field>
+      {backing && alignAvail && source !== "midi" && (
+        <label className="flex items-start gap-2 text-xs text-[var(--color-muted)]">
+          <input type="checkbox" className="mt-0.5" checked={align} onChange={(e) => setAlign(e.target.checked)} />
+          <span>
+            <span className="text-[var(--color-ink)]">Align to the backing's real sections</span> — detect where the
+            backing actually changes (librosa) and {source === "song"
+              ? "re-time your arrangement's sections to those boundaries (labels kept)."
+              : "auto-build a per-section guitar arrangement from them (roles inferred by energy)."}
+          </span>
+        </label>
+      )}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Rendering…" : "Render → amp"}</PrimaryButton>
     </div>
   );

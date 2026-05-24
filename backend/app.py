@@ -25,6 +25,7 @@ from . import mix as mix_mod
 from . import postfx as postfx_mod
 from . import master as master_mod
 from . import guitar as guitar_mod
+from . import sections as sections_mod
 from . import genres as genres_mod
 from . import llm as llm_mod
 from . import melody as melody_mod
@@ -425,6 +426,7 @@ def tone_presets():
     d["kontakt_available"] = bool(CFG.get("kontakt_vst3_path") and os.path.exists(CFG["kontakt_vst3_path"]))
     d["kontakt_ready"] = _kontakt_ready()
     d["riff_genres"] = [{"id": k, "label": v["label"]} for k, v in guitar_mod.RIFF_GENRES.items()]
+    d["align_available"] = sections_mod.available()
     return d
 
 
@@ -634,6 +636,7 @@ async def guitar_render_amp(midi: UploadFile = File(None),
                             genre: str = Form(""),
                             part: str = Form("riff"),
                             sections: str = Form(None),
+                            align_backing: bool = Form(False),
                             di_engine: str = Form("ks"),
                             duration: float = Form(None),
                             seed: int = Form(None),
@@ -678,15 +681,33 @@ async def guitar_render_amp(midi: UploadFile = File(None),
             brain = "llm"
             prov = {"local": "ollama", "claude": "claude"}.get(riff_brain, "")
         btag = "" if brain == "algorithmic" else f" · {riff_brain} AI"
+        # Optionally align section timing to the backing's REAL section boundaries
+        # (librosa) instead of the arrangement's nominal lengths.
+        aligned = False
+        blocks = None
         if sections:
             try:
                 blocks = json.loads(sections)
             except Exception:
                 raise HTTPException(400, "sections must be JSON [{type,seconds}]")
+            if align_backing and backing_path and sections_mod.available():
+                try:
+                    blocks = sections_mod.align_blocks(blocks, backing_path)
+                    aligned = True
+                except Exception:
+                    pass                                  # detection failed → keep nominal
+        elif align_backing and backing_path and sections_mod.available():
+            try:
+                blocks = sections_mod.auto_blocks(backing_path)   # arrange from the backing itself
+                aligned = True
+            except Exception:
+                blocks = None
+        if blocks is not None:
             notes = guitar_mod.generate_riff_arrangement(blocks, key, int(bpm), seed,
                                                          brain=brain, provider=prov, genre=genre)
             gtag = f" {genre}" if (brain == "llm" and genre) else ""
-            src_label = f"arrangement riff{gtag} {key} {bpm}bpm ({len(blocks)} sections){btag}"
+            atag = " · aligned to backing" if aligned else ""
+            src_label = f"arrangement riff{gtag} {key} {bpm}bpm ({len(blocks)} sections){atag}{btag}"
         elif riff:
             notes = guitar_mod.compose_riff(brain, key, int(bpm), duration_s=duration,
                                             bars=int(bars), style=style, genre=genre,
