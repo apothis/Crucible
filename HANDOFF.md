@@ -24,11 +24,12 @@ A local, private music-generation studio focused on rock/metal (heavy, power, sy
 - **`HANDOFF.md`** (this file) — entry point + current status.
 - **Memory** (`~/.claude/.../project_musicgen-app.md`) — condensed durable facts for the assistant.
 
-## Current status (2026-05-23)
+## Current status (2026-05-24)
 **Working end-to-end — the whole creative loop is built:**
-- ComfyUI generation (ACE-Step 1.5 **XL base**) driven from the Mac. Metal output is "decent"; guitars OK, needs tuning. Vocals done separately.
-- **Crucible UI** (React) with tabs: **Generate** (+ batch/variations, subgenre presets, Simple/Expert), **Restyle**, **Vocals (RVC)** (+ voice search/install), **Voice Swap** (one-click split→re-timbre→remix), **Stems** (Demucs), **Mix**. Plus waveform players, a results/compare grid, library with open-in-workspace, and an **Assistant dock** (Gemma/Claude: lyrics/tags/ideas).
-- **Full vocal pipeline:** CREATE (ACE-Step sings lyrics) → ISOLATE (Demucs on Mac MPS) → RE-TIMBRE (RVC) → MIX (in-app mixer). All in-app; one-click Voice Swap chains it.
+- ComfyUI generation (ACE-Step 1.5 **XL base**) driven from the Mac; negative-prompt + sampler/scheduler/shift now exposed. Vocals done separately.
+- **Crucible UI** (React) — **redesigned** (UI_DESIGN.md §7): grouped left **sidebar** (Create / Guitar / Vocals / Finish), working area with **inline results**, **Library drawer**. Tools: Generate · Song · Restyle · Voc.Builder · Vocals(RVC) · Voice Swap · Import · Stems · **Backing · Guitar · Tone · Master** · Mix. Waveform players, compare grid, Assistant dock (Gemma/Claude).
+- **Full vocal pipeline:** CREATE (ACE-Step) → ISOLATE (Demucs/Mac) → RE-TIMBRE (RVC) → MIX. One-click Voice Swap chains it.
+- **Guitar pipeline (new):** Backing (strip guitar) → Guitar (AI riff/solo, per-genre, → clean DI via Karplus-Strong/SoundFont/Shreddage → amp) → Tone (reshape) / Master (matchering). Unified genre registry (`backend/genres.py`). See the music-quality section below.
 
 **Stack:** Python FastAPI backend + **React + Vite + TS + Tailwind v4** UI in `web/` (built to `web/dist`, served by FastAPI at `:8000`). The old vanilla `frontend/` is now just a fallback.
 
@@ -91,26 +92,32 @@ A new **Voc. Builder** tab (`web/src/VocalBuilder.tsx`) that **composes a vocal 
   - **SoulX voices are zero-shot** (the reference clip *is* the voice). A **named voice library** (`web/src/VocalBuilder.tsx` picker + `POST /api/vocal/soulx/prep` → server preprocess) lets you prep a clip once and reuse it. The **Import tab** (`web/src/Import.tsx`) is the full song→voice pipeline: import a song → drag a region on the waveform → `POST /api/import/extract` (trim + Demucs vocal on the Mac) → preview → save as a SoulX voice. Don't need metal/solo refs — SoulX gives the performance/vibrato, RVC sets the final identity, and Demucs isolates a vocal from any mix. _Note: do NOT install `preprocess/requirements.txt` — it pins torch 2.10/numpy 2 and would clobber the working CUDA torch; its deps are already in the main env._
   - **Shared-GPU safety:** the SoulX server loads its model **on demand and unloads after each synth** (default; `MG_SOULX_KEEP_RESIDENT=1` to keep it loaded), and `backend/app.py` calls ComfyUI `POST /free` before any GPU vocal build (host engine or RVC re-timbre) so models don't collide on the 3090. Verify SoulX's actual footprint with `nvidia-smi` on first load.
 
-## Immediate next — MUSIC QUALITY PUSH (primary focus)
-The next initiative is making the **generated music itself better** within the target genres. **Scope expanded** beyond metal to include **heavy rock** — e.g. Bon Jovi, Halestorm, Black Stone Cherry, AC/DC — alongside heavy/power/symphonic/folk metal.
+## MUSIC-QUALITY PUSH — built this cycle (2026-05-24)
 
-**Research DONE (2026-05-24) → written up in `RESEARCH.md §10`** (4 tracks + a prioritized experiment table §10e). Key takeaways:
-- **Biggest near-term win is Mac-side post-processing** (no GPU contention): a `pedalboard` guitar-tone chain (surgical EQ + IR re-cab + saturation) on the `htdemucs_6s` guitar stem, recombined via the mixer, plus a `matchering` reference-master stage. Honest caveat: true NAM/amp re-amp needs a *clean DI* — a generated/separated stem is already distorted, so the post-FX *reshapes* tone, it doesn't re-amp from clean.
-- **ACE-Step tuning levers:** we currently use **no real negative prompt** (`ConditioningZeroOut` is only the empty-negative fallback) and fixed `euler/simple`, `shift=3`, hardcoded LM sampling params — all untapped. APG-based negatives need `xl_sft` (not installed; only `xl_base` is).
-- **Tone feature (Track C):** two layers — prompt vocabulary (amp/cab/era tags) + the post-FX tone stage with named presets.
-- **LoRAs:** Epic Music / Psychedelic Rock-Funk exist but Civitai was geoblocked from research env → XL-compatibility unverified; no dedicated metal LoRA found. Custom LoRA training = highest ceiling, highest effort.
+Scope includes **heavy rock** (Bon Jovi / Halestorm / Black Stone Cherry / AC/DC) alongside heavy/power/symphonic/folk metal. Full research in `RESEARCH.md §10`; UI redesign in `UI_DESIGN.md §7`. The whole **guitar-tone problem** got an alternative, controllable pipeline (since ACE's distorted guitars are the weak spot and can't be cleanly de-amped):
 
-**Progress on the experiment list (`RESEARCH.md §10e`):**
-- **#3 Negative prompts — WIRED** (`comfy.py` `_negative_node`/`DEFAULT_NEGATIVE`; Generate UI Expert "Negative tags" field). Backward compatible. **GPU A/B test still pending user OK.**
-- **#1 Guitar post-FX ("Tone" tab) — BUILT + VERIFIED end-to-end (Mac-side).** `backend/postfx.py` (pedalboard tone chains: tighten_highgain / accdc_crunch / scooped_metal / warm_smooth, + Helix Native VST3 insert + optional IR cab) on the `htdemucs_6s` guitar stem → recombine → library mode `tone`. New "Tone" tab. Honest framing in the UI: it *reshapes* tone, doesn't re-amp from a clean DI. **Helix Native is wired LIVE** — VST3 at `/Library/Audio/Plug-Ins/VST3/Line 6/Helix Native.vst3` (in `app_config.json` as `helix_vst3_path`), license activated; the "helix" preset shows in the Tone tab. For a reusable Helix tone, save a `.vstpreset` and set `helix_default_preset`.
-- **#2 Matchering master ("Master" tab) — BUILT + VERIFIED end-to-end (Mac-side).** `backend/master.py` (Matchering 2.0) + `POST /api/master/apply`; pick a target track + a reference master you own → matches loudness/EQ/peak/width → library mode `master`. `matchering` added to requirements.
+**The guitar pipeline (new tabs Backing / Guitar / Tone / Master):**
+- **Backing** — 6-stem split (`htdemucs_6s`) → recombine WITHOUT the guitar = a guitar-less bed. (`backend/stems.py` 6-stem, `backend/postfx.py` recombine.)
+- **Guitar** (`backend/guitar.py`) — generate a guitar part → **clean DI** → amp → optional mix onto a backing.
+  - *Source:* Test riff · **Song arrangement** (per-section riffs from the Song Constructor) · MIDI upload.
+  - *Riff brain:* Algorithmic (instant) or **AI** (local Gemma / Claude) — LLM writes a 2-bar pattern (or solo phrase) on a 16th grid.
+  - *Part:* **Riff** (power chords) or **Solo** (single-note lead, high register), each genre-characteristic.
+  - *DI render engine (pluggable):* **Karplus-Strong** (synth, no deps) · **SoundFont** (FreePats Fender, `soundfonts/eguitar_clean.sf2`, fluidsynth) · **Shreddage/Kontakt** (best — capture once via the setup button).
+  - *Amp:* the tone presets / **Helix Native** (captured tones reused via `raw_state`).
+- **Tone** (`backend/postfx.py`) — reshape an existing distorted guitar stem (EQ/cab/sat presets or Helix; delta-recombine, gain-matched + latency-aligned). Honest: this *reshapes*, it doesn't re-amp from clean.
+- **Master** (`backend/master.py`, Matchering 2.0) — match a track to a reference master you own.
 
-- **Sampler/scheduler/shift — exposed + user-selectable.** `comfy.py` honors `sampler_name`/`scheduler`/`shift` (were hardcoded); Expert tuning has dropdowns (euler/dpmpp_2m/res_multistep/er_sde/… × simple/beta/normal/karras/ddim_uniform). A 5-combo sweep was run; user wanted all offered as choices. `er_sde/beta` is a notable "different vibe."
-- **`xl_sft` — pending user download** (~9.97 GB) to the Windows box: `…/diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors` (HF `Comfy-Org/ace_step_1.5_ComfyUI_files`). UI auto-shows "XL SFT" once present.
-- **Symbolic guitar route — prototyped (the real fix for guitar tone).** RemFx de-amp (#11) confirmed too weak on metal; prompting for clean guitar (#12) failed (model always distorts). So: **(a) "Backing" tab** = strip the guitar (6-stem → recombine without guitar) → guitar-less backing; **(b) "Guitar" tab** (`backend/guitar.py`) = MIDI/test-riff → **clean DI** (Karplus-Strong) → Helix/tone amp (valid on a clean DI!) → optional mix onto a backing. Verified end-to-end. _Placeholders to upgrade: `test_riff` is random-in-scale (swap for real symbolic gen — ProgGP/DadaGP or extend `melody.py`); KS render is "synthy" (swap for Shreddage/fluidsynth DI); length-match guitar to song._
+**Unified genre registry** — `backend/genres.py` is the SINGLE source of truth (22 genres incl. neoclassical), served via `/api/config` → drives both the generation preset chips AND the Guitar riff/solo genre pickers. Genre **suggests** bpm/key (chips set tags only; suggestions shown as hints) — never forces.
 
-**Still to do from §10e:** #4 tone-vocab presets; GPU A/B of #3 (negative prompt — note the *default* negative thinned the mix); base-vs-`xl_sft` compare (after download); real symbolic guitar generation; #8 LoRAs; #9 custom LoRA. NEVER run the 3090 (ComfyUI/RVC/SoulX) without asking; Mac-side Demucs/pedalboard/matchering/guitar-render are fine. New UI tabs: **Tone, Backing, Guitar, Master**. (`:8000` restarted to serve `/api/tone/*`, `/api/master/*`, `/api/backing/*`, `/api/guitar/*`.)
+**Source tuning** — `comfy.py` exposes real **negative prompts** + **sampler/scheduler/shift** (Expert tuning). Only `xl_base` installed.
 
-Then (secondary): verify SoulX/DiffSinger on the 3090; model variants (`xl_sft`/`xl_turbo`); reproducibility "regenerate with tweak".
+**Plugins (this Mac):** Helix Native VST3 (licensed, wired) at `/Library/Audio/Plug-Ins/VST3/Line 6/Helix Native.vst3`; Kontakt 7 + Shreddage 3 Stratus FREE (Kontakt state captured to `soundfonts/kontakt_guitar.state`). New `app_config.json` keys: `helix_vst3_path`, `helix_default_preset`, `guitar_ir_path`, `guitar_soundfont`, `kontakt_vst3_path`. `soundfonts/` + any `RemFx/` are gitignored.
 
-_Note: the Song Constructor's `/api/stitch` endpoint + the instrumental structure-tag change in `comfy.py` require a backend restart (`./run.sh`) to take effect on a long-running `:8000` server._
+**UI redesign** (`UI_DESIGN.md §7`): grouped left **sidebar** (Create / Guitar / Vocals / Finish) replaced 13 flat tabs; working area shows **results inline**; **Library is a collapsible right drawer**. Fixed WavePlayer silent playback (MediaElement backend).
+
+## Open / next (for a fresh context)
+- **User-side (pending):** download **`xl_sft`** (~9.97 GB) → `…/ComfyUI/models/diffusion_models/acestep_v1.5_xl_sft_bf16.safetensors` (HF `Comfy-Org/ace_step_1.5_ComfyUI_files`); then base-vs-sft A/B. Audition the sampler-sweep takes + the AI riffs/solos.
+- **GPU A/B of negative prompts** (#3) — the *default* negative thinned the mix; needs by-ear tuning. NEVER run the 3090 (ComfyUI/RVC/SoulX) without asking; Mac-side Demucs/pedalboard/matchering/guitar-render are fine.
+- **Candidates:** solos in Song arrangements (a Solo section → lead, not riff); align arrangement sections to a backing's real section times; refine genre solo prompts; LoRAs (Civitai geoblocked from Claude's web tools — user VPN-downloads + transfers); custom metal LoRA; verify SoulX/DiffSinger on the 3090; reproducibility "regenerate with tweak".
+
+_After UI source edits run `cd web && npm run build` for `:8000`; backend changes need `./run.sh` restart._

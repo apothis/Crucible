@@ -166,8 +166,15 @@ _Mac Ollama also has embedding models (`bge-large`, `mxbai-embed-large`) — can
 
 **Done (2026-05-24):** ▶ **Song Constructor** (Phase 6 / Phase 2 flagship) — draggable section-block builder, both drive modes (compile + per-block stitch). Song tab + `SongForm`, `backend/mix.py:stitch`, `POST /api/stitch`.
 
-**Next up — MUSIC QUALITY PUSH (primary):** make the generated audio genuinely better within the target genres (now incl. **heavy rock** — Bon Jovi / Halestorm / Black Stone Cherry / AC/DC — not just metal). **Research DONE 2026-05-24 → `RESEARCH.md §10`** (Tracks A–E + prioritized experiment table §10e). Headline: the biggest near-term win is **Mac-side post-processing** — a `pedalboard` guitar-tone chain (EQ + IR re-cab + saturation) on the `htdemucs_6s` guitar stem + a `matchering` reference-master, no GPU contention; honest caveat that this *reshapes* tone (true NAM re-amp needs a clean DI we don't have). Then cheap GPU experiments: real **negative prompts** (currently unused — `ConditioningZeroOut` is just the empty fallback), sampler/scheduler/`shift`/cfg/steps sweep, exposing the hardcoded LM sampling params. Bigger bets: download `xl_sft` (APG negatives) / `xl_turbo`, ACE-Step LoRAs (Civitai geoblocked — compat unverified), custom metal-guitar LoRA. **Feature idea — guitar/amp tone control (Track C):** prompt vocabulary (amps/cabs/eras) + a post-process tone stage with named presets on the guitar stem. Confirm §10e priorities with the user before any GPU run/install.
+**MUSIC QUALITY PUSH — built 2026-05-24** (research `RESEARCH.md §10`; UI `UI_DESIGN.md §7`; full detail in `HANDOFF.md`). Shipped a controllable **guitar pipeline** that sidesteps ACE's weak distorted guitars:
+- **Backing** (strip guitar via 6-stem) → **Guitar** (AI/algorithmic riff *or* solo, per-genre, → clean DI [Karplus-Strong / SoundFont / Shreddage-Kontakt] → amp [tone presets / Helix Native]) → **Tone** (reshape) / **Master** (matchering reference-master).
+- **Unified genre registry** (`backend/genres.py`, 22 genres incl. neoclassical) → drives generation chips + riff/solo pickers; genre **suggests** bpm/key, doesn't force.
+- **Source tuning:** real negative prompts + sampler/scheduler/shift exposed (`comfy.py`).
+- **UI redesign:** grouped sidebar + inline results + library drawer.
+- Honest finding: a generated/separated guitar can't be cleanly de-amped (RemFx too weak; prompting-for-clean fails) — so amp-sims run on a *generated clean-DI* (symbolic→DI→amp) rather than on the ACE output.
 
-**Then (secondary):** verify SoulX/DiffSinger on the 3090; model variants (`xl_sft`/`xl_turbo` download); guide-vocal generation (D2 lyric2vocal); reproducibility "regenerate with tweak"; voice cloning/training.
+**Next up (pending):** download `xl_sft` → base-vs-sft A/B; GPU A/B of negative prompts (default thinned the mix); solos inside Song arrangements; align arrangement to backing section times; refine genre solo prompts; LoRAs (Civitai via user VPN); custom metal LoRA.
 
-_Last updated: 2026-05-23._
+**Then (secondary):** verify SoulX/DiffSinger on the 3090; `xl_turbo`; reproducibility "regenerate with tweak"; voice cloning/training.
+
+_Last updated: 2026-05-24._
