@@ -21,6 +21,7 @@ from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
 from . import acestep_py
+from . import asr as asr_mod
 from . import voices as voices_mod
 from . import stems as stems_mod
 from . import mix as mix_mod
@@ -501,6 +502,49 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
         p["duration"] = dur                         # repaint keeps the original length
     p.pop("extend_left", None); p.pop("extend_right", None)
     return _submit_edit(p, ref, "repaint", label)
+
+
+@app.post("/api/transcribe")
+async def transcribe(file: UploadFile = File(None), params: str = Form("{}"), job_id: str = Form(None)):
+    """Transcribe a source song's lyrics locally (Whisper on the Mac). Isolates the
+    vocal first (Demucs) by default so dense/metal mixes transcribe cleanly. Returns
+    {text, language, duration}. Used to auto-fill the cover/vocal lyrics field —
+    transcribes the user's own file (not reproducing copyrighted lyrics from the web)."""
+    p = json.loads(params or "{}")
+    size = p.get("model_size", "small")
+    isolate = p.get("isolate_vocal", True)
+    language = p.get("language") or None
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+    try:
+        if file is not None:
+            ext = os.path.splitext(file.filename or "")[1] or ".wav"
+            src = os.path.join(work, "src" + ext)
+            with open(src, "wb") as f:
+                f.write(await file.read())
+        elif job_id:
+            src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                        if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+            if not src:
+                raise HTTPException(404, "source track not found")
+        else:
+            raise HTTPException(400, "provide a file or job_id")
+        target = src
+        if isolate:
+            try:
+                files = stems_mod.separate(src, work, mode="vocals")   # Demucs vocal, Mac MPS
+                voc = next((f for f in files if os.path.basename(f).startswith("vocals")), None)
+                if voc:
+                    target = voc
+            except Exception:
+                pass                                                   # fall back to the full mix
+        try:
+            return asr_mod.transcribe(target, size=size, language=language)
+        except Exception as e:
+            raise HTTPException(500, f"transcription failed: {e}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # NOTE: /api/extend (append-to-track) removed — "extend" is not a native ACE-Step

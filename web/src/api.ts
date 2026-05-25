@@ -33,6 +33,7 @@ export const api = {
   generate: (p: unknown) => jpost("/api/generate", p),
   restyle: (fd: FormData) => jform("/api/restyle", fd),
   cover: (fd: FormData) => jform("/api/cover", fd),
+  transcribe: (fd: FormData) => jform("/api/transcribe", fd),
   repaint: (fd: FormData) => jform("/api/repaint", fd),
   layer: (fd: FormData) => jform("/api/layer", fd),
   layerIsolate: (fd: FormData) => jform("/api/layer/isolate", fd),

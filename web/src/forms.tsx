@@ -267,10 +267,27 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const [lyrics, setLyrics] = useState("");
   const [timbre, setTimbre] = useState<File | null>(null);
   const [coverStrength, setCoverStrength] = useState(0.5);
+  const [transcribing, setTranscribing] = useState(false);
   const [expert, setExpert] = useState(true);
   const tuning = useTuning(cfg, expert);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const isCover = mode === "cover";
+
+  async function transcribeLyrics() {
+    if (transcribing) return;
+    if (!file && !job) return fail(ctx, "Choose a source track first.");
+    setTranscribing(true);
+    try {
+      const fd = new FormData();
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      fd.append("params", JSON.stringify({ isolate_vocal: true, model_size: "small" }));
+      const r = await api.transcribe(fd);   // Demucs vocal + Whisper, on the Mac
+      setLyrics((r.text || "").trim());
+      setInstrumental(false);
+      if (!r.text) fail(ctx, "No lyrics detected (try a section with clear vocals).");
+    } catch (e) { fail(ctx, "Transcribe failed: " + (e as Error).message); }
+    finally { setTranscribing(false); }
+  }
 
   async function run() {
     if (!file && !job) return fail(ctx, "Choose a source track (library or upload).");
@@ -324,6 +341,14 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
           </>
         : <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
+      {isCover && (
+        <div>
+          <GhostButton onClick={transcribeLyrics}>
+            {transcribing ? "Transcribing… (isolating vocal + Whisper, ~30–90s)" : "✨ Transcribe lyrics from the source"}
+          </GhostButton>
+          <p className="mt-1 text-[11px] text-[var(--color-muted)]">Pulls the words from your source audio (Demucs vocal → Whisper, on the Mac) into the Lyrics box below. You can also just type/paste them.</p>
+        </div>
+      )}
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? (isCover ? "Covering…" : "Restyling…") : (isCover ? "Cover" : "Restyle")}</PrimaryButton>
