@@ -20,6 +20,7 @@ from . import comfy
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
+from . import acestep_py
 from . import voices as voices_mod
 from . import stems as stems_mod
 from . import mix as mix_mod
@@ -50,6 +51,7 @@ HOST = CFG["comfy_host"]
 CLIENT_ID = "musicgen-app"
 C = comfy.Comfy(HOST)
 ROFORMER_HOST = CFG.get("roformer_host", "")
+ACESTEP_HOST = CFG.get("acestep_host", "")   # official ACE-Step engine (cover etc.); empty = use ComfyUI
 
 
 def make_rvc():
@@ -220,7 +222,22 @@ def config():
     return {"comfy_host": HOST, "variants": C.available_variants(),
             "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER,
             "roformer": _roformer_available(),
+            "acestep": bool(ACESTEP_HOST),
             "genres": genres}
+
+
+@app.get("/api/acestep/info")
+def acestep_info():
+    """Health + available models from the official ACE-Step engine (for verifying
+    the box install). Returns reachable=False if acestep_host isn't set/up."""
+    if not ACESTEP_HOST:
+        return {"reachable": False, "reason": "acestep_host not set in app_config.json"}
+    try:
+        return {"reachable": True, "host": ACESTEP_HOST,
+                "health": acestep_py.health(ACESTEP_HOST),
+                "models": acestep_py.models(ACESTEP_HOST)}
+    except Exception as e:
+        return {"reachable": False, "host": ACESTEP_HOST, "error": str(e)}
 
 
 def _new_job(resolved, mode):
@@ -248,12 +265,12 @@ def generate(p: dict):
 
 
 @app.post("/api/restyle")
-async def restyle(file: UploadFile = File(...), params: str = Form(...)):
+async def restyle(file: UploadFile = File(None), params: str = Form(...), job_id: str = Form(None)):
     p = json.loads(params)
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required to restyle toward a target style")
+    ref, label, dur = await _resolve_edit_source(file, job_id)   # upload OR a library track (e.g. an import)
     try:
-        ref = C.upload_audio(await file.read(), file.filename)
         graph, resolved = comfy.build_restyle(p, ref)
         res = C.submit(graph, CLIENT_ID)
     except Exception as e:
@@ -263,7 +280,122 @@ async def restyle(file: UploadFile = File(...), params: str = Form(...)):
     pid = res["prompt_id"]
     with LOCK:
         JOBS[pid] = _new_job(resolved, "restyle")
-        JOBS[pid]["params"]["source"] = file.filename
+        JOBS[pid]["params"]["source"] = label
+    save_job(pid)
+    return {"job_id": pid, "seed": resolved["seed"]}
+
+
+def _acestep_cover_poll(pid, task_id):
+    """Background: poll the official ACE-Step engine until the cover task finishes,
+    download the audio into the library, mark the job done. Mirrors the ComfyUI job
+    UX so the frontend's pollJob works unchanged."""
+    try:
+        fr = acestep_py.wait(ACESTEP_HOST, task_id)
+        data = acestep_py.download(ACESTEP_HOST, fr)
+        out = os.path.join(LIBRARY, f"{pid}.wav")
+        with open(out, "wb") as f:
+            f.write(data)
+        try:
+            fixed = postfx_mod.tidy_ending(out)
+            if fixed and fixed != out:
+                os.remove(out)
+                out = fixed
+        except Exception:
+            pass
+        with LOCK:
+            JOBS[pid]["audio_file"] = out
+            JOBS[pid]["status"] = "done"
+        save_job(pid)
+    except Exception as e:
+        with LOCK:
+            JOBS[pid]["status"] = "error"
+            JOBS[pid]["error"] = f"acestep cover failed: {e}"
+        save_job(pid)
+
+
+@app.post("/api/cover")
+async def cover(file: UploadFile = File(None), params: str = Form(...),
+                job_id: str = Form(None), timbre: UploadFile = File(None)):
+    """Structure-preserving COVER (ACE-Step `cover` task): keep the source's
+    structure/melody, change timbre/genre via tags (+ optional timbre clip).
+
+    Routes to the OFFICIAL ACE-Step engine when `acestep_host` is set (proper
+    `audio_cover_strength` — RESEARCH §13); otherwise falls back to the ComfyUI
+    cover guider (weaker, no strength knob)."""
+    p = json.loads(params)
+    if not (p.get("tags") or "").strip():
+        raise HTTPException(400, "style tags are required (describe the target sound/genre)")
+
+    if ACESTEP_HOST:                                  # ----- official engine path -----
+        if file is not None:
+            data = await file.read()
+            label = file.filename or "upload"
+        elif job_id:
+            src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                        if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+            if not src:
+                raise HTTPException(404, "source track not found")
+            with open(src, "rb") as f:
+                data = f.read()
+            label = job_id
+        else:
+            raise HTTPException(400, "provide a source (library job_id or upload)")
+        ctx = None
+        if timbre is not None:
+            tname = timbre.filename or "timbre.wav"
+            ctx = (await timbre.read(), tname)
+        # Field names/model id follow the docs (RESEARCH §13) — verify vs /v1/models.
+        fields = {
+            "task_type": "cover",
+            "prompt": p.get("tags", ""),
+            "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
+            "audio_cover_strength": float(p.get("cover_strength", 0.5)),
+            "guidance_scale": float(p.get("guidance_scale", 7.0)),
+            "inference_steps": int(p.get("steps", 32)),
+            "shift": float(p.get("shift", 3.0)),
+            "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
+            "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
+            "infer_method": p.get("infer_method", "ode"),
+            "audio_format": "wav",
+            "model": p.get("model", "acestep-v15-xl-base"),
+        }
+        if p.get("seed"):
+            fields["seed"] = int(p["seed"])
+        try:
+            task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(data, label), ctx_audio=ctx)
+        except Exception as e:
+            raise HTTPException(500, f"acestep submit failed: {e}")
+        pid = uuid.uuid4().hex
+        resolved = {"engine": "acestep", "source": label, "tags": p.get("tags", ""),
+                    "cover_strength": fields["audio_cover_strength"], "model": fields["model"],
+                    "guidance_scale": fields["guidance_scale"], "steps": fields["inference_steps"]}
+        with LOCK:
+            JOBS[pid] = _new_job(resolved, "cover")
+            JOBS[pid]["status"] = "running"
+        save_job(pid)
+        threading.Thread(target=_acestep_cover_poll, args=(pid, task_id), daemon=True).start()
+        return {"job_id": pid}
+
+    # ----- fallback: ComfyUI cover guider -----
+    ref, label, dur = await _resolve_edit_source(file, job_id)
+    if dur:
+        p["duration"] = dur                         # cover auto-locks length to the source (per ACE docs)
+    timbre_ref = None
+    if timbre is not None:
+        tdata = await timbre.read()
+        tname = timbre.filename if (timbre.filename or "").endswith(".wav") else ((timbre.filename or "timbre") + ".mp3")
+        timbre_ref = C.upload_audio(tdata, tname)
+    try:
+        graph, resolved = comfy.build_cover(p, ref, timbre_ref=timbre_ref)
+        res = C.submit(graph, CLIENT_ID)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "cover")
+        JOBS[pid]["params"]["source"] = label
     save_job(pid)
     return {"job_id": pid, "seed": resolved["seed"]}
 
@@ -1105,6 +1237,44 @@ async def guitar_render_amp(midi: UploadFile = File(None),
                       os.path.join(LIBRARY, f"{mj}.wav"))
         out["mix_url"] = f"/api/audio/{mj}"
     return out
+
+
+@app.post("/api/import/upload")
+async def import_upload(file: UploadFile = File(...), title: str = Form(None)):
+    """Import a local audio file INTO the library as a reusable `source` track
+    (usable by Cover/Restyle/Stems/Backing/Layer/Master). mp3/wav saved as-is;
+    anything else (flac/m4a/ogg…) transcoded to mp3 via ffmpeg so /api/audio and
+    every feature's source-resolver can find it at library/<id>.<ext>."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    iid = uuid.uuid4().hex
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext in (".mp3", ".wav"):
+        out = os.path.join(LIBRARY, iid + ext)
+        with open(out, "wb") as f:
+            f.write(data)
+    else:                                            # transcode to mp3 via ffmpeg
+        import shutil as _sh
+        import subprocess
+        ff = _sh.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+        if not os.path.exists(ff):
+            raise HTTPException(500, "ffmpeg not found (brew install ffmpeg) — needed to import this format")
+        tmp = os.path.join(LIBRARY, iid + (ext or ".bin"))
+        with open(tmp, "wb") as f:
+            f.write(data)
+        out = os.path.join(LIBRARY, iid + ".mp3")
+        r = subprocess.run([ff, "-y", "-i", tmp, "-vn", "-b:a", "192k", out],
+                           capture_output=True, text=True)
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        if r.returncode != 0 or not os.path.exists(out):
+            raise HTTPException(500, f"transcode failed: {r.stderr[-400:]}")
+    name = (title or os.path.splitext(file.filename or "")[0] or "imported audio")[:80]
+    save_done_row(iid, "source", {"source": name, "imported": True}, out)
+    return {"job_id": iid, "import_id": iid, "audio_url": f"/api/audio/{iid}", "title": name}
 
 
 @app.post("/api/import/fetch")

@@ -7,6 +7,7 @@
   "claude_model": "claude-3-5-sonnet-latest",
   "soulx_host": "WINDOWS_PC_IP:5060",
   "roformer_host": "",
+  "acestep_host": "",
   "diffsinger_host": "",
   "ytdlp_cookies_from_browser": "",
   "ytdlp_cookies_file": "",

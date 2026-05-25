@@ -32,6 +32,7 @@ export const api = {
   job: (id: string) => jget(`/api/job/${id}`),
   generate: (p: unknown) => jpost("/api/generate", p),
   restyle: (fd: FormData) => jform("/api/restyle", fd),
+  cover: (fd: FormData) => jform("/api/cover", fd),
   repaint: (fd: FormData) => jform("/api/repaint", fd),
   layer: (fd: FormData) => jform("/api/layer", fd),
   layerIsolate: (fd: FormData) => jform("/api/layer/isolate", fd),
@@ -60,6 +61,7 @@ export const api = {
   soulxVoices: () => jget("/api/vocal/soulx/voices"),
   soulxPrep: (fd: FormData) => jform("/api/vocal/soulx/prep", fd),
   importExtract: (fd: FormData) => jform("/api/import/extract", fd),
+  importUpload: (fd: FormData) => jform("/api/import/upload", fd),
   importFetch: (url: string) => jpost("/api/import/fetch", { url }),
   archiveSearch: (q: string) => jget(`/api/archive/search?q=${encodeURIComponent(q)}`),
   archiveItem: (id: string) => jget(`/api/archive/item?id=${encodeURIComponent(id)}`),
@@ -78,7 +80,7 @@ export const api = {
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };
-export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; genres: Genre[] };
+export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; genres: Genre[] };
 export type LibItem = { id: string; created: number; mode: string; params: Record<string, any>; audio_url: string; bucket?: string };
 // Arrangement shared from the Song Constructor to the Vocal Builder.
 export type SongDraft = { blocks: { type: string; seconds: number; lyrics: string }[]; key: string; bpm: number; tags: string };

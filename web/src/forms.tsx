@@ -257,45 +257,82 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
 }
 
 export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
+  const tracks = useLibrary((it) => ["source", "generate", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
+  const [mode, setMode] = useState<"reimagine" | "cover">("reimagine");
+  const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [amount, setAmount] = useState(0.7);
   const [tags, setTags] = useState("");
   const [instrumental, setInstrumental] = useState(true);
   const [lyrics, setLyrics] = useState("");
+  const [timbre, setTimbre] = useState<File | null>(null);
+  const [coverStrength, setCoverStrength] = useState(0.5);
   const [expert, setExpert] = useState(true);
   const tuning = useTuning(cfg, expert);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
+  const isCover = mode === "cover";
 
   async function run() {
-    if (!file) return fail(ctx, "Choose a source track to restyle.");
-    if (!tags.trim()) return fail(ctx, "Add style tags (target style).");
+    if (!file && !job) return fail(ctx, "Choose a source track (library or upload).");
+    if (!tags.trim()) return fail(ctx, "Add style tags (target style/genre).");
     const id = rid();
-    ctx.setResults([{ id, title: "queued…", status: "pending", pct: 0 }]);
+    ctx.setResults([{ id, title: isCover ? "covering…" : "queued…", status: "pending", pct: 0 }]);
     try {
       const fd = new FormData();
-      fd.append("file", file);
-      fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, restyle_amount: amount }));
-      const { job_id } = await api.restyle(fd);
-      ctx.patch(id, { status: "running", pct: 5 });
-      pollJob(job_id, id, ctx);
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      if (isCover) {
+        if (timbre) fd.append("timbre", timbre);
+        fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, cover_strength: coverStrength }));
+        const { job_id } = await api.cover(fd);
+        ctx.patch(id, { status: "running", pct: 5 });
+        pollJob(job_id, id, ctx);
+      } else {
+        fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, restyle_amount: amount }));
+        const { job_id } = await api.restyle(fd);
+        ctx.patch(id, { status: "running", pct: 5 });
+        pollJob(job_id, id, ctx);
+      }
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
   return (
     <div className="space-y-4">
+      <div className="flex gap-1.5">
+        {([["reimagine", "Reimagine"], ["cover", "Cover (keep structure)"]] as const).map(([m, label]) => (
+          <button key={m} onClick={() => setMode(m)}
+            className={`flex-1 rounded-lg border py-1.5 text-sm ${mode === m ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{label}</button>
+        ))}
+      </div>
+      <p className="text-xs text-[var(--color-muted)]">
+        {isCover
+          ? "Cover: keep the song's structure/melody, change the timbre/genre from the tags (+ optional timbre reference) — e.g. map a non-metal track to metal. Base/SFT."
+          : "Reimagine: audio→audio by denoise amount — higher transforms more, further from the source."}
+      </p>
       <ModeToggle expert={expert} setExpert={setExpert} />
-      <Field label="Source track"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
-      <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />
+      <Field label="Source track" hint="a library track (incl. imported songs) or upload">
+        <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
+          <option value="">— pick a library track —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.source || t.params.tags || t.id).slice(0, 40)}</option>)}
+        </select>
+      </Field>
+      <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setJob(""); }} /></Field>
+      {isCover
+        ? <>
+            <Slider label="Cover strength (lower = freer to change genre)" value={coverStrength} set={setCoverStrength} min={0.1} max={1.0} step={0.05} />
+            <p className="-mt-2 text-[11px] text-[var(--color-muted)]">Big genre change (e.g. pop → metal): try ~0.3–0.5. Keep it close to the original: ~0.7–0.9.{!cfg.acestep && " (Needs the ACE-Step engine — acestep_host — for true strength control; otherwise falls back to the basic ComfyUI cover.)"}</p>
+            <Field label="Timbre reference (optional)" hint="a clip whose instrument/voice character the cover should adopt"><input className={inp} type="file" accept="audio/*" onChange={(e) => setTimbre(e.target.files?.[0] ?? null)} /></Field>
+          </>
+        : <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
       {tuning.node}
-      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Restyling…" : "Restyle"}</PrimaryButton>
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? (isCover ? "Covering…" : "Restyling…") : (isCover ? "Cover" : "Restyle")}</PrimaryButton>
     </div>
   );
 }
 
 function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "extend" }) {
-  const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix", "repaint", "extend", "voiceswap"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "repaint", "extend", "voiceswap", "source"].includes(it.mode));
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [tags, setTags] = useState("");
@@ -375,7 +412,7 @@ const LAYER_TRACKS = ["vocals", "drums", "bass", "guitar", "keyboard", "strings"
   "percussion", "synth", "fx", "brass", "woodwinds", "backing_vocals"];
 
 export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
-  const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix", "repaint", "layer", "voiceswap"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "repaint", "layer", "voiceswap", "source"].includes(it.mode));
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [track, setTrack] = useState("guitar");
@@ -684,7 +721,7 @@ export function SwapForm({ busy, ...ctx }: FormProps) {
 }
 
 export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
-  const tracks = useLibrary((it) => ["generate", "restyle", "voiceswap", "mix", "song"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "restyle", "cover", "voiceswap", "mix", "song", "layer", "source"].includes(it.mode));
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState("vocals");
@@ -1001,7 +1038,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
 }
 
 export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
-  const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "source"].includes(it.mode));
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [engine, setEngine] = useState<"demucs" | "roformer">("demucs");
@@ -1047,7 +1084,7 @@ export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
 }
 
 export function MasterForm({ busy, ...ctx }: FormProps) {
-  const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "voiceswap"].includes(it.mode));
+  const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source"].includes(it.mode));
   const refs = useLibrary(() => true);  // any track can be a reference, esp. imported "source" songs
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
