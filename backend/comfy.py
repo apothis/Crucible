@@ -250,8 +250,25 @@ def build_edit(p, audio_ref):
     """
     p = _resolve(p)
     g = _loaders(p["_file"], p.get("shift", 3.0))
-    g["8"] = _text_encode(p, generate_audio_codes=False)
-    g["9"] = _negative_node(p)
+    # The 1.5 native edit guider MUST be fed task-aware conditioning: task_type
+    # "repaint" turns ON the LM audio-code generation that gives the regenerated /
+    # extended region its musical structure. Using the plain TextEncode (codes off,
+    # the cover/restyle pattern) starves it of codes → garbled noise in the new region.
+    g["8"] = {"class_type": "ACEStep15TaskTextEncode", "inputs": {
+        "clip": ["5", 0],
+        "text": p.get("tags", ""),
+        "task_type": "repaint",
+        "track_name": "None",
+        "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
+        "bpm": int(p.get("bpm", 120)),
+        "duration": float(p.get("duration", 60.0)),
+        "keyscale": p.get("keyscale", "E minor"),
+        "timesignature": str(p.get("timesignature", "4")),
+        "language": p.get("language", "en"),
+        "seed": p["seed"],
+        "cfg_scale": 2.0, "temperature": 0.85, "top_p": 0.9, "top_k": 0, "min_p": 0.0,
+    }}
+    g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
     g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
     g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
     g["20"] = {"class_type": "ACEStep15NativeEditGuider", "inputs": {
