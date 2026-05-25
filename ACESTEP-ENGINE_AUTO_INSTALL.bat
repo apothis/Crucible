@@ -56,14 +56,17 @@ if "%DEST%"=="" goto ASK_DIR
 if not exist "%DEST%" mkdir "%DEST%"
 
 rem ---------- CONTAINMENT: every cache/runtime pinned inside DEST ----------
-set "CKPT=%DEST%\checkpoints"
+rem CKPT must be the engine's OWN repo-relative ./checkpoints (it loads from there and
+rem ignores ACESTEP_CHECKPOINTS_DIR). Created AFTER the clone (pre-creating it would make
+rem the clone target non-empty and fail). Caches below are pre-created (safe, outside repo).
+set "CKPT=%DEST%\ACE-Step-1.5\checkpoints"
 set "UV_CACHE_DIR=%DEST%\.cache\uv"
 set "UV_PYTHON_INSTALL_DIR=%DEST%\.uvpython"
 set "UV_INSTALL_DIR=%DEST%\.uvbin"
 set "HF_HOME=%DEST%\.cache\huggingface"
 set "HUGGINGFACE_HUB_CACHE=%DEST%\.cache\huggingface\hub"
 set "PIP_CACHE_DIR=%DEST%\.cache\pip"
-for %%D in ("%CKPT%" "%UV_CACHE_DIR%" "%UV_PYTHON_INSTALL_DIR%" "%UV_INSTALL_DIR%" "%HF_HOME%" "%PIP_CACHE_DIR%") do if not exist "%%~D" mkdir "%%~D"
+for %%D in ("%UV_CACHE_DIR%" "%UV_PYTHON_INSTALL_DIR%" "%UV_INSTALL_DIR%" "%HF_HOME%" "%PIP_CACHE_DIR%") do if not exist "%%~D" mkdir "%%~D"
 
 echo(
 echo -------- Checking prerequisites --------
@@ -83,6 +86,7 @@ if exist "ACE-Step-1.5\.git" (
 )
 pushd "ACE-Step-1.5"
 set "ENGINE=%CD%"
+if not exist "%CKPT%" mkdir "%CKPT%"
 
 echo(
 echo -------- Installing the engine + CUDA dependencies (uv sync) --------
@@ -115,8 +119,9 @@ set "LAUNCH=%DEST%\run_acestep_api.bat"
 >> "%LAUNCH%" echo set "UV_PYTHON_INSTALL_DIR=%%ROOT%%.uvpython"
 >> "%LAUNCH%" echo set "HF_HOME=%%ROOT%%.cache\huggingface"
 >> "%LAUNCH%" echo set "HUGGINGFACE_HUB_CACHE=%%ROOT%%.cache\huggingface\hub"
->> "%LAUNCH%" echo set "ACESTEP_CHECKPOINTS_DIR=%%ROOT%%checkpoints"
+>> "%LAUNCH%" echo set "ACESTEP_CHECKPOINTS_DIR=%%ROOT%%ACE-Step-1.5\checkpoints"
 >> "%LAUNCH%" echo cd /d "%ENGINE%"
+>> "%LAUNCH%" echo rem (engine loads from its repo-relative ./checkpoints = the cd target above)
 >> "%LAUNCH%" echo "%UV%" run acestep-api --host 0.0.0.0 --port %PORT%
 >> "%LAUNCH%" echo pause
 
