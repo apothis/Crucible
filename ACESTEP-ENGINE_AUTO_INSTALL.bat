@@ -118,15 +118,16 @@ set "LAUNCH=%DEST%\run_acestep_api.bat"
 >> "%LAUNCH%" echo set "HUGGINGFACE_HUB_CACHE=%%ROOT%%.cache\huggingface\hub"
 >> "%LAUNCH%" echo set "ACESTEP_CHECKPOINTS_DIR=%%ROOT%%checkpoints"
 >> "%LAUNCH%" echo cd /d "%ENGINE%"
->> "%LAUNCH%" echo "%UV%" run acestep-api --server-name 0.0.0.0 --port %PORT%
+>> "%LAUNCH%" echo "%UV%" run acestep-api --host 0.0.0.0 --port %PORT%
 >> "%LAUNCH%" echo pause
 
 echo(
 echo -------------------------------------------------------------
 echo   Install complete^!  Everything is inside: %DEST%
 echo   START THE ENGINE:  %DEST%\run_acestep_api.bat
-echo   Reachable:         http://^<this-PC-IP^>:%PORT%   (check /health)
-echo   On the Mac, set    "acestep_host": "^<this-PC-IP^>:%PORT%"  in app_config.json
+echo   Reachable:         http://THIS-PC-IP:%PORT%   (check /health)
+echo   On the Mac, set    "acestep_host": "THIS-PC-IP:%PORT%"  in app_config.json
+echo   (replace THIS-PC-IP with the box's LAN IP - run ipconfig)
 echo   First launch loads models into VRAM (the 3090 has plenty) - give it a minute.
 echo -------------------------------------------------------------
 echo Launching the API now...
@@ -141,9 +142,10 @@ exit /b
 
 :hfget
 rem %1 = HF repo id, %2 = local dir, %3 = description
+rem Always call huggingface-cli: it's idempotent (skips complete files, resumes
+rem partial ones), so re-running is safe and we never wrongly skip a download.
 echo(
 echo   ^>^> %~3
-if exist "%~2\*" ( echo      already present in "%~2" - skipping & goto :eof )
 if not exist "%~2" mkdir "%~2"
 "%UV%" run --with "huggingface_hub[cli]" huggingface-cli download %~1 --local-dir "%~2"
 if errorlevel 1 echo      [!] download failed for %~1 - re-run installer to resume, or verify the repo id.
