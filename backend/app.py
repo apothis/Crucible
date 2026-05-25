@@ -1840,4 +1840,7 @@ app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=CFG.get("server_port", 8000))
+    # server_host: "127.0.0.1" = this Mac only (default); "0.0.0.0" = reachable from
+    # other machines on the LAN at http://<this-Mac-IP>:<port>. The API has no auth,
+    # so only use 0.0.0.0 on a trusted network.
+    uvicorn.run(app, host=CFG.get("server_host", "127.0.0.1"), port=CFG.get("server_port", 8000))
