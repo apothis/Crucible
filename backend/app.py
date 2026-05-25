@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from . import comfy
 from . import rvc as rvc_mod
 from . import rvc_py
+from . import roformer_py
 from . import voices as voices_mod
 from . import stems as stems_mod
 from . import mix as mix_mod
@@ -48,6 +49,7 @@ CFG = json.load(open(_CFG_PATH))
 HOST = CFG["comfy_host"]
 CLIENT_ID = "musicgen-app"
 C = comfy.Comfy(HOST)
+ROFORMER_HOST = CFG.get("roformer_host", "")
 
 
 def make_rvc():
@@ -217,6 +219,7 @@ def config():
                "lead": bool(g.get("lead")), "parent": g.get("parent")} for g in genres_mod.GENRES]
     return {"comfy_host": HOST, "variants": C.available_variants(),
             "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER,
+            "roformer": _roformer_available(),
             "genres": genres}
 
 
@@ -390,11 +393,49 @@ async def layer(file: UploadFile = File(None), params: str = Form(...),
     return {"job_id": pid, "seed": resolved["seed"]}
 
 
-# Map the 12 lego/extract track names onto htdemucs_6s's 6 stems.
+# Map the 12 lego/extract track names onto the separators' stem sets.
+# htdemucs_6s and BS-Roformer SW share the same 6 stems (vocals/bass/drums/
+# guitar/piano|keyboard/other), so one map serves both.
 DEMUCS_STEM = {"vocals": "vocals", "backing_vocals": "vocals", "drums": "drums",
                "percussion": "drums", "bass": "bass", "guitar": "guitar",
                "keyboard": "piano", "synth": "other", "strings": "other",
                "brass": "other", "woodwinds": "other", "fx": "other"}
+
+
+def _roformer_available():
+    return bool(ROFORMER_HOST)
+
+
+def _separate(input_path, work, engine="demucs", stems="all", demucs_mode="6stem"):
+    """Separate `input_path` into stems, returning [(stem_name, wav_path), ...].
+
+    engine='demucs'  → Mac-side htdemucs / htdemucs_6s (fast, no GPU).
+    engine='roformer'→ box-side BS-Roformer SW on the 3090 (SOTA, 6 stems). We free
+                       ComfyUI's VRAM first so the separator isn't fighting the
+                       ACE-Step models for the 3090's memory. `stems` may narrow the
+                       returned set (e.g. 'guitar') to save bandwidth."""
+    if engine == "roformer":
+        if not ROFORMER_HOST:
+            raise HTTPException(400, "roformer_host not set in app_config.json")
+        try:
+            C.free()                       # release the 3090 before the separator loads
+        except Exception:
+            pass
+        with open(input_path, "rb") as f:
+            data = f.read()
+        try:
+            res = roformer_py.separate(data, os.path.basename(input_path), ROFORMER_HOST, stems=stems)
+        except Exception as e:
+            raise HTTPException(502, f"roformer separation failed (is the box service running?): {e}")
+        out = []
+        for name, wav in res["stems"].items():
+            p = os.path.join(work, f"{name}.wav")
+            with open(p, "wb") as fh:
+                fh.write(wav)
+            out.append((name, p))
+        return out
+    files = stems_mod.separate(input_path, work, mode=demucs_mode)
+    return [(os.path.splitext(os.path.basename(f))[0], f) for f in files]
 
 
 @app.post("/api/layer/isolate")
@@ -429,7 +470,8 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
         save_job(pid)
         return {"job_id": pid, "seed": resolved["seed"]}
 
-    # method == 'demucs': Mac-side, synchronous
+    # method in ('demucs','roformer'): synchronous separation (Mac or box GPU)
+    engine = "roformer" if method == "roformer" else "demucs"
     sid = uuid.uuid4().hex
     work = os.path.join(STEMS_DIR, sid)
     os.makedirs(work, exist_ok=True)
@@ -449,14 +491,13 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
         src_label = job_id
     else:
         raise HTTPException(400, "provide a file or job_id")
-    try:
-        files = stems_mod.separate(inp, work, mode="6stem")
-    except Exception as e:
-        raise HTTPException(500, f"separation failed: {e}")
     want = DEMUCS_STEM.get(track, "other")
-    match = next((f for f in files if os.path.splitext(os.path.basename(f))[0] == want), None)
+    stem_files = _separate(inp, work, engine=engine, stems=want)
+    match = next((p for (name, p) in stem_files if name == want), None)
+    if not match:                                  # fall back to 'other' if the exact stem is absent
+        match = next((p for (name, p) in stem_files if name == "other"), None)
     if not match:
-        raise HTTPException(500, f"demucs stem '{want}' not produced")
+        raise HTTPException(500, f"{engine} stem '{want}' not produced")
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.wav")
     shutil.copy(match, out)
@@ -466,7 +507,7 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
         except Exception:
             pass
     save_done_row(jid, "layerstem", {"source": src_label, "track_name": track,
-        "method": "demucs", "demucs_stem": want, "layer_start": start, "layer_end": end}, out)
+        "method": engine, "stem": want, "layer_start": start, "layer_end": end}, out)
     shutil.rmtree(work, ignore_errors=True)
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}", "status": "done"}
 
@@ -595,8 +636,11 @@ async def rvc_convert(file: UploadFile = File(...), params: str = Form(...)):
 
 @app.post("/api/stems/separate")
 async def stems_separate(mode: str = Form("vocals"),
+                         engine: str = Form("demucs"),
                          job_id: str = Form(None),
                          file: UploadFile = File(None)):
+    """Split into stems. engine='demucs' (Mac, modes vocals/all/6stem) or
+    'roformer' (box GPU, BS-Roformer SW — always its 6 stems)."""
     sid = uuid.uuid4().hex
     work = os.path.join(STEMS_DIR, sid)
     os.makedirs(work, exist_ok=True)
@@ -615,18 +659,23 @@ async def stems_separate(mode: str = Form("vocals"),
     else:
         raise HTTPException(400, "provide a file or job_id")
     try:
-        files = stems_mod.separate(inp, work, mode=mode)
+        produced = _separate(inp, work, engine=("roformer" if engine == "roformer" else "demucs"),
+                             stems="all", demucs_mode=mode)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"separation failed: {e}")
     try:
         os.remove(inp)
     except Exception:
         pass
+    files = [p for (_n, p) in produced]
     stems = [{"name": os.path.splitext(os.path.basename(f))[0],
               "url": f"/api/stem/{sid}/{os.path.basename(f)}"} for f in files]
     for f in files:  # register each stem in the library (Stems section)
         save_done_row(uuid.uuid4().hex, "stem",
                       {"source": job_id or (file.filename if file else "upload"),
+                       "engine": engine,
                        "kind": os.path.splitext(os.path.basename(f))[0]}, f)
     return {"id": sid, "stems": stems}
 
@@ -827,23 +876,25 @@ async def master_apply(job_id: str = Form(None),
 @app.post("/api/backing/strip-guitar")
 async def backing_strip_guitar(job_id: str = Form(None),
                                file: UploadFile = File(None),
+                               engine: str = Form("demucs"),
                                normalize: bool = Form(True)):
-    """6-stem split (Mac/Demucs) → recombine every stem EXCEPT guitar → a
-    guitar-less backing. Foundation for the symbolic→DI→amp guitar route: drop
-    the model's distorted guitar so our own clean-DI-then-amped guitar can sit
-    on a clean backing. (Demucs separation is imperfect — some guitar bleed into
-    'other' may remain.)"""
+    """6-stem split → recombine every stem EXCEPT guitar → a guitar-less backing.
+    Foundation for the symbolic→DI→amp guitar route: drop the model's distorted
+    guitar so our own clean-DI-then-amped guitar can sit on a clean backing.
+    engine='demucs' (Mac) or 'roformer' (box GPU, cleaner guitar removal)."""
     work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
     os.makedirs(work, exist_ok=True)
     inp, src_label = _stash_input(work, "input",
                                   await file.read() if file else None,
                                   file.filename if file else None, job_id)
     try:
-        stem_files = stems_mod.separate(inp, work, mode="guitar")
+        produced = _separate(inp, work, engine=("roformer" if engine == "roformer" else "demucs"),
+                            stems="all", demucs_mode="guitar")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"separation failed: {e}")
-    others = [f for f in stem_files
-              if os.path.splitext(os.path.basename(f))[0] != "guitar"]
+    others = [p for (name, p) in produced if name != "guitar"]
     if not others:
         raise HTTPException(500, "no non-guitar stems produced")
     try:

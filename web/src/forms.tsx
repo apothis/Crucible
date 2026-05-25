@@ -386,7 +386,7 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
   const [timbre, setTimbre] = useState<File | null>(null);
   const [legoCfg, setLegoCfg] = useState("6");
   const [isolate, setIsolate] = useState(false);
-  const [method, setMethod] = useState<"demucs" | "extract">("demucs");
+  const [method, setMethod] = useState<"demucs" | "roformer" | "extract">("demucs");
   const [outputs, setOutputs] = useState<"both" | "stem">("both");
   const [gate, setGate] = useState(true);
   const [expert, setExpert] = useState(false);
@@ -473,9 +473,10 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
       </label>
       {isolate && (
         <div className="grid grid-cols-2 gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
-          <Field label="Method" hint="Demucs = Mac, fast; extract = native ACE, GPU">
-            <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as "demucs" | "extract")}>
+          <Field label="Method" hint="Demucs = Mac fast; RoFormer = SOTA 6-stem (GPU); extract = native ACE (GPU)">
+            <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as "demucs" | "roformer" | "extract")}>
               <option value="demucs">Demucs (Mac, fast)</option>
+              {cfg.roformer && <option value="roformer">BS-Roformer SW (GPU, best)</option>}
               <option value="extract">ACE extract (GPU)</option>
             </select>
           </Field>
@@ -665,19 +666,22 @@ export function SwapForm({ busy, ...ctx }: FormProps) {
   );
 }
 
-export function StemsForm({ busy, ...ctx }: FormProps) {
+export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
   const tracks = useLibrary((it) => ["generate", "restyle", "voiceswap", "mix", "song"].includes(it.mode));
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState("vocals");
+  const [engine, setEngine] = useState<"demucs" | "roformer">("demucs");
+  const isRofo = engine === "roformer";
 
   async function run() {
     if (!file && !job) return fail(ctx, "Choose a track to separate.");
     const id = rid();
-    ctx.setResults([{ id, title: "separating on the Mac GPU…", status: "running", pct: 40 }]);
+    ctx.setResults([{ id, title: isRofo ? "separating on the 3090 (BS-Roformer)…" : "separating on the Mac GPU…", status: "running", pct: 40 }]);
     try {
       const fd = new FormData();
       fd.append("mode", mode);
+      fd.append("engine", engine);
       if (file) fd.append("file", file); else fd.append("job_id", job);
       const d = await api.stems(fd);
       ctx.setResults(d.stems.map((s: any) => ({ id: rid(), title: s.name, status: "done", pct: 100, url: s.url })));
@@ -686,7 +690,7 @@ export function StemsForm({ busy, ...ctx }: FormProps) {
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-[var(--color-muted)]">Split a track on the Mac GPU (parallel with the 3090) — isolate a vocal or split fully.</p>
+      <p className="text-xs text-[var(--color-muted)]">Split a track into stems — Demucs on the Mac (parallel with the 3090), or the SOTA BS-Roformer 6-stem model on the 3090.</p>
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="">— choose —</option>
@@ -694,11 +698,24 @@ export function StemsForm({ busy, ...ctx }: FormProps) {
         </select>
       </Field>
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      {cfg.roformer && (
+        <Field label="Engine" hint="RoFormer = best quality, any stem (runs on the 3090)">
+          <select className={inp} value={engine} onChange={(e) => setEngine(e.target.value as "demucs" | "roformer")}>
+            <option value="demucs">Demucs (Mac, fast)</option>
+            <option value="roformer">BS-Roformer SW (GPU, best — 6 stems)</option>
+          </select>
+        </Field>
+      )}
       <Field label="Split mode">
-        <select className={inp} value={mode} onChange={(e) => setMode(e.target.value)}>
-          <option value="vocals">Vocals + instrumental (2-stem)</option>
-          <option value="all">Full split (vocals / drums / bass / other)</option>
-        </select>
+        {isRofo ? (
+          <div className="text-sm text-[var(--color-muted)] px-1 py-2">Always 6 stems: vocals / bass / drums / guitar / piano / other.</div>
+        ) : (
+          <select className={inp} value={mode} onChange={(e) => setMode(e.target.value)}>
+            <option value="vocals">Vocals + instrumental (2-stem)</option>
+            <option value="all">Full split (vocals / drums / bass / other)</option>
+            <option value="6stem">6-stem (adds guitar + piano)</option>
+          </select>
+        )}
       </Field>
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Separating…" : "Separate"}</PrimaryButton>
     </div>
@@ -966,17 +983,19 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
   );
 }
 
-export function BackingForm({ busy, ...ctx }: FormProps) {
+export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
   const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix"].includes(it.mode));
   const [job, setJob] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [engine, setEngine] = useState<"demucs" | "roformer">("demucs");
 
   async function run() {
     if (!file && !job) return fail(ctx, "Choose a track to strip the guitar from.");
     const id = rid();
-    ctx.setResults([{ id, title: "splitting + removing guitar… (Mac)", status: "running", pct: 40 }]);
+    ctx.setResults([{ id, title: engine === "roformer" ? "removing guitar… (3090, BS-Roformer)" : "splitting + removing guitar… (Mac)", status: "running", pct: 40 }]);
     try {
       const fd = new FormData();
+      fd.append("engine", engine);
       if (file) fd.append("file", file); else fd.append("job_id", job);
       const d = await api.stripGuitar(fd);
       ctx.setResults([{ id: rid(), title: "guitar-less backing", status: "done", pct: 100, url: d.audio_url }]);
@@ -986,9 +1005,9 @@ export function BackingForm({ busy, ...ctx }: FormProps) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-[var(--color-muted)]">
-        Remove the guitar from a track (6-stem split on the Mac, recombine without the guitar stem) → a <em>guitar-less backing</em>.
+        Remove the guitar from a track (6-stem split, recombine without the guitar stem) → a <em>guitar-less backing</em>.
         Foundation for the symbolic-guitar route: drop the model's distorted guitar so a clean-DI, properly-amped guitar can sit on top.
-        Demucs isn't perfect — some guitar bleed may remain.
+        {cfg.roformer ? " BS-Roformer (GPU) removes guitar more cleanly than Demucs." : " Demucs isn't perfect — some guitar bleed may remain."}
       </p>
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
@@ -997,6 +1016,14 @@ export function BackingForm({ busy, ...ctx }: FormProps) {
         </select>
       </Field>
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      {cfg.roformer && (
+        <Field label="Engine" hint="RoFormer (3090) separates guitar more cleanly">
+          <select className={inp} value={engine} onChange={(e) => setEngine(e.target.value as "demucs" | "roformer")}>
+            <option value="demucs">Demucs (Mac, fast)</option>
+            <option value="roformer">BS-Roformer SW (GPU, best)</option>
+          </select>
+        </Field>
+      )}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : "Strip guitar → backing"}</PrimaryButton>
     </div>
   );
