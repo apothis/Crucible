@@ -371,6 +371,90 @@ export function RepaintForm(p: FormProps) { return <EditForm {...p} mode="repain
 // Extend (append) removed — not a native ACE task; see RESEARCH.md §10j. EditForm
 // retains the "extend" branch in git history; RepaintForm is the only caller now.
 
+const LAYER_TRACKS = ["vocals", "drums", "bass", "guitar", "keyboard", "strings",
+  "percussion", "synth", "fx", "brass", "woodwinds", "backing_vocals"];
+
+export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
+  const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix", "repaint", "layer", "voiceswap"].includes(it.mode));
+  const [job, setJob] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [track, setTrack] = useState("guitar");
+  const [tags, setTags] = useState("");
+  const [lyrics, setLyrics] = useState("");
+  const [start, setStart] = useState("0");
+  const [end, setEnd] = useState("");
+  const [timbre, setTimbre] = useState<File | null>(null);
+  const [legoCfg, setLegoCfg] = useState("6");
+  const [expert, setExpert] = useState(false);
+  const tuning = useTuning(cfg, expert, true);   // duration derived from the source
+  const isVocal = track === "vocals" || track === "backing_vocals";
+  const applyPreset = (p: Preset) => setTags(p.tags);
+
+  async function run() {
+    if (!job && !file) return fail(ctx, "Choose a backing track (library or upload).");
+    if (!tags.trim()) return fail(ctx, "Add style tags describing the layer to add.");
+    if (end && !(parseFloat(end) > parseFloat(start))) return fail(ctx, "Layer end must be after start.");
+    const id = rid();
+    ctx.setResults([{ id, title: `adding ${track}…`, status: "pending", pct: 0 }]);
+    try {
+      const params: Record<string, unknown> = {
+        ...tuning.params(), tags, track_name: track,
+        lyrics: isVocal ? lyrics : "", instrumental: !isVocal,
+        layer_start: parseFloat(start) || 0, lego_cfg: parseFloat(legoCfg) || 6,
+      };
+      delete params.duration;                     // backend derives it from the backing
+      if (end) params.layer_end = parseFloat(end);
+      const fd = new FormData();
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      if (timbre) fd.append("timbre", timbre);
+      fd.append("params", JSON.stringify(params));
+      const { job_id } = await api.layer(fd);
+      ctx.patch(id, { status: "running", pct: 5 });
+      pollJob(job_id, id, ctx);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <ModeToggle expert={expert} setExpert={setExpert} />
+      <p className="text-xs text-[var(--color-muted)]">
+        Add-a-Layer (ACE-Step <code>lego</code>): generate a new instrument/vocal part over an
+        existing backing in a time region, keeping the rest. <em>Base/SFT only (defaults SFT) — the
+        Model picker's turbo option doesn't apply.</em>
+      </p>
+      <Field label="Backing track">
+        <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
+          <option value="">— pick a library track —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{(t.params.tags || t.params.source || t.id).slice(0, 40)}</option>)}
+        </select>
+      </Field>
+      <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="Layer">
+          <select className={inp} value={track} onChange={(e) => setTrack(e.target.value)}>
+            {LAYER_TRACKS.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
+          </select>
+        </Field>
+        <Field label="Start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+        <Field label="End (s)" hint="blank = full length"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+      </div>
+      <PresetBar genres={cfg.genres} onApply={applyPreset} />
+      <Field label="Style tags" hint="describe the part to add (e.g. 'soaring lead guitar solo, fast melodic')">
+        <input className={inp} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="lead guitar, melodic solo, high register" />
+      </Field>
+      {isVocal && (
+        <Field label="Lyrics" hint="for vocal layers"><textarea className={inp} rows={3} value={lyrics} onChange={(e) => setLyrics(e.target.value)} /></Field>
+      )}
+      <Field label="Timbre reference (optional)" hint="a clip whose instrument/voice character the new layer should adopt">
+        <input className={inp} type="file" accept="audio/*" onChange={(e) => setTimbre(e.target.files?.[0] ?? null)} />
+      </Field>
+      {expert && <Field label="Lego guidance (cfg)" hint="base/sft; sft cfg6 is the quality keeper"><input className={inp} type="number" step="0.5" value={legoCfg} onChange={(e) => setLegoCfg(e.target.value)} /></Field>}
+      {tuning.node}
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : `Add ${track.replace("_", " ")} layer`}</PrimaryButton>
+    </div>
+  );
+}
+
 function useVoices() {
   const [voices, setVoices] = useState<string[]>([]);
   const [status, setStatus] = useState("");

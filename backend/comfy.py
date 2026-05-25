@@ -305,3 +305,77 @@ def build_edit(p, audio_ref):
     g["13"] = {"class_type": "SaveAudioMP3",
                "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/edit", "quality": "320k"}}
     return g, p
+
+
+def build_lego(p, audio_ref, timbre_ref=None):
+    """Add-a-Layer (ACE-Step `lego` task) — generate a NEW named track
+    (vocals/drums/bass/guitar/keyboard/strings/…) into a time region of an existing
+    backing, preserving the rest, via the vendored `ACEStep15NativeLegoGuider`
+    (comfy_custom_nodes/ComfyUI-ACEStep-Repaint) driven through `SamplerCustomAdvanced`.
+
+    Per ACE Studio's docs the layer is generated as an isolated, additive part (see
+    RESEARCH §11a) — confirm stem-vs-full-mix on the first GPU run.
+
+    - `track_name` = which instrument/voice to add.
+    - `layer_start`/`layer_end` (seconds) = the region to fill.
+    - optional `timbre_ref` audio clip → reference_latent so the new part adopts that
+      clip's instrument/voice character (item D); falls back to the backing's own latent
+      when `ref_timbre` is set without a separate clip.
+
+    CRITICAL: lego/extract/complete are BASE/SFT-ONLY — the turbo silence-latent does
+    not apply (RESEARCH §10j). Default xl_sft; never force turbo here.
+    """
+    p = dict(p)
+    if p.get("variant") not in ("xl_base", "xl_sft"):
+        p["variant"] = "xl_sft"
+    if not p.get("steps"):
+        p["steps"] = 50 if p["variant"] == "xl_base" else 30
+    p = _resolve(p)
+    g = _loaders(p["_file"], p.get("shift", 3.0))
+    track = p.get("track_name", "vocals")
+    g["8"] = {"class_type": "ACEStep15TaskTextEncode", "inputs": {
+        "clip": ["5", 0],
+        "text": p.get("tags", ""),
+        "task_type": "lego",
+        "track_name": track,
+        "lyrics": p.get("lyrics", "") if track in ("vocals", "backing_vocals") else "",
+        "bpm": int(p.get("bpm", 120)),
+        "duration": float(p.get("duration", 60.0)),
+        "keyscale": p.get("keyscale", "E minor"),
+        "timesignature": str(p.get("timesignature", "4")),
+        "language": p.get("language", "en"),
+        "seed": p["seed"],
+        "cfg_scale": 2.0, "temperature": 0.85, "top_p": 0.9, "top_k": 0, "min_p": 0.0,
+    }}
+    g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
+    g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
+    g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
+    lego_inputs = {
+        "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0],
+        "source_latents": ["15", 0],
+        "cfg": float(p.get("lego_cfg", 6.0)),       # base/sft guidance; sft cfg6 is our quality keeper (cfg7.3 muddied)
+        "track_name": track,
+        "start_seconds": float(p.get("layer_start", 0.0)),
+        "end_seconds": float(p.get("layer_end", p.get("duration", 60.0))),
+    }
+    if timbre_ref:
+        # Separate timbre clip → its own encode → reference_latent.
+        g["16"] = {"class_type": "LoadAudio", "inputs": {"audio": timbre_ref}}
+        g["17"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["16", 0], "vae": ["6", 0]}}
+        lego_inputs["reference_latent"] = ["17", 0]
+    elif p.get("ref_timbre"):
+        lego_inputs["reference_latent"] = ["15", 0]
+    g["20"] = {"class_type": "ACEStep15NativeLegoGuider", "inputs": lego_inputs}
+    g["21"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": ["7", 0], "scheduler": p.get("scheduler", "simple"),
+        "steps": p["_steps"], "denoise": 1.0}}
+    g["22"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": p.get("sampler_name", "euler")}}
+    g["23"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": p["seed"]}}
+    # Lego guider returns only a GUIDER (no resized latent) → sample the source latent.
+    g["24"] = {"class_type": "SamplerCustomAdvanced", "inputs": {
+        "noise": ["23", 0], "guider": ["20", 0], "sampler": ["22", 0],
+        "sigmas": ["21", 0], "latent_image": ["15", 0]}}
+    g["12"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["24", 0], "vae": ["6", 0]}}
+    g["13"] = {"class_type": "SaveAudioMP3",
+               "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/layer", "quality": "320k"}}
+    return g, p

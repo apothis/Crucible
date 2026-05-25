@@ -341,6 +341,42 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
 # (comfy.build_edit + _resolve_edit_source + postfx.close_seam_gap remain for Repaint.)
 
 
+@app.post("/api/layer")
+async def layer(file: UploadFile = File(None), params: str = Form(...),
+                job_id: str = Form(None), timbre: UploadFile = File(None)):
+    """Add-a-Layer (ACE-Step `lego` task): generate a new named track
+    (track_name = vocals/drums/bass/guitar/keyboard/strings/…) into a time region of
+    an existing backing, preserving the rest. params JSON carries track_name,
+    layer_start/layer_end (sec), tags (+lyrics for vocal layers), optional timbre.
+    Base/SFT only (defaults xl_sft) — see RESEARCH §11a / §10j."""
+    p = json.loads(params)
+    if not (p.get("tags") or "").strip():
+        raise HTTPException(400, "style tags are required (describe the layer to add)")
+    ref, label, dur = await _resolve_edit_source(file, job_id)
+    if dur and not p.get("duration"):
+        p["duration"] = dur                         # layer over the backing's full length
+    if not p.get("layer_end"):
+        p["layer_end"] = p.get("duration", dur or 60.0)
+    timbre_ref = None
+    if timbre is not None:
+        tdata = await timbre.read()
+        tname = timbre.filename if timbre.filename.endswith(".wav") else (timbre.filename + ".mp3")
+        timbre_ref = C.upload_audio(tdata, tname)
+    try:
+        graph, resolved = comfy.build_lego(p, ref, timbre_ref=timbre_ref)
+        res = C.submit(graph, CLIENT_ID)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "layer")
+        JOBS[pid]["params"]["source"] = label
+    save_job(pid)
+    return {"job_id": pid, "seed": resolved["seed"]}
+
+
 @app.get("/api/job/{pid}")
 def job(pid: str):
     with LOCK:

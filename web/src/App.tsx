@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type LibItem, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, RepaintForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
+import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { ImportForm } from "./Import";
 import { Assistant } from "./Assistant";
@@ -14,6 +14,7 @@ const MODES = [
   { id: "import", label: "Import" },
   { id: "restyle", label: "Restyle" },
   { id: "repaint", label: "Repaint" },
+  { id: "layer", label: "Add Layer" },
   { id: "vocals", label: "Vocals" },
   { id: "swap", label: "Voice Swap" },
   { id: "stems", label: "Stems" },
@@ -26,7 +27,7 @@ const MODES = [
 
 // Grouped navigation (replaces the flat tab row) — by workflow stage.
 const GROUPS: { name: string; modes: string[] }[] = [
-  { name: "Create", modes: ["generate", "song", "restyle", "repaint"] },
+  { name: "Create", modes: ["generate", "song", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master"] },
@@ -122,6 +123,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "import": return <ImportForm goTo={goTo} />;
     case "restyle": return <RestyleForm {...p} />;
     case "repaint": return <RepaintForm {...p} />;
+    case "layer": return <LayerForm {...p} />;
     case "vocals": return <VocalsForm {...p} />;
     case "swap": return <SwapForm {...p} />;
     case "stems": return <StemsForm {...p} />;
@@ -249,6 +251,7 @@ function libDesc(it: LibItem): string {
   if (it.mode === "tone") return `tone: ${p.preset || "?"}${p.source ? " · from " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "master") return `mastered${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "repaint") return `repaint: ${p.tags ? String(p.tags).slice(0, 28) : "?"} · [${p.repaint_start ?? "?"}–${p.repaint_end ?? "?"}s]`;
+  if (it.mode === "layer") return `layer: ${p.track_name || "?"}${p.tags ? " · " + String(p.tags).slice(0, 22) : ""}`;
   if (it.mode === "extend") return `extend +${p.extend_left || 0}/${p.extend_right || 0}s · ${p.tags ? String(p.tags).slice(0, 24) : "?"}`;
   if (it.mode === "backing") return `guitar-less backing${p.source ? " · from " + String(p.source).slice(0, 22) : ""}`;
   if (it.mode === "guitar") return `amped guitar (${p.preset || "?"})${p.source ? " · " + String(p.source).slice(0, 22) : ""}`;
@@ -275,6 +278,7 @@ const LIB_SECTIONS = [
   { key: "mix", label: "Mixes" },
   { key: "restyle", label: "Restyled" },
   { key: "repaint", label: "Repainted" },
+  { key: "layer", label: "Added layers" },
   { key: "extend", label: "Extended" },
   { key: "tone", label: "Re-toned" },
   { key: "backing", label: "Backing (no guitar)" },

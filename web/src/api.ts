@@ -33,6 +33,7 @@ export const api = {
   generate: (p: unknown) => jpost("/api/generate", p),
   restyle: (fd: FormData) => jform("/api/restyle", fd),
   repaint: (fd: FormData) => jform("/api/repaint", fd),
+  layer: (fd: FormData) => jform("/api/layer", fd),
   rvcVoices: () => jget("/api/rvc/voices"),
   rvcConvert: (fd: FormData) => jform("/api/rvc/convert", fd),
   voiceswap: (fd: FormData) => jform("/api/voiceswap", fd),
