@@ -507,6 +507,19 @@ _Context: we ruled out getting a clean DI from ACE-Step (won't render clean on p
 - **Near-term (improve the source, low effort):** stick with ACE-Step but make its output better — download **xl_sft** + run a sampler/scheduler/cfg/steps sweep (§10c), and consider a **Family-1 stem model** later to get a clean (artifact-free) guitar stem for the reshape chain.
 - **High-ceiling (real tone control, big build):** the **Family-2 symbolic route** — generate metal guitar as MIDI (ProgGP/DadaGP/GTR-CTRL) → render a clean DI (Shreddage 3 Stratus FREE) → Helix amp. This is the only path that makes the owned Helix amp genuinely useful for metal, and gives reproducible, editable riffs. Worth prototyping once the near-term source work is done.
 
+### 10i. Remix / cover / repaint / extend workflows — how others use ACE in ComfyUI (2026-05-25)
+
+_Prompted by a user-spotted YouTube remix workflow (which used Detail Daemon as a sharpening step). Researching how people structure ACE **remixes**, and what the box already exposes._
+
+**The box has the ACE primitives natively** (`/object_info`): `LoadAudio`, `VAEEncodeAudio`, `VAEDecodeAudio(/Tiled)`, `TextEncodeAceStepAudio1.5`, `EmptyAceStep1.5LatentAudio`, plus audio utils (`TrimAudioDuration`, `AudioConcat`, `AudioMerge`, `SplitAudioChannels`, `ReferenceTimbreAudio`). So the four "remix" tasks are **graph patterns over these**, not new installs:
+
+- **Cover / audio2audio (= "remix" in most videos)** — `LoadAudio → VAEEncodeAudio → KSampler(latent_image=encoded, denoise=cover strength) → VAEDecodeAudio`. **Higher denoise = more change from the source** (RESEARCH §4/§8: ~0.3–0.5 for big genre jumps, higher to stay closer is wrong way round — *lower denoise = closer to source*). ✅ **We already have this** = the **Restyle** tab (`build_restyle`, `restyle_amount` = denoise). A "remix" is just restyle with new tags + a chosen denoise; Detail Daemon (§10c) is an optional post-sharpen on top.
+- **Repaint (targeted edit)** — regenerate a **time range** / change lyrics / swap singing gender / restyle a section, **preserving the rest**. Mechanically: encode the audio, then re-sample only a masked latent window (denoise applied to that region). Native node graph isn't turnkey/documented on the wiki; the **`ACE-Step-ComfyUI` custom pack** (ace-step/ACE-Step-ComfyUI, via ComfyUI-Manager) adds first-class **Repaint/Extend/Cover** nodes (see the "I Added Native Support for Repaint, Extend, Cover" video). **We don't have repaint** — candidate feature: "regenerate this section" on a library track (pairs with the Song Constructor sections + our `backend/sections.py` boundary detection).
+- **Extend / continue** — lengthen a track by padding the latent and generating the tail conditioned on the existing audio. Native graph not documented; provided by the ACE-Step-ComfyUI pack. **We don't have it** — candidate feature.
+- **Retake / variation** — small-denoise reroll for subtle variations of a take (vs our current approach = fresh seeds for batch variations).
+
+**Two routes to add repaint/extend:** (a) build the masked-latent graphs ourselves over the native nodes (no box install, more graph work — needs verifying ACE's latent masking), or (b) install the **ACE-Step-ComfyUI** custom pack on the box (turnkey nodes, same install pattern as Detail Daemon §10c) and drive them. **TODO (per user):** keep watching community remix workflows; if Detail Daemon / repaint / a specific remix chain recurs, fold it in. Detail Daemon install left for now (user deferred).
+
 ### 10e. Proposed prioritized experiments (confirm before any GPU run / install)
 
 | # | Experiment | Track | Expected impact | Effort | GPU? |
