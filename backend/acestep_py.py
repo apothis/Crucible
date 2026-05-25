@@ -18,7 +18,8 @@ import time
 import requests
 
 HTTP_TIMEOUT = 60          # per call
-DEFAULT_DEADLINE = 900     # max seconds to wait for one generation
+DEFAULT_DEADLINE = 5400    # max wait for one generation (generous: the FIRST request
+                           # also triggers a model download that can take a while)
 
 
 def _base(host):
@@ -88,6 +89,8 @@ def result_file(task):
             res = json.loads(res)
         except Exception:
             return None
+    if isinstance(res, list):           # engine returns a list of song objects (batch) — take the first
+        res = res[0] if res else None
     if isinstance(res, dict):
         return res.get("file") or res.get("audio") or res.get("path")
     return None
@@ -108,7 +111,7 @@ def download(host, file_ref):
     return r.content
 
 
-def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=2.0):
+def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0):
     """Poll /query_result until the task succeeds (status==1); return its file ref.
     Raises on failure/timeout. Status: 1=done; treat negative or 'failed'/'error' as failure."""
     start = time.time()
