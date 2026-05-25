@@ -721,3 +721,21 @@ _User asked to research Option 1 properly: drop ComfyUI's ACE-Step path and stan
 **Recommendation:** proceed — it's the correct long-term engine (what ACE Studio uses) and the API/VRAM/Windows story all fit. Do it incrementally (cover-first), keep ComfyUI running until each task is verified on the official engine, so nothing working is lost mid-migration.
 
 **Sources (§13):** INFERENCE.md https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INFERENCE.md · INSTALL.md https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INSTALL.md · API.md https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/API.md · GRADIO_GUIDE.md · DeepWiki https://deepwiki.com/ace-step/ACE-Step-1.5 (Generation Features / Advanced Tasks / Quick Start) · repo https://github.com/ace-step/ACE-Step-1.5 · cover example (country→metal, audio_cover_strength=0.4) from INFERENCE.md/DeepWiki.
+
+## 14. Song artwork generation — uncensored realistic image models for ComfyUI (research, 2026-05-25)
+
+_User idea: optional feature — an LLM writes an image prompt from the song's tags/lyrics/title, then ComfyUI (already on the box) generates album/song artwork. Needs REALISTIC + UNCENSORED models (metal art = dark/occult/gore that "safe" models refuse). Sources at end._
+
+**Top pick — CHROMA** (`lodestones/Chroma`, HuggingFace): a FLUX-based model **uncensored at the training level** (censorship removed + anatomical training added), **Apache-2.0** (commercial OK), pruned to **8.9B** params, **FLUX-architecture-compatible** (existing FLUX LoRAs work), and has **first-class ComfyUI support** (official `ComfyUI_examples/chroma/` workflow). FLUX-level quality without FLUX dev's content restrictions. Needs 12 GB+ VRAM → the **3090's 24 GB is ample** (FP8 halves it). **On HuggingFace, so NOT Civitai-geoblocked** — I can point to the exact files; no VPN dance. **This is the recommended default.**
+
+**Why not plain FLUX dev:** top quality but **not uncensored** — NSFW/dark prompts come out blurred/distorted unless you add an NSFW finetune or unlock LoRA. Chroma is the OOTB-uncensored FLUX-class option.
+
+**Lighter/faster alternative — SDXL realism checkpoints:** **Juggernaut XL** (the photorealism go-to), RealVisXL, CyberRealistic XL — superb realism, much lighter/faster than FLUX-class, uncensored community finetunes. **Caveat: these live on Civitai, which is geoblocked from Claude's web tools** → user VPN-downloads + transfers to the box ([[civitai-vpn]]); I provide the shopping list. Good as a "fast" engine or alternate aesthetic.
+
+**Other 2026 uncensored options noted:** HunyuanImage ("simplest uncensored"), Pony Diffusion v6 XL (stylized/anime, not for realism). 
+
+**Recommendation:** make the image step **engine-agnostic** (per [[more-options]]) with **CHROMA as the default** (HF download, ComfyUI-native, Apache, fits the 3090) and **Juggernaut XL** as an optional fast SDXL alternative (Civitai → VPN-transfer). ComfyUI is already installed, so this reuses it — just add the checkpoint + an image workflow; no new server.
+
+**Proposed feature shape:** `llm.py` gains an "artwork prompt" system prompt (local Gemma or Claude) → builds an image prompt from the song's tags/lyrics/title → `comfy.build_image()` (Chroma or SDXL t2i graph) → `POST /api/artwork` (N images for a song) → save to library (mode `image`) + show them with the track. Optional, off to the side. Needs the image checkpoint installed on the box (Chroma from HF — a few GB; an installer or ComfyUI-Manager step) before first run.
+
+**Sources (§14):** Chroma — https://huggingface.co/lodestones/Chroma · ComfyUI Chroma workflow https://comfyanonymous.github.io/ComfyUI_examples/chroma/ · uncensored-model roundups https://offlinecreator.com/blog/best-uncensored-ai-models-civitai-2026 · https://offlinecreator.com/blog/flux-vs-sdxl-vs-hunyuan-uncensored · https://offlinecreator.com/blog/how-to-run-flux-uncensored-locally-2026 · realism roundup https://awesomeagents.ai/guides/best-local-image-generation-models-2026/
