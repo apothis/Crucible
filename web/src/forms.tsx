@@ -460,11 +460,13 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
         <Field label="Start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
         <Field label="End (s)" hint="blank = full length"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={cleanBed} onChange={(e) => setCleanBed(e.target.checked)} />
-        Strip {track.replace("_", " ")} from the backing first <span className="text-[var(--color-muted)]">(clean bed — so the added part is the only {track.replace("_", " ")}, and isolates cleanly)</span>
-      </label>
-      {cleanBed && cfg.roformer && (
+      {expert && (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={cleanBed} onChange={(e) => setCleanBed(e.target.checked)} />
+          <span><span className="text-[var(--color-accent)]">Advanced:</span> strip {track.replace("_", " ")} from the backing first <span className="text-[var(--color-muted)]">(clean bed — so the added part is the only {track.replace("_", " ")})</span></span>
+        </label>
+      )}
+      {expert && cleanBed && cfg.roformer && (
         <Field label="Bed separation engine" hint="how to strip the existing instrument before layering">
           <select className={inp} value={bedEngine} onChange={(e) => setBedEngine(e.target.value as "demucs" | "roformer")}>
             <option value="demucs">Demucs (Mac, fast)</option>
