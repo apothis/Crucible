@@ -689,3 +689,35 @@ _Verified empirically on a guitar-lead-over-rhythm-backing test (user-driven QA 
 - `combine_other` (param on `/api/layer/isolate`): sum the `target` + `other` stems, so we recover the whole added part regardless of which bucket the re-render dumped it into. On a clean bed the bed's `other` is ~0.002, so `target+other` ≈ just the added part.
 - Verified: clean-bed guitar lead isolates at region-RMS **0.138** via `combine_other` (vs **0.000** grabbing `guitar` alone). UI: Layer tab "Strip {track} from the backing first (clean bed)" + "Isolate as stem" → the isolate call passes `combine_other` automatically.
 - **Caveat that remains:** if you DON'T clean the bed (backing keeps its own guitar), the isolated stem is rhythm+lead together — inherent to separation, not fixable. Clean-bed is the recommended path for a separable added part.
+
+## 13. Migrating to the OFFICIAL ACE-Step engine (replacing ComfyUI for ACE tasks) — research (2026-05-25)
+
+_User asked to research Option 1 properly: drop ComfyUI's ACE-Step path and standardize on the official `acestep` engine (the one ACE Studio runs), because the community ComfyUI cover node is broken (no `audio_cover_strength`) and running both engines is redundant + duplicate models. Verdict: it's the better engine and it's feasible. Sources at end._
+
+**Why the official engine is the right target (capability):** it implements ALL six tasks with the complete param set — text2music, **cover (with `audio_cover_strength` 0–1)**, repaint, lego, extract, complete — plus an LM "thinking"/`format_input` step (auto-expand tags→caption, auto-infer bpm/key) we don't currently have. Cover example (official docs) literally does country→metal at `audio_cover_strength=0.4, guidance_scale=9, steps=28, cfg_interval 0–0.95, infer_method=ode`. ComfyUI gives us none of this for cover.
+
+**It has a real REST API server (maps onto how we already drive ComfyUI):**
+- Launch: `python acestep/api_server.py` (or `acestep-api`), default **port 8001**; Windows portable `.7z` ships `start_api_server.bat`.
+- Async pattern: `POST /release_task` (params; `thinking=true` optional) → `POST /query_result` (poll `status==1`) → `GET /v1/audio?path=…` to download. Plus `/v1/models`, `/v1/init` (switch models without restart), `/v1/stats`, `/health`, `/format_input`, `/create_random_sample`.
+- Source audio: `multipart/form-data` field `src_audio`/`ctx_audio`, OR server-side `src_audio_path`.
+- **Models stay resident**; `/v1/init` hot-swaps DiT/LM; slots 2–3 allow concurrent models. So no cold load per request.
+
+**Models — can we reuse ComfyUI's files? NO (the key finding).** The official engine uses **HuggingFace-format checkpoint directories** (auto-download from `ACE-Step/Ace-Step1.5` → `./checkpoints/`, redirectable via `ACESTEP_CHECKPOINTS_DIR`), and a **different component split** than ComfyUI: official = `vae` + **Qwen3-Embedding-0.6B** text encoder + separate **LM models (0.6B/1.7B/4B)** + DiT (turbo 2B / XL 4B). ComfyUI uses repackaged individual bf16 safetensors with a Qwen-4B-as-CLIP. Same underlying model family, **incompatible packaging** → migration needs its **own download** (core ~10GB; XL 4B DiT + larger LM add more — call it ~20–30GB on the box). Disk is on the Windows box (not the Mac SSD). Not a blocker, but it's a real separate download, not a symlink.
+
+**Box fit:** Windows portable package, **CUDA 12.8**, Python 3.11–3.12; VRAM ≥6GB for LM+DiT (the **3090's 24GB is ample** — no offload/quant needed, unlike <20GB cards). Auto VRAM tiering (GPU tiled → GPU+CPU offload → CPU) built in. Runs as a persistent service → fits our RVC/SoulX/RoFormer pattern + the new Service Manager.
+
+**What we'd gain / lose:**
+- **Gain:** working cover (strength control), native repaint (no turbo-hack), LM auto-caption/bpm/key, a richer/cleaner param set, ONE engine, no two-engine redundancy.
+- **Lose:** ComfyUI's graph flexibility for ACE (we don't really use it beyond what we built) and our `APG` node — but the official's `cfg_interval_start/end` is its own native high-cfg-oversaturation control (APG's purpose). RoFormer/RVC/SoulX are already separate services, unaffected. Negative-prompt handling on the official engine = TODO to confirm.
+
+**Migration plan (incremental, de-risked):**
+1. **Install** official ACE-Step on the box (portable `.7z` or `uv`), download the XL model set, run `start_api_server.bat` on :8001, models resident. Add to the Service Manager. (Box-side install — write an installer `.bat` like our other `*_AUTO_INSTALL.bat`; user runs it.)
+2. **Mac client** `backend/acestep_py.py` — submit/poll/download against :8001 (mirrors the ComfyUI client). Config key `acestep_host`.
+3. **Port task-by-task, verify each before moving on:** **cover first** (the motivator → finally test country→metal at strength ~0.4), then **text2music** (A/B against current tuned ComfyUI takes — must not regress; dial in guidance/steps/cfg_interval), then repaint/lego/extract.
+4. **Retire ComfyUI for ACE** once all tasks verified on the official engine (can leave it installed but unused initially).
+
+**Risks:** (a) re-verifying generation quality matches/beats our tuned ComfyUI output (different defaults — needs A/B); (b) build effort (new client + rewrite `comfy.py` builders → acestep params); (c) separate model download on the box; (d) official package maturity (e.g. issue #200: SFT in service mode). All manageable; cover + generation A/B are the gates.
+
+**Recommendation:** proceed — it's the correct long-term engine (what ACE Studio uses) and the API/VRAM/Windows story all fit. Do it incrementally (cover-first), keep ComfyUI running until each task is verified on the official engine, so nothing working is lost mid-migration.
+
+**Sources (§13):** INFERENCE.md https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INFERENCE.md · INSTALL.md https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INSTALL.md · API.md https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/API.md · GRADIO_GUIDE.md · DeepWiki https://deepwiki.com/ace-step/ACE-Step-1.5 (Generation Features / Advanced Tasks / Quick Start) · repo https://github.com/ace-step/ACE-Step-1.5 · cover example (country→metal, audio_cover_strength=0.4) from INFERENCE.md/DeepWiki.
