@@ -739,3 +739,26 @@ _User idea: optional feature — an LLM writes an image prompt from the song's t
 **Proposed feature shape:** `llm.py` gains an "artwork prompt" system prompt (local Gemma or Claude) → builds an image prompt from the song's tags/lyrics/title → `comfy.build_image()` (Chroma or SDXL t2i graph) → `POST /api/artwork` (N images for a song) → save to library (mode `image`) + show them with the track. Optional, off to the side. Needs the image checkpoint installed on the box (Chroma from HF — a few GB; an installer or ComfyUI-Manager step) before first run.
 
 **Sources (§14):** Chroma — https://huggingface.co/lodestones/Chroma · ComfyUI Chroma workflow https://comfyanonymous.github.io/ComfyUI_examples/chroma/ · uncensored-model roundups https://offlinecreator.com/blog/best-uncensored-ai-models-civitai-2026 · https://offlinecreator.com/blog/flux-vs-sdxl-vs-hunyuan-uncensored · https://offlinecreator.com/blog/how-to-run-flux-uncensored-locally-2026 · realism roundup https://awesomeagents.ai/guides/best-local-image-generation-models-2026/
+
+## 15. Rock/metal LoRAs for ACE-Step (research, 2026-05-25)
+
+_User asked what rock/metal LoRAs exist for ACE-Step. Sources at end._
+
+**No purpose-built "heavy metal" LoRA exists yet**, but the closest ready-made option is strong and metal-adjacent:
+
+- **DisturbingTheField/ACE-Step-v1.5-raspy-vocal-and-instrumental-5-LoRAs** (HuggingFace — NOT Civitai-geoblocked):
+  - `male_vocals` — **raspy/hoarse male vocals** (very metal-adjacent).
+  - `instrumental` — **electric/distorted guitar, bass, drums, piano, synth**.
+  - 3 pre-merged voc/inst blends (0.8/0.8, voc0.6/inst1.4, voc1.4/inst0.6).
+  - **Trained on `ACE-Step/Ace-Step1.5` = `acestep-v15-base` + `acestep-5Hz-lm-4B`** (the OFFICIAL engine's models). Recommended LoRA scale **0.2–0.7** (low works best); no trigger words; test Think on/off.
+  - **Loaded via the official ACE-Step engine** (rename to `adapter_model.safetensors`, use its LoRA loader / Gradio "LoRA Training" tab; `--init_service false`) — **NOT ComfyUI.** ⇒ another reason the official-engine migration is the right call: the metal-relevant LoRA ecosystem targets it.
+- **Epic Music** LoRA (Civitai 1962774) — symphonic/epic beds (good for symphonic metal). Civitai → user VPN-downloads + transfers ([[civitai-vpn]]).
+- Other HF: `DisturbingTheField/…-acoustic-guitar…` (folk-metal beds), `woctordho/ACE-Step-v1-LoRA-collection` (older **v1**, likely incompatible with 1.5).
+
+**⚠️ Compatibility caveat (the practical gotcha):** a LoRA is tied to the **exact DiT it was trained on**. The pack above used `acestep-v15-base` — if that's the **2B base** (not the **XL 4B** base/sft we're downloading), it **won't load on XL** (different param count). So either (a) run the matching base DiT for LoRA work, or (b) the LoRA may need an XL-trained equivalent. **Verify the DiT variant before relying on it** (download the matching base if needed, or test-load).
+
+**Best path for a truly metal-tuned model — train our own (highest ceiling):** the official ACE-Step engine ships a **one-click LoRA Training tab** + a `LoRA_Training_Tutorial.md`; **20–50 reference tracks** of the target metal style → a custom LoRA. This was already flagged as experiment #9 (§10e); the official engine makes it low-friction. Train it on whichever DiT we standardize on (XL base/sft) so compatibility is guaranteed. This is the real win — a Crucible metal LoRA.
+
+**Recommendation:** after the engine migration, (1) try the **DisturbingTheField raspy+distorted pack** (verify DiT-variant match) as a quick metal-adjacent boost; (2) plan a **custom metal LoRA** via the engine's built-in trainer for the genuine article. Make LoRA a selectable, weighted option in the generate/cover requests (pluggable, per [[more-options]]).
+
+**Sources (§15):** raspy+instrumental pack https://huggingface.co/DisturbingTheField/ACE-Step-v1.5-raspy-vocal-and-instrumental-5-LoRAs (mirror m125148) · acoustic-guitar LoRA https://huggingface.co/DisturbingTheField/ACE-Step-v1.5-acoustic-guitar-and-a-merge-LoRA · Epic Music https://civitai.com/models/1962774 · v1 collection https://huggingface.co/woctordho/ACE-Step-v1-LoRA-collection · LoRA training https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/LoRA_Training_Tutorial.md
