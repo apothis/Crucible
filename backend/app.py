@@ -362,6 +362,10 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
         if p.get("seed"):
             fields["seed"] = int(p["seed"])
         try:
+            C.free()                                  # release ComfyUI's VRAM — the official engine + ComfyUI share the one 3090
+        except Exception:
+            pass
+        try:
             task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(data, label), ctx_audio=ctx)
         except Exception as e:
             raise HTTPException(500, f"acestep submit failed: {e}")
