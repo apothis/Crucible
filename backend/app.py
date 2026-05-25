@@ -70,6 +70,31 @@ def make_rvc():
 
 R, RVC_DRIVER = make_rvc()
 
+
+def free_gpu(keep=""):
+    """Evict every OTHER box GPU service before running `keep`, so the shared 3090
+    isn't double-booked. ComfyUI + RVC expose /free; SoulX & RoFormer self-unload
+    after each run; ACE-Step runs CPU-offloaded (low idle VRAM, no unload API)."""
+    if keep != "comfy":
+        try:
+            C.free()
+        except Exception:
+            pass
+    if keep != "rvc":
+        host = CFG.get("rvc_python_host", "")
+        if host:
+            try:
+                requests.post(f"http://{host}/free", timeout=15)
+            except Exception:
+                pass
+
+
+def submit_comfy(graph):
+    """Free the other GPU services, then submit a graph to ComfyUI."""
+    free_gpu("comfy")
+    return C.submit(graph, CLIENT_ID)
+
+
 # in-memory live job state keyed by prompt_id
 JOBS = {}
 LOCK = threading.Lock()
@@ -253,7 +278,7 @@ def generate(p: dict):
         raise HTTPException(400, "style tags are required (an empty prompt produces noise)")
     try:
         graph, resolved = comfy.build_t2m(p)
-        res = C.submit(graph, CLIENT_ID)
+        res = submit_comfy(graph)
     except Exception as e:
         raise HTTPException(500, f"submit failed: {e}")
     if res.get("node_errors"):
@@ -273,7 +298,7 @@ async def restyle(file: UploadFile = File(None), params: str = Form(...), job_id
     ref, label, dur = await _resolve_edit_source(file, job_id)   # upload OR a library track (e.g. an import)
     try:
         graph, resolved = comfy.build_restyle(p, ref)
-        res = C.submit(graph, CLIENT_ID)
+        res = submit_comfy(graph)
     except Exception as e:
         raise HTTPException(500, f"submit failed: {e}")
     if res.get("node_errors"):
@@ -380,7 +405,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
         if p.get("seed"):
             fields["seed"] = int(p["seed"])
         try:
-            C.free()                                  # release ComfyUI's VRAM — the official engine + ComfyUI share the one 3090
+            free_gpu("ace")                           # free ComfyUI + RVC before the (offloaded) ACE engine generates
         except Exception:
             pass
         try:
@@ -409,7 +434,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
         timbre_ref = C.upload_audio(tdata, tname)
     try:
         graph, resolved = comfy.build_cover(p, ref, timbre_ref=timbre_ref)
-        res = C.submit(graph, CLIENT_ID)
+        res = submit_comfy(graph)
     except Exception as e:
         raise HTTPException(500, f"submit failed: {e}")
     if res.get("node_errors"):
@@ -478,7 +503,7 @@ def _submit_edit(p, ref, mode, label):
         raise HTTPException(400, "style tags are required (describe the new content)")
     try:
         graph, resolved = comfy.build_edit(p, ref)
-        res = C.submit(graph, CLIENT_ID)
+        res = submit_comfy(graph)
     except Exception as e:
         raise HTTPException(500, f"submit failed: {e}")
     if res.get("node_errors"):
@@ -632,7 +657,7 @@ async def layer(file: UploadFile = File(None), params: str = Form(...),
         timbre_ref = C.upload_audio(tdata, tname)
     try:
         graph, resolved = comfy.build_lego(p, ref, timbre_ref=timbre_ref)
-        res = C.submit(graph, CLIENT_ID)
+        res = submit_comfy(graph)
     except Exception as e:
         raise HTTPException(500, f"submit failed: {e}")
     if res.get("node_errors"):
@@ -670,7 +695,7 @@ def _separate(input_path, work, engine="demucs", stems="all", demucs_mode="6stem
         if not ROFORMER_HOST:
             raise HTTPException(400, "roformer_host not set in app_config.json")
         try:
-            C.free()                       # release the 3090 before the separator loads
+            free_gpu("roformer")           # free ComfyUI + RVC before the separator loads
         except Exception:
             pass
         send_path = input_path
@@ -720,7 +745,7 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
             p["duration"] = dur
         try:
             graph, resolved = comfy.build_extract(p, ref)
-            res = C.submit(graph, CLIENT_ID)
+            res = submit_comfy(graph)
         except Exception as e:
             raise HTTPException(500, f"submit failed: {e}")
         if res.get("node_errors"):
@@ -888,6 +913,7 @@ async def rvc_convert(file: UploadFile = File(...), params: str = Form(...)):
     p = json.loads(params)
     if not p.get("voice"):
         raise HTTPException(400, "no voice selected")
+    free_gpu("rvc")                       # free ComfyUI before RVC runs (shared 3090)
     try:
         wav = R.convert(
             await file.read(), file.filename, p["voice"],
@@ -1638,7 +1664,7 @@ def vocal_build(body: dict):
     # Shared 3090: if this build will use the GPU (a host engine or RVC
     # re-timbre), free ComfyUI's VRAM first so models don't collide.
     if engine != "guide" or body.get("retimbre"):
-        C.free()
+        free_gpu("soulx")
     try:
         wav = voicegen_mod.synthesize(engine, score, CFG, reference=ref, opts=opts)
     except Exception as e:
@@ -1704,7 +1730,7 @@ async def soulx_prep(name: str = Form(...), language: str = Form("English"),
         fname = os.path.basename(src)
     else:
         raise HTTPException(400, "provide a file or job_id")
-    C.free()  # free ComfyUI VRAM; preprocess is GPU-heavy
+    free_gpu("soulx")  # free ComfyUI + RVC; preprocess is GPU-heavy
     try:
         r = requests.post(f"http://{host}/voices/prep",
                           data={"name": name, "language": language,
@@ -1756,6 +1782,7 @@ async def voiceswap(voice: str = Form(...), job_id: str = Form(None),
         raise HTTPException(500, "split did not produce vocal + instrumental stems")
 
     # 2) re-timbre the vocal via RVC
+    free_gpu("rvc")                       # free ComfyUI before RVC runs (shared 3090)
     try:
         with open(voc, "rb") as f:
             conv = R.convert(f.read(), "vocals.wav", voice, transpose=transpose,
