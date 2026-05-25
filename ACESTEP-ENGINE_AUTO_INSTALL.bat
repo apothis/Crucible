@@ -27,10 +27,11 @@ echo(
 echo Which ACE-Step 1.5 model set?
 echo 1) Turbo only  - core repo (~10 GB), fast previews, smallest download   QUICK START
 echo 2) XL full     - core + XL base + XL SFT (~30 GB), best quality          RECOMMENDED
+set "ACE_SET="
 set /p "MODEL_CHOICE=Enter 1 or 2: "
-if "!MODEL_CHOICE!"=="1" (set "ACE_SET=TURBO") ^
-else if "!MODEL_CHOICE!"=="2" (set "ACE_SET=XL") ^
-else ( echo Invalid choice. & timeout /t 2 >nul & goto CHOOSE_MODEL )
+if "%MODEL_CHOICE%"=="1" set "ACE_SET=TURBO"
+if "%MODEL_CHOICE%"=="2" set "ACE_SET=XL"
+if not defined ACE_SET ( echo Invalid choice. & timeout /t 2 >nul & goto CHOOSE_MODEL )
 
 rem ---------- LM CHOICE ----------
 :CHOOSE_LM
@@ -39,10 +40,11 @@ echo Which LM (writes/structures captions, bpm, key)? The core repo already
 echo includes the 1.7B LM. The 4B is smarter but ~8 GB more to download.
 echo 1) Keep 1.7B (already in core)                                          RECOMMENDED
 echo 2) Also fetch 4B (best, larger)
+set "GET_LM4B="
 set /p "LM_CHOICE=Enter 1 or 2: "
-if "!LM_CHOICE!"=="1" (set "GET_LM4B=0") ^
-else if "!LM_CHOICE!"=="2" (set "GET_LM4B=1") ^
-else ( echo Invalid choice. & timeout /t 2 >nul & goto CHOOSE_LM )
+if "%LM_CHOICE%"=="1" set "GET_LM4B=0"
+if "%LM_CHOICE%"=="2" set "GET_LM4B=1"
+if not defined GET_LM4B ( echo Invalid choice. & timeout /t 2 >nul & goto CHOOSE_LM )
 
 rem ---------- INSTALL FOLDER ----------
 :ASK_DIR
