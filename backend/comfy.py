@@ -248,6 +248,15 @@ def build_edit(p, audio_ref):
     Either or both. New content follows `tags`/`lyrics`. The guider returns both the
     GUIDER and a correctly-sized `output_latent` (grown for extend) → we sample that.
     """
+    # The native edit guiders are built for the TURBO model: they inject a
+    # turbo-trained `silence_latent` as the "generate-here" signal, and the only
+    # official 1.5-edit workflow uses the turbo checkpoint. On base/sft the model
+    # doesn't interpret that tensor → garbled repaint / poorly-blended extend. So
+    # force turbo + the canonical edit settings (cfg 1 on the guider, ~30 steps).
+    p = dict(p)
+    p["variant"] = "xl_turbo"
+    if not p.get("steps"):
+        p["steps"] = 30
     p = _resolve(p)
     g = _loaders(p["_file"], p.get("shift", 3.0))
     # The 1.5 native edit guider MUST be fed task-aware conditioning: task_type

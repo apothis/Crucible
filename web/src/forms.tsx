@@ -338,6 +338,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
         {mode === "repaint"
           ? "Regenerate a time range of a track (new tags/lyrics) while keeping the rest — latent-level via ACEStep15NativeEditGuider."
           : "Lengthen a track by generating new content before and/or after it — the existing audio is preserved."}
+        {" "}<em>Runs on the turbo model (what the edit guider needs); the Model picker below is ignored here.</em>
       </p>
       <Field label="Source track">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
