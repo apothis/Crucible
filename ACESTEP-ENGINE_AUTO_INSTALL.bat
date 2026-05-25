@@ -92,15 +92,15 @@ if errorlevel 1 ( echo uv sync failed. & popd & popd & pause & exit /b 1 )
 
 echo(
 echo -------- Downloading models into "%CKPT%" --------
-echo   Each component is listed as it downloads; existing ones are skipped.
+echo   Selected: model set=[%ACE_SET%]  fetch 4B LM=[%GET_LM4B%]
+echo   Each component is listed as it downloads; existing ones are verified/resumed.
 echo(
-rem NOTE: keep these as single-line `if ... call` and keep parentheses OUT of the
-rem description strings - a literal ) inside a parenthesised if-block closes the
-rem block early (that bug skipped the XL/LM downloads before).
+rem Plain %%VAR%% (not !VAR!) so this does not depend on delayed expansion; keep these
+rem single-line and parenthesis-free in the descriptions.
 call :hfget "ACE-Step/Ace-Step1.5" "%CKPT%" "Core: VAE + text encoder + turbo DiT + 1.7B LM, ~10 GB"
-if "!ACE_SET!"=="XL" call :hfget "ACE-Step/acestep-v15-xl-base" "%CKPT%\acestep-v15-xl-base" "XL base DiT - 4B, best quality, ~9 GB"
-if "!ACE_SET!"=="XL" call :hfget "ACE-Step/acestep-v15-xl-sft"  "%CKPT%\acestep-v15-xl-sft"  "XL SFT DiT - 4B, fine-tuned, ~9 GB"
-if "!GET_LM4B!"=="1" call :hfget "ACE-Step/acestep-5Hz-lm-4B" "%CKPT%\acestep-5Hz-lm-4B" "4B LM - smartest captioning, ~8 GB"
+if /i "%ACE_SET%"=="XL" call :hfget "ACE-Step/acestep-v15-xl-base" "%CKPT%\acestep-v15-xl-base" "XL base DiT - 4B, best quality, ~9 GB"
+if /i "%ACE_SET%"=="XL" call :hfget "ACE-Step/acestep-v15-xl-sft"  "%CKPT%\acestep-v15-xl-sft"  "XL SFT DiT - 4B, fine-tuned, ~9 GB"
+if "%GET_LM4B%"=="1" call :hfget "ACE-Step/acestep-5Hz-lm-4B" "%CKPT%\acestep-5Hz-lm-4B" "4B LM - smartest captioning, ~8 GB"
 
 popd
 popd
