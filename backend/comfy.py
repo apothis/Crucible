@@ -280,13 +280,19 @@ def build_edit(p, audio_ref):
     g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
     g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
     g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
-    g["20"] = {"class_type": "ACEStep15NativeEditGuider", "inputs": {
+    edit_inputs = {
         "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0],
         "source_latents": ["15", 0], "cfg": float(p.get("edit_cfg", 1.0)),   # canonical edit cfg=1 (DiT guidance off; content from LM codes). >1 over-guides → garbled
         "extend_left_seconds": float(p.get("extend_left", 0.0)),
         "extend_right_seconds": float(p.get("extend_right", 0.0)),
         "repaint_start_seconds": float(p.get("repaint_start", -1.0)),
-        "repaint_end_seconds": float(p.get("repaint_end", -1.0))}}
+        "repaint_end_seconds": float(p.get("repaint_end", -1.0))}
+    if p.get("ref_timbre"):
+        # Feed the source's own latent as the timbre reference so newly-generated
+        # regions adopt the original's instrument/voice character (fixes "same song,
+        # different sound" on extend). Gated so it can't regress the good repaint path.
+        edit_inputs["reference_latent"] = ["15", 0]
+    g["20"] = {"class_type": "ACEStep15NativeEditGuider", "inputs": edit_inputs}
     g["21"] = {"class_type": "BasicScheduler", "inputs": {
         "model": ["7", 0], "scheduler": p.get("scheduler", "simple"),
         "steps": p["_steps"], "denoise": 1.0}}

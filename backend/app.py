@@ -341,6 +341,7 @@ async def extend(file: UploadFile = File(None), params: str = Form(...), job_id:
     tags/lyrics, + tuning."""
     p = json.loads(params)
     ref, label, dur = await _resolve_edit_source(file, job_id, trim_tail=True)
+    p["ref_timbre"] = p.get("ref_timbre", True)     # match the source's timbre in the new region
     add = float(p.get("extend_left", 0) or 0) + float(p.get("extend_right", 0) or 0)
     if dur:
         p["duration"] = dur + add                   # full output length
