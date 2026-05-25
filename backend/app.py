@@ -247,9 +247,14 @@ async def restyle(file: UploadFile = File(...), params: str = Form(...)):
     return {"job_id": pid, "seed": resolved["seed"]}
 
 
-async def _resolve_edit_source(file, job_id):
+async def _resolve_edit_source(file, job_id, trim_tail=False):
     """Source audio for repaint/extend: an uploaded file OR a library job_id.
-    Uploads it to ComfyUI and returns (ref, label, duration_seconds)."""
+    Uploads it to ComfyUI and returns (ref, label, duration_seconds).
+
+    `trim_tail` (extend): strip the source's trailing fade-out / near-silence first,
+    so new content attaches to LIVE music instead of after a fade (otherwise the join
+    is "fade → silent gap → new content"). Our generations end with a tidy fade, so
+    extending them without this leaves an audible gap at the seam."""
     if file is not None:
         data = await file.read()
         label = file.filename
@@ -263,13 +268,33 @@ async def _resolve_edit_source(file, job_id):
         label = job_id
     else:
         raise HTTPException(400, "provide a source track (library job_id or upload)")
+    import io
+    import soundfile as _sf
+    dur = 0.0
     try:
-        import io
-        import soundfile as _sf
-        dur = float(_sf.info(io.BytesIO(data)).duration)
+        if trim_tail:
+            import numpy as _np
+            x, sr = _sf.read(io.BytesIO(data), always_2d=True)
+            env = _np.abs(x).max(axis=1)
+            pk = float(env.max()) or 1.0
+            above = _np.where(env > pk * 0.04)[0]          # last sample of real signal
+            if above.size:
+                end = min(len(x), int(above[-1]) + int(0.03 * sr))   # keep a tiny tail
+                x = x[:end]
+            buf = io.BytesIO()
+            _sf.write(buf, x, sr, format="WAV", subtype="PCM_16")
+            data = buf.getvalue()
+            dur = len(x) / float(sr)
+            label = (label or "edit_src").rsplit(".", 1)[0] + ".wav"
+        else:
+            dur = float(_sf.info(io.BytesIO(data)).duration)
     except Exception:
-        dur = 0.0
-    ref = C.upload_audio(data, (label or "edit_src") + (".wav" if label and label.endswith(".wav") else ".mp3"))
+        try:
+            dur = float(_sf.info(io.BytesIO(data)).duration)
+        except Exception:
+            dur = 0.0
+    fname = label if label and label.endswith(".wav") else ((label or "edit_src") + ".mp3")
+    ref = C.upload_audio(data, fname)
     return ref, label, dur
 
 
@@ -310,7 +335,7 @@ async def extend(file: UploadFile = File(None), params: str = Form(...), job_id:
     (ACEStep15NativeEditGuider). params JSON carries extend_left/extend_right (sec),
     tags/lyrics, + tuning."""
     p = json.loads(params)
-    ref, label, dur = await _resolve_edit_source(file, job_id)
+    ref, label, dur = await _resolve_edit_source(file, job_id, trim_tail=True)
     add = float(p.get("extend_left", 0) or 0) + float(p.get("extend_right", 0) or 0)
     if dur:
         p["duration"] = dur + add                   # full output length
