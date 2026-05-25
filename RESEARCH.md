@@ -544,6 +544,16 @@ Native graph: `LoadAudio→VAEEncodeAudio→source_latents`; our `TextEncodeAceS
 - **Install footprint:** the parent pack pulls heavy unrelated deps (pygame, pymunk, opencv-python, openunmix, scikit-image, matplotlib). BUT `nodes/acestep/` is **self-contained** (imports only torch/numpy/`comfy.*` + its own files; `__init__.py` defines its own `logger`) and **MIT** → can be **VENDORED as a lean standalone custom node** (no extra pip installs) instead of installing the whole pack. Recommended install = vendor `acestep/` → drop into the box's `ComfyUI/custom_nodes/` + restart ComfyUI.
 - **Build plan (after install + node-verify):** `comfy.py` `build_repaint(p, audio_ref)` + `build_extend(p, audio_ref)` (SamplerCustomAdvanced graphs w/ the guiders) → `/api/repaint` + `/api/extend` endpoints (mirror restyle's upload) → UI (Restyle-like tabs: pick a library track + time range / extend seconds + new tags/lyrics). Verify on GPU first run (confirm guiders work with xl_base/xl_sft).
 
+### 10j. EXTEND is not a native ACE task — don't chase it (2026-05-25)
+
+_After repaint worked (turbo) but extend kept failing (seam gap, beat-phase not locking, length undershoot ~6s for +10, timbre drift), the question was: "if extend exists, someone solved it — are we chasing ghosts?" Researched the official ACE-Step docs. **Answer: yes, a ghost.**_
+
+The **official ACE-Step task menu** (`docs/en/ace_step_musicians_guide.md`): **Text-to-Music · Remix(cover) · Repaint · Lego(add layers) · Extract(isolate stems) · Complete(add accompaniment to a vocal)**. There is **NO native extend/lengthen/append task.** The API exposes `duration` (10–600s) set *at generation time*, not a "continue rendered audio" op. So community "extend" (RyanOnTheInside `extend_left/right_seconds`, billwuhao "Extending") is a **bolt-on: pad the latent + repaint the padding** — the model was never trained to continue a rendered track, hence the unfixable seam/beat/length artifacts. We weren't missing a fix.
+
+**The legitimate "longer song" paths:** (a) generate at the target `duration` in one pass (coherent — it's one generation; our Generate supports up to 600s), or (b) the Song Constructor for structured long songs. You cannot seamlessly bolt seconds onto already-rendered audio. **Decision: drop append-extend; keep Repaint (works).**
+
+**Also confirmed (important for Lego/Extract/Complete builds):** those three are **base/SFT only, NOT turbo** (per the guide); **Repaint works on turbo** (we verified). So the ACE Studio "Add a Layer" = **Lego task on base/sft** (not turbo).
+
 ### 10e. Proposed prioritized experiments (confirm before any GPU run / install)
 
 | # | Experiment | Track | Expected impact | Effort | GPU? |
