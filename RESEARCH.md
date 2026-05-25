@@ -533,6 +533,17 @@ _Cheap adjacent wins (no install):_ **retake/variation** = audio2audio (our Rest
 
 _Recommendation:_ true coherent repaint/extend needs latent-level masking → **Route 2** (verify + install a custom ACE repaint pack) is the best quality/effort balance; **Route 1** is worth a short spike (if core SetLatentNoiseMask works on audio latents, we get it install-free); the waveform splice + low-denoise retake are immediate no-install interims. Decide route before building.
 
+**Route-1 spike RESULT (2026-05-25): FAILED — core-native masked latent does NOT work.** Built `LoadAudio→VAEEncodeAudio→SetLatentNoiseMask(mask from SolidMask+MaskComposite, middle 40-70%)→KSampler(denoise 1)→VAEDecodeAudio` and ran it. Graph VALIDATED (SetLatentNoiseMask accepts an audio LATENT at submit) but **KSampler errored at runtime: "Input and output must have the same number of spatial dimensions"** — ComfyUI's mask resize (`common_upscale`/interpolate) assumes a 2-D image mask, but the ACE audio latent is 1-D temporal `[B,C,T]`, so it shape-mismatches. No stock node authors a 1-D temporal mask. ⇒ **core-native repaint is out; go Route 2.**
+
+**Route-2 SOLUTION FOUND (2026-05-25): `ryanontheinside/ComfyUI_RyanOnTheInside` → `nodes/acestep/` (MIT).** Native ACE-Step **1.5** repaint/extend (the `ACEStep15…` nodes confirm 1.5). Key nodes (all output `GUIDER` for `SamplerCustomAdvanced`):
+- `ACEStepRepaintGuider` — inputs: model, positive, negative, cfg(1.0), source_latents, **start_time**, **end_time**, **repaint_strength**(0.7), **feather_time**(0.1).
+- `ACEStepExtendGuider` — model, positive, negative, cfg, source_latents, **extend_left_time**, **extend_right_time**.
+- `ACEStepHybridGuider` — extend + repaint together (repaint_start/end_time -1=off).
+- utils: `ACEStepTimeRange`, `ACEStep15SemanticExtractor/HintsBlend`, mask visualizers.
+Native graph: `LoadAudio→VAEEncodeAudio→source_latents`; our `TextEncodeAceStepAudio1.5`→positive/negative; model = our `UNETLoader→ModelSamplingAuraFlow`; → `ACEStep*Guider` → `SamplerCustomAdvanced(noise=RandomNoise, guider, sampler=KSamplerSelect, sigmas=BasicScheduler(model,scheduler,steps,denoise=1.0), latent=source_latents)` → `VAEDecodeAudio` → save. Uses ComfyUI's stock custom-sampling nodes (all present on our box).
+- **Install footprint:** the parent pack pulls heavy unrelated deps (pygame, pymunk, opencv-python, openunmix, scikit-image, matplotlib). BUT `nodes/acestep/` is **self-contained** (imports only torch/numpy/`comfy.*` + its own files; `__init__.py` defines its own `logger`) and **MIT** → can be **VENDORED as a lean standalone custom node** (no extra pip installs) instead of installing the whole pack. Recommended install = vendor `acestep/` → drop into the box's `ComfyUI/custom_nodes/` + restart ComfyUI.
+- **Build plan (after install + node-verify):** `comfy.py` `build_repaint(p, audio_ref)` + `build_extend(p, audio_ref)` (SamplerCustomAdvanced graphs w/ the guiders) → `/api/repaint` + `/api/extend` endpoints (mirror restyle's upload) → UI (Restyle-like tabs: pick a library track + time range / extend seconds + new tags/lyrics). Verify on GPU first run (confirm guiders work with xl_base/xl_sft).
+
 ### 10e. Proposed prioritized experiments (confirm before any GPU run / install)
 
 | # | Experiment | Track | Expected impact | Effort | GPU? |
