@@ -35,3 +35,10 @@ RemFx/
 
 # SoundFonts for the fluidsynth DI renderer (large, CC0)
 soundfonts/
+
+# Secondary venv for RoFormer separation (Python 3.12; torch etc. — large)
+.venv-roformer/
+# On-SSD caches (torch/HF/pip/uv) — kept off the small system drive
+.caches/
+# Separation model checkpoints (large)
+models/
