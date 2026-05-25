@@ -252,6 +252,7 @@ function libDesc(it: LibItem): string {
   if (it.mode === "master") return `mastered${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "repaint") return `repaint: ${p.tags ? String(p.tags).slice(0, 28) : "?"} · [${p.repaint_start ?? "?"}–${p.repaint_end ?? "?"}s]`;
   if (it.mode === "layer") return `layer: ${p.track_name || "?"}${p.tags ? " · " + String(p.tags).slice(0, 22) : ""}`;
+  if (it.mode === "layerstem") return `${p.track_name || "?"} stem (${p.method || "?"})${p.source ? " · from " + String(p.source).slice(0, 18) : ""}`;
   if (it.mode === "extend") return `extend +${p.extend_left || 0}/${p.extend_right || 0}s · ${p.tags ? String(p.tags).slice(0, 24) : "?"}`;
   if (it.mode === "backing") return `guitar-less backing${p.source ? " · from " + String(p.source).slice(0, 22) : ""}`;
   if (it.mode === "guitar") return `amped guitar (${p.preset || "?"})${p.source ? " · " + String(p.source).slice(0, 22) : ""}`;
@@ -279,6 +280,7 @@ const LIB_SECTIONS = [
   { key: "restyle", label: "Restyled" },
   { key: "repaint", label: "Repainted" },
   { key: "layer", label: "Added layers" },
+  { key: "layerstem", label: "Layer stems" },
   { key: "extend", label: "Extended" },
   { key: "tone", label: "Re-toned" },
   { key: "backing", label: "Backing (no guitar)" },

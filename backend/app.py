@@ -130,6 +130,19 @@ def on_complete(pid):
                         postfx_mod.close_seam_gap(path)
                     except Exception:
                         pass
+                jp = JOBS.get(pid, {}).get("params", {})
+                if JOBS.get(pid, {}).get("mode") == "layerstem" and jp.get("gate"):
+                    # Reduce the extracted stem to just the layer's time window.
+                    try:
+                        import soundfile as _sf
+                        wav = os.path.splitext(path)[0] + ".wav"
+                        if path != wav:                       # transcode mp3 → wav so gate can rewrite it
+                            d, sr = _sf.read(path, always_2d=True)
+                            _sf.write(wav, d, sr, subtype="PCM_16")
+                            os.remove(path); path = wav
+                        postfx_mod.gate_region(path, jp.get("layer_start", 0), jp.get("layer_end", 0))
+                    except Exception:
+                        pass
                 with LOCK:
                     JOBS[pid]["audio_file"] = path
                     JOBS[pid]["status"] = "done"
@@ -375,6 +388,87 @@ async def layer(file: UploadFile = File(None), params: str = Form(...),
         JOBS[pid]["params"]["source"] = label
     save_job(pid)
     return {"job_id": pid, "seed": resolved["seed"]}
+
+
+# Map the 12 lego/extract track names onto htdemucs_6s's 6 stems.
+DEMUCS_STEM = {"vocals": "vocals", "backing_vocals": "vocals", "drums": "drums",
+               "percussion": "drums", "bass": "bass", "guitar": "guitar",
+               "keyboard": "piano", "synth": "other", "strings": "other",
+               "brass": "other", "woodwinds": "other", "fx": "other"}
+
+
+@app.post("/api/layer/isolate")
+async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), job_id: str = Form(None)):
+    """Isolate a named track from a mix (typically a layer render) as a standalone stem.
+    method='demucs' (Mac-side htdemucs_6s, synchronous) or 'extract' (GPU, native ACE
+    extract task). Optionally region-gate to the layer window [layer_start, layer_end].
+    Saves a library item with mode 'layerstem'."""
+    p = json.loads(params)
+    track = p.get("track_name", "vocals")
+    method = p.get("method", "demucs")
+    start = float(p.get("layer_start", 0) or 0)
+    end = float(p.get("layer_end", 0) or 0)
+    gate = bool(p.get("gate", True))
+
+    if method == "extract":                          # GPU: native ACE extract task
+        ref, label, dur = await _resolve_edit_source(file, job_id)
+        if dur and not p.get("duration"):
+            p["duration"] = dur
+        try:
+            graph, resolved = comfy.build_extract(p, ref)
+            res = C.submit(graph, CLIENT_ID)
+        except Exception as e:
+            raise HTTPException(500, f"submit failed: {e}")
+        if res.get("node_errors"):
+            raise HTTPException(400, f"node errors: {res['node_errors']}")
+        pid = res["prompt_id"]
+        with LOCK:
+            JOBS[pid] = _new_job(resolved, "layerstem")
+            JOBS[pid]["params"].update({"source": label, "track_name": track,
+                "gate": gate, "layer_start": start, "layer_end": end, "method": "extract"})
+        save_job(pid)
+        return {"job_id": pid, "seed": resolved["seed"]}
+
+    # method == 'demucs': Mac-side, synchronous
+    sid = uuid.uuid4().hex
+    work = os.path.join(STEMS_DIR, sid)
+    os.makedirs(work, exist_ok=True)
+    if file is not None:
+        ext = os.path.splitext(file.filename)[1] or ".wav"
+        inp = os.path.join(work, "input" + ext)
+        with open(inp, "wb") as f:
+            f.write(await file.read())
+        src_label = file.filename
+    elif job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "source track not found")
+        inp = os.path.join(work, job_id + os.path.splitext(src)[1])
+        shutil.copy(src, inp)
+        src_label = job_id
+    else:
+        raise HTTPException(400, "provide a file or job_id")
+    try:
+        files = stems_mod.separate(inp, work, mode="6stem")
+    except Exception as e:
+        raise HTTPException(500, f"separation failed: {e}")
+    want = DEMUCS_STEM.get(track, "other")
+    match = next((f for f in files if os.path.splitext(os.path.basename(f))[0] == want), None)
+    if not match:
+        raise HTTPException(500, f"demucs stem '{want}' not produced")
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.wav")
+    shutil.copy(match, out)
+    if gate and end > start:
+        try:
+            postfx_mod.gate_region(out, start, end)
+        except Exception:
+            pass
+    save_done_row(jid, "layerstem", {"source": src_label, "track_name": track,
+        "method": "demucs", "demucs_stem": want, "layer_start": start, "layer_end": end}, out)
+    shutil.rmtree(work, ignore_errors=True)
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}", "status": "done"}
 
 
 @app.get("/api/job/{pid}")

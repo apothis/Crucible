@@ -54,6 +54,32 @@ def tidy_ending(in_path):
     return out
 
 
+def gate_region(in_path, start, end, fade_ms=40):
+    """Keep only [start, end] seconds of a track and silence the rest, with short
+    equal-power fades at the two boundaries so the kept window doesn't click. Used to
+    reduce an isolated stem to just the layer's time window (the layer only exists
+    inside the lego region; outside it the source == the preserved backing). Rewrites
+    the file in place as a WAV. Returns the path. numpy/soundfile only."""
+    import numpy as np
+    import soundfile as sf
+    x, sr = sf.read(in_path, always_2d=True)
+    n = len(x)
+    a = max(0, int(float(start) * sr))
+    b = min(n, int(float(end) * sr)) if end and float(end) > 0 else n
+    if b <= a:
+        return in_path
+    out = np.zeros_like(x)
+    out[a:b] = x[a:b]
+    f = max(1, int(fade_ms / 1000.0 * sr))
+    ramp = np.sqrt(np.linspace(0, 1, f))[:, None]        # equal-power
+    if a + f <= b:
+        out[a:a + f] *= ramp
+    if b - f >= a:
+        out[b - f:b] *= ramp[::-1]
+    sf.write(in_path, out, sr, subtype="PCM_16")
+    return in_path
+
+
 def close_seam_gap(in_path, min_ms=60, max_ms=900, xfade_ms=60):
     """Remove the brief near-silent gap the ACE edit guider inserts at the seam of
     an EXTEND (model starts the extended region with a moment of silence). Finds the

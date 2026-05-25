@@ -385,6 +385,10 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
   const [end, setEnd] = useState("");
   const [timbre, setTimbre] = useState<File | null>(null);
   const [legoCfg, setLegoCfg] = useState("6");
+  const [isolate, setIsolate] = useState(false);
+  const [method, setMethod] = useState<"demucs" | "extract">("demucs");
+  const [outputs, setOutputs] = useState<"both" | "stem">("both");
+  const [gate, setGate] = useState(true);
   const [expert, setExpert] = useState(false);
   const tuning = useTuning(cfg, expert, true);   // duration derived from the source
   const isVocal = track === "vocals" || track === "backing_vocals";
@@ -394,24 +398,39 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
     if (!job && !file) return fail(ctx, "Choose a backing track (library or upload).");
     if (!tags.trim()) return fail(ctx, "Add style tags describing the layer to add.");
     if (end && !(parseFloat(end) > parseFloat(start))) return fail(ctx, "Layer end must be after start.");
-    const id = rid();
-    ctx.setResults([{ id, title: `adding ${track}…`, status: "pending", pct: 0 }]);
+    const s = parseFloat(start) || 0;
+    const e = end ? parseFloat(end) : 0;
+    const mixId = rid();
+    const stemId = isolate && outputs === "both" ? rid() : null;
+    const cards = [{ id: mixId, title: isolate && outputs === "stem" ? `rendering ${track}…` : `adding ${track}…`, status: "pending" as const, pct: 0 }];
+    if (stemId) cards.push({ id: stemId, title: `isolating ${track} stem…`, status: "pending" as const, pct: 0 });
+    ctx.setResults(cards);
     try {
       const params: Record<string, unknown> = {
         ...tuning.params(), tags, track_name: track,
         lyrics: isVocal ? lyrics : "", instrumental: !isVocal,
-        layer_start: parseFloat(start) || 0, lego_cfg: parseFloat(legoCfg) || 6,
+        layer_start: s, lego_cfg: parseFloat(legoCfg) || 6,
       };
       delete params.duration;                     // backend derives it from the backing
-      if (end) params.layer_end = parseFloat(end);
+      if (e) params.layer_end = e;
       const fd = new FormData();
       if (file) fd.append("file", file); else fd.append("job_id", job);
       if (timbre) fd.append("timbre", timbre);
       fd.append("params", JSON.stringify(params));
-      const { job_id } = await api.layer(fd);
-      ctx.patch(id, { status: "running", pct: 5 });
-      pollJob(job_id, id, ctx);
-    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+      const { job_id: mixJob } = await api.layer(fd);
+      ctx.patch(mixId, { status: "running", pct: 5 });
+      if (!isolate) { pollJob(mixJob, mixId, ctx); return; }
+      await waitJob(mixJob, mixId, ctx);          // wait for the layered mix before isolating
+      const target = outputs === "stem" ? mixId : stemId!;
+      ctx.patch(target, { status: "running", pct: outputs === "stem" ? 50 : 5, title: `isolating ${track} stem (${method})…` });
+      const iso = new FormData();
+      iso.append("job_id", mixJob);
+      iso.append("params", JSON.stringify({ track_name: track, method, layer_start: s, layer_end: e, gate }));
+      const r = await api.layerIsolate(iso);
+      if (method === "extract") await waitJob(r.job_id, target, ctx);
+      else { ctx.patch(target, { status: "done", pct: 100, url: r.audio_url + "?t=" + Date.now() }); ctx.onDone(); }
+      if (outputs === "stem") await api.deleteLib(mixJob).catch(() => {});   // discard the full mix, keep only the stem
+    } catch (err) { ctx.patch(stemId ?? mixId, { status: "error", pct: 0, err: (err as Error).message }); }
   }
 
   return (
@@ -448,6 +467,30 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
       <Field label="Timbre reference (optional)" hint="a clip whose instrument/voice character the new layer should adopt">
         <input className={inp} type="file" accept="audio/*" onChange={(e) => setTimbre(e.target.files?.[0] ?? null)} />
       </Field>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} />
+        Isolate the added part as a stem <span className="text-[var(--color-muted)]">(to mix in yourself or drive something else)</span>
+      </label>
+      {isolate && (
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
+          <Field label="Method" hint="Demucs = Mac, fast; extract = native ACE, GPU">
+            <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as "demucs" | "extract")}>
+              <option value="demucs">Demucs (Mac, fast)</option>
+              <option value="extract">ACE extract (GPU)</option>
+            </select>
+          </Field>
+          <Field label="Outputs">
+            <select className={inp} value={outputs} onChange={(e) => setOutputs(e.target.value as "both" | "stem")}>
+              <option value="both">Keep mix + stem</option>
+              <option value="stem">Stem only</option>
+            </select>
+          </Field>
+          <label className="col-span-2 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={gate} onChange={(e) => setGate(e.target.checked)} />
+            Trim the stem to the layer's time window
+          </label>
+        </div>
+      )}
       {expert && <Field label="Lego guidance (cfg)" hint="base/sft; sft cfg6 is the quality keeper"><input className={inp} type="number" step="0.5" value={legoCfg} onChange={(e) => setLegoCfg(e.target.value)} /></Field>}
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : `Add ${track.replace("_", " ")} layer`}</PrimaryButton>

@@ -379,3 +379,53 @@ def build_lego(p, audio_ref, timbre_ref=None):
     g["13"] = {"class_type": "SaveAudioMP3",
                "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/layer", "quality": "320k"}}
     return g, p
+
+
+def build_extract(p, audio_ref):
+    """Isolate a named track (`track_name`) from an existing mix via the vendored
+    `ACEStep15NativeExtractGuider` (the ACE-Step `extract` task) — a model-native stem
+    separation, as an alternative to Mac-side Demucs. Semantic hints are auto-extracted
+    by the guider. Whole-track output (region-gate downstream for a layer window).
+
+    BASE/SFT-ONLY like lego (RESEARCH §10j) — default xl_sft, guider cfg 7 default."""
+    p = dict(p)
+    if p.get("variant") not in ("xl_base", "xl_sft"):
+        p["variant"] = "xl_sft"
+    if not p.get("steps"):
+        p["steps"] = 50 if p["variant"] == "xl_base" else 30
+    p = _resolve(p)
+    g = _loaders(p["_file"], p.get("shift", 3.0))
+    track = p.get("track_name", "vocals")
+    g["8"] = {"class_type": "ACEStep15TaskTextEncode", "inputs": {
+        "clip": ["5", 0],
+        "text": p.get("tags", ""),
+        "task_type": "extract",
+        "track_name": track,
+        "lyrics": "",
+        "bpm": int(p.get("bpm", 120)),
+        "duration": float(p.get("duration", 60.0)),
+        "keyscale": p.get("keyscale", "E minor"),
+        "timesignature": str(p.get("timesignature", "4")),
+        "language": p.get("language", "en"),
+        "seed": p["seed"],
+        "cfg_scale": 2.0, "temperature": 0.85, "top_p": 0.9, "top_k": 0, "min_p": 0.0,
+    }}
+    g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
+    g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
+    g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
+    g["20"] = {"class_type": "ACEStep15NativeExtractGuider", "inputs": {
+        "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0],
+        "source_latents": ["15", 0], "cfg": float(p.get("extract_cfg", 7.0)),
+        "track_name": track}}
+    g["21"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": ["7", 0], "scheduler": p.get("scheduler", "simple"),
+        "steps": p["_steps"], "denoise": 1.0}}
+    g["22"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": p.get("sampler_name", "euler")}}
+    g["23"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": p["seed"]}}
+    g["24"] = {"class_type": "SamplerCustomAdvanced", "inputs": {
+        "noise": ["23", 0], "guider": ["20", 0], "sampler": ["22", 0],
+        "sigmas": ["21", 0], "latent_image": ["15", 0]}}
+    g["12"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["24", 0], "vae": ["6", 0]}}
+    g["13"] = {"class_type": "SaveAudioMP3",
+               "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/stem", "quality": "320k"}}
+    return g, p
