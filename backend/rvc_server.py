@@ -120,6 +120,36 @@ def set_params(body: dict):
     return JSONResponse({"message": "ok", "params": STATE["params"]})
 
 
+@app.post("/free")
+def free():
+    """Unload the RVC model and free its VRAM, so the other GPU services on the shared
+    3090 (ACE-Step / ComfyUI / etc.) can use it. The next /convert re-loads on demand.
+    Also aliased at /unload."""
+    freed = False
+    try:
+        vc.get_vc("")                 # RVC's own unload path: drops net_g/pipeline + empties cache
+        freed = True
+    except Exception:
+        pass
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+    STATE["model"] = None
+    STATE["index"] = ""
+    return JSONResponse({"message": "rvc model unloaded; VRAM freed", "freed": freed})
+
+
+@app.post("/unload")
+def unload():
+    return free()
+
+
 @app.post("/convert")
 def convert(body: dict):
     if not STATE["model"]:
