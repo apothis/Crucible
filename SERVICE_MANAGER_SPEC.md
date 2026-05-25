@@ -20,6 +20,13 @@ Crucible's Mac app drives several long-running services on this Windows box (Com
 - **Python 3** (already on the box) with **`psutil`** (process trees) + **`requests`** (health checks). GUI: use a toolkit that's easy to ship on Windows — **Tkinter** (stdlib, zero extra install) is fine and recommended; PySide6/PySimpleGUI acceptable if you prefer. Keep dependencies minimal.
 - Ship a `run_service_manager.bat` launcher and a `requirements.txt`.
 
+## ⛔ HARD SAFETY RULE — read first (a violation already broke everything once)
+**NEVER kill processes by image name or globally — only by the exact PID this manager launched, plus that PID's own child tree.** All managed services are `python.exe`, so a broad kill nukes every other service at once.
+- **FORBIDDEN, anywhere — including while testing/developing the app:** `taskkill /F /IM python.exe`, `taskkill /IM pythonw.exe`, `Stop-Process -Name python*`, `pkill python`, `wmic process where name='python.exe' delete`, or any kill that targets a process the manager did not itself start.
+- **ALLOWED:** terminate only `psutil.Process(<pid_we_started>)` and its `children(recursive=True)`, or `taskkill /PID <pid_we_started> /T /F`. Record each launched PID; only ever act on those.
+- Before shipping/testing a Stop or Restart, assert the target PID is one the manager owns. When in doubt, do nothing and surface an error rather than kill broadly.
+- (Real incident 2026-05-25: a "kill all python" issued during testing killed ComfyUI/RVC/SoulX/RoFormer and forced a full manual restart. Do not repeat.)
+
 ## Critical Windows gotchas (get these right)
 1. **Killing a service kills its whole tree.** Several services are launched via a `.bat` that spawns `python.exe` (e.g. ComfyUI's `.bat` → `python_embeded\python.exe`). Terminating the `.bat`'s PID will **orphan the real python**, leaving the port in use. Launch each service with `subprocess.Popen([...], cwd=..., creationflags=CREATE_NEW_PROCESS_GROUP)` and on Stop, **kill the entire process tree** via `psutil.Process(pid).children(recursive=True)` (terminate children then parent), or `taskkill /PID <pid> /T /F`. Verify the port is actually freed after Stop.
 2. **Crash vs. user-stop.** Maintain per-service state: `desired` (running/stopped) and `user_stopped`. The watchdog restarts only when `desired==running` and the process is gone/unhealthy and `user_stopped` is False.
