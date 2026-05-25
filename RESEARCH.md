@@ -586,3 +586,22 @@ Native graph: `LoadAudio→VAEEncodeAudio→source_latents`; our `TextEncodeAceS
 - Stem-output music models: https://github.com/karchkha/MSG-LD · MusicGen-Stem https://arxiv.org/pdf/2501.01757 · StemGen https://arxiv.org/abs/2312.08723
 - Symbolic guitar/tab gen: https://github.com/dada-bots/dadaGP · https://github.com/otnemrasordep/ProgGP · GTR-CTRL https://arxiv.org/abs/2302.05393 · ShredGP https://arxiv.org/html/2307.05324
 - MIDI→clean DI render (free DI instruments): Shreddage 3 Stratus FREE https://impactsoundworks.com/product/shreddage-3-stratus-free-kp/ · DDSP guitar synth https://arxiv.org/abs/2309.07658
+
+## 11. ACE Studio teardown — adoptable ideas (2026-05-25)
+
+_User noticed the ACE Studio app uses ACE-Step and asked what we can learn. ACE-Step was made by **ACE Studio (TimedomAIn) + StepFun** — so ACE Studio is the same team's full product on top of the model. Research below; the big takeaway is that ACE Studio's flagship "Generative Kits" map onto ACE-Step **tasks**, several of whose guiders we ALREADY vendored on the box._
+
+**What ACE Studio 2.0 is:** an "AI-first music workstation" — a multitrack canvas (Audio Tracks + Singer Tracks), a **piano-roll vocal editor** (per-note pitch / timing / vibrato / pronunciation / dynamics / emotional intensity), **140+ AI voices / 8 languages** (Verse25 synth), AI instruments (Chorus25 strings/brass — proprietary), **Generative AI Kits** ("Inspire Me", "Music Enhancer", "Add a Layer"), **Turbo Mode + pre-rendering**, a **DAW bridge** (ACE Bridge), and an "**edit vocal from a mixed track**" flow (stem-split → vocal→MIDI+lyrics → edit → re-synthesize).
+
+**Adoptable ideas, mapped to Crucible (✅ = node/tool already present):**
+- **A. "Add a Layer" = ACE-Step `lego` task ✅node.** `ACEStep15NativeLegoGuider` (vendored, installed) generates a *specific track* (vocals/drums/bass/guitar/keyboard/strings/…) in a time region **over the existing mix**, with optional `reference_latent` timbre. Build = `build_lego` (like `build_edit`) + `ACEStep15TaskTextEncode(task_type="lego", track_name=…)` + `/api/layer` + UI. **Highest-value, cheapest** (node present): layer a lead/harmony/orchestration/2nd guitar onto a backing — very on-scope for metal.
+- **B. Native Cover/Remix = `cover` task ✅node.** `ACEStep15NativeCoverGuider` uses semantic tokens from the source (via `ACEStep15SemanticExtractor`) + optional `reference_latent` to **decouple timbre from structure** — a structure-preserving cover, distinct from our denoise-based Restyle. Could augment Restyle ("keep the arrangement, change the instruments/voice").
+- **C. "Edit vocal from a mixed track" = vocal→MIDI+lyrics.** We have Demucs (vocal stem) + the Vocal Builder; missing piece = **audio→MIDI (Basic Pitch, already planned §4)** + **lyric ASR** → editable melody+lyrics → re-sing (SoulX). Mid effort, no new GPU node. Strong vocal-workflow win.
+- **D. Reference-timbre conditioning ✅ (built into the guiders).** Every native guider (edit/lego/cover) takes a `reference_latent` — expose a "timbre reference" clip across repaint/extend/layer/cover so the new content adopts a chosen instrument/voice character.
+- **E. Turbo Mode = download `xl_turbo`.** Fast-preview variant (8 steps); the UI variant picker already supports it once installed. Cheap.
+- **F. Piano-roll per-note vocal editing.** ACE Studio's core editor (pitch/vibrato/dynamics per note). Our Vocal Builder has an SVG piano-roll (read-only) — could add per-note drag/edit. UI-heavy, later.
+- **G. Already covered:** "Inspire Me" ≈ our Assistant dock; "Music Enhancer" ≈ Matchering master (+ multi-pass refine); stem-split ≈ Demucs; voice cloning ≈ RVC + SoulX; lyric editing ≈ Repaint.
+
+**Recommendation / priority:** **A (Add-a-Layer / lego)** first — flagship ACE Studio feature, node already installed, very on-scope (layer solos/harmonies/orchestration onto a backing). Then **D (reference timbre)** (trivial, guiders already accept it) and **B (native cover)**. **C (vocal→MIDI+lyrics)** is the bigger vocal-workflow build; **E (turbo)** is a free download. Not adopting ACE Studio's proprietary instrument models (Chorus25/Verse25).
+
+**Sources:** ACE Studio 2.0 — https://acestudio.ai/ · https://acestudio.ai/blog/ace-studio-2-released/ · https://bedroomproducersblog.com/2025/12/18/ace-studio/ · review https://aimojo.io/tools/ace-studio-ai/ · edit-vocal-from-mixed-track https://docs.acestudio.ai/guides/for-newcomers/use-cases/edit-vocal-from-a-mixed-track · ACE-Step https://github.com/ace-step/ACE-Step
