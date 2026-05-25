@@ -294,6 +294,81 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   );
 }
 
+function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "extend" }) {
+  const tracks = useLibrary((it) => ["generate", "song", "restyle", "mix", "repaint", "extend", "voiceswap"].includes(it.mode));
+  const [job, setJob] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [tags, setTags] = useState("");
+  const [instrumental, setInstrumental] = useState(true);
+  const [lyrics, setLyrics] = useState("");
+  const [start, setStart] = useState("10");
+  const [end, setEnd] = useState("20");
+  const [left, setLeft] = useState("0");
+  const [right, setRight] = useState("10");
+  const [editCfg, setEditCfg] = useState("3");
+  const [expert, setExpert] = useState(false);
+  const tuning = useTuning(cfg, expert, true);   // duration derived from the source
+  const applyPreset = (p: Preset) => setTags(p.tags);
+
+  async function run() {
+    if (!job && !file) return fail(ctx, "Choose a source track (library or upload).");
+    if (!tags.trim()) return fail(ctx, "Add style tags describing the new content.");
+    if (mode === "repaint" && !(parseFloat(end) > parseFloat(start))) return fail(ctx, "Repaint end must be after start.");
+    if (mode === "extend" && !((parseFloat(left) || 0) > 0 || (parseFloat(right) || 0) > 0)) return fail(ctx, "Set seconds to add (before and/or after).");
+    const id = rid();
+    ctx.setResults([{ id, title: mode === "repaint" ? "repainting…" : "extending…", status: "pending", pct: 0 }]);
+    try {
+      const params: Record<string, unknown> = { ...tuning.params(), tags, instrumental, lyrics, edit_cfg: parseFloat(editCfg) || 3 };
+      delete params.duration;                     // let the backend derive it from the source (+ extends)
+      if (mode === "repaint") { params.repaint_start = parseFloat(start); params.repaint_end = parseFloat(end); }
+      else { params.extend_left = parseFloat(left) || 0; params.extend_right = parseFloat(right) || 0; }
+      const fd = new FormData();
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      fd.append("params", JSON.stringify(params));
+      const { job_id } = mode === "repaint" ? await api.repaint(fd) : await api.extend(fd);
+      ctx.patch(id, { status: "running", pct: 5 });
+      pollJob(job_id, id, ctx);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <ModeToggle expert={expert} setExpert={setExpert} />
+      <p className="text-xs text-[var(--color-muted)]">
+        {mode === "repaint"
+          ? "Regenerate a time range of a track (new tags/lyrics) while keeping the rest — latent-level via ACEStep15NativeEditGuider."
+          : "Lengthen a track by generating new content before and/or after it — the existing audio is preserved."}
+      </p>
+      <Field label="Source track">
+        <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
+          <option value="">— pick a library track —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{(t.params.tags || t.params.source || t.id).slice(0, 40)}</option>)}
+        </select>
+      </Field>
+      <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+      {mode === "repaint" ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Repaint start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+          <Field label="Repaint end (s)"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Add before (s)"><input className={inp} type="number" step="0.5" value={left} onChange={(e) => setLeft(e.target.value)} /></Field>
+          <Field label="Add after (s)"><input className={inp} type="number" step="0.5" value={right} onChange={(e) => setRight(e.target.value)} /></Field>
+        </div>
+      )}
+      <PresetBar genres={cfg.genres} onApply={applyPreset} />
+      <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
+      {expert && <Field label="Edit guidance (cfg)" hint="strength of the new content; def 3"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
+      {tuning.node}
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : mode === "repaint" ? "Repaint region" : "Extend track"}</PrimaryButton>
+    </div>
+  );
+}
+
+export function RepaintForm(p: FormProps) { return <EditForm {...p} mode="repaint" />; }
+export function ExtendForm(p: FormProps) { return <EditForm {...p} mode="extend" />; }
+
 function useVoices() {
   const [voices, setVoices] = useState<string[]>([]);
   const [status, setStatus] = useState("");

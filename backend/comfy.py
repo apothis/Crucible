@@ -236,3 +236,40 @@ def build_restyle(p, audio_ref):
     g["13"] = {"class_type": "SaveAudioMP3",
                "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/restyle", "quality": "320k"}}
     return g, p
+
+
+def build_edit(p, audio_ref):
+    """Repaint and/or extend an existing track via the vendored
+    `ACEStep15NativeEditGuider` custom node (comfy_custom_nodes/ComfyUI-ACEStep-Repaint,
+    installed on the box) driven through `SamplerCustomAdvanced`.
+
+    - **Repaint** a region: set `repaint_start`/`repaint_end` (seconds; the rest is
+      preserved). - **Extend**: set `extend_left`/`extend_right` (seconds added).
+    Either or both. New content follows `tags`/`lyrics`. The guider returns both the
+    GUIDER and a correctly-sized `output_latent` (grown for extend) → we sample that.
+    """
+    p = _resolve(p)
+    g = _loaders(p["_file"], p.get("shift", 3.0))
+    g["8"] = _text_encode(p, generate_audio_codes=False)
+    g["9"] = _negative_node(p)
+    g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
+    g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
+    g["20"] = {"class_type": "ACEStep15NativeEditGuider", "inputs": {
+        "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0],
+        "source_latents": ["15", 0], "cfg": float(p.get("edit_cfg", 3.0)),
+        "extend_left_seconds": float(p.get("extend_left", 0.0)),
+        "extend_right_seconds": float(p.get("extend_right", 0.0)),
+        "repaint_start_seconds": float(p.get("repaint_start", -1.0)),
+        "repaint_end_seconds": float(p.get("repaint_end", -1.0))}}
+    g["21"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": ["7", 0], "scheduler": p.get("scheduler", "simple"),
+        "steps": p["_steps"], "denoise": 1.0}}
+    g["22"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": p.get("sampler_name", "euler")}}
+    g["23"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": p["seed"]}}
+    g["24"] = {"class_type": "SamplerCustomAdvanced", "inputs": {
+        "noise": ["23", 0], "guider": ["20", 0], "sampler": ["22", 0],
+        "sigmas": ["21", 0], "latent_image": ["20", 1]}}   # guider's prepared (extend-sized) latent
+    g["12"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["24", 0], "vae": ["6", 0]}}
+    g["13"] = {"class_type": "SaveAudioMP3",
+               "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/edit", "quality": "320k"}}
+    return g, p

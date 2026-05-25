@@ -247,6 +247,77 @@ async def restyle(file: UploadFile = File(...), params: str = Form(...)):
     return {"job_id": pid, "seed": resolved["seed"]}
 
 
+async def _resolve_edit_source(file, job_id):
+    """Source audio for repaint/extend: an uploaded file OR a library job_id.
+    Uploads it to ComfyUI and returns (ref, label, duration_seconds)."""
+    if file is not None:
+        data = await file.read()
+        label = file.filename
+    elif job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "source track not found in the library")
+        with open(src, "rb") as f:
+            data = f.read()
+        label = job_id
+    else:
+        raise HTTPException(400, "provide a source track (library job_id or upload)")
+    try:
+        import io
+        import soundfile as _sf
+        dur = float(_sf.info(io.BytesIO(data)).duration)
+    except Exception:
+        dur = 0.0
+    ref = C.upload_audio(data, (label or "edit_src") + (".wav" if label and label.endswith(".wav") else ".mp3"))
+    return ref, label, dur
+
+
+def _submit_edit(p, ref, mode, label):
+    if not (p.get("tags") or "").strip():
+        raise HTTPException(400, "style tags are required (describe the new content)")
+    try:
+        graph, resolved = comfy.build_edit(p, ref)
+        res = C.submit(graph, CLIENT_ID)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, mode)
+        JOBS[pid]["params"]["source"] = label
+    save_job(pid)
+    return {"job_id": pid, "seed": resolved["seed"]}
+
+
+@app.post("/api/repaint")
+async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id: str = Form(None)):
+    """Regenerate a time range of an existing track, preserving the rest
+    (ACEStep15NativeEditGuider). params JSON carries repaint_start/repaint_end (sec),
+    tags/lyrics for the new content, + tuning."""
+    p = json.loads(params)
+    ref, label, dur = await _resolve_edit_source(file, job_id)
+    if dur and not p.get("duration"):
+        p["duration"] = dur                         # repaint keeps the original length
+    p.pop("extend_left", None); p.pop("extend_right", None)
+    return _submit_edit(p, ref, "repaint", label)
+
+
+@app.post("/api/extend")
+async def extend(file: UploadFile = File(None), params: str = Form(...), job_id: str = Form(None)):
+    """Lengthen a track by generating new content before/after it
+    (ACEStep15NativeEditGuider). params JSON carries extend_left/extend_right (sec),
+    tags/lyrics, + tuning."""
+    p = json.loads(params)
+    ref, label, dur = await _resolve_edit_source(file, job_id)
+    add = float(p.get("extend_left", 0) or 0) + float(p.get("extend_right", 0) or 0)
+    if dur:
+        p["duration"] = dur + add                   # full output length
+    p.pop("repaint_start", None); p.pop("repaint_end", None)
+    return _submit_edit(p, ref, "extend", label)
+
+
 @app.get("/api/job/{pid}")
 def job(pid: str):
     with LOCK:
