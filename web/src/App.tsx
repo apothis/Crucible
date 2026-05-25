@@ -120,7 +120,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "generate": return <GenerateForm {...p} handoff={handoff} clearHandoff={() => setHandoff(null)} />;
     case "song": return <SongForm {...p} onSong={setSong} onSendToGenerate={(h: { tags?: string; lyrics?: string }) => { setHandoff(h); goTo("generate"); }} />;
     case "vocalbuilder": return <VocalBuilderForm {...p} song={song} />;
-    case "import": return <ImportForm goTo={goTo} />;
+    case "import": return <ImportForm goTo={goTo} onImported={p.onDone} />;
     case "restyle": return <RestyleForm {...p} />;
     case "repaint": return <RepaintForm {...p} />;
     case "layer": return <LayerForm {...p} />;
@@ -251,6 +251,7 @@ function libDesc(it: LibItem): string {
   if (it.mode === "tone") return `tone: ${p.preset || "?"}${p.source ? " · from " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "master") return `mastered${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "repaint") return `repaint: ${p.tags ? String(p.tags).slice(0, 28) : "?"} · [${p.repaint_start ?? "?"}–${p.repaint_end ?? "?"}s]`;
+  if (it.mode === "cover") { const st = p.cover_strength != null ? " str" + p.cover_strength : (p.cover_cfg ? " cfg" + p.cover_cfg : ""); const tk = p.take ? " · take " + p.take : ""; return `cover${st}${tk}: ${p.tags ? String(p.tags).slice(0, 20) : "?"}${p.source ? " · " + String(p.source).slice(0, 12) : ""}`; }
   if (it.mode === "layer") return `layer: ${p.track_name || "?"}${p.tags ? " · " + String(p.tags).slice(0, 22) : ""}`;
   if (it.mode === "layerstem") return `${p.track_name || "?"} stem (${p.method || "?"})${p.source ? " · from " + String(p.source).slice(0, 18) : ""}`;
   if (it.mode === "extend") return `extend +${p.extend_left || 0}/${p.extend_right || 0}s · ${p.tags ? String(p.tags).slice(0, 24) : "?"}`;
@@ -278,6 +279,7 @@ const LIB_SECTIONS = [
   { key: "voiceswap", label: "Voice swaps" },
   { key: "mix", label: "Mixes" },
   { key: "restyle", label: "Restyled" },
+  { key: "cover", label: "Covers" },
   { key: "repaint", label: "Repainted" },
   { key: "layer", label: "Added layers" },
   { key: "layerstem", label: "Layer stems" },

@@ -285,27 +285,44 @@ async def restyle(file: UploadFile = File(None), params: str = Form(...), job_id
     return {"job_id": pid, "seed": resolved["seed"]}
 
 
+def _save_engine_audio(jid, file_ref):
+    """Download one engine output into the library as <jid>.wav (+ tidy_ending). Returns path."""
+    data = acestep_py.download(ACESTEP_HOST, file_ref)
+    out = os.path.join(LIBRARY, f"{jid}.wav")
+    with open(out, "wb") as f:
+        f.write(data)
+    try:
+        fixed = postfx_mod.tidy_ending(out)
+        if fixed and fixed != out:
+            os.remove(out)
+            out = fixed
+    except Exception:
+        pass
+    return out
+
+
 def _acestep_cover_poll(pid, task_id):
     """Background: poll the official ACE-Step engine until the cover task finishes,
-    download the audio into the library, mark the job done. Mirrors the ComfyUI job
-    UX so the frontend's pollJob works unchanged."""
+    then download EVERY batch take — the first becomes the tracked job (pid), the rest
+    are saved as their own library rows ('take 2', 'take 3'…) so they can be compared.
+    Mirrors the ComfyUI job UX so the frontend's pollJob works unchanged."""
     try:
-        fr = acestep_py.wait(ACESTEP_HOST, task_id)
-        data = acestep_py.download(ACESTEP_HOST, fr)
-        out = os.path.join(LIBRARY, f"{pid}.wav")
-        with open(out, "wb") as f:
-            f.write(data)
-        try:
-            fixed = postfx_mod.tidy_ending(out)
-            if fixed and fixed != out:
-                os.remove(out)
-                out = fixed
-        except Exception:
-            pass
+        files = acestep_py.wait(ACESTEP_HOST, task_id)     # list, one ref per take
+        out = _save_engine_audio(pid, files[0])
         with LOCK:
+            base = dict(JOBS[pid]["params"])
+            JOBS[pid]["params"]["take"] = 1
             JOBS[pid]["audio_file"] = out
             JOBS[pid]["status"] = "done"
         save_job(pid)
+        for i, fr in enumerate(files[1:], start=2):        # extra takes → their own library items
+            try:
+                jid = uuid.uuid4().hex
+                o2 = _save_engine_audio(jid, fr)
+                p2 = dict(base); p2["take"] = i
+                save_done_row(jid, "cover", p2, o2)
+            except Exception:
+                pass
     except Exception as e:
         with LOCK:
             JOBS[pid]["status"] = "error"

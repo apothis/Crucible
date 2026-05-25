@@ -80,20 +80,32 @@ def query(host, task_id):
     return arr[0] if arr else {}
 
 
-def result_file(task):
-    """Pull the produced audio path out of a completed task's `result` (a JSON string
-    with a `file` like '/v1/audio?path=...')."""
+def _one_file(r):
+    if isinstance(r, dict):
+        return r.get("file") or r.get("audio") or r.get("path")
+    return None
+
+
+def result_files(task):
+    """All produced audio refs from a completed task's `result` (a JSON string that
+    decodes to a LIST of song objects — the engine batches, default 2). Returns a list
+    of file refs like '/v1/audio?path=...' (one per take)."""
     res = task.get("result")
     if isinstance(res, str):
         try:
             res = json.loads(res)
         except Exception:
-            return None
-    if isinstance(res, list):           # engine returns a list of song objects (batch) — take the first
-        res = res[0] if res else None
+            return []
     if isinstance(res, dict):
-        return res.get("file") or res.get("audio") or res.get("path")
-    return None
+        res = [res]
+    if isinstance(res, list):
+        return [f for f in (_one_file(r) for r in res) if f]
+    return []
+
+
+def result_file(task):
+    files = result_files(task)
+    return files[0] if files else None
 
 
 def download(host, file_ref):
@@ -119,10 +131,10 @@ def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0):
         t = query(host, task_id)
         st = t.get("status")
         if st == 1 or st == "succeeded":
-            fr = result_file(t)
-            if not fr:
+            files = result_files(t)
+            if not files:
                 raise RuntimeError(f"task done but no file in result: {t}")
-            return fr
+            return files                 # list of refs (one per batch take)
         if (isinstance(st, str) and st.lower() in ("failed", "error")) or (isinstance(st, int) and st < 0):
             raise RuntimeError(t.get("message") or t.get("error") or f"task failed: {t}")
         time.sleep(poll)
