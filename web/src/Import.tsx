@@ -122,12 +122,13 @@ function ArchiveSearch({ onPick, busy }: { onPick: (url: string) => void; busy: 
   );
 }
 
-export function ImportForm({ goTo }: { goTo: (m: string) => void }) {
-  const [file, setFile] = useState<File | null>(null);
+export function ImportForm({ goTo, onImported }: { goTo: (m: string) => void; onImported?: () => void }) {
   const [importId, setImportId] = useState("");
+  const [importTitle, setImportTitle] = useState("");
   const [urlInput, setUrlInput] = useState("");
   const [fetching, setFetching] = useState(false);
   const [url, setUrl] = useState("");
+  const [voiceMode, setVoiceMode] = useState(false);
   const [sel, setSel] = useState<Sel | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [vocalUrl, setVocalUrl] = useState("");
@@ -135,34 +136,44 @@ export function ImportForm({ goTo }: { goTo: (m: string) => void }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [msg, setMsg] = useState("");
-  const hasSource = !!file || !!importId;
+  const hasSource = !!importId;
 
-  function reset() { setSel(null); setVocalUrl(""); setSaved(false); setMsg(""); }
+  function reset() { setSel(null); setVocalUrl(""); setSaved(false); setMsg(""); setVoiceMode(false); }
 
-  function pick(f: File | null) {
-    setFile(f); setImportId(""); reset();
-    setUrl((prev) => { if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev); return f ? URL.createObjectURL(f) : ""; });
+  async function pick(f: File | null) {
+    if (!f) return;
+    reset(); setMsg("importing…");
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const d = await api.importUpload(fd);
+      setImportId(d.import_id); setImportTitle(d.title || f.name);
+      setUrl(d.audio_url + "?t=" + Date.now());
+      setMsg("✓ imported to your library — usable in Cover, Restyle, Stems, Backing, etc.");
+      onImported?.();
+    } catch (e) { setMsg("✗ " + (e as Error).message); }
   }
 
   async function doFetch(u: string) {
     if (!u.trim()) return setMsg("Paste a link first.");
-    setFetching(true); setMsg("downloading audio…");
+    setFetching(true); reset(); setMsg("downloading audio…");
     try {
       const d = await api.importFetch(u.trim());
-      setFile(null); setImportId(d.import_id); reset();
+      setImportId(d.import_id); setImportTitle(d.title || "audio");
       setUrl(d.audio_url + "?t=" + Date.now());
-      setMsg("✓ fetched: " + (d.title || "audio"));
+      setMsg("✓ imported to your library — usable in Cover, Restyle, Stems, Backing, etc.");
+      onImported?.();
     } catch (e) { setMsg("✗ " + (e as Error).message); }
     finally { setFetching(false); }
   }
   const fetchUrl = () => doFetch(urlInput);
 
   async function extract() {
-    if (!hasSource) return setMsg("Choose a song or fetch a link first.");
+    if (!hasSource) return setMsg("Import a song first.");
     setExtracting(true); setVocalUrl(""); setMsg("extracting vocal on the Mac (Demucs)…");
     try {
       const fd = new FormData();
-      if (file) fd.append("file", file); else fd.append("import_id", importId);
+      fd.append("import_id", importId);
       fd.append("start", String(sel?.start ?? 0));
       fd.append("end", String(sel?.end ?? 0));
       const d = await api.importExtract(fd);
@@ -193,36 +204,48 @@ export function ImportForm({ goTo }: { goTo: (m: string) => void }) {
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-sm font-semibold text-[var(--color-ink)]">Make a singing voice from any song</h2>
-        <p className="mt-1 text-xs text-[var(--color-muted)]">Follow the steps. You don't need a metal track or a solo vocal — pick any song with a voice you like; the app isolates the vocal, and you can re-timbre to a specific singer later.</p>
+        <h2 className="text-sm font-semibold text-[var(--color-ink)]">Import a song</h2>
+        <p className="mt-1 text-xs text-[var(--color-muted)]">Bring any song into your <strong>library</strong> — then it's usable everywhere: <strong>Cover</strong>, <strong>Restyle</strong>, <strong>Stems</strong>, <strong>Backing</strong>, <strong>Master</strong>, layering, etc. (Making a singing voice from it is an optional extra below.)</p>
       </div>
 
-      <Step n={1} title="Choose a song" active={!hasSource} done={hasSource}>
-        <p className="mb-2 text-[11px] text-[var(--color-muted)]">Find a singer whose <em>tone &amp; delivery</em> you want (operatic, powerful, gritty…). Genre doesn't matter — RVC sets the final identity later. Two ways to bring audio in:</p>
-        <p className="mb-1 text-[10px] font-semibold text-[var(--color-accent2)]">A · Paste a link</p>
-        <p className="mb-1.5 text-[10px] text-[#5a5f6e]">A YouTube (or similar) link to the song/performance — click Fetch and it pulls the audio in. Great for streaming-only tracks. Personal use only.</p>
+      <Step n={1} title="Import a song (→ your library)" active={!hasSource} done={hasSource}>
+        <p className="mb-2 text-[11px] text-[var(--color-muted)]">Three ways to bring audio in. Whichever you use, it's saved to your library as a reusable source track. Personal use only.</p>
+        <p className="mb-1 text-[10px] font-semibold text-[var(--color-accent2)]">A · Upload a file</p>
+        <p className="mb-1.5 text-[10px] text-[#5a5f6e]">Any audio file you already have (mp3/wav/flac/m4a…).</p>
+        <input className={`${inp} mb-3`} type="file" accept="audio/*" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+        <p className="mb-1 text-[10px] font-semibold text-[var(--color-accent2)]">B · Paste a link</p>
+        <p className="mb-1.5 text-[10px] text-[#5a5f6e]">A YouTube (or similar) link — click Fetch and it pulls the audio in. Great for streaming-only tracks.</p>
         <div className="mb-3 flex gap-2">
           <input className={inp} placeholder="https://www.youtube.com/watch?v=…" value={urlInput} onChange={(e) => setUrlInput(e.target.value)} />
           <GhostButton onClick={fetchUrl} className="flex-none">{fetching ? "Fetching…" : "Fetch"}</GhostButton>
         </div>
-        <p className="mb-1 text-[10px] font-semibold text-[var(--color-accent2)]">B · Search the Internet Archive</p>
+        <p className="mb-1 text-[10px] font-semibold text-[var(--color-accent2)]">C · Search the Internet Archive</p>
         <p className="mb-1.5 text-[10px] text-[#5a5f6e]">Search archive.org, expand an item, and click a format/quality to pull it in. Reliable + huge catalogue (incl. public-domain opera).</p>
         <ArchiveSearch onPick={doFetch} busy={fetching} />
-        <p className="mb-1 mt-3 text-[10px] font-semibold text-[var(--color-accent2)]">C · Upload a file</p>
-        <p className="mb-1.5 text-[10px] text-[#5a5f6e]">Any audio file you already have.</p>
-        <input className={inp} type="file" accept="audio/*" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
       </Step>
 
-      {url && (
-        <Step n={2} title="Select a section" active={hasSource && !vocalUrl} done={!!sel}>
+      {hasSource && url && (
+        <Step n={2} title="Imported — preview" active done={false}>
+          <p className="mb-2 text-[11px] text-[var(--color-muted)]"><strong>{importTitle || "your song"}</strong> is in the library now. Pick it as the source in Cover, Restyle, Stems, Backing, Master, or layering.</p>
+          <WavePlayer url={url} />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <GhostButton onClick={() => goTo("restyle")}>Use in Restyle / Cover →</GhostButton>
+            <GhostButton onClick={() => goTo("stems")}>Split into stems →</GhostButton>
+            {!voiceMode && <GhostButton onClick={() => setVoiceMode(true)}>Make a singing voice from it →</GhostButton>}
+          </div>
+        </Step>
+      )}
+
+      {voiceMode && url && (
+        <Step n={3} title="Optional — select a section (for a singing voice)" active={hasSource && !vocalUrl} done={!!sel}>
           <p className="mb-2 text-[11px] text-[var(--color-muted)]">Drag across the waveform to select <strong>10–30s</strong> where the singing is clear and prominent — a chorus is ideal. Avoid instrumental-only parts.</p>
           <RegionPicker url={url} onSelect={setSel} />
           {sel && <div className={`mt-1 text-[11px] ${selOk ? "text-emerald-400" : "text-[var(--color-accent2)]"}`}>selection {sel.start.toFixed(1)}–{sel.end.toFixed(1)}s ({dur.toFixed(1)}s){selOk ? " ✓ good length" : " — aim for 10–30s"}</div>}
         </Step>
       )}
 
-      {url && (
-        <Step n={3} title="Extract the vocal" active={!!sel && !vocalUrl} done={!!vocalUrl}>
+      {voiceMode && url && (
+        <Step n={4} title="Optional — extract the vocal" active={!!sel && !vocalUrl} done={!!vocalUrl}>
           <p className="mb-2 text-[11px] text-[var(--color-muted)]">Pulls just the voice out (Demucs, on the Mac — keeps the GPU free). Then listen: if it's clean, continue; if it's muddy or has bleed, go back and pick a clearer section.</p>
           <PrimaryButton onClick={extract} disabled={extracting}>{extracting ? "Extracting… (~10s)" : sel ? "Extract vocal from selection" : "Select a section first (or extract whole song)"}</PrimaryButton>
           {vocalUrl && <div className="mt-2"><WavePlayer url={vocalUrl} /></div>}
@@ -230,7 +253,7 @@ export function ImportForm({ goTo }: { goTo: (m: string) => void }) {
       )}
 
       {vocalUrl && (
-        <Step n={4} title="Save as a SoulX voice" active={!saved} done={saved}>
+        <Step n={5} title="Optional — save as a SoulX voice" active={!saved} done={saved}>
           <p className="mb-2 text-[11px] text-[var(--color-muted)]">Name it and save. This prepares it for SoulX (transcribes the clip on the GPU — one time, ~30–60s). It then appears in the Voc. Builder's voice picker.</p>
           <Field label="Voice name"><input className={inp} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. operatic_tenor" /></Field>
           <div className="mt-2"><PrimaryButton onClick={save} disabled={saving}>{saving ? "Preparing… (slow, ~30–60s)" : "Save as SoulX voice"}</PrimaryButton></div>
@@ -238,7 +261,7 @@ export function ImportForm({ goTo }: { goTo: (m: string) => void }) {
       )}
 
       {saved && (
-        <Step n={5} title="Use your voice" active done={false}>
+        <Step n={6} title="Use your voice" active done={false}>
           <p className="mb-2 text-[11px] text-[var(--color-muted)]">In the Voc. Builder: compose a melody, pick <strong>SoulX</strong>, choose <strong>{name}</strong> as the voice (optionally turn on RVC re-timbre for a specific singer), then Build vocal.</p>
           <PrimaryButton onClick={() => goTo("vocalbuilder")}>Go to Voc. Builder →</PrimaryButton>
         </Step>

@@ -429,3 +429,59 @@ def build_extract(p, audio_ref):
     g["13"] = {"class_type": "SaveAudioMP3",
                "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/stem", "quality": "320k"}}
     return g, p
+
+
+def build_cover(p, audio_ref, timbre_ref=None):
+    """Structure-preserving COVER (ACE-Step `cover`/remix task) via the vendored
+    `ACEStep15NativeCoverGuider`. Unlike Restyle (denoise blend), cover extracts the
+    source's SEMANTIC tokens (melody/structure/phrasing) and regenerates audio that
+    keeps that structure while taking timbre/instrumentation from the new `tags` (and
+    an optional `timbre_ref` clip via reference_latent). Good for "same song, new
+    genre" — e.g. map a non-metal track to metal while keeping its bones.
+
+    The guider auto-extracts semantic hints from the source (no separate extractor
+    node needed). BASE/SFT-ONLY — default xl_sft (never turbo)."""
+    p = dict(p)
+    if p.get("variant") not in ("xl_base", "xl_sft"):
+        p["variant"] = "xl_sft"
+    if not p.get("steps"):
+        p["steps"] = 50 if p["variant"] == "xl_base" else 30
+    p = _resolve(p)
+    g = _loaders(p["_file"], p.get("shift", 3.0))
+    g["8"] = {"class_type": "ACEStep15TaskTextEncode", "inputs": {
+        "clip": ["5", 0],
+        "text": p.get("tags", ""),
+        "task_type": "cover",
+        "track_name": "None",
+        "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
+        "bpm": int(p.get("bpm", 120)),
+        "duration": float(p.get("duration", 60.0)),
+        "keyscale": p.get("keyscale", "E minor"),
+        "timesignature": str(p.get("timesignature", "4")),
+        "language": p.get("language", "en"),
+        "seed": p["seed"],
+        "cfg_scale": 2.0, "temperature": 0.85, "top_p": 0.9, "top_k": 0, "min_p": 0.0,
+    }}
+    g["9"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["8", 0]}}
+    g["14"] = {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}}
+    g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
+    cover_inputs = {
+        "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0],
+        "source_latents": ["15", 0], "cfg": float(p.get("cover_cfg", 7.0))}
+    if timbre_ref:
+        g["16"] = {"class_type": "LoadAudio", "inputs": {"audio": timbre_ref}}
+        g["17"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["16", 0], "vae": ["6", 0]}}
+        cover_inputs["reference_latent"] = ["17", 0]
+    g["20"] = {"class_type": "ACEStep15NativeCoverGuider", "inputs": cover_inputs}
+    g["21"] = {"class_type": "BasicScheduler", "inputs": {
+        "model": ["7", 0], "scheduler": p.get("scheduler", "simple"),
+        "steps": p["_steps"], "denoise": 1.0}}
+    g["22"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": p.get("sampler_name", "euler")}}
+    g["23"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": p["seed"]}}
+    g["24"] = {"class_type": "SamplerCustomAdvanced", "inputs": {
+        "noise": ["23", 0], "guider": ["20", 0], "sampler": ["22", 0],
+        "sigmas": ["21", 0], "latent_image": ["15", 0]}}
+    g["12"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["24", 0], "vae": ["6", 0]}}
+    g["13"] = {"class_type": "SaveAudioMP3",
+               "inputs": {"audio": ["12", 0], "filename_prefix": "musicgen/cover", "quality": "320k"}}
+    return g, p
