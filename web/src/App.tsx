@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type LibItem, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, RepaintForm, ExtendForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
+import { GenerateForm, RestyleForm, RepaintForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { ImportForm } from "./Import";
 import { Assistant } from "./Assistant";
@@ -14,7 +14,6 @@ const MODES = [
   { id: "import", label: "Import" },
   { id: "restyle", label: "Restyle" },
   { id: "repaint", label: "Repaint" },
-  { id: "extend", label: "Extend" },
   { id: "vocals", label: "Vocals" },
   { id: "swap", label: "Voice Swap" },
   { id: "stems", label: "Stems" },
@@ -27,7 +26,7 @@ const MODES = [
 
 // Grouped navigation (replaces the flat tab row) — by workflow stage.
 const GROUPS: { name: string; modes: string[] }[] = [
-  { name: "Create", modes: ["generate", "song", "restyle", "repaint", "extend"] },
+  { name: "Create", modes: ["generate", "song", "restyle", "repaint"] },
   { name: "Guitar", modes: ["backing", "guitar", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master"] },
@@ -123,7 +122,6 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "import": return <ImportForm goTo={goTo} />;
     case "restyle": return <RestyleForm {...p} />;
     case "repaint": return <RepaintForm {...p} />;
-    case "extend": return <ExtendForm {...p} />;
     case "vocals": return <VocalsForm {...p} />;
     case "swap": return <SwapForm {...p} />;
     case "stems": return <StemsForm {...p} />;

@@ -334,19 +334,11 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
     return _submit_edit(p, ref, "repaint", label)
 
 
-@app.post("/api/extend")
-async def extend(file: UploadFile = File(None), params: str = Form(...), job_id: str = Form(None)):
-    """Lengthen a track by generating new content before/after it
-    (ACEStep15NativeEditGuider). params JSON carries extend_left/extend_right (sec),
-    tags/lyrics, + tuning."""
-    p = json.loads(params)
-    ref, label, dur = await _resolve_edit_source(file, job_id, trim_tail=True)
-    p["ref_timbre"] = p.get("ref_timbre", True)     # match the source's timbre in the new region
-    add = float(p.get("extend_left", 0) or 0) + float(p.get("extend_right", 0) or 0)
-    if dur:
-        p["duration"] = dur + add                   # full output length
-    p.pop("repaint_start", None); p.pop("repaint_end", None)
-    return _submit_edit(p, ref, "extend", label)
+# NOTE: /api/extend (append-to-track) removed — "extend" is not a native ACE-Step
+# task (official tasks: text2music/remix/repaint/lego/extract/complete; no append),
+# so the community guider hack had unfixable seam/beat/length artifacts. Use Generate
+# at a longer duration or the Song Constructor for longer songs. See RESEARCH.md §10j.
+# (comfy.build_edit + _resolve_edit_source + postfx.close_seam_gap remain for Repaint.)
 
 
 @app.get("/api/job/{pid}")

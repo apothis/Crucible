@@ -325,7 +325,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       const fd = new FormData();
       if (file) fd.append("file", file); else fd.append("job_id", job);
       fd.append("params", JSON.stringify(params));
-      const { job_id } = mode === "repaint" ? await api.repaint(fd) : await api.extend(fd);
+      const { job_id } = await api.repaint(fd);   // extend removed (not a native ACE task)
       ctx.patch(id, { status: "running", pct: 5 });
       pollJob(job_id, id, ctx);
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -368,7 +368,8 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
 }
 
 export function RepaintForm(p: FormProps) { return <EditForm {...p} mode="repaint" />; }
-export function ExtendForm(p: FormProps) { return <EditForm {...p} mode="extend" />; }
+// Extend (append) removed — not a native ACE task; see RESEARCH.md §10j. EditForm
+// retains the "extend" branch in git history; RepaintForm is the only caller now.
 
 function useVoices() {
   const [voices, setVoices] = useState<string[]>([]);
