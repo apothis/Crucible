@@ -513,6 +513,7 @@ async def transcribe(file: UploadFile = File(None), params: str = Form("{}"), jo
     p = json.loads(params or "{}")
     size = p.get("model_size", "small")
     isolate = p.get("isolate_vocal", True)
+    iso_engine = "roformer" if p.get("isolate_engine") == "roformer" else "demucs"
     language = p.get("language") or None
     sid = uuid.uuid4().hex
     work = os.path.join(STEMS_DIR, sid)
@@ -533,8 +534,15 @@ async def transcribe(file: UploadFile = File(None), params: str = Form("{}"), jo
         target = src
         if isolate:
             try:
-                files = stems_mod.separate(src, work, mode="vocals")   # Demucs vocal, Mac MPS
-                voc = next((f for f in files if os.path.basename(f).startswith("vocals")), None)
+                if iso_engine == "roformer" and ROFORMER_HOST:
+                    # cleaner vocal (box GPU) → better lyrics on dense mixes. NB: shares the
+                    # 3090 with the ACE-Step engine; _separate frees ComfyUI but not the ACE
+                    # engine, so this can be tight on VRAM — Demucs (Mac) is the safe default.
+                    stem_files = _separate(src, work, engine="roformer", stems="all")
+                    voc = next((pp for (name, pp) in stem_files if name == "vocals"), None)
+                else:
+                    files = stems_mod.separate(src, work, mode="vocals")   # Demucs vocal, Mac MPS
+                    voc = next((f for f in files if os.path.basename(f).startswith("vocals")), None)
                 if voc:
                     target = voc
             except Exception:

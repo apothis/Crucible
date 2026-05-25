@@ -268,6 +268,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const [timbre, setTimbre] = useState<File | null>(null);
   const [coverStrength, setCoverStrength] = useState(0.5);
   const [transcribing, setTranscribing] = useState(false);
+  const [isoEngine, setIsoEngine] = useState<"demucs" | "roformer">("demucs");
   const [expert, setExpert] = useState(true);
   const tuning = useTuning(cfg, expert);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
@@ -280,8 +281,8 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
     try {
       const fd = new FormData();
       if (file) fd.append("file", file); else fd.append("job_id", job);
-      fd.append("params", JSON.stringify({ isolate_vocal: true, model_size: "small" }));
-      const r = await api.transcribe(fd);   // Demucs vocal + Whisper, on the Mac
+      fd.append("params", JSON.stringify({ isolate_vocal: true, isolate_engine: isoEngine, model_size: "small" }));
+      const r = await api.transcribe(fd);   // (Demucs/Mac or RoFormer/box) vocal + Whisper
       setLyrics((r.text || "").trim());
       setInstrumental(false);
       if (!r.text) fail(ctx, "No lyrics detected (try a section with clear vocals).");
@@ -343,10 +344,18 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       {isCover && (
         <div>
-          <GhostButton onClick={transcribeLyrics}>
-            {transcribing ? "Transcribing… (isolating vocal + Whisper, ~30–90s)" : "✨ Transcribe lyrics from the source"}
-          </GhostButton>
-          <p className="mt-1 text-[11px] text-[var(--color-muted)]">Pulls the words from your source audio (Demucs vocal → Whisper, on the Mac) into the Lyrics box below. You can also just type/paste them.</p>
+          <div className="flex items-center gap-2">
+            <GhostButton onClick={transcribeLyrics}>
+              {transcribing ? "Transcribing… (isolate vocal + Whisper, ~30–90s)" : "✨ Transcribe lyrics from the source"}
+            </GhostButton>
+            {cfg.roformer && (
+              <select className={`${inp} w-auto`} value={isoEngine} onChange={(e) => setIsoEngine(e.target.value as "demucs" | "roformer")} title="vocal isolation engine">
+                <option value="demucs">Demucs (Mac)</option>
+                <option value="roformer">RoFormer (GPU, cleaner)</option>
+              </select>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-[var(--color-muted)]">Pulls the words from your source audio (isolate vocal → Whisper) into the Lyrics box below. RoFormer gives a cleaner vocal (better on dense mixes) but uses the 3090; Demucs runs on the Mac. You can also just type/paste.</p>
         </div>
       )}
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
