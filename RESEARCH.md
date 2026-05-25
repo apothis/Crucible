@@ -671,3 +671,21 @@ _Our current separators: Demucs `htdemucs` / `htdemucs_6s` (Mac MPS). Research f
 **Pending:** user runs `ROFORMER-API_AUTO_INSTALL.bat` on the box + sets `roformer_host`, then GPU-verify guitar-stem cleanliness vs Demucs/ACE-extract (gated RMS/mel-cosine) and any-stem quality on a real mix.
 
 **Sources (§12):** BS-RoFormer overview https://grokipedia.com/page/BS-RoFormer · benchmark https://dev.to/codesugar_lin_037a57b06a4/htdemucs-vs-bs-roformer-vs-spleeter-a-2026-audio-source-separation-benchmark-2ll8 · Mel-Band RoFormer paper https://arxiv.org/pdf/2310.01809 · MVSep algorithms https://mvsep.com/en/algorithms · BS-Roformer SW 6-stem (guitar) https://mvsep.com/algorithms/77 · ZFTurbo MSST https://github.com/ZFTurbo/Music-Source-Separation-Training (+ releases / pretrained-models) · ComfyUI nodes: https://github.com/kijai/ComfyUI-MelBandRoFormer · https://github.com/set-soft/AudioSeparation · https://github.com/christian-byrne/audio-separation-nodes-comfyui
+
+### 12c. Why "isolate the added layer" is hard, and the clean-bed fix (2026-05-25)
+
+_Verified empirically on a guitar-lead-over-rhythm-backing test (user-driven QA — they correctly suspected the stem was bad)._
+
+**Two compounding problems with extracting an added layer from a lego mix:**
+1. **Same-instrument can't be split.** Separators isolate by *instrument class*. If the backing already has rhythm guitar and you add a lead, the `guitar` stem = rhythm + lead together. No separator (Demucs, BS-Roformer, even the 53-stem acoustic/electric model) splits two parts of the same instrument.
+2. **The lego re-render scatters the instrument across buckets.** ACE's lego guider re-renders the WHOLE track; that shifts the audio character so the separator misclassifies the (distorted) guitar. Measured region-RMS where the guitar energy landed:
+   - Plain backing (not re-rendered): `guitar`=0.078, `other`=0.002 → correctly in `guitar`.
+   - Lego layer mix (rhythm+lead): `guitar`=0.019, `other`=0.128 → **collapsed into `other`**.
+   - Clean-bed lego mix (lead only): `guitar`=0.000, `other`=0.138 → **entirely in `other`**.
+   So grabbing the mapped `guitar` stem from a lego output returns ~nothing — exactly the "pulled almost nothing" the user heard. (BS-Roformer is still excellent on **real / non-re-rendered** mixes — it's the lego re-render that breaks the mapping.)
+
+**The fix = "clean bed by construction" + combine `target`+`other`:**
+- `clean_bed` (param on `/api/layer`): strip the layer's own instrument from the backing FIRST (Demucs or RoFormer), recombine the rest → a bed missing that instrument, then lego the new part onto it. Now the added part is the ONLY instance of that instrument.
+- `combine_other` (param on `/api/layer/isolate`): sum the `target` + `other` stems, so we recover the whole added part regardless of which bucket the re-render dumped it into. On a clean bed the bed's `other` is ~0.002, so `target+other` ≈ just the added part.
+- Verified: clean-bed guitar lead isolates at region-RMS **0.138** via `combine_other` (vs **0.000** grabbing `guitar` alone). UI: Layer tab "Strip {track} from the backing first (clean bed)" + "Isolate as stem" → the isolate call passes `combine_other` automatically.
+- **Caveat that remains:** if you DON'T clean the bed (backing keeps its own guitar), the isolated stem is rhythm+lead together — inherent to separation, not fixable. Clean-bed is the recommended path for a separable added part.

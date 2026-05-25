@@ -385,6 +385,8 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
   const [end, setEnd] = useState("");
   const [timbre, setTimbre] = useState<File | null>(null);
   const [legoCfg, setLegoCfg] = useState("6");
+  const [cleanBed, setCleanBed] = useState(false);
+  const [bedEngine, setBedEngine] = useState<"demucs" | "roformer">("demucs");
   const [isolate, setIsolate] = useState(false);
   const [method, setMethod] = useState<"demucs" | "roformer" | "extract">("demucs");
   const [outputs, setOutputs] = useState<"both" | "stem">("both");
@@ -410,6 +412,7 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
         ...tuning.params(), tags, track_name: track,
         lyrics: isVocal ? lyrics : "", instrumental: !isVocal,
         layer_start: s, lego_cfg: parseFloat(legoCfg) || 6,
+        clean_bed: cleanBed, clean_bed_engine: bedEngine,
       };
       delete params.duration;                     // backend derives it from the backing
       if (e) params.layer_end = e;
@@ -425,7 +428,7 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
       ctx.patch(target, { status: "running", pct: outputs === "stem" ? 50 : 5, title: `isolating ${track} stem (${method})…` });
       const iso = new FormData();
       iso.append("job_id", mixJob);
-      iso.append("params", JSON.stringify({ track_name: track, method, layer_start: s, layer_end: e, gate }));
+      iso.append("params", JSON.stringify({ track_name: track, method, layer_start: s, layer_end: e, gate, combine_other: cleanBed }));
       const r = await api.layerIsolate(iso);
       if (method === "extract") await waitJob(r.job_id, target, ctx);
       else { ctx.patch(target, { status: "done", pct: 100, url: r.audio_url + "?t=" + Date.now() }); ctx.onDone(); }
@@ -457,6 +460,18 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
         <Field label="Start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
         <Field label="End (s)" hint="blank = full length"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
       </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={cleanBed} onChange={(e) => setCleanBed(e.target.checked)} />
+        Strip {track.replace("_", " ")} from the backing first <span className="text-[var(--color-muted)]">(clean bed — so the added part is the only {track.replace("_", " ")}, and isolates cleanly)</span>
+      </label>
+      {cleanBed && cfg.roformer && (
+        <Field label="Bed separation engine" hint="how to strip the existing instrument before layering">
+          <select className={inp} value={bedEngine} onChange={(e) => setBedEngine(e.target.value as "demucs" | "roformer")}>
+            <option value="demucs">Demucs (Mac, fast)</option>
+            <option value="roformer">BS-Roformer SW (GPU, cleaner)</option>
+          </select>
+        </Field>
+      )}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <Field label="Style tags" hint="describe the part to add (e.g. 'soaring lead guitar solo, fast melodic')">
         <input className={inp} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="lead guitar, melodic solo, high register" />

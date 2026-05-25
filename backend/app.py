@@ -368,7 +368,54 @@ async def layer(file: UploadFile = File(None), params: str = Form(...),
     p = json.loads(params)
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required (describe the layer to add)")
-    ref, label, dur = await _resolve_edit_source(file, job_id)
+    track = p.get("track_name", "vocals")
+    clean_bed = bool(p.get("clean_bed"))
+
+    if clean_bed:
+        # "By construction" clean layer: strip the layer's own instrument from the
+        # backing FIRST, so after lego the added part is the ONLY instance of that
+        # instrument → it isolates cleanly (post-hoc separation of a lego mix that
+        # already contains the same instrument is unreliable — RESEARCH §12c).
+        bed_engine = "roformer" if p.get("clean_bed_engine") == "roformer" else "demucs"
+        work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
+        os.makedirs(work, exist_ok=True)
+        if file is not None:
+            data = await file.read()
+            label = file.filename or "upload"
+            srcp = os.path.join(work, "src" + (os.path.splitext(label)[1] or ".wav"))
+            with open(srcp, "wb") as f:
+                f.write(data)
+        elif job_id:
+            s = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                      if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+            if not s:
+                raise HTTPException(404, "backing track not found")
+            srcp = os.path.join(work, job_id + os.path.splitext(s)[1])
+            shutil.copy(s, srcp)
+            label = job_id
+        else:
+            raise HTTPException(400, "provide a backing (library job_id or upload)")
+        import soundfile as _sf
+        try:
+            dur = float(_sf.info(srcp).duration)
+        except Exception:
+            dur = 0.0
+        want = DEMUCS_STEM.get(track, "other")
+        stem_files = _separate(srcp, work, engine=bed_engine, stems="all", demucs_mode="6stem")
+        # recombine everything EXCEPT the layer's instrument (and the bonus full-mix
+        # 'instrumental' stem) → a bed missing that instrument.
+        others = [pp for (name, pp) in stem_files if name not in (want, "instrumental")]
+        if not others:
+            raise HTTPException(500, f"clean-bed: no stems left after removing '{want}'")
+        try:
+            bed_bytes = postfx_mod.recombine(others, normalize=True)
+        except Exception as e:
+            raise HTTPException(500, f"clean-bed recombine failed: {e}")
+        ref = C.upload_audio(bed_bytes, "cleanbed.wav")
+        shutil.rmtree(work, ignore_errors=True)
+        p["clean_bed_stripped"] = want
+    else:
+        ref, label, dur = await _resolve_edit_source(file, job_id)
     if dur and not p.get("duration"):
         p["duration"] = dur                         # layer over the backing's full length
     if not p.get("layer_end"):
@@ -421,10 +468,16 @@ def _separate(input_path, work, engine="demucs", stems="all", demucs_mode="6stem
             C.free()                       # release the 3090 before the separator loads
         except Exception:
             pass
-        with open(input_path, "rb") as f:
+        send_path = input_path
+        if not input_path.lower().endswith(".wav"):   # box separator needs WAV
+            import soundfile as _sf
+            x, sr = _sf.read(input_path, always_2d=True)
+            send_path = os.path.join(work, "ssrc.wav")
+            _sf.write(send_path, x, sr, subtype="PCM_16")
+        with open(send_path, "rb") as f:
             data = f.read()
         try:
-            res = roformer_py.separate(data, os.path.basename(input_path), ROFORMER_HOST, stems=stems)
+            res = roformer_py.separate(data, os.path.basename(send_path), ROFORMER_HOST, stems=stems)
         except Exception as e:
             raise HTTPException(502, f"roformer separation failed (is the box service running?): {e}")
         out = []
@@ -450,6 +503,11 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
     start = float(p.get("layer_start", 0) or 0)
     end = float(p.get("layer_end", 0) or 0)
     gate = bool(p.get("gate", True))
+    # The lego re-render scatters a distorted instrument across its own stem AND
+    # 'other' (verified: a lego lead lands almost entirely in 'other'). When the
+    # backing was cleaned of this instrument first (clean_bed), summing target+other
+    # robustly recovers the whole added part regardless of which bucket it fell into.
+    combine_other = bool(p.get("combine_other"))
 
     if method == "extract":                          # GPU: native ACE extract task
         ref, label, dur = await _resolve_edit_source(file, job_id)
@@ -492,22 +550,33 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
     else:
         raise HTTPException(400, "provide a file or job_id")
     want = DEMUCS_STEM.get(track, "other")
-    stem_files = _separate(inp, work, engine=engine, stems=want)
-    match = next((p for (name, p) in stem_files if name == want), None)
-    if not match:                                  # fall back to 'other' if the exact stem is absent
-        match = next((p for (name, p) in stem_files if name == "other"), None)
-    if not match:
-        raise HTTPException(500, f"{engine} stem '{want}' not produced")
+    stem_files = _separate(inp, work, engine=engine, stems="all")
+    by = {name: pth for (name, pth) in stem_files}
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.wav")
-    shutil.copy(match, out)
+    if combine_other:
+        sel = [by[k] for k in dict.fromkeys([want, "other"]) if k in by]  # dedup if want=='other'
+        if not sel:
+            raise HTTPException(500, f"{engine}: no '{want}'/'other' stems produced")
+        if len(sel) == 1:
+            shutil.copy(sel[0], out)
+        else:
+            with open(out, "wb") as fh:
+                fh.write(postfx_mod.recombine(sel, normalize=False))
+        stem_label = f"{want}+other"
+    else:
+        match = by.get(want) or by.get("other")
+        if not match:
+            raise HTTPException(500, f"{engine} stem '{want}' not produced")
+        shutil.copy(match, out)
+        stem_label = want
     if gate and end > start:
         try:
             postfx_mod.gate_region(out, start, end)
         except Exception:
             pass
     save_done_row(jid, "layerstem", {"source": src_label, "track_name": track,
-        "method": engine, "stem": want, "layer_start": start, "layer_end": end}, out)
+        "method": engine, "stem": stem_label, "layer_start": start, "layer_end": end}, out)
     shutil.rmtree(work, ignore_errors=True)
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}", "status": "done"}
 
