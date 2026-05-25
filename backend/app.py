@@ -125,6 +125,11 @@ def on_complete(pid):
                         path = fixed
                 except Exception:
                     pass
+                if JOBS.get(pid, {}).get("mode") == "extend":   # close the model's brief seam silence
+                    try:
+                        postfx_mod.close_seam_gap(path)
+                    except Exception:
+                        pass
                 with LOCK:
                     JOBS[pid]["audio_file"] = path
                     JOBS[pid]["status"] = "done"

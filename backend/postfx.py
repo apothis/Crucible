@@ -54,6 +54,53 @@ def tidy_ending(in_path):
     return out
 
 
+def close_seam_gap(in_path, min_ms=60, max_ms=900, xfade_ms=60):
+    """Remove the brief near-silent gap the ACE edit guider inserts at the seam of
+    an EXTEND (model starts the extended region with a moment of silence). Finds the
+    largest short interior near-silent stretch (not the leading/trailing edge) and
+    splices it out with a short equal-power crossfade so the join is continuous.
+    Returns the path if it changed anything, else None. numpy/soundfile only."""
+    import numpy as np
+    import soundfile as sf
+    x, sr = sf.read(in_path, always_2d=True)
+    n = len(x)
+    if n < sr:
+        return None
+    w = max(1, int(0.02 * sr))                       # 20 ms peak-envelope frames
+    env = np.array([np.abs(x[i:i + w]).max() for i in range(0, n - w, w)])
+    if env.size == 0:
+        return None
+    pk = float(env.max()) or 1.0
+    thr = pk * 0.05
+    edge = int(1.0 / 0.02)                            # ignore the first/last ~1 s (lead-in / fade-out)
+    runs, i = [], 0
+    while i < len(env):
+        if env[i] < thr:
+            j = i
+            while j < len(env) and env[j] < thr:
+                j += 1
+            runs.append((i, j))
+            i = j
+        else:
+            i += 1
+    cand = [(i, j) for (i, j) in runs
+            if min_ms / 1000 <= (j - i) * 0.02 <= max_ms / 1000 and i > edge and j < len(env) - edge]
+    if not cand:
+        return None
+    i, j = max(cand, key=lambda r: r[1] - r[0])
+    s0, s1 = i * w, j * w                             # silent span [s0:s1] to remove
+    xf = min(int(xfade_ms / 1000 * sr), s0, n - s1)
+    if xf > 0:
+        a, b = x[:s0], x[s1:]
+        ramp = np.linspace(0.0, np.pi / 2, xf)[:, None]
+        blend = a[-xf:] * np.cos(ramp) + b[:xf] * np.sin(ramp)
+        joined = np.concatenate([a[:-xf], blend, b[xf:]], axis=0)
+    else:
+        joined = np.concatenate([x[:s0], x[s1:]], axis=0)
+    sf.write(in_path, joined, sr, subtype="PCM_16")
+    return in_path
+
+
 # Native pedalboard presets. Each is a list of (effect_name, kwargs). Effects are
 # resolved against pedalboard at build time so importing this module never
 # requires pedalboard to be installed.
