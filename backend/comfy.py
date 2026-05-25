@@ -273,7 +273,7 @@ def build_edit(p, audio_ref):
     g["15"] = {"class_type": "VAEEncodeAudio", "inputs": {"audio": ["14", 0], "vae": ["6", 0]}}
     g["20"] = {"class_type": "ACEStep15NativeEditGuider", "inputs": {
         "model": ["7", 0], "positive": ["8", 0], "negative": ["9", 0],
-        "source_latents": ["15", 0], "cfg": float(p.get("edit_cfg", 3.0)),
+        "source_latents": ["15", 0], "cfg": float(p.get("edit_cfg", 1.0)),   # canonical edit cfg=1 (DiT guidance off; content from LM codes). >1 over-guides → garbled
         "extend_left_seconds": float(p.get("extend_left", 0.0)),
         "extend_right_seconds": float(p.get("extend_right", 0.0)),
         "repaint_start_seconds": float(p.get("repaint_start", -1.0)),

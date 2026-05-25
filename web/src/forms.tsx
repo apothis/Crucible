@@ -305,7 +305,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
   const [end, setEnd] = useState("20");
   const [left, setLeft] = useState("0");
   const [right, setRight] = useState("10");
-  const [editCfg, setEditCfg] = useState("3");
+  const [editCfg, setEditCfg] = useState("1");
   const [expert, setExpert] = useState(false);
   const tuning = useTuning(cfg, expert, true);   // duration derived from the source
   const applyPreset = (p: Preset) => setTags(p.tags);
@@ -359,7 +359,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       )}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
-      {expert && <Field label="Edit guidance (cfg)" hint="strength of the new content; def 3"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
+      {expert && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : mode === "repaint" ? "Repaint region" : "Extend track"}</PrimaryButton>
     </div>
