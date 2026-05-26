@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Config, type LibItem, type SongDraft } from "./api";
+import { api, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { ImportForm } from "./Import";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
+import { DraftProvider, useDraftCtx } from "./drafts";
 import type { Result, RunCtx } from "./ui";
 
 const MODES = [
@@ -35,6 +36,15 @@ const GROUPS: { name: string; modes: string[] }[] = [
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
 
 export default function App() {
+  return (
+    <DraftProvider>
+      <AppInner />
+    </DraftProvider>
+  );
+}
+
+function AppInner() {
+  const drafts = useDraftCtx();
   const [cfg, setCfg] = useState<Config | null>(null);
   const [mode, setMode] = useState<string>("generate");
   const [library, setLibrary] = useState<LibItem[]>([]);
@@ -43,9 +53,13 @@ export default function App() {
   const [handoff, setHandoff] = useState<{ tags?: string; lyrics?: string } | null>(null);
   const [libOpen, setLibOpen] = useState(true);
   const [openGroups, setOpenGroups] = useState<string[]>(GROUPS.map((g) => g.name));
+  // Projects — a saved bundle of every page's drafts + the song arrangement + tab.
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [current, setCurrent] = useState<{ id: string; name: string } | null>(null);
 
   const refreshLib = () => api.library().then(setLibrary).catch(() => {});
-  useEffect(() => { api.config().then(setCfg).catch(() => {}); refreshLib(); }, []);
+  const refreshProjects = () => api.projects().then(setProjects).catch(() => {});
+  useEffect(() => { api.config().then(setCfg).catch(() => {}); refreshLib(); refreshProjects(); }, []);
   useEffect(() => { setResults([]); }, [mode]);
 
   const busy = useMemo(() => results.some((r) => r.status === "pending" || r.status === "running"), [results]);
@@ -55,9 +69,58 @@ export default function App() {
     onDone: refreshLib,
   };
 
+  const snapshot = () => ({ drafts: drafts.store, song, mode });
+  async function projectSave() {
+    if (!current) return projectSaveAs();
+    try { const r = await api.projectSave(current.id, { data: snapshot() }); setCurrent({ id: current.id, name: r.name }); refreshProjects(); }
+    catch (e) { alert("Save failed: " + (e as Error).message); }
+  }
+  async function projectSaveAs() {
+    const name = window.prompt("Save project as:", current?.name || "My song");
+    if (!name) return;
+    try { const r = await api.projectCreate({ name, data: snapshot() }); setCurrent({ id: r.id, name: r.name }); refreshProjects(); }
+    catch (e) { alert("Save failed: " + (e as Error).message); }
+  }
+  async function projectOpen(id: string) {
+    if (!id) return;
+    try {
+      const p = await api.projectGet(id);
+      drafts.replaceAll(p.data?.drafts || {});
+      setSong(p.data?.song ?? null);
+      setHandoff(null);
+      setResults([]);
+      setMode(p.data?.mode || "generate");
+      setCurrent({ id: p.id, name: p.name });
+    } catch (e) { alert("Open failed: " + (e as Error).message); }
+  }
+  function projectNew() {
+    drafts.reset();
+    setSong(null);
+    setHandoff(null);
+    setResults([]);
+    setCurrent(null);
+    setMode("generate");
+  }
+  async function projectRename() {
+    if (!current) return;
+    const name = window.prompt("Rename project:", current.name);
+    if (!name) return;
+    try { await api.projectRename(current.id, name); setCurrent({ ...current, name }); refreshProjects(); }
+    catch (e) { alert("Rename failed: " + (e as Error).message); }
+  }
+  async function projectDelete() {
+    if (!current) return;
+    if (!window.confirm(`Delete project “${current.name}”? Your current workspace stays open.`)) return;
+    try { await api.projectDelete(current.id); setCurrent(null); refreshProjects(); }
+    catch (e) { alert("Delete failed: " + (e as Error).message); }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <Header cfg={cfg} libOpen={libOpen} toggleLib={() => setLibOpen((v) => !v)} />
+      <ProjectBar projects={projects} current={current}
+        onNew={projectNew} onOpen={projectOpen} onSave={projectSave} onSaveAs={projectSaveAs}
+        onRename={projectRename} onDelete={projectDelete} />
       <main className="flex flex-1 min-h-0">
         <Sidebar mode={mode} setMode={setMode} openGroups={openGroups} setOpenGroups={setOpenGroups} />
 
@@ -152,6 +215,32 @@ function Header({ cfg, libOpen, toggleLib }: { cfg: Config | null; libOpen: bool
         </button>
       </div>
     </header>
+  );
+}
+
+function ProjectBar({ projects, current, onNew, onOpen, onSave, onSaveAs, onRename, onDelete }: {
+  projects: Project[]; current: { id: string; name: string } | null;
+  onNew: () => void; onOpen: (id: string) => void; onSave: () => void; onSaveAs: () => void;
+  onRename: () => void; onDelete: () => void;
+}) {
+  const btn = "rounded-md border border-[var(--color-line)] bg-[var(--color-panel2)] px-2.5 py-1 text-[var(--color-muted)] transition hover:border-[var(--color-accent)] hover:text-[var(--color-ink)] disabled:opacity-40 disabled:hover:border-[var(--color-line)]";
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-line)] bg-[var(--color-panel)] px-5 py-2 text-[11px]">
+      <span className="text-[var(--color-muted)]">Project</span>
+      <span className="mr-1 rounded-md bg-[#2a1c19] px-2 py-1 font-medium text-[var(--color-accent2)]" title={current ? "current project" : "nothing saved yet — Save to name it"}>
+        {current ? current.name : "Unsaved"}
+      </span>
+      <select className={`${btn} max-w-[180px]`} value="" title="Open a saved project"
+        onChange={(e) => { onOpen(e.target.value); e.currentTarget.value = ""; }}>
+        <option value="">Open…</option>
+        {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <button className={btn} onClick={onNew} title="Clear every page and start fresh">New</button>
+      <button className={btn} onClick={onSave} title="Save the current project">Save</button>
+      <button className={btn} onClick={onSaveAs} title="Save as a new named project">Save As</button>
+      <button className={btn} onClick={onRename} disabled={!current}>Rename</button>
+      <button className={btn} onClick={onDelete} disabled={!current}>Delete</button>
+    </div>
   );
 }
 

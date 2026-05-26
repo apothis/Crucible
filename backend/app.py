@@ -135,6 +135,10 @@ def init_db():
         cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()]
         if "bucket" not in cols:  # filing bucket: "" (auto by mode) or "tests"
             conn.execute("ALTER TABLE jobs ADD COLUMN bucket TEXT DEFAULT ''")
+        # A "project" = one saved bundle of per-page inputs/settings (the web draft store)
+        # plus the song arrangement and current tab. `data` is the JSON the UI serializes.
+        conn.execute("""CREATE TABLE IF NOT EXISTS projects(
+            id TEXT PRIMARY KEY, name TEXT, created REAL, updated REAL, data TEXT)""")
 
 
 def save_job(pid):
@@ -1139,6 +1143,77 @@ def delete_library_item(jid: str):
     with LOCK:
         JOBS.pop(jid, None)
     return {"ok": True, "removed": removed}
+
+
+# ---------------- Projects (saved per-page state bundles) ----------------
+@app.get("/api/projects")
+def projects_list():
+    """List saved projects (metadata only — no data payload)."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,name,created,updated FROM projects ORDER BY updated DESC").fetchall()
+    return [{"id": r["id"], "name": r["name"], "created": r["created"], "updated": r["updated"]}
+            for r in rows]
+
+
+@app.post("/api/projects")
+def projects_create(body: dict):
+    """Create a new project. Body: {name, data}. Returns the new id."""
+    pid = uuid.uuid4().hex
+    name = (body.get("name") or "Untitled project").strip() or "Untitled project"
+    data = json.dumps(body.get("data") or {})
+    now = time.time()
+    with db() as conn:
+        conn.execute("INSERT INTO projects(id,name,created,updated,data) VALUES(?,?,?,?,?)",
+                     (pid, name, now, now, data))
+    return {"id": pid, "name": name, "created": now, "updated": now}
+
+
+@app.get("/api/projects/{pid}")
+def projects_get(pid: str):
+    pid = os.path.basename(pid)
+    with db() as conn:
+        r = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    if not r:
+        raise HTTPException(404, "project not found")
+    return {"id": r["id"], "name": r["name"], "created": r["created"],
+            "updated": r["updated"], "data": json.loads(r["data"] or "{}")}
+
+
+@app.put("/api/projects/{pid}")
+def projects_save(pid: str, body: dict):
+    """Save (overwrite) a project's data, optionally its name too."""
+    pid = os.path.basename(pid)
+    now = time.time()
+    with db() as conn:
+        r = conn.execute("SELECT name FROM projects WHERE id=?", (pid,)).fetchone()
+        if not r:
+            raise HTTPException(404, "project not found")
+        name = (body.get("name") or r["name"]).strip() or r["name"]
+        data = json.dumps(body.get("data") or {})
+        conn.execute("UPDATE projects SET name=?,data=?,updated=? WHERE id=?", (name, data, now, pid))
+    return {"id": pid, "name": name, "updated": now}
+
+
+@app.patch("/api/projects/{pid}")
+def projects_rename(pid: str, body: dict):
+    pid = os.path.basename(pid)
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    with db() as conn:
+        cur = conn.execute("UPDATE projects SET name=?,updated=? WHERE id=?", (name, time.time(), pid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "project not found")
+    return {"id": pid, "name": name}
+
+
+@app.delete("/api/projects/{pid}")
+def projects_delete(pid: str):
+    pid = os.path.basename(pid)
+    with db() as conn:
+        conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+    return {"ok": True}
 
 
 @app.get("/api/rvc/voices")

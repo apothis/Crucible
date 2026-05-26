@@ -1,33 +1,35 @@
 import { useEffect, useState } from "react";
 import { api, type Config, type SongDraft, type Score, type VocalEngine } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, runSync, type RunCtx } from "./ui";
+import { useDrafts } from "./drafts";
 
 type Props = { cfg: Config; busy: boolean; song: SongDraft | null } & RunCtx;
 
 const SECTION_COLORS = ["#e07a3f", "#d4a13f", "#5fa9d4", "#8f7fd4", "#5fc7a0", "#d45f8f", "#9fc75f", "#c75f5f"];
 
 export function VocalBuilderForm({ busy, song, ...ctx }: Props) {
-  const [provider, setProvider] = useState("");
+  const d = useDrafts("vocalbuilder");
+  const [provider, setProvider] = d.use("provider", "");
   const [score, setScore] = useState<Score | null>(null);
   const [composing, setComposing] = useState(false);
   const [engines, setEngines] = useState<VocalEngine[]>([]);
-  const [engine, setEngine] = useState("guide");
+  const [engine, setEngine] = d.use("engine", "guide");
   const [voices, setVoices] = useState<string[]>([]);
-  const [retimbre, setRetimbre] = useState(false);
-  const [voice, setVoice] = useState("");
-  const [transpose, setTranspose] = useState("0");
+  const [retimbre, setRetimbre] = d.use("retimbre", false);
+  const [voice, setVoice] = d.use("voice", "");
+  const [transpose, setTranspose] = d.use("transpose", "0");
   const [refs, setRefs] = useState<{ id: string; label: string }[]>([]);
   const [msg, setMsg] = useState("");
   // SoulX engine settings (expert)
-  const [expert, setExpert] = useState(false);
-  const [steps, setSteps] = useState("200");
-  const [cfg, setCfg] = useState("3");
-  const [prec, setPrec] = useState("fp32");
-  const [autoShift, setAutoShift] = useState(true);
-  const [pitchShift, setPitchShift] = useState("0");
+  const [expert, setExpert] = d.use("expert", false);
+  const [steps, setSteps] = d.use("steps", "200");
+  const [cfg, setCfg] = d.use("cfg", "3");
+  const [prec, setPrec] = d.use("prec", "fp32");
+  const [autoShift, setAutoShift] = d.use("autoShift", true);
+  const [pitchShift, setPitchShift] = d.use("pitchShift", "0");
   // SoulX reference-voice library (zero-shot timbre)
   const [refVoices, setRefVoices] = useState<{ name: string; ready: boolean }[]>([]);
-  const [refVoice, setRefVoice] = useState("");
+  const [refVoice, setRefVoice] = d.use("refVoice", "");
   const [addOpen, setAddOpen] = useState(false);
   const [prepName, setPrepName] = useState("");
   const [prepJob, setPrepJob] = useState("");

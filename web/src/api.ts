@@ -19,6 +19,16 @@ async function jform(url: string, fd: FormData) {
   if (!r.ok) throw new Error(d.detail || r.statusText);
   return d;
 }
+async function jmethod(method: string, url: string, body: unknown) {
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || r.statusText);
+  return d;
+}
 
 export const api = {
   config: () => jget("/api/config"),
@@ -79,6 +89,17 @@ export const api = {
   },
   audioUrl: (id: string) => `/api/audio/${id}`,
   cancel: () => jpost("/api/cancel", {}),
+  // Projects — saved bundles of per-page state
+  projects: () => jget("/api/projects"),
+  projectGet: (id: string) => jget(`/api/projects/${id}`),
+  projectCreate: (body: { name: string; data: unknown }) => jpost("/api/projects", body),
+  projectSave: (id: string, body: { name?: string; data: unknown }) => jmethod("PUT", `/api/projects/${id}`, body),
+  projectRename: (id: string, name: string) => jmethod("PATCH", `/api/projects/${id}`, { name }),
+  projectDelete: async (id: string) => {
+    const r = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error("delete failed");
+    return r.json();
+  },
 };
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
@@ -91,3 +112,5 @@ export type Note = { midi: number; start: number; dur: number; syllable: string;
 export type Section = { role: string; start: number; seconds: number; lyrics: string; notes: Note[] };
 export type Score = { bpm: number; key: string; duration: number; provider: string; sections: Section[]; notes: Note[] };
 export type VocalEngine = { id: string; label: string; desc: string; sings_words: boolean; available: boolean; host: string };
+export type Project = { id: string; name: string; created: number; updated: number; data?: ProjectData };
+export type ProjectData = { drafts?: Record<string, Record<string, unknown>>; song?: SongDraft | null; mode?: string };

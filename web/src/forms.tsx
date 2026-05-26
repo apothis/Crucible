@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { api, type Config, type Genre, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, Slider, pollJob, waitJob, runSync, rid, type RunCtx } from "./ui";
+import { useDrafts } from "./drafts";
 import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
 import { RegionSelector } from "./RegionSelector";
 
@@ -33,27 +34,28 @@ const ENGINE_MODELS = [
   { id: "acestep-v15-turbo", label: "Turbo (fast preview)" },
 ];
 
-function useTuning(cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false) {
+function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false) {
+  const d = useDrafts(`${ns}.tuning`);
   const firstAvail = cfg.variants.find((v) => v.available);
-  const [variant, setVariant] = useState(firstAvail?.id ?? "xl_base");
-  const [steps, setSteps] = useState("");
-  const [cfgScale, setCfgScale] = useState("");
-  const [duration, setDuration] = useState("40");
-  const [bpm, setBpm] = useState("170");
-  const [keyscale, setKeyscale] = useState("E minor");
-  const [seed, setSeed] = useState("");
-  const [sampler, setSampler] = useState("euler");
-  const [scheduler, setScheduler] = useState("simple");
-  const [shift, setShift] = useState("");
-  const [apg, setApg] = useState(false);
-  const [apgNorm, setApgNorm] = useState("1.3");
-  const [apgEta, setApgEta] = useState("1.05");
+  const [variant, setVariant] = d.use("variant", firstAvail?.id ?? "xl_base");
+  const [steps, setSteps] = d.use("steps", "");
+  const [cfgScale, setCfgScale] = d.use("cfgScale", "");
+  const [duration, setDuration] = d.use("duration", "40");
+  const [bpm, setBpm] = d.use("bpm", "170");
+  const [keyscale, setKeyscale] = d.use("keyscale", "E minor");
+  const [seed, setSeed] = d.use("seed", "");
+  const [sampler, setSampler] = d.use("sampler", "euler");
+  const [scheduler, setScheduler] = d.use("scheduler", "simple");
+  const [shift, setShift] = d.use("shift", "");
+  const [apg, setApg] = d.use("apg", false);
+  const [apgNorm, setApgNorm] = d.use("apgNorm", "1.3");
+  const [apgEta, setApgEta] = d.use("apgEta", "1.05");
   // ---- official ACE-Step engine controls (only shown/sent in engineMode) ----
-  const [engModel, setEngModel] = useState("acestep-v15-xl-base");  // base = docs' quality pick
-  const [useAdg, setUseAdg] = useState(true);                       // Adaptive Dual Guidance (de-mud)
-  const [inferMethod, setInferMethod] = useState("ode");            // ode (euler) | sde (stochastic)
-  const [cfgIntStart, setCfgIntStart] = useState("");
-  const [cfgIntEnd, setCfgIntEnd] = useState("");
+  const [engModel, setEngModel] = d.use("engModel", "acestep-v15-xl-base");  // base = docs' quality pick
+  const [useAdg, setUseAdg] = d.use("useAdg", true);                       // Adaptive Dual Guidance (de-mud)
+  const [inferMethod, setInferMethod] = d.use("inferMethod", "ode");            // ode (euler) | sde (stochastic)
+  const [cfgIntStart, setCfgIntStart] = d.use("cfgIntStart", "");
+  const [cfgIntEnd, setCfgIntEnd] = d.use("cfgIntEnd", "");
   const v = cfg.variants.find((x) => x.id === variant);
   const engTurbo = engModel.includes("turbo");
 
@@ -257,15 +259,16 @@ function PromptFields({ tags, setTags, instrumental, setInstrumental, lyrics, se
 }
 
 export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormProps & { handoff?: { tags?: string; lyrics?: string } | null; clearHandoff?: () => void }) {
-  const [tags, setTags] = useState("symphonic power metal, heavily distorted electric guitars, double-bass drums, orchestral strings, fast tempo, heroic");
-  const [instrumental, setInstrumental] = useState(true);
-  const [lyrics, setLyrics] = useState("");
-  const [count, setCount] = useState(1);
-  const [expert, setExpert] = useState(false);
-  const [neg, setNeg] = useState("");
-  const [thinking, setThinking] = useState(true);   // engine: 4B LM audio codes (ComfyUI parity)
-  const [cot, setCot] = useState(true);             // engine: LM expands tags + detects language
-  const tuning = useTuning(cfg, expert, false, !!cfg.acestep);
+  const d = useDrafts("generate");
+  const [tags, setTags] = d.use("tags", "symphonic power metal, heavily distorted electric guitars, double-bass drums, orchestral strings, fast tempo, heroic");
+  const [instrumental, setInstrumental] = d.use("instrumental", true);
+  const [lyrics, setLyrics] = d.use("lyrics", "");
+  const [count, setCount] = d.use("count", 1);
+  const [expert, setExpert] = d.use("expert", false);
+  const [neg, setNeg] = d.use("neg", "");
+  const [thinking, setThinking] = d.use("thinking", true);   // engine: 4B LM audio codes (ComfyUI parity)
+  const [cot, setCot] = d.use("cot", true);             // engine: LM expands tags + detects language
+  const tuning = useTuning("generate", cfg, expert, false, !!cfg.acestep);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
 
   // accept a "send to Generate" handoff from the Song builder (tags + compiled lyrics)
@@ -327,22 +330,23 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
 }
 
 export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
+  const d = useDrafts("restyle");
   const tracks = useLibrary((it) => ["source", "generate", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
-  const [mode, setMode] = useState<"reimagine" | "cover">("reimagine");
-  const [job, setJob] = useState("");
+  const [mode, setMode] = d.use<"reimagine" | "cover">("mode", "reimagine");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [amount, setAmount] = useState(0.7);
-  const [tags, setTags] = useState("");
-  const [instrumental, setInstrumental] = useState(true);
-  const [lyrics, setLyrics] = useState("");
+  const [amount, setAmount] = d.use("amount", 0.7);
+  const [tags, setTags] = d.use("tags", "");
+  const [instrumental, setInstrumental] = d.use("instrumental", true);
+  const [lyrics, setLyrics] = d.use("lyrics", "");
   const [timbre, setTimbre] = useState<File | null>(null);
-  const [coverStrength, setCoverStrength] = useState(0.5);
+  const [coverStrength, setCoverStrength] = d.use("coverStrength", 0.5);
   const [transcribing, setTranscribing] = useState(false);
-  const [isoEngine, setIsoEngine] = useState<"demucs" | "roformer">("demucs");
-  const [expert, setExpert] = useState(true);
+  const [isoEngine, setIsoEngine] = d.use<"demucs" | "roformer">("isoEngine", "demucs");
+  const [expert, setExpert] = d.use("expert", true);
   // Restyle/Cover are source-conditioned on the engine: length/tempo/key come from the
   // source audio (the cover task doesn't receive bpm/key/duration), so hide those.
-  const tuning = useTuning(cfg, expert, false, !!cfg.acestep, !!cfg.acestep);
+  const tuning = useTuning("restyle", cfg, expert, false, !!cfg.acestep, !!cfg.acestep);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const isCover = mode === "cover";
 
@@ -450,25 +454,26 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
 }
 
 function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "extend" }) {
+  const d = useDrafts(mode);
   const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "repaint", "extend", "voiceswap", "source"].includes(it.mode));
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [tags, setTags] = useState("");
-  const [instrumental, setInstrumental] = useState(true);
-  const [lyrics, setLyrics] = useState("");
-  const [start, setStart] = useState("10");
-  const [end, setEnd] = useState("20");
-  const [left, setLeft] = useState("0");
-  const [right, setRight] = useState("10");
-  const [editCfg, setEditCfg] = useState("1");
-  const [repaintStrength, setRepaintStrength] = useState(0.5);  // balanced; higher = regenerate more freely (per _resolve_repaint_config)
-  const [expert, setExpert] = useState(false);
+  const [tags, setTags] = d.use("tags", "");
+  const [instrumental, setInstrumental] = d.use("instrumental", true);
+  const [lyrics, setLyrics] = d.use("lyrics", "");
+  const [start, setStart] = d.use("start", "10");
+  const [end, setEnd] = d.use("end", "20");
+  const [left, setLeft] = d.use("left", "0");
+  const [right, setRight] = d.use("right", "10");
+  const [editCfg, setEditCfg] = d.use("editCfg", "1");
+  const [repaintStrength, setRepaintStrength] = d.use("repaintStrength", 0.5);  // balanced; higher = regenerate more freely (per _resolve_repaint_config)
+  const [expert, setExpert] = d.use("expert", false);
   const [beats, setBeats] = useState<number[]>([]);
   const [srcUrl, setSrcUrl] = useState<string>("");
   // Repaint runs on ComfyUI by default (engine repaint is weak); only show engine-style
   // controls when the engine repaint path is explicitly enabled.
   const engineRepaint = !!cfg.acestep_repaint;
-  const tuning = useTuning(cfg, expert, true, engineRepaint, engineRepaint);
+  const tuning = useTuning(mode, cfg, expert, true, engineRepaint, engineRepaint);
   const applyPreset = (p: Preset) => setTags(p.tags);
 
   // Waveform region selector: resolve the source audio URL + detect beats (Mac) when
@@ -571,28 +576,29 @@ const LAYER_TRACKS = ["vocals", "drums", "bass", "guitar", "keyboard", "strings"
   "percussion", "synth", "fx", "brass", "woodwinds", "backing_vocals"];
 
 export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
+  const d = useDrafts("layer");
   const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "repaint", "layer", "voiceswap", "source"].includes(it.mode));
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [track, setTrack] = useState("guitar");
-  const [tags, setTags] = useState("");
-  const [lyrics, setLyrics] = useState("");
-  const [start, setStart] = useState("0");
-  const [end, setEnd] = useState("");
+  const [track, setTrack] = d.use("track", "guitar");
+  const [tags, setTags] = d.use("tags", "");
+  const [lyrics, setLyrics] = d.use("lyrics", "");
+  const [start, setStart] = d.use("start", "0");
+  const [end, setEnd] = d.use("end", "");
   const [timbre, setTimbre] = useState<File | null>(null);
-  const [legoCfg, setLegoCfg] = useState("6");
-  const [cleanBed, setCleanBed] = useState(false);
-  const [bedEngine, setBedEngine] = useState<"demucs" | "roformer">("demucs");
-  const [isolate, setIsolate] = useState(false);
-  const [method, setMethod] = useState<"demucs" | "roformer" | "extract">("demucs");
-  const [outputs, setOutputs] = useState<"both" | "stem">("both");
-  const [gate, setGate] = useState(true);
-  const [expert, setExpert] = useState(false);
+  const [legoCfg, setLegoCfg] = d.use("legoCfg", "6");
+  const [cleanBed, setCleanBed] = d.use("cleanBed", false);
+  const [bedEngine, setBedEngine] = d.use<"demucs" | "roformer">("bedEngine", "demucs");
+  const [isolate, setIsolate] = d.use("isolate", false);
+  const [method, setMethod] = d.use<"demucs" | "roformer" | "extract">("method", "demucs");
+  const [outputs, setOutputs] = d.use<"both" | "stem">("outputs", "both");
+  const [gate, setGate] = d.use("gate", true);
+  const [expert, setExpert] = d.use("expert", false);
   const [beats, setBeats] = useState<number[]>([]);
   const [srcUrl, setSrcUrl] = useState<string>("");
   // Engine lego (off by default) → show engine-style controls + source-conditioned.
   const engineLego = !!cfg.acestep_lego;
-  const tuning = useTuning(cfg, expert, true, engineLego, engineLego);   // duration derived from the source
+  const tuning = useTuning("layer", cfg, expert, true, engineLego, engineLego);   // duration derived from the source
   const isVocal = track === "vocals" || track === "backing_vocals";
   const applyPreset = (p: Preset) => setTags(p.tags);
 
@@ -761,14 +767,15 @@ function useLibrary(filter: (it: LibItem) => boolean) {
 }
 
 export function VocalsForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("vocals");
   const { voices, status, reload } = useVoices();
   const [file, setFile] = useState<File | null>(null);
-  const [voice, setVoice] = useState("");
-  const [transpose, setTranspose] = useState("0");
-  const [f0, setF0] = useState("rmvpe");
-  const [indexRate, setIndexRate] = useState(0.75);
-  const [rms, setRms] = useState(0.25);
-  const [protect, setProtect] = useState(0.33);
+  const [voice, setVoice] = d.use("voice", "");
+  const [transpose, setTranspose] = d.use("transpose", "0");
+  const [f0, setF0] = d.use("f0", "rmvpe");
+  const [indexRate, setIndexRate] = d.use("indexRate", 0.75);
+  const [rms, setRms] = d.use("rms", 0.25);
+  const [protect, setProtect] = d.use("protect", 0.33);
   useEffect(() => { if (!voice && voices.length) setVoice(voices[0]); }, [voices]);
 
   async function run() {
@@ -867,14 +874,15 @@ function RepoRow({ repo, onInstall }: { repo: any; onInstall: (b: any) => void }
 }
 
 export function SwapForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("swap");
   const { voices, status } = useVoices();
   const songs = useLibrary((it) => (it.mode === "generate" || it.mode === "restyle") && !it.params.instrumental);
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [voice, setVoice] = useState("");
-  const [transpose, setTranspose] = useState("0");
-  const [vGain, setVGain] = useState("0");
-  const [iGain, setIGain] = useState("0");
+  const [voice, setVoice] = d.use("voice", "");
+  const [transpose, setTranspose] = d.use("transpose", "0");
+  const [vGain, setVGain] = d.use("vGain", "0");
+  const [iGain, setIGain] = d.use("iGain", "0");
   useEffect(() => { if (!voice && voices.length) setVoice(voices[0]); }, [voices]);
 
   async function run() {
@@ -911,11 +919,12 @@ export function SwapForm({ busy, ...ctx }: FormProps) {
 }
 
 export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
+  const d = useDrafts("stems");
   const tracks = useLibrary((it) => ["generate", "restyle", "cover", "voiceswap", "mix", "song", "layer", "source"].includes(it.mode));
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [mode, setMode] = useState("vocals");
-  const [engine, setEngine] = useState<"demucs" | "roformer">("demucs");
+  const [mode, setMode] = d.use("mode", "vocals");
+  const [engine, setEngine] = d.use<"demucs" | "roformer">("engine", "demucs");
   const isRofo = engine === "roformer";
 
   async function run() {
@@ -967,10 +976,11 @@ export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
 }
 
 export function ToneForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("tone");
   const tracks = useLibrary((it) => ["generate", "restyle", "song", "mix", "tone"].includes(it.mode));
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [preset, setPreset] = useState("tighten_highgain");
+  const [preset, setPreset] = d.use("preset", "tighten_highgain");
   const [presets, setPresets] = useState<{ id: string; label: string; desc: string }[]>([]);
   const [helixOn, setHelixOn] = useState(false);
   const [capName, setCapName] = useState("");
@@ -1046,23 +1056,24 @@ export function ToneForm({ busy, ...ctx }: FormProps) {
 }
 
 export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: SongDraft | null }) {
+  const d = useDrafts("guitar");
   const backings = useLibrary((it) => it.mode === "backing");
-  const [source, setSource] = useState<"riff" | "song" | "midi">("riff");
+  const [source, setSource] = d.use<"riff" | "song" | "midi">("source", "riff");
   const [file, setFile] = useState<File | null>(null);
-  const [key, setKey] = useState("E minor");
-  const [bpm, setBpm] = useState("160");
-  const [bars, setBars] = useState("8");
-  const [style, setStyle] = useState("gallop");
-  const [brain, setBrain] = useState("algorithmic");
-  const [genre, setGenre] = useState(cfg.genres[0]?.id || "thrash");
-  const [part, setPart] = useState("riff");
-  const [preset, setPreset] = useState("helix");
+  const [key, setKey] = d.use("key", "E minor");
+  const [bpm, setBpm] = d.use("bpm", "160");
+  const [bars, setBars] = d.use("bars", "8");
+  const [style, setStyle] = d.use("style", "gallop");
+  const [brain, setBrain] = d.use("brain", "algorithmic");
+  const [genre, setGenre] = d.use("genre", cfg.genres[0]?.id || "thrash");
+  const [part, setPart] = d.use("part", "riff");
+  const [preset, setPreset] = d.use("preset", "helix");
   const [presets, setPresets] = useState<{ id: string; label: string }[]>([]);
-  const [backing, setBacking] = useState("");
-  const [align, setAlign] = useState(false);
+  const [backing, setBacking] = d.use("backing", "");
+  const [align, setAlign] = d.use("align", false);
   const [alignAvail, setAlignAvail] = useState(false);
   const [sfOn, setSfOn] = useState(false);
-  const [diEngine, setDiEngine] = useState("ks");
+  const [diEngine, setDiEngine] = d.use("diEngine", "ks");
   const [kontaktReady, setKontaktReady] = useState(false);
   const [kontaktAvail, setKontaktAvail] = useState(false);
   const [kStatus, setKStatus] = useState("");
@@ -1228,10 +1239,11 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
 }
 
 export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
+  const d = useDrafts("backing");
   const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "source"].includes(it.mode));
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [engine, setEngine] = useState<"demucs" | "roformer">("demucs");
+  const [engine, setEngine] = d.use<"demucs" | "roformer">("engine", "demucs");
 
   async function run() {
     if (!file && !job) return fail(ctx, "Choose a track to strip the guitar from.");
@@ -1274,11 +1286,12 @@ export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
 }
 
 export function MasterForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("master");
   const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source"].includes(it.mode));
   const refs = useLibrary(() => true);  // any track can be a reference, esp. imported "source" songs
-  const [job, setJob] = useState("");
+  const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
-  const [refJob, setRefJob] = useState("");
+  const [refJob, setRefJob] = d.use("refJob", "");
   const [refFile, setRefFile] = useState<File | null>(null);
 
   async function run() {
@@ -1322,9 +1335,10 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
 }
 
 export function MixForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("mix");
   const [sources, setSources] = useState<{ label: string; url: string }[]>([]);
-  const [rows, setRows] = useState([{ src: "", gain: "0", offset: "0" }, { src: "", gain: "0", offset: "0" }]);
-  const [norm, setNorm] = useState(true);
+  const [rows, setRows] = d.use("rows", [{ src: "", gain: "0", offset: "0" }, { src: "", gain: "0", offset: "0" }]);
+  const [norm, setNorm] = d.use("norm", true);
   useEffect(() => { api.sources().then(setSources).catch(() => {}); }, []);
 
   const upd = (i: number, k: string, val: string) => setRows((r) => r.map((row, j) => j === i ? { ...row, [k]: val } : row));
@@ -1440,21 +1454,25 @@ function SortableBlock({ b, drive, instrumental, upd, remove }: {
 }
 
 export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormProps & { onSong?: (s: SongDraft) => void; onSendToGenerate?: (h: { tags: string; lyrics: string }) => void }) {
-  const [blocks, setBlocks] = useState<Block[]>(() =>
-    ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Solo", "Chorus", "Outro"].map(newBlock));
-  const [tags, setTags] = useState("");
-  const [instrumental, setInstrumental] = useState(false);
-  const [drive, setDrive] = useState<"compile" | "stitch">("compile");
-  const [crossfade, setCrossfade] = useState(1);
-  const [expert, setExpert] = useState(false);
-  const [tpl, setTpl] = useState("");
-  const [dirty, setDirty] = useState(false); // arrangement edited since last template/default
-  const [lyrTheme, setLyrTheme] = useState("");
-  const [lyrProv, setLyrProv] = useState("local");
+  const d = useDrafts("song");
+  // Stable default arrangement (newBlock assigns ids); compute once so an empty
+  // store doesn't regenerate fresh ids every render.
+  const defBlocks = useRef<Block[] | null>(null);
+  if (!defBlocks.current) defBlocks.current = ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Solo", "Chorus", "Outro"].map(newBlock);
+  const [blocks, setBlocks] = d.use<Block[]>("blocks", defBlocks.current);
+  const [tags, setTags] = d.use("tags", "");
+  const [instrumental, setInstrumental] = d.use("instrumental", false);
+  const [drive, setDrive] = d.use<"compile" | "stitch">("drive", "compile");
+  const [crossfade, setCrossfade] = d.use("crossfade", 1);
+  const [expert, setExpert] = d.use("expert", false);
+  const [tpl, setTpl] = d.use("tpl", "");
+  const [dirty, setDirty] = d.use("dirty", false); // arrangement edited since last template/default
+  const [lyrTheme, setLyrTheme] = d.use("lyrTheme", "");
+  const [lyrProv, setLyrProv] = d.use("lyrProv", "local");
   const [lyrBusy, setLyrBusy] = useState(false);
-  const [sungEnds, setSungEnds] = useState(false);
+  const [sungEnds, setSungEnds] = d.use("sungEnds", false);
   const claude = useClaudeAvail();
-  const tuning = useTuning(cfg, expert, true); // duration is computed from blocks
+  const tuning = useTuning("song", cfg, expert, true); // duration is computed from blocks
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
