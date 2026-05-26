@@ -32,7 +32,7 @@ const ENGINE_MODELS = [
   { id: "acestep-v15-turbo", label: "Turbo (fast preview)" },
 ];
 
-function useTuning(cfg: Config, expert: boolean, hideDuration = false, engineMode = false) {
+function useTuning(cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false) {
   const firstAvail = cfg.variants.find((v) => v.available);
   const [variant, setVariant] = useState(firstAvail?.id ?? "xl_base");
   const [steps, setSteps] = useState("");
@@ -75,15 +75,15 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false, engineMod
             </select>
           )}
         </Field>
-        {!hideDuration && <Field label="Duration (s)"><input className={inp} type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>}
+        {!hideDuration && !sourceConditioned && <Field label="Duration (s)"><input className={inp} type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>}
         <Field label="Steps" hint={engineMode ? (engTurbo ? "turbo 8" : "base/sft 32–64") : (v ? `def ${v.steps}` : "")}><input className={inp} type="number" placeholder={engineMode ? (engTurbo ? "8" : "64") : String(v?.steps ?? "")} value={steps} onChange={(e) => setSteps(e.target.value)} /></Field>
         <Field label={engineMode ? "Guidance" : "CFG"} hint={engineMode ? (engTurbo ? "turbo: n/a" : "base/sft 5–9") : (v ? `def ${v.cfg}` : "")}><input className={inp} type="number" step="0.5" placeholder={engineMode ? "8" : String(v?.cfg ?? "")} value={cfgScale} onChange={(e) => setCfgScale(e.target.value)} /></Field>
-        <Field label="BPM"><input className={inp} type="number" value={bpm} onChange={(e) => setBpm(e.target.value)} /></Field>
-        <Field label="Key">
+        {!sourceConditioned && <Field label="BPM"><input className={inp} type="number" value={bpm} onChange={(e) => setBpm(e.target.value)} /></Field>}
+        {!sourceConditioned && <Field label="Key">
           <select className={inp} value={keyscale} onChange={(e) => setKeyscale(e.target.value)}>
             {cfg.keys.map((k) => <option key={k}>{k}</option>)}
           </select>
-        </Field>
+        </Field>}
         <Field label="Seed" hint="blank = random"><input className={inp} type="number" placeholder="random" value={seed} onChange={(e) => setSeed(e.target.value)} /></Field>
         {engineMode ? (
           <Field label="Inference" hint="ode=euler · sde=stochastic">
@@ -134,7 +134,7 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false, engineMod
         </>
       )}
     </>
-  ) : hideDuration ? null : (
+  ) : (hideDuration || sourceConditioned) ? null : (
     <Field label="Duration (s)"><input className={inp} type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>
   );
 
@@ -339,7 +339,9 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const [transcribing, setTranscribing] = useState(false);
   const [isoEngine, setIsoEngine] = useState<"demucs" | "roformer">("demucs");
   const [expert, setExpert] = useState(true);
-  const tuning = useTuning(cfg, expert);
+  // Restyle/Cover are source-conditioned on the engine: length/tempo/key come from the
+  // source audio (the cover task doesn't receive bpm/key/duration), so hide those.
+  const tuning = useTuning(cfg, expert, false, !!cfg.acestep, !!cfg.acestep);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const isCover = mode === "cover";
 
@@ -367,7 +369,16 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
     try {
       const fd = new FormData();
       if (file) fd.append("file", file); else fd.append("job_id", job);
-      if (isCover) {
+      if (cfg.acestep) {
+        // Engine path: Reimagine + Cover both ride the official `cover` task.
+        // Reimagine maps the "amount" (more change) to a LOWER cover_strength.
+        if (isCover && timbre) fd.append("timbre", timbre);
+        const strength = isCover ? coverStrength : +(1 - amount).toFixed(2);
+        fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, cover_strength: strength, result_mode: isCover ? "cover" : "restyle" }));
+        const { job_id } = await api.cover(fd);
+        ctx.patch(id, { status: "running", pct: 5 });
+        pollJob(job_id, id, ctx);
+      } else if (isCover) {
         if (timbre) fd.append("timbre", timbre);
         fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, cover_strength: coverStrength }));
         const { job_id } = await api.cover(fd);
@@ -393,7 +404,9 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
       <p className="text-xs text-[var(--color-muted)]">
         {isCover
           ? "Cover: keep the song's structure/melody, change the timbre/genre from the tags (+ optional timbre reference) — e.g. map a non-metal track to metal. Base/SFT."
-          : "Reimagine: audio→audio by denoise amount — higher transforms more, further from the source."}
+          : (cfg.acestep
+              ? "Reimagine: transform the source toward the target style — runs the engine cover task at low strength (higher amount = freer / more change)."
+              : "Reimagine: audio→audio by denoise amount — higher transforms more, further from the source.")}
       </p>
       <ModeToggle expert={expert} setExpert={setExpert} />
       <Field label="Source track" hint="a library track (incl. imported songs) or upload">

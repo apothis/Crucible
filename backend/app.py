@@ -305,13 +305,15 @@ def generate(p: dict):
             "bpm": int(p.get("bpm", 120)),
             "keyscale": p.get("keyscale", "E minor"),
             "vocal_language": p.get("language", "en"),
-            "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 6.0),
-            "inference_steps": int(p.get("steps") or 32),
+            # Defaults = the documented best-quality recipe (A/B-verified): guidance 8,
+            # 64 steps + ADG for base/sft (turbo wants ~8 steps, ignores guidance/ADG).
+            "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
+            "inference_steps": int(p.get("steps") or (8 if eng_is_turbo else 64)),
             "shift": float(p.get("shift", 3.0)),
             "infer_method": p.get("infer_method", "ode"),
             "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
             "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
-            "use_adg": bool(p.get("use_adg", False)),           # Adaptive Dual Guidance (quality; base/sft only)
+            "use_adg": bool(p.get("use_adg", not eng_is_turbo)),  # Adaptive Dual Guidance (quality; base/sft only)
             "thinking": bool(p.get("thinking", True)),          # 4B LM audio codes (ComfyUI parity)
             "use_cot_caption": bool(p.get("use_cot_caption", True)),   # LM auto-expands the tags
             "use_cot_language": bool(p.get("use_cot_language", True)),
@@ -453,20 +455,27 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
         if timbre is not None:
             tname = timbre.filename or "timbre.wav"
             ctx = (await timbre.read(), tname)
-        # Field names/model id follow the docs (RESEARCH §13) — verify vs /v1/models.
+        # Param mapping mirrors /api/generate (cfg→guidance_scale, steps→inference_steps,
+        # model/use_adg/infer_method/cfg_interval from the engine tuning UI). The LM is
+        # auto-skipped for cover, so thinking/CoT don't apply here. Reimagine and Cover both
+        # ride this `cover` task — reimagine just passes a lower audio_cover_strength.
+        eng_model = p.get("model") or "acestep-v15-xl-base"
+        is_turbo = "turbo" in eng_model.lower()
+        result_mode = p.get("result_mode", "cover")    # "cover" or "restyle" (reimagine) — library label
         fields = {
             "task_type": "cover",
             "prompt": p.get("tags", ""),
             "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
             "audio_cover_strength": float(p.get("cover_strength", 0.5)),
-            "guidance_scale": float(p.get("guidance_scale", 7.0)),
-            "inference_steps": int(p.get("steps", 32)),
+            "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
+            "inference_steps": int(p.get("steps") or (8 if is_turbo else 32)),
             "shift": float(p.get("shift", 3.0)),
             "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
             "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
             "infer_method": p.get("infer_method", "ode"),
+            "use_adg": bool(p.get("use_adg", not is_turbo)),
             "audio_format": "wav",
-            "model": p.get("model", "acestep-v15-xl-base"),
+            "model": eng_model,
         }
         if p.get("seed"):
             fields["seed"] = int(p["seed"])
@@ -484,10 +493,10 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
                     "cover_strength": fields["audio_cover_strength"], "model": fields["model"],
                     "guidance_scale": fields["guidance_scale"], "steps": fields["inference_steps"]}
         with LOCK:
-            JOBS[pid] = _new_job(resolved, "cover")
+            JOBS[pid] = _new_job(resolved, result_mode)
             JOBS[pid]["status"] = "running"
         save_job(pid)
-        threading.Thread(target=_acestep_poll, args=(pid, task_id, "cover"), daemon=True).start()
+        threading.Thread(target=_acestep_poll, args=(pid, task_id, result_mode), daemon=True).start()
         return {"job_id": pid}
 
     # ----- fallback: ComfyUI cover guider -----
