@@ -437,7 +437,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required (describe the target sound/genre)")
 
-    if ACESTEP_HOST:                                  # ----- official engine path -----
+    if ACESTEP_HOST and not p.get("force_comfy"):     # ----- official engine path -----
         if file is not None:
             data = await file.read()
             label = file.filename or "upload"
@@ -474,6 +474,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
             "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
             "infer_method": p.get("infer_method", "ode"),
             "use_adg": bool(p.get("use_adg", not is_turbo)),
+            "batch_size": int(p.get("batch_size", 2)),  # engine default is 2 takes/request
             "audio_format": "wav",
             "model": eng_model,
         }

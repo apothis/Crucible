@@ -233,6 +233,9 @@ function ResultCard({ r }: { r: Result }) {
 
 function libDesc(it: LibItem): string {
   const p = it.params || {};
+  // An explicit note (e.g. an A/B label) always wins — so tagged comparison takes
+  // are identifiable in the library instead of all showing the same prompt.
+  if (p.note) return String(p.note);
   if (p.source === "vocal-builder") {
     const o = p.opts || {};
     const parts = [
