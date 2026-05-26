@@ -413,6 +413,35 @@ def _save_engine_audio(jid, file_ref):
     return out
 
 
+def _acestep_ensure_model(model):
+    """Make sure the engine has `model` loaded before submitting. `/release_task` does
+    NOT auto-load a requested model — if it isn't in a loaded slot the engine silently
+    falls back to the primary (ace-step/ACE-Step-1.5 job_model_selection.py). So when the
+    loaded DiT differs, swap it via POST /v1/init (keeps the LM). Best-effort: on failure
+    we log and proceed (the engine will use whatever is loaded)."""
+    if not (ACESTEP_HOST and model):
+        return
+    try:
+        cur = (acestep_py.health(ACESTEP_HOST).get("data") or {}).get("loaded_model", "")
+    except Exception:
+        return
+    if cur == model:
+        return
+    base = ACESTEP_HOST if ACESTEP_HOST.startswith("http") else f"http://{ACESTEP_HOST}"
+    try:
+        requests.post(base + "/v1/init", json={"model": model, "init_llm": False}, timeout=1800)
+    except Exception as e:
+        print(f"[acestep] model swap to {model} failed ({e}); using {cur}")
+        return
+    for _ in range(180):                       # poll health until the swap completes
+        try:
+            if (acestep_py.health(ACESTEP_HOST).get("data") or {}).get("loaded_model", "") == model:
+                return
+        except Exception:
+            pass
+        time.sleep(5)
+
+
 def _acestep_poll(pid, task_id, mode):
     """Background: poll the official ACE-Step engine until the task finishes, then
     download EVERY batch take — the first becomes the tracked job (pid), the rest are
@@ -491,7 +520,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
         # model/use_adg/infer_method/cfg_interval from the engine tuning UI). The LM is
         # auto-skipped for cover, so thinking/CoT don't apply here. Reimagine and Cover both
         # ride this `cover` task — reimagine just passes a lower audio_cover_strength.
-        eng_model = p.get("model") or "acestep-v15-xl-base"
+        eng_model = p.get("model") or "acestep-v15-xl-sft"   # sft = the validated cover basis (melody retention)
         is_turbo = "turbo" in eng_model.lower()
         result_mode = p.get("result_mode", "cover")    # "cover" or "restyle" (reimagine) — library label
         fields = {
@@ -499,6 +528,9 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
             "prompt": p.get("tags", ""),
             "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
             "audio_cover_strength": float(p.get("cover_strength", 0.5)),
+            # Melody retention: 0 = pure style transfer (loses the tune), 0.1–0.25 = keep the
+            # melody while changing style (validated by ear on Baby One More Time → metal).
+            "cover_noise_strength": float(p.get("cover_noise_strength", 0.2)),
             "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
             "inference_steps": int(p.get("steps") or (8 if is_turbo else 32)),
             "shift": float(p.get("shift", 3.0)),
@@ -517,13 +549,15 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
             free_gpu("ace")                           # free ComfyUI + RVC before the (offloaded) ACE engine generates
         except Exception:
             pass
+        _acestep_ensure_model(eng_model)              # /release_task won't auto-load; swap if needed so the picked model is honored
         try:
             task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(data, label), ctx_audio=ctx)
         except Exception as e:
             raise HTTPException(500, f"acestep submit failed: {e}")
         pid = uuid.uuid4().hex
         resolved = {"engine": "acestep", "source": label, "tags": p.get("tags", ""),
-                    "cover_strength": fields["audio_cover_strength"], "model": fields["model"],
+                    "cover_strength": fields["audio_cover_strength"],
+                    "cover_noise_strength": fields["cover_noise_strength"], "model": fields["model"],
                     "guidance_scale": fields["guidance_scale"], "steps": fields["inference_steps"]}
         with LOCK:
             JOBS[pid] = _new_job(resolved, result_mode)

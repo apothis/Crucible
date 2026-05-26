@@ -34,7 +34,7 @@ const ENGINE_MODELS = [
   { id: "acestep-v15-turbo", label: "Turbo (fast preview)" },
 ];
 
-function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false) {
+function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false, defaultEngModel = "acestep-v15-xl-base") {
   const d = useDrafts(`${ns}.tuning`);
   const firstAvail = cfg.variants.find((v) => v.available);
   const [variant, setVariant] = d.use("variant", firstAvail?.id ?? "xl_base");
@@ -51,7 +51,7 @@ function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = fals
   const [apgNorm, setApgNorm] = d.use("apgNorm", "1.3");
   const [apgEta, setApgEta] = d.use("apgEta", "1.05");
   // ---- official ACE-Step engine controls (only shown/sent in engineMode) ----
-  const [engModel, setEngModel] = d.use("engModel", "acestep-v15-xl-base");  // base = docs' quality pick
+  const [engModel, setEngModel] = d.use("engModel", defaultEngModel);  // per-form default (cover uses sft)
   const [useAdg, setUseAdg] = d.use("useAdg", true);                       // Adaptive Dual Guidance (de-mud)
   const [inferMethod, setInferMethod] = d.use("inferMethod", "ode");            // ode (euler) | sde (stochastic)
   const [cfgIntStart, setCfgIntStart] = d.use("cfgIntStart", "");
@@ -341,12 +341,16 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const [lyrics, setLyrics] = d.use("lyrics", "");
   const [timbre, setTimbre] = useState<File | null>(null);
   const [coverStrength, setCoverStrength] = d.use("coverStrength", 0.5);
+  // Melody retention (engine cover_noise_strength): 0 = pure style transfer (loses the tune),
+  // 0.1–0.25 = keep the melody while changing style. Validated by ear; the cover default.
+  const [melodyRetention, setMelodyRetention] = d.use("melodyRetention", 0.2);
   const [transcribing, setTranscribing] = useState(false);
   const [isoEngine, setIsoEngine] = d.use<"demucs" | "roformer">("isoEngine", "demucs");
   const [expert, setExpert] = d.use("expert", true);
   // Restyle/Cover are source-conditioned on the engine: length/tempo/key come from the
   // source audio (the cover task doesn't receive bpm/key/duration), so hide those.
-  const tuning = useTuning("restyle", cfg, expert, false, !!cfg.acestep, !!cfg.acestep);
+  // Default the engine model to SFT — the validated cover basis (best melody retention).
+  const tuning = useTuning("restyle", cfg, expert, false, !!cfg.acestep, !!cfg.acestep, "acestep-v15-xl-sft");
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const isCover = mode === "cover";
 
@@ -379,7 +383,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
         // Reimagine maps the "amount" (more change) to a LOWER cover_strength.
         if (isCover && timbre) fd.append("timbre", timbre);
         const strength = isCover ? coverStrength : +(1 - amount).toFixed(2);
-        fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, cover_strength: strength, result_mode: isCover ? "cover" : "restyle" }));
+        fd.append("params", JSON.stringify({ ...tuning.params(), tags, instrumental, lyrics, cover_strength: strength, cover_noise_strength: melodyRetention, result_mode: isCover ? "cover" : "restyle" }));
         const { job_id } = await api.cover(fd);
         ctx.patch(id, { status: "running", pct: 5 });
         pollJob(job_id, id, ctx);
@@ -429,6 +433,12 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
             <Field label="Timbre reference (optional)" hint="a clip whose instrument/voice character the cover should adopt"><input className={inp} type="file" accept="audio/*" onChange={(e) => setTimbre(e.target.files?.[0] ?? null)} /></Field>
           </>
         : <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />}
+      {cfg.acestep && (
+        <>
+          <Slider label="Melody retention (keep the original tune)" value={melodyRetention} set={setMelodyRetention} min={0} max={1} step={0.05} />
+          <p className="-mt-2 text-[11px] text-[var(--color-muted)]">0 = pure style transfer (ignores the source melody) · <b>0.1–0.25 = keep the melody while changing style (recommended)</b> · higher = stick closely to the tune. This is the knob that makes covers actually track the source.</p>
+        </>
+      )}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       {isCover && (
         <div>
