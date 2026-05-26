@@ -461,7 +461,8 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
   const [right, setRight] = useState("10");
   const [editCfg, setEditCfg] = useState("1");
   const [expert, setExpert] = useState(false);
-  const tuning = useTuning(cfg, expert, true);   // duration derived from the source
+  // Engine repaint: source-conditioned (length/key from source), engine levers shown.
+  const tuning = useTuning(cfg, expert, true, !!cfg.acestep, !!cfg.acestep);
   const applyPreset = (p: Preset) => setTags(p.tags);
 
   async function run() {
@@ -490,9 +491,11 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       <ModeToggle expert={expert} setExpert={setExpert} />
       <p className="text-xs text-[var(--color-muted)]">
         {mode === "repaint"
-          ? "Regenerate a time range of a track (new tags/lyrics) while keeping the rest — latent-level via ACEStep15NativeEditGuider."
+          ? "Regenerate a time range of a track (new tags/lyrics) while keeping the rest."
           : "Lengthen a track by generating new content before and/or after it — the existing audio is preserved."}
-        {" "}<em>Runs on the turbo model (what the edit guider needs); the Model picker below is ignored here.</em>
+        {" "}<em>{cfg.acestep
+          ? "Native repaint on the official engine (base/SFT — no turbo hack)."
+          : "Runs on the turbo model (what the edit guider needs); the Model picker below is ignored here."}</em>
       </p>
       <Field label="Source track">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
@@ -514,7 +517,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       )}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
-      {expert && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
+      {expert && !cfg.acestep && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : mode === "repaint" ? "Repaint region" : "Extend track"}</PrimaryButton>
     </div>

@@ -575,6 +575,21 @@ async def _resolve_edit_source(file, job_id, trim_tail=False):
     return ref, label, dur
 
 
+async def _source_bytes(file, job_id):
+    """Raw bytes + label for an edit source (upload or library job_id) — for engine
+    tasks that take a multipart src_audio (cover/repaint), vs the ComfyUI upload path."""
+    if file is not None:
+        return await file.read(), (file.filename or "src.wav")
+    if job_id:
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+                    if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
+        if not src:
+            raise HTTPException(404, "source track not found")
+        with open(src, "rb") as f:
+            return f.read(), job_id
+    raise HTTPException(400, "provide a source (library job_id or upload)")
+
+
 def _submit_edit(p, ref, mode, label):
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required (describe the new content)")
@@ -599,6 +614,55 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
     (ACEStep15NativeEditGuider). params JSON carries repaint_start/repaint_end (sec),
     tags/lyrics for the new content, + tuning."""
     p = json.loads(params)
+    if not (p.get("tags") or "").strip():
+        raise HTTPException(400, "style tags are required (describe the new content)")
+
+    if ACESTEP_HOST and not p.get("force_comfy"):     # ----- official engine repaint -----
+        # Native `repaint` works on base/sft (no turbo-forcing, unlike the ComfyUI guider).
+        # LM is auto-skipped for repaint, so thinking/CoT don't apply. Region preserved
+        # outside [start,end]; new content follows tags/lyrics.
+        data, label = await _source_bytes(file, job_id)
+        eng_model = p.get("model") or "acestep-v15-xl-sft"
+        is_turbo = "turbo" in eng_model.lower()
+        fields = {
+            "task_type": "repaint",
+            "prompt": p.get("tags", ""),
+            "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
+            "repainting_start": float(p.get("repaint_start", 0.0)),
+            "repainting_end": float(p.get("repaint_end", -1)),   # -1 = to end of source
+            "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
+            "inference_steps": int(p.get("steps") or (8 if is_turbo else 32)),
+            "shift": float(p.get("shift", 3.0)),
+            "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
+            "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
+            "infer_method": p.get("infer_method", "ode"),
+            "use_adg": bool(p.get("use_adg", not is_turbo)),
+            "batch_size": int(p.get("batch_size", 2)),
+            "audio_format": "wav",
+            "model": eng_model,
+        }
+        if p.get("seed"):
+            fields["seed"] = int(p["seed"]); fields["use_random_seed"] = False
+        try:
+            free_gpu("ace")
+        except Exception:
+            pass
+        try:
+            task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(data, label))
+        except Exception as e:
+            raise HTTPException(500, f"acestep submit failed: {e}")
+        pid = uuid.uuid4().hex
+        resolved = {"engine": "acestep", "source": label, "tags": p.get("tags", ""),
+                    "repaint_start": fields["repainting_start"], "repaint_end": fields["repainting_end"],
+                    "model": eng_model, "guidance_scale": fields["guidance_scale"], "steps": fields["inference_steps"]}
+        with LOCK:
+            JOBS[pid] = _new_job(resolved, "repaint")
+            JOBS[pid]["status"] = "running"
+        save_job(pid)
+        threading.Thread(target=_acestep_poll, args=(pid, task_id, "repaint"), daemon=True).start()
+        return {"job_id": pid}
+
+    # ----- ComfyUI fallback (turbo-forced edit guider) -----
     ref, label, dur = await _resolve_edit_source(file, job_id)
     if dur and not p.get("duration"):
         p["duration"] = dur                         # repaint keeps the original length
