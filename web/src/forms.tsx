@@ -24,8 +24,15 @@ const lyrProvOf = (v: string) => (v === "claude" ? "claude" : "ollama");
 // otherwise only Duration shows and the rest use presets/defaults.
 const SAMPLERS = ["euler", "dpmpp_2m", "res_multistep", "er_sde", "dpmpp_2m_sde", "heun", "uni_pc"];
 const SCHEDULERS = ["simple", "beta", "normal", "karras", "ddim_uniform"];
+// Official ACE-Step engine DiT models (the `model` field on /release_task). Base is the
+// docs' best-quality pick; sft = refined; turbo = fast preview.
+const ENGINE_MODELS = [
+  { id: "acestep-v15-xl-base", label: "XL Base (best quality)" },
+  { id: "acestep-v15-xl-sft", label: "XL SFT (refined)" },
+  { id: "acestep-v15-turbo", label: "Turbo (fast preview)" },
+];
 
-function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
+function useTuning(cfg: Config, expert: boolean, hideDuration = false, engineMode = false) {
   const firstAvail = cfg.variants.find((v) => v.available);
   const [variant, setVariant] = useState(firstAvail?.id ?? "xl_base");
   const [steps, setSteps] = useState("");
@@ -40,24 +47,37 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
   const [apg, setApg] = useState(false);
   const [apgNorm, setApgNorm] = useState("1.3");
   const [apgEta, setApgEta] = useState("1.05");
+  // ---- official ACE-Step engine controls (only shown/sent in engineMode) ----
+  const [engModel, setEngModel] = useState("acestep-v15-xl-base");  // base = docs' quality pick
+  const [useAdg, setUseAdg] = useState(true);                       // Adaptive Dual Guidance (de-mud)
+  const [inferMethod, setInferMethod] = useState("ode");            // ode (euler) | sde (stochastic)
+  const [cfgIntStart, setCfgIntStart] = useState("");
+  const [cfgIntEnd, setCfgIntEnd] = useState("");
   const v = cfg.variants.find((x) => x.id === variant);
+  const engTurbo = engModel.includes("turbo");
 
   const node = expert ? (
     <>
       <SectionTitle>Guided tuning</SectionTitle>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Model">
-          <select className={inp} value={variant} onChange={(e) => setVariant(e.target.value)}>
-            {cfg.variants.map((vv) => (
-              <option key={vv.id} value={vv.id} disabled={!vv.available}>
-                {vv.label}{vv.available ? "" : " — not installed"}
-              </option>
-            ))}
-          </select>
+          {engineMode ? (
+            <select className={inp} value={engModel} onChange={(e) => setEngModel(e.target.value)}>
+              {ENGINE_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          ) : (
+            <select className={inp} value={variant} onChange={(e) => setVariant(e.target.value)}>
+              {cfg.variants.map((vv) => (
+                <option key={vv.id} value={vv.id} disabled={!vv.available}>
+                  {vv.label}{vv.available ? "" : " — not installed"}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
         {!hideDuration && <Field label="Duration (s)"><input className={inp} type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></Field>}
-        <Field label="Steps" hint={v ? `def ${v.steps}` : ""}><input className={inp} type="number" placeholder={String(v?.steps ?? "")} value={steps} onChange={(e) => setSteps(e.target.value)} /></Field>
-        <Field label="CFG" hint={v ? `def ${v.cfg}` : ""}><input className={inp} type="number" step="0.5" placeholder={String(v?.cfg ?? "")} value={cfgScale} onChange={(e) => setCfgScale(e.target.value)} /></Field>
+        <Field label="Steps" hint={engineMode ? (engTurbo ? "turbo 8" : "base/sft 32–64") : (v ? `def ${v.steps}` : "")}><input className={inp} type="number" placeholder={engineMode ? (engTurbo ? "8" : "64") : String(v?.steps ?? "")} value={steps} onChange={(e) => setSteps(e.target.value)} /></Field>
+        <Field label={engineMode ? "Guidance" : "CFG"} hint={engineMode ? (engTurbo ? "turbo: n/a" : "base/sft 5–9") : (v ? `def ${v.cfg}` : "")}><input className={inp} type="number" step="0.5" placeholder={engineMode ? "8" : String(v?.cfg ?? "")} value={cfgScale} onChange={(e) => setCfgScale(e.target.value)} /></Field>
         <Field label="BPM"><input className={inp} type="number" value={bpm} onChange={(e) => setBpm(e.target.value)} /></Field>
         <Field label="Key">
           <select className={inp} value={keyscale} onChange={(e) => setKeyscale(e.target.value)}>
@@ -65,27 +85,53 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
           </select>
         </Field>
         <Field label="Seed" hint="blank = random"><input className={inp} type="number" placeholder="random" value={seed} onChange={(e) => setSeed(e.target.value)} /></Field>
-        <Field label="Sampler">
-          <select className={inp} value={sampler} onChange={(e) => setSampler(e.target.value)}>
-            {SAMPLERS.map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </Field>
-        <Field label="Scheduler">
-          <select className={inp} value={scheduler} onChange={(e) => setScheduler(e.target.value)}>
-            {SCHEDULERS.map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </Field>
-        <Field label="Shift" hint="AuraFlow; def 3"><input className={inp} type="number" step="0.5" placeholder="3" value={shift} onChange={(e) => setShift(e.target.value)} /></Field>
+        {engineMode ? (
+          <Field label="Inference" hint="ode=euler · sde=stochastic">
+            <select className={inp} value={inferMethod} onChange={(e) => setInferMethod(e.target.value)}>
+              <option value="ode">ode (euler)</option>
+              <option value="sde">sde (stochastic)</option>
+            </select>
+          </Field>
+        ) : (
+          <Field label="Sampler">
+            <select className={inp} value={sampler} onChange={(e) => setSampler(e.target.value)}>
+              {SAMPLERS.map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+        )}
+        {!engineMode && (
+          <Field label="Scheduler">
+            <select className={inp} value={scheduler} onChange={(e) => setScheduler(e.target.value)}>
+              {SCHEDULERS.map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Shift" hint={engineMode ? "1–5; def 3 (not turbo)" : "AuraFlow; def 3"}><input className={inp} type="number" step="0.5" placeholder="3" value={shift} onChange={(e) => setShift(e.target.value)} /></Field>
       </div>
-      <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-        <input type="checkbox" checked={apg} onChange={(e) => setApg(e.target.checked)} />
-        Adaptive Projected Guidance (APG) <span className="text-[10px]">— cleaner high-CFG, less mud/oversaturation</span>
-      </label>
-      {apg && (
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="APG norm" hint="main knob; lower = more (def 1.3)"><input className={inp} type="number" step="0.1" value={apgNorm} onChange={(e) => setApgNorm(e.target.value)} /></Field>
-          <Field label="APG eta" hint="def 1.05 (1 = plain CFG)"><input className={inp} type="number" step="0.05" value={apgEta} onChange={(e) => setApgEta(e.target.value)} /></Field>
-        </div>
+      {engineMode ? (
+        <>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={useAdg} onChange={(e) => setUseAdg(e.target.checked)} />
+            Adaptive Dual Guidance (ADG) <span className="text-[10px]">— keeps high guidance clean (less mud); base/sft only</span>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="CFG interval start" hint="0–1; blank = 0"><input className={inp} type="number" step="0.05" placeholder="0" value={cfgIntStart} onChange={(e) => setCfgIntStart(e.target.value)} /></Field>
+            <Field label="CFG interval end" hint="0–1; blank = 0.95"><input className={inp} type="number" step="0.05" placeholder="0.95" value={cfgIntEnd} onChange={(e) => setCfgIntEnd(e.target.value)} /></Field>
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={apg} onChange={(e) => setApg(e.target.checked)} />
+            Adaptive Projected Guidance (APG) <span className="text-[10px]">— cleaner high-CFG, less mud/oversaturation</span>
+          </label>
+          {apg && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="APG norm" hint="main knob; lower = more (def 1.3)"><input className={inp} type="number" step="0.1" value={apgNorm} onChange={(e) => setApgNorm(e.target.value)} /></Field>
+              <Field label="APG eta" hint="def 1.05 (1 = plain CFG)"><input className={inp} type="number" step="0.05" value={apgEta} onChange={(e) => setApgEta(e.target.value)} /></Field>
+            </div>
+          )}
+        </>
       )}
     </>
   ) : hideDuration ? null : (
@@ -97,9 +143,18 @@ function useTuning(cfg: Config, expert: boolean, hideDuration = false) {
     if (steps) o.steps = parseInt(steps);
     if (cfgScale) o.cfg = parseFloat(cfgScale);
     if (seed) o.seed = parseInt(seed);
-    if (sampler !== "euler" || scheduler !== "simple") { o.sampler_name = sampler; o.scheduler = scheduler; }
     if (shift) o.shift = parseFloat(shift);
-    if (apg) { o.apg = true; o.apg_norm = parseFloat(apgNorm) || 1.3; o.apg_eta = parseFloat(apgEta) || 1.05; }
+    if (engineMode) {
+      // engine-specific levers (the ComfyUI variant/sampler/scheduler/apg are inert here)
+      o.model = engModel;
+      o.use_adg = useAdg && !engTurbo;            // ADG is base/sft only
+      o.infer_method = inferMethod;
+      if (cfgIntStart) o.cfg_interval_start = parseFloat(cfgIntStart);
+      if (cfgIntEnd) o.cfg_interval_end = parseFloat(cfgIntEnd);
+    } else {
+      if (sampler !== "euler" || scheduler !== "simple") { o.sampler_name = sampler; o.scheduler = scheduler; }
+      if (apg) { o.apg = true; o.apg_norm = parseFloat(apgNorm) || 1.3; o.apg_eta = parseFloat(apgEta) || 1.05; }
+    }
     return o;
   };
   const applyPreset = (p: Preset) => { setBpm(String(p.bpm)); setKeyscale(p.key); };
@@ -209,7 +264,7 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
   const [neg, setNeg] = useState("");
   const [thinking, setThinking] = useState(true);   // engine: 4B LM audio codes (ComfyUI parity)
   const [cot, setCot] = useState(true);             // engine: LM expands tags + detects language
-  const tuning = useTuning(cfg, expert);
+  const tuning = useTuning(cfg, expert, false, !!cfg.acestep);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
 
   // accept a "send to Generate" handoff from the Song builder (tags + compiled lyrics)

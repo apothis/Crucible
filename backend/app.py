@@ -311,6 +311,7 @@ def generate(p: dict):
             "infer_method": p.get("infer_method", "ode"),
             "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
             "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
+            "use_adg": bool(p.get("use_adg", False)),           # Adaptive Dual Guidance (quality; base/sft only)
             "thinking": bool(p.get("thinking", True)),          # 4B LM audio codes (ComfyUI parity)
             "use_cot_caption": bool(p.get("use_cot_caption", True)),   # LM auto-expands the tags
             "use_cot_language": bool(p.get("use_cot_language", True)),
