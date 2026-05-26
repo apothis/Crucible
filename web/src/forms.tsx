@@ -461,6 +461,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
   const [left, setLeft] = useState("0");
   const [right, setRight] = useState("10");
   const [editCfg, setEditCfg] = useState("1");
+  const [repaintStrength, setRepaintStrength] = useState(0.7);
   const [expert, setExpert] = useState(false);
   const [beats, setBeats] = useState<number[]>([]);
   const [srcUrl, setSrcUrl] = useState<string>("");
@@ -497,7 +498,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
     try {
       const params: Record<string, unknown> = { ...tuning.params(), tags, instrumental, lyrics, edit_cfg: parseFloat(editCfg) || 3 };
       delete params.duration;                     // let the backend derive it from the source (+ extends)
-      if (mode === "repaint") { params.repaint_start = parseFloat(start); params.repaint_end = parseFloat(end); }
+      if (mode === "repaint") { params.repaint_start = parseFloat(start); params.repaint_end = parseFloat(end); if (cfg.acestep) params.repaint_strength = repaintStrength; }
       else { params.extend_left = parseFloat(left) || 0; params.extend_right = parseFloat(right) || 0; }
       const fd = new FormData();
       if (file) fd.append("file", file); else fd.append("job_id", job);
@@ -547,6 +548,12 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       )}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
+      {mode === "repaint" && cfg.acestep && (
+        <>
+          <Slider label="Repaint strength (higher = follows the prompt more / keeps less of the original)" value={repaintStrength} set={setRepaintStrength} min={0.2} max={1.0} step={0.05} />
+          <p className="-mt-2 text-[11px] text-[var(--color-muted)]">Subtle touch-up ~0.3–0.5 · clear new content (e.g. a solo) ~0.7–0.9. Repaint works best on a full-length song with a small window (it's trained on multi-minute tracks).</p>
+        </>
+      )}
       {expert && !cfg.acestep && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : mode === "repaint" ? "Repaint region" : "Extend track"}</PrimaryButton>

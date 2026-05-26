@@ -631,6 +631,10 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
             "lyrics": "" if p.get("instrumental") else p.get("lyrics", ""),
             "repainting_start": float(p.get("repaint_start", 0.0)),
             "repainting_end": float(p.get("repaint_end", -1)),   # -1 = to end of source
+            # how much of the region to regenerate: higher = follows the prompt more / keeps
+            # less of the original (engine default 0.5 "balanced" keeps a lot of the source).
+            "repaint_strength": float(p.get("repaint_strength", 0.5)),
+            "repaint_mode": p.get("repaint_mode", "balanced"),
             "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
             "inference_steps": int(p.get("steps") or (8 if is_turbo else 32)),
             "shift": float(p.get("shift", 3.0)),
