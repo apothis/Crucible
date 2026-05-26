@@ -408,6 +408,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
               ? "Reimagine: transform the source toward the target style — runs the engine cover task at low strength (higher amount = freer / more change)."
               : "Reimagine: audio→audio by denoise amount — higher transforms more, further from the source.")}
       </p>
+      <p className="text-[11px] text-amber-400/80">⚠ Experimental — ACE-Step's cover/remix shifts overall style/genre, but exact melody fidelity and vocal re-singing are weak (an engine limitation). Best for instrumental/style transforms; for a genre change use a low strength (~0.4).</p>
       <ModeToggle expert={expert} setExpert={setExpert} />
       <Field label="Source track" hint="a library track (incl. imported songs) or upload">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
