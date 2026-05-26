@@ -801,15 +801,22 @@ async def _engine_lego(p, file, job_id, timbre, track):
     except Exception:
         src_dur = float(p.get("duration") or 0)
     is_vocal = track in ("vocals", "backing_vocals")
-    eng_model = p.get("model") or "acestep-v15-xl-base"   # lego needs the LM → base/sft only
+    eng_model = p.get("model") or "acestep-v15-xl-base"   # lego needs a BASE DiT + the LM
+    lstart = float(p.get("layer_start", 0.0))
+    lend = float(p.get("layer_end") or -1)
+    # Regional layer → "explicit" mask (0/1 from the repaint range, confines the part to
+    # the window, keeps the rest); whole-track layer → "auto" (model decides).
+    is_region = lstart > 0.05 or (lend > 0 and src_dur and lend < src_dur - 0.05)
     fields = {
         "task_type": "lego",
         "track_name": track,                              # engine builds "Generate the {TRACK} track…"
         "prompt": p.get("tags", ""),
+        "global_caption": p.get("global_caption", "") or p.get("tags", ""),  # Global: full-song desc
         "lyrics": p.get("lyrics", "") if is_vocal else "",
         "instrumental": not is_vocal,
-        "repainting_start": float(p.get("layer_start", 0.0)),
-        "repainting_end": float(p.get("layer_end") or -1),   # -1 = full backing
+        "repainting_start": lstart,
+        "repainting_end": lend,                              # -1 = full backing
+        "chunk_mask_mode": "explicit" if is_region else "auto",
         "duration": src_dur if src_dur > 0 else None,        # lock output length to the backing
         "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
         "inference_steps": int(p.get("steps") or 32),
