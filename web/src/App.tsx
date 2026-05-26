@@ -305,6 +305,7 @@ function LibCard({ it, inTests, onOpen, onDelete, onBucket }: { it: LibItem; inT
         <span className="rounded bg-[#2a1c19] px-1.5 py-0.5 text-[var(--color-accent2)]">{it.mode}</span>
         <span className="text-[var(--color-muted)]">{hhmm(it.created)}</span>
         <button onClick={() => onOpen(it)} className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Open in workspace">↗</button>
+        <a href={`/api/export/${it.id}?fmt=mp3`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Export as MP3 (320k)">⬇</a>
         <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
         <button onClick={() => { if (confirm("Delete this track permanently?")) onDelete(it.id); }} className="text-[var(--color-muted)] hover:text-red-400" title="Delete">✕</button>
       </div>

@@ -5,6 +5,7 @@ Run:  python -m backend.app   (from the repo root)
 import json
 import os
 import random
+import re
 import shutil
 import sqlite3
 import threading
@@ -1973,6 +1974,53 @@ def audio(pid: str):
         mt = "audio/wav" if row["audio"].endswith(".wav") else "audio/mpeg"
         return FileResponse(row["audio"], media_type=mt)
     raise HTTPException(404, "no audio")
+
+
+def _lib_source_path(pid):
+    """Absolute path to a library item's audio (by id, or the stored DB path)."""
+    for ext in (".mp3", ".wav"):
+        p = os.path.join(LIBRARY, f"{pid}{ext}")
+        if os.path.exists(p):
+            return p
+    with db() as conn:
+        row = conn.execute("SELECT audio FROM jobs WHERE id=?", (pid,)).fetchone()
+    if row and row["audio"] and os.path.exists(row["audio"]):
+        return row["audio"]
+    return None
+
+
+@app.get("/api/export/{pid}")
+def export_audio(pid: str, fmt: str = "mp3"):
+    """Download a library track as MP3 (320k). Already-MP3 files pass through; WAVs are
+    transcoded with ffmpeg. Filename uses the item's note/label when available."""
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "no audio")
+    # friendly download name from the job's note/tags/source
+    name = pid
+    try:
+        with db() as conn:
+            row = conn.execute("SELECT params FROM jobs WHERE id=?", (pid,)).fetchone()
+        if row and row["params"]:
+            pp = json.loads(row["params"])
+            raw = pp.get("note") or pp.get("tags") or pp.get("source") or pid
+            slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(raw)).strip("_")[:48] or pid
+            name = slug
+    except Exception:
+        pass
+    fname = f"{name}.mp3"
+    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
+    if src.lower().endswith(".mp3"):
+        return FileResponse(src, media_type="audio/mpeg", filename=fname)
+    import subprocess
+    try:
+        out = subprocess.run(["ffmpeg", "-y", "-i", src, "-f", "mp3", "-b:a", "320k", "pipe:1"],
+                             capture_output=True, timeout=120)
+        if out.returncode != 0 or not out.stdout:
+            raise RuntimeError((out.stderr or b"")[-300:].decode("utf-8", "ignore"))
+    except Exception as e:
+        raise HTTPException(500, f"mp3 export failed: {e}")
+    return Response(content=out.stdout, media_type="audio/mpeg", headers=headers)
 
 
 # static frontend at root (registered last so /api/* wins)
