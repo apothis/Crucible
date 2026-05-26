@@ -68,6 +68,11 @@ ACESTEP_DCW_OK = bool(CFG.get("acestep_dcw_ok", False))
 # verified, see HANDOFF/RESEARCH). ComfyUI's edit guider runs the LM codes in-graph and was
 # user-confirmed good. Flip to true only if the engine's repaint improves upstream.
 ACESTEP_REPAINT = bool(CFG.get("acestep_repaint", False))
+# Add-a-Layer (lego) on the official engine — off by default while we validate it. Lego
+# KEEPS the LM on (unlike repaint), so the new part gets an audio-code plan; the engine
+# auto-builds the instruction from track_name and returns a full mix with the part baked
+# in (duration locks to source, BPM-locked). base/SFT only. Flip true to test the engine path.
+ACESTEP_LEGO = bool(CFG.get("acestep_lego", False))
 
 
 def make_rvc():
@@ -265,6 +270,7 @@ def config():
             "roformer": _roformer_available(),
             "acestep": bool(ACESTEP_HOST),
             "acestep_repaint": ACESTEP_REPAINT,
+            "acestep_lego": ACESTEP_LEGO,
             "genres": genres}
 
 
@@ -408,8 +414,22 @@ def _acestep_poll(pid, task_id, mode):
     download EVERY batch take — the first becomes the tracked job (pid), the rest are
     saved as their own library rows ('take 2', 'take 3'…) under the same `mode` so they
     can be compared. Mirrors the ComfyUI job UX so the frontend's pollJob works unchanged."""
+    start = time.time()
+
+    def _on_progress(task):
+        # Live progress for the bar: prefer a parsed step/percent from the engine's log
+        # line; else a gentle time-based estimate so the bar still moves. JOBS stores
+        # progress/max → /api/job → frontend pct = 100*progress/max.
+        frac = acestep_py.progress_fraction(task)
+        if frac is None:
+            frac = min(0.92, (time.time() - start) / 75.0)   # ~75s typical; caps below 100
+        with LOCK:
+            if pid in JOBS:
+                JOBS[pid]["progress"] = frac
+                JOBS[pid]["max"] = 1.0
+
     try:
-        files = acestep_py.wait(ACESTEP_HOST, task_id)     # list, one ref per take
+        files = acestep_py.wait(ACESTEP_HOST, task_id, poll=3.0, on_progress=_on_progress)  # list, one ref per take
         out = _save_engine_audio(pid, files[0])
         with LOCK:
             base = dict(JOBS[pid]["params"])
@@ -740,6 +760,95 @@ async def transcribe(file: UploadFile = File(None), params: str = Form("{}"), jo
 # (comfy.build_edit + _resolve_edit_source + postfx.close_seam_gap remain for Repaint.)
 
 
+async def _layer_backing_bytes(file, job_id, track, clean_bed, bed_engine):
+    """Backing audio as raw bytes for the engine lego path. With clean_bed, strips the
+    layer's own instrument first (separate → recombine the rest) so the added part is the
+    only instance of that instrument. Returns (bytes, label, stripped_stem_or_None)."""
+    if not clean_bed:
+        data, label = await _source_bytes(file, job_id)
+        return data, label, None
+    work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
+    os.makedirs(work, exist_ok=True)
+    try:
+        data, label = await _source_bytes(file, job_id)
+        srcp = os.path.join(work, "src" + (".wav" if label.endswith(".wav") else ".mp3"))
+        with open(srcp, "wb") as f:
+            f.write(data)
+        want = DEMUCS_STEM.get(track, "other")
+        stem_files = _separate(srcp, work, engine=bed_engine, stems="all", demucs_mode="6stem")
+        others = [pp for (name, pp) in stem_files if name not in (want, "instrumental")]
+        if not others:
+            raise HTTPException(500, f"clean-bed: no stems left after removing '{want}'")
+        return postfx_mod.recombine(others, normalize=True), "cleanbed.wav", want
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+async def _engine_lego(p, file, job_id, timbre, track):
+    """Official-engine `lego`: add a named track over the backing. The engine auto-builds
+    the instruction from track_name, keeps the LM on (thinking) so the new part gets an
+    audio-code plan, and returns a full mix with the part baked in (duration locks to
+    source). base/SFT only. Off by default (ACESTEP_LEGO)."""
+    clean_bed = bool(p.get("clean_bed"))
+    bed_engine = "roformer" if p.get("clean_bed_engine") == "roformer" else "demucs"
+    backing_bytes, label, stripped = await _layer_backing_bytes(file, job_id, track, clean_bed, bed_engine)
+    if stripped:
+        p["clean_bed_stripped"] = stripped
+    import io as _io
+    import soundfile as _sf
+    try:
+        src_dur = float(_sf.info(_io.BytesIO(backing_bytes)).duration)   # lock output to the backing length
+    except Exception:
+        src_dur = float(p.get("duration") or 0)
+    is_vocal = track in ("vocals", "backing_vocals")
+    eng_model = p.get("model") or "acestep-v15-xl-base"   # lego needs the LM → base/sft only
+    fields = {
+        "task_type": "lego",
+        "track_name": track,                              # engine builds "Generate the {TRACK} track…"
+        "prompt": p.get("tags", ""),
+        "lyrics": p.get("lyrics", "") if is_vocal else "",
+        "instrumental": not is_vocal,
+        "repainting_start": float(p.get("layer_start", 0.0)),
+        "repainting_end": float(p.get("layer_end") or -1),   # -1 = full backing
+        "duration": src_dur if src_dur > 0 else None,        # lock output length to the backing
+        "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 8.0),
+        "inference_steps": int(p.get("steps") or 32),
+        "shift": float(p.get("shift", 3.0)),
+        "infer_method": p.get("infer_method", "ode"),
+        "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
+        "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
+        "use_adg": bool(p.get("use_adg", True)),
+        "thinking": True,                                  # lego uses the LM (the key advantage)
+        "audio_format": "wav",
+        "model": eng_model,
+        "batch_size": int(p.get("batch_size", 2)),
+    }
+    if p.get("global_caption"):
+        fields["global_caption"] = p["global_caption"]
+    if p.get("seed"):
+        fields["seed"] = int(p["seed"]); fields["use_random_seed"] = False
+    ref = None
+    if timbre is not None:
+        ref = (await timbre.read(), timbre.filename or "timbre.wav")
+    try:
+        free_gpu("ace")
+    except Exception:
+        pass
+    try:
+        task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(backing_bytes, label), ref_audio=ref)
+    except Exception as e:
+        raise HTTPException(500, f"acestep lego submit failed: {e}")
+    pid = uuid.uuid4().hex
+    resolved = {"engine": "acestep", "track_name": track, "tags": p.get("tags", ""), "source": label,
+                "model": eng_model, "clean_bed_stripped": p.get("clean_bed_stripped")}
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "layer")
+        JOBS[pid]["status"] = "running"
+    save_job(pid)
+    threading.Thread(target=_acestep_poll, args=(pid, task_id, "layer"), daemon=True).start()
+    return {"job_id": pid}
+
+
 @app.post("/api/layer")
 async def layer(file: UploadFile = File(None), params: str = Form(...),
                 job_id: str = Form(None), timbre: UploadFile = File(None)):
@@ -753,6 +862,9 @@ async def layer(file: UploadFile = File(None), params: str = Form(...),
         raise HTTPException(400, "style tags are required (describe the layer to add)")
     track = p.get("track_name", "vocals")
     clean_bed = bool(p.get("clean_bed"))
+
+    if ACESTEP_HOST and ACESTEP_LEGO and not p.get("force_comfy"):   # engine lego (off by default)
+        return await _engine_lego(p, file, job_id, timbre, track)
 
     if clean_bed:
         # "By construction" clean layer: strip the layer's own instrument from the

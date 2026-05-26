@@ -588,9 +588,32 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
   const [outputs, setOutputs] = useState<"both" | "stem">("both");
   const [gate, setGate] = useState(true);
   const [expert, setExpert] = useState(false);
-  const tuning = useTuning(cfg, expert, true);   // duration derived from the source
+  const [beats, setBeats] = useState<number[]>([]);
+  const [srcUrl, setSrcUrl] = useState<string>("");
+  // Engine lego (off by default) → show engine-style controls + source-conditioned.
+  const engineLego = !!cfg.acestep_lego;
+  const tuning = useTuning(cfg, expert, true, engineLego, engineLego);   // duration derived from the source
   const isVocal = track === "vocals" || track === "backing_vocals";
   const applyPreset = (p: Preset) => setTags(p.tags);
+
+  // Waveform region selector: load the backing + detect beats so you can drag the
+  // region to layer into (mirrors Repaint). Object URLs (uploads) revoked on change.
+  useEffect(() => {
+    if (!job && !file) { setSrcUrl(""); setBeats([]); return; }
+    let revoke = "";
+    if (file) { const u = URL.createObjectURL(file); revoke = u; setSrcUrl(u); }
+    else { setSrcUrl(`/api/audio/${job}`); }
+    setBeats([]);
+    (async () => {
+      try {
+        const r = file
+          ? await (() => { const fd = new FormData(); fd.append("file", file); return api.beatsUpload(fd); })()
+          : await api.beats(job);
+        setBeats(Array.isArray(r?.beats) ? r.beats : []);
+      } catch { setBeats([]); }
+    })();
+    return () => { if (revoke) URL.revokeObjectURL(revoke); };
+  }, [job, file]);
 
   async function run() {
     if (!job && !file) return fail(ctx, "Choose a backing track (library or upload).");
@@ -647,15 +670,23 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
         </select>
       </Field>
       <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
-      <div className="grid grid-cols-3 gap-3">
-        <Field label="Layer">
-          <select className={inp} value={track} onChange={(e) => setTrack(e.target.value)}>
-            {LAYER_TRACKS.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
-          </select>
+      <Field label="Layer">
+        <select className={inp} value={track} onChange={(e) => setTrack(e.target.value)}>
+          {LAYER_TRACKS.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
+        </select>
+      </Field>
+      {srcUrl ? (
+        <Field label="Region to layer into" hint="drag to mark · drag the band to move · drag an edge to resize · leave full for the whole track">
+          <RegionSelector url={srcUrl} beats={beats}
+            start={parseFloat(start) || 0} end={parseFloat(end) || 0}
+            onChange={(s, e) => { setStart(String(s)); setEnd(String(e)); }} />
         </Field>
-        <Field label="Start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
-        <Field label="End (s)" hint="blank = full length"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+          <Field label="End (s)" hint="blank = full length"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+        </div>
+      )}
       {expert && (
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={cleanBed} onChange={(e) => setCleanBed(e.target.checked)} />

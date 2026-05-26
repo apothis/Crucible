@@ -14,6 +14,7 @@ health()/models() once the engine is reachable and adjust if needed — they're 
 here on purpose.
 """
 import json
+import re
 import time
 import requests
 
@@ -47,15 +48,18 @@ def stats(host):
     return r.json()
 
 
-def submit(host, fields, src_audio=None, ctx_audio=None):
-    """POST /release_task. `fields` = dict of generation params. `src_audio`/`ctx_audio`
-    = optional (bytes, filename) tuples uploaded as multipart files. Returns task_id."""
+def submit(host, fields, src_audio=None, ctx_audio=None, ref_audio=None):
+    """POST /release_task. `fields` = dict of generation params. `src_audio`/`ctx_audio`/
+    `ref_audio` = optional (bytes, filename) tuples uploaded as multipart files
+    (`ref_audio` → the `reference_audio` field, e.g. a lego/cover timbre clip). Returns task_id."""
     url = _base(host) + "/release_task"
     files = {}
     if src_audio:
         files["src_audio"] = (src_audio[1] or "src.wav", src_audio[0], "application/octet-stream")
     if ctx_audio:
         files["ctx_audio"] = (ctx_audio[1] or "ctx.wav", ctx_audio[0], "application/octet-stream")
+    if ref_audio:
+        files["reference_audio"] = (ref_audio[1] or "ref.wav", ref_audio[0], "application/octet-stream")
     if files:
         # multipart: params ride along as string form fields
         data = {k: ("" if v is None else str(v)) for k, v in fields.items()}
@@ -123,9 +127,30 @@ def download(host, file_ref):
     return r.content
 
 
-def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0):
+_PROG_FRAC = re.compile(r"(\d+)\s*/\s*(\d+)")
+_PROG_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+
+def progress_fraction(task):
+    """Best-effort 0..1 progress for a running task. The engine only surfaces a
+    `progress_text` log line during a run (numeric `progress` shows up at completion),
+    so parse a step "N/M" or a "NN%" out of it. Returns None if nothing parseable."""
+    txt = task.get("progress_text") or ""
+    m = _PROG_FRAC.search(txt)
+    if m:
+        cur, tot = int(m.group(1)), int(m.group(2))
+        if tot > 0:
+            return max(0.0, min(1.0, cur / tot))
+    m = _PROG_PCT.search(txt)
+    if m:
+        return max(0.0, min(1.0, float(m.group(1)) / 100.0))
+    return None
+
+
+def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0, on_progress=None):
     """Poll /query_result until the task succeeds; return its file refs.
-    Raises on failure/timeout. Status (per API.md): 0=queued/running, 1=succeeded, 2=failed."""
+    Raises on failure/timeout. Status (per API.md): 0=queued/running, 1=succeeded, 2=failed.
+    `on_progress(task)` is called each poll while running (for live progress)."""
     start = time.time()
     while time.time() - start < deadline:
         t = query(host, task_id)
@@ -139,5 +164,10 @@ def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0):
                   or (isinstance(st, str) and st.lower() in ("failed", "error")))
         if failed:
             raise RuntimeError(t.get("message") or t.get("error") or f"task failed: {t}")
+        if on_progress:
+            try:
+                on_progress(t)
+            except Exception:
+                pass
         time.sleep(poll)
     raise RuntimeError(f"timed out after {deadline}s waiting for task {task_id}")
