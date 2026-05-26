@@ -461,7 +461,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
   const [left, setLeft] = useState("0");
   const [right, setRight] = useState("10");
   const [editCfg, setEditCfg] = useState("1");
-  const [repaintStrength, setRepaintStrength] = useState(0.7);
+  const [repaintStrength, setRepaintStrength] = useState(0.5);  // balanced; higher = regenerate more freely (per _resolve_repaint_config)
   const [expert, setExpert] = useState(false);
   const [beats, setBeats] = useState<number[]>([]);
   const [srcUrl, setSrcUrl] = useState<string>("");
@@ -550,8 +550,8 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
       {mode === "repaint" && cfg.acestep && (
         <>
-          <Slider label="Repaint strength (higher = follows the prompt more / keeps less of the original)" value={repaintStrength} set={setRepaintStrength} min={0.2} max={1.0} step={0.05} />
-          <p className="-mt-2 text-[11px] text-[var(--color-muted)]">Subtle touch-up ~0.3–0.5 · clear new content (e.g. a solo) ~0.7–0.9. Repaint works best on a full-length song with a small window (it's trained on multi-minute tracks).</p>
+          <Slider label="Regeneration strength (higher = regenerate the section more freely · lower = keep more of the original)" value={repaintStrength} set={setRepaintStrength} min={0.1} max={0.9} step={0.05} />
+          <p className="-mt-2 text-[11px] text-[var(--color-muted)]">Repaint <b>regenerates this section to fit the song</b> — for fixing/varying a weak part, not adding a distinct new element. To <b>add</b> a new part (e.g. a guitar solo), use <b>Add-a-Layer</b>. Works best on a full-length song with a small window.</p>
         </>
       )}
       {expert && !cfg.acestep && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
