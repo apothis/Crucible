@@ -62,6 +62,12 @@ ACESTEP_HOST = CFG.get("acestep_host", "")   # official ACE-Step engine (cover e
 # trajectory) and cover/repaint (source-anchored) are unaffected. Flip to true once the box
 # is patched + verified.
 ACESTEP_DCW_OK = bool(CFG.get("acestep_dcw_ok", False))
+# Repaint stays on the ComfyUI path by default: the official engine's repaint is weak for
+# content regeneration (silence-seeds the region, skips the LM so no audio-code plan, no
+# loudness match → quiet/weak regions; feeding external audio codes breaks alignment — all
+# verified, see HANDOFF/RESEARCH). ComfyUI's edit guider runs the LM codes in-graph and was
+# user-confirmed good. Flip to true only if the engine's repaint improves upstream.
+ACESTEP_REPAINT = bool(CFG.get("acestep_repaint", False))
 
 
 def make_rvc():
@@ -258,6 +264,7 @@ def config():
             "keys": comfy.KEYS, "languages": ["en"], "rvc_driver": RVC_DRIVER,
             "roformer": _roformer_available(),
             "acestep": bool(ACESTEP_HOST),
+            "acestep_repaint": ACESTEP_REPAINT,
             "genres": genres}
 
 
@@ -618,7 +625,7 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required (describe the new content)")
 
-    if ACESTEP_HOST and not p.get("force_comfy"):     # ----- official engine repaint -----
+    if ACESTEP_HOST and ACESTEP_REPAINT and not p.get("force_comfy"):  # ----- official engine repaint (off by default; engine repaint is weak) -----
         # Native `repaint` works on base/sft (no turbo-forcing, unlike the ComfyUI guider).
         # LM is auto-skipped for repaint, so thinking/CoT don't apply. Region preserved
         # outside [start,end]; new content follows tags/lyrics.

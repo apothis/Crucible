@@ -465,8 +465,10 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
   const [expert, setExpert] = useState(false);
   const [beats, setBeats] = useState<number[]>([]);
   const [srcUrl, setSrcUrl] = useState<string>("");
-  // Engine repaint: source-conditioned (length/key from source), engine levers shown.
-  const tuning = useTuning(cfg, expert, true, !!cfg.acestep, !!cfg.acestep);
+  // Repaint runs on ComfyUI by default (engine repaint is weak); only show engine-style
+  // controls when the engine repaint path is explicitly enabled.
+  const engineRepaint = !!cfg.acestep_repaint;
+  const tuning = useTuning(cfg, expert, true, engineRepaint, engineRepaint);
   const applyPreset = (p: Preset) => setTags(p.tags);
 
   // Waveform region selector: resolve the source audio URL + detect beats (Mac) when
@@ -498,7 +500,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
     try {
       const params: Record<string, unknown> = { ...tuning.params(), tags, instrumental, lyrics, edit_cfg: parseFloat(editCfg) || 3 };
       delete params.duration;                     // let the backend derive it from the source (+ extends)
-      if (mode === "repaint") { params.repaint_start = parseFloat(start); params.repaint_end = parseFloat(end); if (cfg.acestep) params.repaint_strength = repaintStrength; }
+      if (mode === "repaint") { params.repaint_start = parseFloat(start); params.repaint_end = parseFloat(end); if (engineRepaint) params.repaint_strength = repaintStrength; }
       else { params.extend_left = parseFloat(left) || 0; params.extend_right = parseFloat(right) || 0; }
       const fd = new FormData();
       if (file) fd.append("file", file); else fd.append("job_id", job);
@@ -516,9 +518,9 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
         {mode === "repaint"
           ? "Regenerate a time range of a track (new tags/lyrics) while keeping the rest."
           : "Lengthen a track by generating new content before and/or after it — the existing audio is preserved."}
-        {" "}<em>{cfg.acestep
-          ? "Native repaint on the official engine (base/SFT — no turbo hack)."
-          : "Runs on the turbo model (what the edit guider needs); the Model picker below is ignored here."}</em>
+        {" "}<em>{engineRepaint
+          ? "Native repaint on the official engine (base/SFT)."
+          : "Regenerates the section keeping the song's structure (ComfyUI edit guider, LM codes on — runs on turbo; the Model picker below is ignored)."}</em>
       </p>
       <Field label="Source track">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
@@ -548,13 +550,13 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       )}
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
-      {mode === "repaint" && cfg.acestep && (
+      {mode === "repaint" && engineRepaint && (
         <>
           <Slider label="Regeneration strength (higher = regenerate the section more freely · lower = keep more of the original)" value={repaintStrength} set={setRepaintStrength} min={0.1} max={0.9} step={0.05} />
           <p className="-mt-2 text-[11px] text-[var(--color-muted)]">Repaint <b>regenerates this section to fit the song</b> — for fixing/varying a weak part, not adding a distinct new element. To <b>add</b> a new part (e.g. a guitar solo), use <b>Add-a-Layer</b>. Works best on a full-length song with a small window.</p>
         </>
       )}
-      {expert && !cfg.acestep && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
+      {expert && !engineRepaint && <Field label="Edit guidance (cfg)" hint="def 1 (canonical); >1 tends to garble"><input className={inp} type="number" step="0.5" value={editCfg} onChange={(e) => setEditCfg(e.target.value)} /></Field>}
       {tuning.node}
       <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : mode === "repaint" ? "Repaint region" : "Extend track"}</PrimaryButton>
     </div>
