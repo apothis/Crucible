@@ -1976,6 +1976,48 @@ def audio(pid: str):
     raise HTTPException(404, "no audio")
 
 
+def _detect_beats(path):
+    """librosa beat tracking (Mac CPU, no GPU). Returns {bpm, beats[], duration} for the
+    waveform region-selector's beat markers + snapping."""
+    import librosa
+    import numpy as _np
+    y, sr = librosa.load(path, mono=True)
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+    beat_times = librosa.frames_to_time(beats, sr=sr)
+    bpm = float(_np.atleast_1d(tempo)[0])
+    return {"bpm": round(bpm, 1),
+            "beats": [round(float(t), 4) for t in beat_times],
+            "duration": round(float(librosa.get_duration(y=y, sr=sr)), 3)}
+
+
+@app.get("/api/beats/{pid}")
+def beats(pid: str):
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "no audio")
+    try:
+        return _detect_beats(src)
+    except Exception as e:
+        raise HTTPException(500, f"beat detection failed: {e}")
+
+
+@app.post("/api/beats")
+async def beats_upload(file: UploadFile = File(...)):
+    """Beat detection for an uploaded (not-yet-in-library) repaint source."""
+    work = os.path.join(STEMS_DIR, "beats_" + uuid.uuid4().hex)
+    os.makedirs(work, exist_ok=True)
+    try:
+        ext = os.path.splitext(file.filename or "")[1] or ".wav"
+        p = os.path.join(work, "src" + ext)
+        with open(p, "wb") as f:
+            f.write(await file.read())
+        return _detect_beats(p)
+    except Exception as e:
+        raise HTTPException(500, f"beat detection failed: {e}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def _lib_source_path(pid):
     """Absolute path to a library item's audio (by id, or the stored DB path)."""
     for ext in (".mp3", ".wav"):

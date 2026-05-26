@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { api, type Config, type Genre, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, Slider, pollJob, waitJob, runSync, rid, type RunCtx } from "./ui";
 import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
+import { RegionSelector } from "./RegionSelector";
 
 type FormProps = { cfg: Config; busy: boolean } & RunCtx;
 
@@ -461,9 +462,30 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
   const [right, setRight] = useState("10");
   const [editCfg, setEditCfg] = useState("1");
   const [expert, setExpert] = useState(false);
+  const [beats, setBeats] = useState<number[]>([]);
+  const [srcUrl, setSrcUrl] = useState<string>("");
   // Engine repaint: source-conditioned (length/key from source), engine levers shown.
   const tuning = useTuning(cfg, expert, true, !!cfg.acestep, !!cfg.acestep);
   const applyPreset = (p: Preset) => setTags(p.tags);
+
+  // Waveform region selector: resolve the source audio URL + detect beats (Mac) when
+  // the repaint source changes. Object URLs (uploads) are revoked on change.
+  useEffect(() => {
+    if (mode !== "repaint" || (!job && !file)) { setSrcUrl(""); setBeats([]); return; }
+    let revoke = "";
+    if (file) { const u = URL.createObjectURL(file); revoke = u; setSrcUrl(u); }
+    else { setSrcUrl(`/api/audio/${job}`); }
+    setBeats([]);
+    (async () => {
+      try {
+        const r = file
+          ? await (() => { const fd = new FormData(); fd.append("file", file); return api.beatsUpload(fd); })()
+          : await api.beats(job);
+        setBeats(Array.isArray(r?.beats) ? r.beats : []);
+      } catch { setBeats([]); }
+    })();
+    return () => { if (revoke) URL.revokeObjectURL(revoke); };
+  }, [job, file, mode]);
 
   async function run() {
     if (!job && !file) return fail(ctx, "Choose a source track (library or upload).");
@@ -505,10 +527,18 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       </Field>
       <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
       {mode === "repaint" ? (
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Repaint start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
-          <Field label="Repaint end (s)"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
-        </div>
+        (srcUrl ? (
+          <Field label="Region to repaint" hint="drag to mark · drag the band to move · drag an edge to resize">
+            <RegionSelector url={srcUrl} beats={beats}
+              start={parseFloat(start) || 0} end={parseFloat(end) || 0}
+              onChange={(s, e) => { setStart(String(s)); setEnd(String(e)); }} />
+          </Field>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Repaint start (s)"><input className={inp} type="number" step="0.5" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+            <Field label="Repaint end (s)"><input className={inp} type="number" step="0.5" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+          </div>
+        ))
       ) : (
         <div className="grid grid-cols-2 gap-3">
           <Field label="Add before (s)"><input className={inp} type="number" step="0.5" value={left} onChange={(e) => setLeft(e.target.value)} /></Field>
