@@ -4,6 +4,7 @@ Run:  python -m backend.app   (from the repo root)
 """
 import json
 import os
+import random
 import shutil
 import sqlite3
 import threading
@@ -53,6 +54,13 @@ CLIENT_ID = "musicgen-app"
 C = comfy.Comfy(HOST)
 ROFORMER_HOST = CFG.get("roformer_host", "")
 ACESTEP_HOST = CFG.get("acestep_host", "")   # official ACE-Step engine (cover etc.); empty = use ComfyUI
+# DCW (Differential Correction in Wavelet domain) ships ON-by-default in the engine and
+# garbles XL text2music (full from-noise trajectory); it CANNOT be disabled over the HTTP
+# API (see HANDOFF). Until DCW is patched off on the box, gate engine text2music on the XL
+# models and fall back to ComfyUI so Generate never silently emits garbage. Turbo (short
+# trajectory) and cover/repaint (source-anchored) are unaffected. Flip to true once the box
+# is patched + verified.
+ACESTEP_DCW_OK = bool(CFG.get("acestep_dcw_ok", False))
 
 
 def make_rvc():
@@ -276,6 +284,63 @@ def _new_job(resolved, mode):
 def generate(p: dict):
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required (an empty prompt produces noise)")
+
+    eng_model = p.get("model") or "acestep-v15-xl-sft"
+    eng_is_turbo = "turbo" in eng_model.lower()
+    # Use the engine only when it won't hit the DCW garble bug: turbo is DCW-safe, and XL
+    # models are allowed once the box's DCW default is patched off (acestep_dcw_ok).
+    use_engine = bool(ACESTEP_HOST) and (eng_is_turbo or ACESTEP_DCW_OK)
+    if use_engine:                                    # ----- official ACE-Step engine path -----
+        seed = int(p.get("seed") or random.randint(1, 2**31 - 1))
+        instrumental = bool(p.get("instrumental"))
+        # cfg→guidance_scale (base/non-turbo only); steps→inference_steps; sampler→infer_method
+        # (drop ComfyUI sampler/scheduler names + APG — the engine's cfg_interval is its high-cfg
+        # control). negative_tags has NO engine equivalent (only lm_negative_prompt) → dropped.
+        fields = {
+            "task_type": "text2music",
+            "prompt": p.get("tags", ""),
+            "lyrics": "" if instrumental else p.get("lyrics", ""),
+            "instrumental": instrumental,
+            "duration": float(p.get("duration", 40.0)),
+            "bpm": int(p.get("bpm", 120)),
+            "keyscale": p.get("keyscale", "E minor"),
+            "vocal_language": p.get("language", "en"),
+            "guidance_scale": float(p.get("cfg") if p.get("cfg") not in (None, "") else 6.0),
+            "inference_steps": int(p.get("steps") or 32),
+            "shift": float(p.get("shift", 3.0)),
+            "infer_method": p.get("infer_method", "ode"),
+            "cfg_interval_start": float(p.get("cfg_interval_start", 0.0)),
+            "cfg_interval_end": float(p.get("cfg_interval_end", 0.95)),
+            "thinking": bool(p.get("thinking", True)),          # 4B LM audio codes (ComfyUI parity)
+            "use_cot_caption": bool(p.get("use_cot_caption", True)),   # LM auto-expands the tags
+            "use_cot_language": bool(p.get("use_cot_language", True)),
+            "batch_size": 1,                                    # 1 take/request → matches the count loop
+            "use_random_seed": False,
+            "seed": seed,
+            "audio_format": "wav",
+            "model": p.get("model", "acestep-v15-xl-sft"),
+        }
+        try:
+            free_gpu("ace")                            # free ComfyUI + RVC; keep ACE resident
+        except Exception:
+            pass
+        try:
+            task_id = acestep_py.submit(ACESTEP_HOST, fields)
+        except Exception as e:
+            raise HTTPException(500, f"acestep submit failed: {e}")
+        pid = uuid.uuid4().hex
+        resolved = {"engine": "acestep", "tags": p.get("tags", ""), "seed": seed,
+                    "model": fields["model"], "guidance_scale": fields["guidance_scale"],
+                    "steps": fields["inference_steps"], "duration": fields["duration"]}
+        with LOCK:
+            JOBS[pid] = _new_job(resolved, "generate")
+            JOBS[pid]["status"] = "running"
+        save_job(pid)
+        threading.Thread(target=_acestep_poll, args=(pid, task_id, "generate"), daemon=True).start()
+        return {"job_id": pid, "seed": seed}
+
+    # ----- ComfyUI text2music (fallback; also the safe path when the engine's DCW bug
+    # would garble XL text2music — see ACESTEP_DCW_OK) -----
     try:
         graph, resolved = comfy.build_t2m(p)
         res = submit_comfy(graph)
@@ -327,11 +392,11 @@ def _save_engine_audio(jid, file_ref):
     return out
 
 
-def _acestep_cover_poll(pid, task_id):
-    """Background: poll the official ACE-Step engine until the cover task finishes,
-    then download EVERY batch take — the first becomes the tracked job (pid), the rest
-    are saved as their own library rows ('take 2', 'take 3'…) so they can be compared.
-    Mirrors the ComfyUI job UX so the frontend's pollJob works unchanged."""
+def _acestep_poll(pid, task_id, mode):
+    """Background: poll the official ACE-Step engine until the task finishes, then
+    download EVERY batch take — the first becomes the tracked job (pid), the rest are
+    saved as their own library rows ('take 2', 'take 3'…) under the same `mode` so they
+    can be compared. Mirrors the ComfyUI job UX so the frontend's pollJob works unchanged."""
     try:
         files = acestep_py.wait(ACESTEP_HOST, task_id)     # list, one ref per take
         out = _save_engine_audio(pid, files[0])
@@ -346,13 +411,13 @@ def _acestep_cover_poll(pid, task_id):
                 jid = uuid.uuid4().hex
                 o2 = _save_engine_audio(jid, fr)
                 p2 = dict(base); p2["take"] = i
-                save_done_row(jid, "cover", p2, o2)
+                save_done_row(jid, mode, p2, o2)
             except Exception:
                 pass
     except Exception as e:
         with LOCK:
             JOBS[pid]["status"] = "error"
-            JOBS[pid]["error"] = f"acestep cover failed: {e}"
+            JOBS[pid]["error"] = f"acestep {mode} failed: {e}"
         save_job(pid)
 
 
@@ -404,6 +469,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
         }
         if p.get("seed"):
             fields["seed"] = int(p["seed"])
+            fields["use_random_seed"] = False         # else the engine ignores `seed` and rolls its own
         try:
             free_gpu("ace")                           # free ComfyUI + RVC before the (offloaded) ACE engine generates
         except Exception:
@@ -420,7 +486,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
             JOBS[pid] = _new_job(resolved, "cover")
             JOBS[pid]["status"] = "running"
         save_job(pid)
-        threading.Thread(target=_acestep_cover_poll, args=(pid, task_id), daemon=True).start()
+        threading.Thread(target=_acestep_poll, args=(pid, task_id, "cover"), daemon=True).start()
         return {"job_id": pid}
 
     # ----- fallback: ComfyUI cover guider -----

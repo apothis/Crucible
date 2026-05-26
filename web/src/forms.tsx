@@ -207,6 +207,8 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
   const [count, setCount] = useState(1);
   const [expert, setExpert] = useState(false);
   const [neg, setNeg] = useState("");
+  const [thinking, setThinking] = useState(true);   // engine: 4B LM audio codes (ComfyUI parity)
+  const [cot, setCot] = useState(true);             // engine: LM expands tags + detects language
   const tuning = useTuning(cfg, expert);
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
 
@@ -224,7 +226,7 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
     ctx.setResults(cards);
     for (const c of cards) {
       try {
-        const { job_id, seed } = await api.generate({ ...tuning.params(), tags, instrumental, lyrics, negative_tags: neg });
+        const { job_id, seed } = await api.generate({ ...tuning.params(), tags, instrumental, lyrics, negative_tags: neg, thinking, use_cot_caption: cot, use_cot_language: cot });
         ctx.patch(c.id, { title: `seed ${seed}`, status: "running", pct: 5 });
         pollJob(job_id, c.id, ctx);
       } catch (e) { ctx.patch(c.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -236,11 +238,23 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
       <ModeToggle expert={expert} setExpert={setExpert} />
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
-      {expert && (
+      {expert && !cfg.acestep && (
         <Field label="Negative tags" hint="steer away from these — blank = off">
           <textarea className={inp} rows={2} value={neg} onChange={(e) => setNeg(e.target.value)}
             placeholder="muddy, lo-fi, harsh fizz, digital clipping, thin weak guitars, out of tune, low quality" />
         </Field>
+      )}
+      {expert && cfg.acestep && (
+        <div className="space-y-1.5">
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={thinking} onChange={(e) => setThinking(e.target.checked)} />
+            LM thinking <span className="text-[10px]">— 4B LM generates audio codes for richer structure (slower)</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={cot} onChange={(e) => setCot(e.target.checked)} />
+            Chain-of-thought <span className="text-[10px]">— LM expands your tags + auto-detects language</span>
+          </label>
+        </div>
       )}
       {tuning.node}
       <Field label="Variations" hint="generate several takes to compare">

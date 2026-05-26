@@ -124,8 +124,8 @@ def download(host, file_ref):
 
 
 def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0):
-    """Poll /query_result until the task succeeds (status==1); return its file ref.
-    Raises on failure/timeout. Status: 1=done; treat negative or 'failed'/'error' as failure."""
+    """Poll /query_result until the task succeeds; return its file refs.
+    Raises on failure/timeout. Status (per API.md): 0=queued/running, 1=succeeded, 2=failed."""
     start = time.time()
     while time.time() - start < deadline:
         t = query(host, task_id)
@@ -135,7 +135,9 @@ def wait(host, task_id, deadline=DEFAULT_DEADLINE, poll=5.0):
             if not files:
                 raise RuntimeError(f"task done but no file in result: {t}")
             return files                 # list of refs (one per batch take)
-        if (isinstance(st, str) and st.lower() in ("failed", "error")) or (isinstance(st, int) and st < 0):
+        failed = (st == 2 or (isinstance(st, int) and st < 0)
+                  or (isinstance(st, str) and st.lower() in ("failed", "error")))
+        if failed:
             raise RuntimeError(t.get("message") or t.get("error") or f"task failed: {t}")
         time.sleep(poll)
     raise RuntimeError(f"timed out after {deadline}s waiting for task {task_id}")
