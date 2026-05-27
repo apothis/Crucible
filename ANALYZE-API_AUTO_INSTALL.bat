@@ -64,52 +64,38 @@ echo -------- Creating venv (in the install dir) --------
 set "VPY=%DEST%\venv\Scripts\python.exe"
 "%VPY%" -m pip install --upgrade pip wheel setuptools
 
+rem =============================================================================
+rem  CORE (required) — CLAP tags + key. This alone makes a working analyze service.
+rem  torch 2.0.0/cu118 so the (optional) NATTEN 0.14.6 wheel can match; torchvision is
+rem  required by laion-clap (timm_model -> torchvision.ops).
+rem =============================================================================
 echo(
-echo -------- Installing torch 2.0.0 (%CUDA%) --------
-rem Pinned to torch 2.0.0 so the prebuilt NATTEN 0.14.6 wheel (which allin1 requires) matches.
-rem torchvision is also required by laion-clap (timm_model -> torchvision.ops).
+echo -------- [core] torch 2.0.0 (%CUDA%) + CLAP + server deps --------
 "%VPY%" -m pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/%CUDA%
+"%VPY%" -m pip install "numpy<2" laion-clap librosa soundfile fastapi "uvicorn[standard]" python-multipart
+if errorlevel 1 ( echo   [!!] CORE install failed - the service needs these. Fix the error above and re-run. & pause )
 
 echo(
-echo -------- Build deps for madmom (Cython + numpy first) --------
-"%VPY%" -m pip install "cython>=0.29" "numpy<2"
+echo -------- [core] Pre-fetching the CLAP checkpoint into the in-dir cache --------
+rem ~2 GB now so the first analysis isn't slow; lands under %HF_HOME% (in-dir).
+"%VPY%" -c "import laion_clap; m=laion_clap.CLAP_Module(enable_fusion=False); m.load_ckpt(); print('CLAP ckpt ready')" || echo   [!] CLAP prefetch skipped (will download on first use).
 
+rem =============================================================================
+rem  OPTIONAL (advanced) — allin1 for BETTER labelled structure (intro/verse/chorus) +
+rem  beats. Best-effort: the service works WITHOUT this (it falls back to the Mac's
+rem  librosa structure). Needs: git, the MS C++ Build Tools (madmom compiles), and the
+rem  prebuilt NATTEN 0.14.6 wheel (often unavailable now — shi-labs cert/host issues; the
+rem  PyPI sdist would need the CUDA Toolkit to compile). If any step fails, just skip it.
+rem =============================================================================
 echo(
-echo -------- Installing madmom (from git) --------
-rem allin1 needs madmom, but the PyPI release won't build on modern Python/numpy. Install
-rem the maintained git version with --no-build-isolation so it compiles against the venv's
-rem pinned numpy<2 (not numpy 2). Needs git on PATH + the MS C++ Build Tools (the Cython
-rem extensions are compiled). If this fails with "Microsoft Visual C++ 14.0 required",
-rem install https://aka.ms/vs/17/release/vs_BuildTools.exe ("Desktop development with C++").
+echo -------- [optional] allin1 structure (cython - madmom - natten - allin1) --------
+"%VPY%" -m pip install "cython>=0.29"
 "%VPY%" -m pip install --no-build-isolation git+https://github.com/CPJKU/madmom
-if errorlevel 1 echo   [!] madmom failed to build - install the MS C++ Build Tools (see note above) then re-run.
-
-echo(
-echo -------- Installing NATTEN 0.14.6 (the version allin1's API needs) --------
-rem allin1 imports the OLD natten API (natten1dav, ...), which exists only in 0.14.x.
-rem Use the prebuilt torch2.0.0/cu118 wheel (no compiling). Newer natten removed those names.
-rem --trusted-host bypasses shi-labs' expired SSL cert (the +torchXXXcuXXX wheels live only
-rem there, not on PyPI). If you see an SSL "validity period" error, also check the box CLOCK.
+if errorlevel 1 echo   [optional] madmom skipped (needs git + MS C++ Build Tools). Structure stays on the Mac.
 "%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://shi-labs.com/natten/wheels --trusted-host shi-labs.com
-if errorlevel 1 (
-    echo   [!] shi-labs wheel index failed; trying whl.natten.org...
-    "%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://whl.natten.org/wheels/cu118/torch2.0.0/index.html --trusted-host whl.natten.org
-    if errorlevel 1 echo   [!!] NATTEN 0.14.6 wheel not found - see https://www.shi-labs.com/natten/ for the torch2.0.0/cu118 wheel, then re-run.
-)
-
-echo(
-echo -------- Installing allin1 + CLAP + server deps --------
-"%VPY%" -m pip install allin1 laion-clap librosa soundfile fastapi "uvicorn[standard]" python-multipart
-if errorlevel 1 (
-    echo   [!] An install step failed above. madmom on Python 3.11/3.12 sometimes needs:
-    echo       "%VPY%" -m pip install git+https://github.com/CPJKU/madmom
-    echo       then re-run this installer.
-)
-
-echo(
-echo -------- (optional) Pre-fetching the CLAP checkpoint into the in-dir cache --------
-rem Downloads ~2 GB now so the first analysis isn't slow; lands under %HF_HOME% (in-dir).
-"%VPY%" -c "import laion_clap; m=laion_clap.CLAP_Module(enable_fusion=False); m.load_ckpt(); print('CLAP ckpt ready')" || echo   [!] CLAP prefetch skipped (will download on first use, into the in-dir cache).
+if errorlevel 1 echo   [optional] NATTEN 0.14.6 wheel unavailable (shi-labs gone / no prebuilt). allin1 will be skipped.
+"%VPY%" -m pip install allin1
+if errorlevel 1 echo   [optional] allin1 not installed - the service runs in tags-only mode (Mac handles structure).
 
 echo(
 echo -------- Installing the API server --------
