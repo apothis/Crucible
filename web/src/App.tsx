@@ -56,11 +56,23 @@ function AppInner() {
   // Projects — a saved bundle of every page's drafts + the song arrangement + tab.
   const [projects, setProjects] = useState<Project[]>([]);
   const [current, setCurrent] = useState<{ id: string; name: string } | null>(null);
+  // ACE-Step engine status (availability + currently-loaded model), polled.
+  const [ace, setAce] = useState<{ reachable: boolean; model?: string } | null>(null);
 
   const refreshLib = () => api.library().then(setLibrary).catch(() => {});
   const refreshProjects = () => api.projects().then(setProjects).catch(() => {});
   useEffect(() => { api.config().then(setCfg).catch(() => {}); refreshLib(); refreshProjects(); }, []);
   useEffect(() => { setResults([]); }, [mode]);
+  // Poll the engine for availability + the loaded model (so a base/sft swap shows in the header).
+  useEffect(() => {
+    if (!cfg?.acestep) { setAce(null); return; }
+    const tick = () => api.acestepInfo()
+      .then((d: any) => setAce({ reachable: !!d?.reachable, model: d?.health?.data?.loaded_model || "" }))
+      .catch(() => setAce({ reachable: false }));
+    tick();
+    const t = window.setInterval(tick, 12000);
+    return () => window.clearInterval(t);
+  }, [cfg?.acestep]);
 
   const busy = useMemo(() => results.some((r) => r.status === "pending" || r.status === "running"), [results]);
   const ctx: RunCtx = {
@@ -137,7 +149,7 @@ function AppInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <Header cfg={cfg} libOpen={libOpen} toggleLib={() => setLibOpen((v) => !v)} />
+      <Header cfg={cfg} ace={ace} libOpen={libOpen} toggleLib={() => setLibOpen((v) => !v)} />
       <ProjectBar projects={projects} current={current}
         onNew={projectNew} onOpen={projectOpen} onSave={projectSave} onSaveAs={projectSaveAs}
         onRename={projectRename} onDelete={projectDelete} />
@@ -220,7 +232,12 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
   }
 }
 
-function Header({ cfg, libOpen, toggleLib }: { cfg: Config | null; libOpen: boolean; toggleLib: () => void }) {
+function shortModel(m?: string): string {
+  if (!m) return "";
+  return m.replace(/^acestep-v15-/, "").replace(/^acestep-/, "");   // acestep-v15-xl-sft → xl-sft
+}
+
+function Header({ cfg, ace, libOpen, toggleLib }: { cfg: Config | null; ace: { reachable: boolean; model?: string } | null; libOpen: boolean; toggleLib: () => void }) {
   return (
     <header className="flex items-center justify-between border-b border-[var(--color-line)] px-5 py-3">
       <div className="flex items-baseline gap-2">
@@ -230,6 +247,10 @@ function Header({ cfg, libOpen, toggleLib }: { cfg: Config | null; libOpen: bool
       <div className="flex items-center gap-2 text-[11px]">
         <Chip label={`ComfyUI ${cfg ? "· " + cfg.comfy_host : "…"}`} ok={!!cfg} />
         <Chip label={`RVC ${cfg ? "· " + cfg.rvc_driver : "…"}`} ok={!!cfg && cfg.rvc_driver !== "gradio"} />
+        {cfg?.acestep && (
+          <Chip ok={!!ace?.reachable}
+            label={`ACE ${ace ? (ace.reachable ? "· " + (shortModel(ace.model) || "loading…") : "· off") : "…"}`} />
+        )}
         <button onClick={toggleLib}
           className={`rounded-lg border px-2.5 py-1 transition ${libOpen ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
           {libOpen ? "Library ▸" : "◂ Library"}

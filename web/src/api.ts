@@ -32,6 +32,7 @@ async function jmethod(method: string, url: string, body: unknown) {
 
 export const api = {
   config: () => jget("/api/config"),
+  acestepInfo: () => jget("/api/acestep/info"),
   library: () => jget("/api/library"),
   deleteLib: async (id: string) => {
     const r = await fetch(`/api/library/${id}`, { method: "DELETE" });
