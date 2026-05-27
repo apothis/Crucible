@@ -1550,6 +1550,32 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
   const claude = useClaudeAvail();
   const tuning = useTuning("song", cfg, expert, true); // duration is computed from blocks
 
+  // ── Analyze a reference track → fill this arrangement (RESEARCH §17 P1, Mac-side) ──
+  const refTracks = useLibrary((it) => ["source", "generate", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
+  const [refJob, setRefJob] = useState("");
+  const [refFile, setRefFile] = useState<File | null>(null);
+  const [refLyrics, setRefLyrics] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [refMsg, setRefMsg] = useState("");
+
+  async function analyzeRef() {
+    if (!refFile && !refJob) { setRefMsg("Pick a library track or upload a reference first."); return; }
+    setAnalyzing(true);
+    setRefMsg(refLyrics ? "analyzing + transcribing (slower)…" : "analyzing (bpm · key · structure)…");
+    try {
+      const fd = new FormData();
+      if (refFile) fd.append("file", refFile); else fd.append("job_id", refJob);
+      fd.append("params", JSON.stringify({ with_lyrics: refLyrics }));
+      const r: any = await api.analyzeReference(fd);
+      setBlocks((r.blocks || []).map((b: any) => ({ ...newBlock(b.type), seconds: b.seconds, lyrics: b.lyrics || "" })));
+      tuning.applyPreset({ name: "ref", tags: "", bpm: r.bpm, key: r.key });
+      if (r.has_vocals) setInstrumental(false);
+      setTpl(""); setDirty(true);
+      setRefMsg(`✓ ${r.bpm} BPM · ${r.key} · ${(r.blocks || []).length} sections${r.has_vocals ? " · lyrics filled" : ""} — review, then add style tags & generate`);
+    } catch (e) { setRefMsg("✗ " + (e as Error).message); }
+    finally { setAnalyzing(false); }
+  }
+
   // The full recipe stored with the rendered song so its card can re-open in the builder.
   const songMeta = () => ({
     blocks: blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })),
@@ -1683,6 +1709,26 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     <div className="space-y-4">
       <ModeToggle expert={expert} setExpert={setExpert} />
       <p className="text-xs text-[var(--color-muted)]">Start from a template, then arrange — drag to reorder, set each length, add optional per-section lyrics.</p>
+      {cfg.analyze && (
+        <details className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
+          <summary className="cursor-pointer text-xs font-medium text-[var(--color-accent2)]">📥 Analyze a reference track → fill this arrangement</summary>
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] text-[var(--color-muted)]">Detects BPM, key &amp; section structure from a reference and fills the arrangement below — then add your own style tags and generate a fresh <b>similar</b> song (normal generation, not a cover). The melody isn't copied (text2music has no melody input); it matches tempo/key/structure{refLyrics ? "/lyrics" : ""}.</p>
+            <Field label="Reference — library track">
+              <select className={inp} value={refJob} onChange={(e) => { setRefJob(e.target.value); if (e.target.value) setRefFile(null); }}>
+                <option value="">— pick a library track —</option>
+                {refTracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.title || t.params.source || t.params.tags || t.id).slice(0, 40)}</option>)}
+              </select>
+            </Field>
+            <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setRefFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setRefJob(""); }} /></Field>
+            <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+              <input type="checkbox" checked={refLyrics} onChange={(e) => setRefLyrics(e.target.checked)} /> Also transcribe lyrics into the sections (slower; rough on dense mixes)
+            </label>
+            <GhostButton onClick={analyzeRef} className="w-full">{analyzing ? "Analyzing…" : "Analyze → fill arrangement"}</GhostButton>
+            {refMsg && <p className="text-[11px] text-[var(--color-muted)]">{refMsg}</p>}
+          </div>
+        </details>
+      )}
       <TemplateGrid active={tpl} onPick={applyTemplate} />
       <PresetBar genres={cfg.genres} onApply={applyPreset} />
       <Field label="Style tags" hint="shared across the whole song">

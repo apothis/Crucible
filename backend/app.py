@@ -31,6 +31,7 @@ from . import postfx as postfx_mod
 from . import master as master_mod
 from . import guitar as guitar_mod
 from . import sections as sections_mod
+from . import analyze as analyze_mod
 from . import genres as genres_mod
 from . import llm as llm_mod
 from . import lyrics as lyrics_mod
@@ -279,6 +280,7 @@ def config():
             "acestep": bool(ACESTEP_HOST),
             "acestep_repaint": ACESTEP_REPAINT,
             "acestep_lego": ACESTEP_LEGO,
+            "analyze": analyze_mod.available(),
             "genres": genres}
 
 
@@ -2055,6 +2057,30 @@ def mix_tracks(body: dict):
     save_done_row(jid, "mix", {"sources": [t.get("src") for t in tracks]},
                   os.path.join(LIBRARY, f"{jid}.wav"))
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+@app.post("/api/reference/analyze")
+async def reference_analyze(file: UploadFile = File(None), params: str = Form("{}"), job_id: str = Form(None)):
+    """Analyse a reference track (Mac/librosa) → a Song-Constructor spec (bpm, key,
+    labelled sections, optional lyrics) to seed the Song Builder for a fresh text2music
+    generation. RESEARCH §17 P1. (P2 will route structure/tags to the box allin1+CLAP.)"""
+    if not analyze_mod.available():
+        raise HTTPException(500, "analysis needs librosa + scikit-learn on the Mac")
+    p = json.loads(params or "{}")
+    work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
+    os.makedirs(work, exist_ok=True)
+    try:
+        src, _ = _stash_input(work, "ref",
+                              await file.read() if file else None,
+                              file.filename if file else None, job_id)
+        try:
+            res = analyze_mod.analyze_reference(src, with_lyrics=bool(p.get("with_lyrics")),
+                                                asr_size=p.get("model_size", "small"))
+        except Exception as e:
+            raise HTTPException(500, f"analysis failed: {e}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return res
 
 
 @app.post("/api/stitch")

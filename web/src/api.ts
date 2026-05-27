@@ -57,6 +57,7 @@ export const api = {
   tone: (fd: FormData) => jform("/api/tone/apply", fd),
   master: (fd: FormData) => jform("/api/master/apply", fd),
   masterOptions: () => jget("/api/master/options"),
+  analyzeReference: (fd: FormData) => jform("/api/reference/analyze", fd),
   stripGuitar: (fd: FormData) => jform("/api/backing/strip-guitar", fd),
   guitarRender: (fd: FormData) => jform("/api/guitar/render-amp", fd),
   helixCapture: (name: string) => jpost("/api/helix/capture", { name }),
@@ -105,7 +106,7 @@ export const api = {
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };
-export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; genres: Genre[] };
+export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; analyze?: boolean; genres: Genre[] };
 export type LibItem = { id: string; created: number; mode: string; params: Record<string, any>; audio_url: string; bucket?: string };
 // Arrangement shared from the Song Constructor to the Vocal Builder.
 export type SongDraft = { blocks: { type: string; seconds: number; lyrics: string }[]; key: string; bpm: number; tags: string };

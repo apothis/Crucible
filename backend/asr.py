@@ -23,16 +23,23 @@ def _get_model(size="small"):
         return _MODELS[size]
 
 
-def transcribe(audio_path, size="small", language=None):
-    """Transcribe an audio file to text. Returns {text, language, duration}.
+def transcribe(audio_path, size="small", language=None, with_segments=False):
+    """Transcribe an audio file to text. Returns {text, language, duration}, plus
+    {segments:[{start,end,text}]} when `with_segments` (for timestamp→section mapping).
     `size`: tiny/base/small/medium/large-v3 (small = good speed/quality on CPU)."""
     model = _get_model(size)
     segments, info = model.transcribe(audio_path, language=language, vad_filter=True)
     lines = []
+    segs = []
     for s in segments:
         t = s.text.strip()
         if t:
             lines.append(t)
-    return {"text": "\n".join(lines).strip(),
-            "language": getattr(info, "language", None),
-            "duration": float(getattr(info, "duration", 0.0) or 0.0)}
+            if with_segments:
+                segs.append({"start": float(s.start), "end": float(s.end), "text": t})
+    out = {"text": "\n".join(lines).strip(),
+           "language": getattr(info, "language", None),
+           "duration": float(getattr(info, "duration", 0.0) or 0.0)}
+    if with_segments:
+        out["segments"] = segs
+    return out
