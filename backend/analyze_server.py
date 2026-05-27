@@ -99,13 +99,14 @@ def _clap_tags(path, labels, top=10):
 
 @app.get("/health")
 def health():
-    ok_allin1 = False
+    info = {"status": "ok", "service": "analyze", "clap_loaded": _clap is not None}
     try:
         import allin1  # noqa: F401
-        ok_allin1 = True
-    except Exception:
-        pass
-    return {"status": "ok", "service": "analyze", "allin1": ok_allin1, "clap_loaded": _clap is not None}
+        info["allin1"] = True
+    except Exception as e:
+        info["allin1"] = False
+        info["allin1_error"] = f"{type(e).__name__}: {e}"   # surface why import failed (natten/madmom/etc.)
+    return info
 
 
 @app.post("/analyze")
