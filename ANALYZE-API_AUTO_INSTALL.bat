@@ -80,13 +80,16 @@ rem ~2 GB now so the first analysis isn't slow; lands under %HF_HOME% (in-dir).
 "%VPY%" -c "import laion_clap; m=laion_clap.CLAP_Module(enable_fusion=False); m.load_ckpt(); print('CLAP ckpt ready')" || echo   [!] CLAP prefetch skipped (will download on first use).
 
 rem =============================================================================
-rem  OPTIONAL — better labelled structure via the all-in-one-fix fork (modern NATTEN
-rem  0.17.5). NO CUDA build: install a PREBUILT Windows NATTEN wheel (lldacing) matched
-rem  to this Python + torch 2.6.0/cu126, then all-in-one-fix. Best-effort: if the wheel
-rem  isn't found, the service still runs tags-only and the Mac handles structure.
+rem  OPTIONAL — better labelled structure via the all-in-one-fix fork. Needs THREE things:
+rem    1) a PREBUILT Windows NATTEN 0.17.5 wheel (lldacing) — no CUDA build,
+rem    2) madmom (compiles via the MS C++ Build Tools + git — all-in-one-fix imports it
+rem       despite not declaring it as a dependency),
+rem    3) all-in-one-fix itself.
+rem  Best-effort: if any piece is missing the service runs tags-only and the Mac handles
+rem  structure. Requires Python 3.10-3.12 (natten wheels) + git + the C++ Build Tools.
 rem =============================================================================
 echo(
-echo -------- [optional] all-in-one-fix structure (prebuilt NATTEN, no compiler) --------
+echo -------- [optional] all-in-one-fix structure (prebuilt NATTEN + madmom build) --------
 rem NOTE: detect with NO quotes in the Python code — batch for/f ('...') is single-quote
 rem delimited, so a python f-string ('cp{..}') would clash and garble PYTAG.
 for /f %%T in ('"%VPY%" -c "import sys;print(sys.version_info[1])"') do set "PYMINOR=%%T"
@@ -98,14 +101,16 @@ if not "%PYTAG%"=="cp310" if not "%PYTAG%"=="cp311" if not "%PYTAG%"=="cp312" (
     goto SKIP_ALLIN1
 )
 "%VPY%" -m pip install "https://huggingface.co/lldacing/NATTEN-windows/resolve/main/natten-0.17.5+torch260cu126-%PYTAG%-%PYTAG%-win_amd64.whl"
-rem Only continue to all-in-one-fix if NATTEN actually imported. Otherwise pip would try to
-rem BUILD natten from source (needs CUDA, fails) — guard against that confusing cascade.
-"%VPY%" -c "import natten" 2>nul
+echo   building madmom (git + MS C++ Build Tools; all-in-one-fix needs it)...
+"%VPY%" -m pip install "cython>=0.29"
+"%VPY%" -m pip install --no-build-isolation "git+https://github.com/CPJKU/madmom"
+"%VPY%" -m pip install all-in-one-fix
+"%VPY%" -m pip install "numpy<2"
+"%VPY%" -c "import allin1fix" 2>nul
 if errorlevel 1 (
-    echo   [optional] NATTEN wheel didn't install - SKIPPING allin1 ^(tags-only^).
+    echo   [optional] allin1 unavailable ^(NATTEN wheel or madmom build failed^) - tags-only mode; Mac handles structure.
 ) else (
-    "%VPY%" -m pip install all-in-one-fix
-    if errorlevel 1 echo   [optional] all-in-one-fix install failed - tags-only mode.
+    echo   [optional] allin1fix ready - full labelled structure enabled.
 )
 :SKIP_ALLIN1
 
