@@ -2143,7 +2143,8 @@ def stitch_tracks(body: dict):
         raise HTTPException(400, "no tracks to stitch")
     try:
         wav = mix_mod.stitch(tracks, LIBRARY, STEMS_DIR,
-                             crossfade_s=float(body.get("crossfade_s", 1.0)))
+                             crossfade_s=float(body.get("crossfade_s", 1.0)),
+                             bpm=body.get("bpm"), beat_align=bool(body.get("beat_align", False)))
     except Exception as e:
         raise HTTPException(500, f"stitch failed: {e}")
     jid = uuid.uuid4().hex

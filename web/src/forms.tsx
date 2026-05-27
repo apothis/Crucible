@@ -1484,8 +1484,9 @@ const SECTION_TYPES = ["Intro", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Solo
 // "anthemic" are from the ACE-Step 1.5 guide; the rest are natural-language delivery/feel
 // steers ACE responds to (metal-leaning). Free-text — these are just autocomplete hints.
 const SECTION_STYLES = [
-  "spoken word", "whispered", "anthemic", "screamed", "growled", "gang vocals",
-  "shouted", "chanted", "falsetto", "harmonized", "soft", "intense", "half-time",
+  "sung", "belted", "full voice", "powerful vocals", "spoken word", "whispered",
+  "anthemic", "screamed", "growled", "gang vocals", "shouted", "chanted",
+  "falsetto", "harmonized", "soft", "intense", "half-time",
 ] as const;
 const DEFAULT_SECS: Record<string, number> = {
   Intro: 8, Verse: 24, "Pre-Chorus": 12, Chorus: 24, Bridge: 16, Solo: 20, Breakdown: 16, Outro: 12,
@@ -1581,6 +1582,8 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
   const [instrumental, setInstrumental] = d.use("instrumental", false);
   const [drive, setDrive] = d.use<"compile" | "stitch">("drive", "compile");
   const [crossfade, setCrossfade] = d.use("crossfade", 1);
+  const [shareSeed, setShareSeed] = d.use("shareSeed", true);   // one seed for all blocks → more cohesion
+  const [beatMatch, setBeatMatch] = d.use("beatMatch", true);   // beat-align the section seams
   const [expert, setExpert] = d.use("expert", false);
   const [tpl, setTpl] = d.use("tpl", "");
   const [dirty, setDirty] = d.use("dirty", false); // arrangement edited since last template/default
@@ -1716,6 +1719,11 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     const cards = blocks.map((b, i) => ({ id: rid(), title: `${i + 1}. ${b.type} · ${b.seconds}s`, status: "pending" as const, pct: 0 }));
     const finalId = rid();
     ctx.setResults([...cards, { id: finalId, title: `stitched song · ${total}s`, status: "pending", pct: 0 }]);
+    // Share one seed across every block (when the user hasn't pinned one) so the
+    // sections draw from the same noise → more tonal/textural cohesion.
+    const base = tuning.params();
+    const seedOverride = shareSeed && base.seed == null ? Math.floor(Math.random() * 2147483647) : undefined;
+    const blockParams = seedOverride != null ? { ...base, seed: seedOverride } : base;
     const urls: string[] = [];
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i], card = cards[i];
@@ -1725,7 +1733,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
         continue;
       }
       try {
-        const { job_id } = await api.generate({ ...tuning.params(), duration: b.seconds, tags, instrumental, lyrics: blockTagged(b) });
+        const { job_id } = await api.generate({ ...blockParams, duration: b.seconds, tags, instrumental, lyrics: blockTagged(b) });
         ctx.patch(card.id, { status: "running", pct: 5 });
         const url = await waitJob(job_id, card.id, ctx);
         urls.push(url);
@@ -1739,7 +1747,8 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     ctx.patch(finalId, { status: "running", pct: 60 });
     try {
       const sections = blocks.map((b) => b.type).join(" · ");
-      const d = await api.stitch({ tracks: urls, crossfade_s: crossfade, tags, sections, title, song_meta: songMeta() });
+      const d = await api.stitch({ tracks: urls, crossfade_s: crossfade, tags, sections, title, song_meta: songMeta(),
+        bpm: tuning.bpm, beat_align: beatMatch });
       ctx.patch(finalId, { status: "done", pct: 100, url: d.audio_url + "?t=" + Date.now() });
       ctx.onDone();
     } catch (e) { ctx.patch(finalId, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -1865,7 +1874,17 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
           </button>
         ))}
       </div>
-      {drive === "stitch" && <Slider label="Crossfade (s)" value={crossfade} set={setCrossfade} min={0} max={4} step={0.5} />}
+      {drive === "stitch" && (
+        <div className="space-y-2">
+          <Slider label="Crossfade (s)" value={crossfade} set={setCrossfade} min={0} max={4} step={0.5} />
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={shareSeed} onChange={(e) => setShareSeed(e.target.checked)} /> Share one seed across sections <span className="text-[10px] opacity-70">(more cohesion)</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={beatMatch} onChange={(e) => setBeatMatch(e.target.checked)} /> Beat-match section seams <span className="text-[10px] opacity-70">(align crossfades to the beat)</span>
+          </label>
+        </div>
+      )}
       {tuning.node}
 
       <PrimaryButton onClick={run} disabled={busy}>

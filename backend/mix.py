@@ -70,10 +70,41 @@ def mix(tracks, library, stems_dir, target_sr=44100, normalize=True) -> bytes:
     return buf.getvalue()
 
 
-def stitch(tracks, library, stems_dir, crossfade_s=1.0, target_sr=44100, normalize=True) -> bytes:
+def _first_onset_sample(seg, sr, max_trim_s=0.7):
+    """First strong onset in a clip (samples), capped — used to trim the arbitrary
+    pre-roll so a clip starts on a beat. Returns 0 if detection fails."""
+    try:
+        import librosa
+        mono = seg.mean(0).numpy().astype("float32")
+        on = librosa.onset.onset_detect(y=mono, sr=sr, units="samples", backtrack=True)
+        if len(on):
+            return int(min(int(on[0]), int(max_trim_s * sr)))
+    except Exception:
+        pass
+    return 0
+
+
+def _beat_samples(seg, sr):
+    """Beat positions (samples) of a clip via librosa; [] on failure."""
+    try:
+        import librosa
+        mono = seg.mean(0).numpy().astype("float32")
+        _, beats = librosa.beat.beat_track(y=mono, sr=sr, units="samples")
+        return [int(b) for b in beats]
+    except Exception:
+        return []
+
+
+def stitch(tracks, library, stems_dir, crossfade_s=1.0, target_sr=44100, normalize=True,
+           bpm=None, beat_align=False) -> bytes:
     """Concatenate tracks end-to-end (one after another) with an equal-power
     crossfade between adjacent segments. `tracks` is a list of in-app URLs in
     play order. Used by the Song Constructor per-block + stitch mode.
+
+    When `beat_align` is set (and `bpm` is known), each clip's pre-roll is trimmed
+    to its first onset so it starts on a beat, the crossfade is snapped to ~one beat,
+    and the splice is anchored to the outgoing clip's nearest detected beat — so the
+    rhythmic grid carries across section seams instead of phasing.
     """
     import math
     import io as _io
@@ -84,10 +115,31 @@ def stitch(tracks, library, stems_dir, crossfade_s=1.0, target_sr=44100, normali
     if not segs:
         raise ValueError("no tracks to stitch")
 
+    beat = (60.0 / float(bpm)) if (beat_align and bpm and float(bpm) > 0) else None
+    if beat_align:
+        # start each clip on a beat (drop the arbitrary lead-in), but keep clips that
+        # are too short to safely trim intact.
+        segs = [s[:, _first_onset_sample(s, target_sr):] if s.shape[1] > int(1.0 * target_sr) else s
+                for s in segs]
+
     out = segs[0]
-    xf = max(0, int(float(crossfade_s) * target_sr))
+    default_xf = max(0, int(float(crossfade_s) * target_sr))
     for nxt in segs[1:]:
-        n = min(xf, out.shape[1], nxt.shape[1])
+        if beat:
+            want = max(1, round(float(crossfade_s) / beat)) if crossfade_s > 0 else 1
+            xf = int(want * beat * target_sr)
+            # anchor the overlap start to the outgoing clip's nearest beat, but only if
+            # that beat is within ±half a crossfade of the target (else keep the musical length).
+            tgt = out.shape[1] - xf
+            bs = [b for b in _beat_samples(out, target_sr) if 0 < b < out.shape[1]]
+            if bs:
+                pos = min(bs, key=lambda b: abs(b - tgt))
+                if abs(pos - tgt) <= xf // 2:
+                    xf = out.shape[1] - pos
+            xf = min(xf, out.shape[1], nxt.shape[1])
+        else:
+            xf = min(default_xf, out.shape[1], nxt.shape[1])
+        n = max(0, xf)
         if n > 0:
             t = torch.linspace(0.0, 1.0, n)
             fade_out = torch.cos(t * math.pi / 2)  # 1 -> 0
