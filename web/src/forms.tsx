@@ -34,7 +34,7 @@ const ENGINE_MODELS = [
   { id: "acestep-v15-turbo", label: "Turbo (fast preview)" },
 ];
 
-function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false, defaultEngModel = "acestep-v15-xl-base") {
+function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = false, engineMode = false, sourceConditioned = false, defaultEngModel = "acestep-v15-xl-sft") {
   const d = useDrafts(`${ns}.tuning`);
   const firstAvail = cfg.variants.find((v) => v.available);
   const [variant, setVariant] = d.use("variant", firstAvail?.id ?? "xl_base");
@@ -51,7 +51,7 @@ function useTuning(ns: string, cfg: Config, expert: boolean, hideDuration = fals
   const [apgNorm, setApgNorm] = d.use("apgNorm", "1.3");
   const [apgEta, setApgEta] = d.use("apgEta", "1.05");
   // ---- official ACE-Step engine controls (only shown/sent in engineMode) ----
-  const [engModel, setEngModel] = d.use("engModel", defaultEngModel);  // per-form default (cover uses sft)
+  const [engModel, setEngModel] = d.use("engModel", defaultEngModel);  // default xl-sft; Expert can pick base/turbo
   const [useAdg, setUseAdg] = d.use("useAdg", true);                       // Adaptive Dual Guidance (de-mud)
   const [inferMethod, setInferMethod] = d.use("inferMethod", "ode");            // ode (euler) | sde (stochastic)
   const [cfgIntStart, setCfgIntStart] = d.use("cfgIntStart", "");
