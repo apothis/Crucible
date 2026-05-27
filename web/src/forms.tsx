@@ -1881,7 +1881,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
             <input type="checkbox" checked={shareSeed} onChange={(e) => setShareSeed(e.target.checked)} /> Share one seed across sections <span className="text-[10px] opacity-70">(more cohesion)</span>
           </label>
           <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-            <input type="checkbox" checked={beatMatch} onChange={(e) => setBeatMatch(e.target.checked)} /> Beat-match section seams <span className="text-[10px] opacity-70">(align crossfades to the beat)</span>
+            <input type="checkbox" checked={beatMatch} onChange={(e) => setBeatMatch(e.target.checked)} /> Beat-match section seams <span className="text-[10px] opacity-70">(trim dead air + align crossfades to the beat)</span>
           </label>
         </div>
       )}

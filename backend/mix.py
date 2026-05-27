@@ -84,6 +84,29 @@ def _first_onset_sample(seg, sr, max_trim_s=0.7):
     return 0
 
 
+def _trim_for_stitch(seg, sr, max_lead_s=0.7, tail_pad_s=0.25):
+    """Trim a clip's dead lead-in (to its first onset) and trailing near-silence so
+    sections connect with continuous music instead of dead air. ACE-Step often ends
+    its phrase a few seconds before the requested duration and pads the rest quiet;
+    this removes that pad (keeping a short decay tail). Returns the trimmed clip."""
+    n = seg.shape[1]
+    if n <= int(1.0 * sr):
+        return seg
+    start = _first_onset_sample(seg, sr, max_lead_s)
+    try:
+        import numpy as np
+        m = seg.abs().amax(dim=0).numpy()
+        body = float(m[: int(n * 0.85)].max()) if int(n * 0.85) else float(m.max())
+        end = n
+        if body > 0:
+            above = np.where(m > body * 0.02)[0]
+            if above.size:
+                end = min(n, int(above[-1]) + int(tail_pad_s * sr))
+        return seg[:, start:end] if end > start + int(0.1 * sr) else seg
+    except Exception:
+        return seg[:, start:] if start > 0 else seg
+
+
 def _beat_samples(seg, sr):
     """Beat positions (samples) of a clip via librosa; [] on failure."""
     try:
@@ -117,10 +140,9 @@ def stitch(tracks, library, stems_dir, crossfade_s=1.0, target_sr=44100, normali
 
     beat = (60.0 / float(bpm)) if (beat_align and bpm and float(bpm) > 0) else None
     if beat_align:
-        # start each clip on a beat (drop the arbitrary lead-in), but keep clips that
-        # are too short to safely trim intact.
-        segs = [s[:, _first_onset_sample(s, target_sr):] if s.shape[1] > int(1.0 * target_sr) else s
-                for s in segs]
+        # start each clip on a beat AND drop the trailing near-silence ACE pads on, so
+        # sections butt up with continuous music instead of dead air at every seam.
+        segs = [_trim_for_stitch(s, target_sr) for s in segs]
 
     out = segs[0]
     default_xf = max(0, int(float(crossfade_s) * target_sr))
