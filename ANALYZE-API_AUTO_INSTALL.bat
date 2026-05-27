@@ -22,9 +22,10 @@ rem ============================================================================
 
 set "PORT=5075"
 set "HERE=%~dp0"
-rem allin1 is pinned to NATTEN 0.14.6, whose prebuilt wheels are torch 2.0.0 / cu118 — so
-rem this venv uses that exact stack (isolated; doesn't affect ComfyUI/ACE on the box).
-set "CUDA=cu118"
+rem Modern CUDA torch for CLAP (tags). allin1 would need an OLD torch 2.0.0/cu118 + the
+rem now-unavailable NATTEN 0.14.6 wheel, which also breaks CLAP — so we don't pin that here
+rem (allin1 is an advanced, manual-only extra; see the note further down).
+set "CUDA=cu124"
 
 if not exist "%HERE%analyze_server.py" (
     echo ERROR: analyze_server.py must be in the same folder as this installer.
@@ -65,37 +66,27 @@ set "VPY=%DEST%\venv\Scripts\python.exe"
 "%VPY%" -m pip install --upgrade pip wheel setuptools
 
 rem =============================================================================
-rem  CORE (required) — CLAP tags + key. This alone makes a working analyze service.
-rem  torch 2.0.0/cu118 so the (optional) NATTEN 0.14.6 wheel can match; torchvision is
-rem  required by laion-clap (timm_model -> torchvision.ops).
+rem  CLAP tags + key — this is the whole service. Modern CUDA torch; torchvision is
+rem  required by laion-clap (timm_model -> torchvision.ops). The Mac handles structure.
 rem =============================================================================
 echo(
-echo -------- [core] torch 2.0.0 (%CUDA%) + CLAP + server deps --------
-"%VPY%" -m pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/%CUDA%
+echo -------- torch (%CUDA%) + CLAP + server deps --------
+"%VPY%" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/%CUDA%
 "%VPY%" -m pip install "numpy<2" laion-clap librosa soundfile fastapi "uvicorn[standard]" python-multipart
-if errorlevel 1 ( echo   [!!] CORE install failed - the service needs these. Fix the error above and re-run. & pause )
+if errorlevel 1 ( echo   [!!] install failed - the service needs these. Fix the error above and re-run. & pause )
 
 echo(
-echo -------- [core] Pre-fetching the CLAP checkpoint into the in-dir cache --------
+echo -------- Pre-fetching the CLAP checkpoint into the in-dir cache --------
 rem ~2 GB now so the first analysis isn't slow; lands under %HF_HOME% (in-dir).
 "%VPY%" -c "import laion_clap; m=laion_clap.CLAP_Module(enable_fusion=False); m.load_ckpt(); print('CLAP ckpt ready')" || echo   [!] CLAP prefetch skipped (will download on first use).
 
 rem =============================================================================
-rem  OPTIONAL (advanced) — allin1 for BETTER labelled structure (intro/verse/chorus) +
-rem  beats. Best-effort: the service works WITHOUT this (it falls back to the Mac's
-rem  librosa structure). Needs: git, the MS C++ Build Tools (madmom compiles), and the
-rem  prebuilt NATTEN 0.14.6 wheel (often unavailable now — shi-labs cert/host issues; the
-rem  PyPI sdist would need the CUDA Toolkit to compile). If any step fails, just skip it.
+rem  NOT INSTALLED HERE: allin1 (better labelled structure). It needs an OLD torch
+rem  2.0.0/cu118 + NATTEN 0.14.6, whose prebuilt wheels are no longer hosted (shi-labs
+rem  cert/host gone) and whose torch pin BREAKS CLAP in this same venv. The Mac's librosa
+rem  structure is used instead. To pursue allin1 you'd need the CUDA Toolkit to build
+rem  NATTEN from source in a SEPARATE venv — not worth it for a tweakable scaffold.
 rem =============================================================================
-echo(
-echo -------- [optional] allin1 structure (cython - madmom - natten - allin1) --------
-"%VPY%" -m pip install "cython>=0.29"
-"%VPY%" -m pip install --no-build-isolation git+https://github.com/CPJKU/madmom
-if errorlevel 1 echo   [optional] madmom skipped (needs git + MS C++ Build Tools). Structure stays on the Mac.
-"%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://shi-labs.com/natten/wheels --trusted-host shi-labs.com
-if errorlevel 1 echo   [optional] NATTEN 0.14.6 wheel unavailable (shi-labs gone / no prebuilt). allin1 will be skipped.
-"%VPY%" -m pip install allin1
-if errorlevel 1 echo   [optional] allin1 not installed - the service runs in tags-only mode (Mac handles structure).
 
 echo(
 echo -------- Installing the API server --------
