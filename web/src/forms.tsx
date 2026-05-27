@@ -1295,51 +1295,114 @@ export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
   );
 }
 
+type MasterOpts = { reference: boolean; gold: boolean; auto: boolean; gold_refs: string[]; tones: string[]; lufs_presets: Record<string, number> };
+
 export function MasterForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("master");
   const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source"].includes(it.mode));
   const refs = useLibrary(() => true);  // any track can be a reference, esp. imported "source" songs
+  const [opts, setOpts] = useState<MasterOpts | null>(null);
+  const [mode, setMode] = d.use<"auto" | "gold" | "reference">("mode", "auto");
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [refJob, setRefJob] = d.use("refJob", "");
   const [refFile, setRefFile] = useState<File | null>(null);
+  const [tone, setTone] = d.use("tone", "metal");
+  const [lufs, setLufs] = d.use("lufs", -12);
+  const [goldRef, setGoldRef] = d.use("goldRef", "");
+  useEffect(() => { api.masterOptions().then(setOpts).catch(() => {}); }, []);
 
   async function run() {
     if (!file && !job) return fail(ctx, "Choose a track to master.");
-    if (!refFile && !refJob) return fail(ctx, "Choose a reference master (a pro track whose sound you want to match).");
+    if (mode === "reference" && !refFile && !refJob) return fail(ctx, "Choose a reference master (a pro track whose sound to match).");
+    if (mode === "gold" && !(opts?.gold_refs.length)) return fail(ctx, "No gold-standard references yet — drop a few well-mastered tracks into library/master_refs/.");
     const id = rid();
-    ctx.setResults([{ id, title: "matching to reference… (Mac)", status: "running", pct: 45 }]);
+    const title = mode === "auto" ? `auto master · ${tone} · ${lufs} LUFS` : mode === "gold" ? `gold master · ${goldRef || opts?.gold_refs[0]}` : "matching to reference…";
+    ctx.setResults([{ id, title, status: "running", pct: 45 }]);
     try {
       const fd = new FormData();
+      fd.append("mode", mode);
       if (file) fd.append("file", file); else fd.append("job_id", job);
-      if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob);
-      const d = await api.master(fd);
-      ctx.setResults([{ id: rid(), title: "mastered", status: "done", pct: 100, url: d.audio_url }]);
+      if (mode === "auto") { fd.append("target_lufs", String(lufs)); fd.append("tone", tone); }
+      else if (mode === "gold") { if (goldRef) fd.append("ref_name", goldRef); }
+      else { if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob); }
+      const r = await api.master(fd);
+      ctx.setResults([{ id: rid(), title: "mastered", status: "done", pct: 100, url: r.audio_url }]);
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
-  const opts = (list: any[]) => list.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.source || t.params.preset || "").slice(0, 32)}</option>);
+  const sel = (list: any[]) => list.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.source || t.params.preset || "").slice(0, 32)}</option>);
+  const MODES = [["auto", "Auto (no reference)"], ["gold", "Gold standard"], ["reference", "Reference"]] as const;
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-[var(--color-muted)]">
-        Reference mastering (Matchering): match a track's loudness, EQ balance, peak & stereo width to a <em>reference</em> master you own. Mac-side. Personal use — the reference is only analysed.
+        Master a finished track. <b>Auto</b> = reference-free DSP chain (tone + glue + limit) to a loudness target — one-click, no reference needed.
+        <b> Gold standard</b> = match a curated built-in reference you've saved. <b>Reference</b> = match a specific master you pick. All Mac-side.
       </p>
+      <div className="flex gap-1.5">
+        {MODES.map(([m, label]) => {
+          // gold + reference both need Matchering (opts.reference); gold stays selectable
+          // even with no refs yet so its in-panel "add references" hint is reachable.
+          const avail = !opts || (m === "auto" ? opts.auto : opts.reference);
+          return (
+            <button key={m} onClick={() => avail && setMode(m)} disabled={!avail}
+              className={`flex-1 rounded-lg border py-1.5 text-sm ${mode === m ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"} ${!avail ? "opacity-40" : ""}`}>{label}</button>
+          );
+        })}
+      </div>
+
       <div className="text-xs font-medium text-[var(--color-muted)]">Target (the track to master)</div>
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
-          <option value="">— choose —</option>{opts(targets)}
+          <option value="">— choose —</option>{sel(targets)}
         </select>
       </Field>
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
-      <div className="text-xs font-medium text-[var(--color-muted)]">Reference (the sound to match — e.g. an imported pro track)</div>
-      <Field label="From a library track">
-        <select className={inp} value={refJob} onChange={(e) => setRefJob(e.target.value)}>
-          <option value="">— choose —</option>{opts(refs)}
-        </select>
-      </Field>
-      <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setRefFile(e.target.files?.[0] ?? null)} /></Field>
-      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Mastering…" : "Master to reference"}</PrimaryButton>
+
+      {mode === "auto" && (
+        <div className="space-y-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
+          <Field label="Loudness target" hint="integrated LUFS — streaming −14 · loud −9">
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(opts?.lufs_presets || { apple: -16, streaming: -14, balanced: -12, loud: -9 }).map(([name, v]) => (
+                <button key={name} onClick={() => setLufs(v)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs ${lufs === v ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{name} ({v})</button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Tone curve" hint="gentle master-bus EQ shaping">
+            <select className={inp} value={tone} onChange={(e) => setTone(e.target.value)}>
+              {(opts?.tones || ["balanced", "metal", "warm", "bright", "flat"]).map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
+
+      {mode === "gold" && (
+        opts && !opts.gold_refs.length ? (
+          <p className="text-[11px] text-amber-400/80">No gold-standard references yet. Drop a few well-mastered tracks you own (named by vibe/genre, e.g. <code>modern-metal.wav</code>) into <code>library/master_refs/</code>, then they'll appear here.</p>
+        ) : (
+          <Field label="Gold standard reference" hint="a curated master to match">
+            <select className={inp} value={goldRef} onChange={(e) => setGoldRef(e.target.value)}>
+              {(opts?.gold_refs || []).map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+        )
+      )}
+
+      {mode === "reference" && (
+        <>
+          <div className="text-xs font-medium text-[var(--color-muted)]">Reference (the sound to match — e.g. an imported pro track)</div>
+          <Field label="From a library track">
+            <select className={inp} value={refJob} onChange={(e) => setRefJob(e.target.value)}>
+              <option value="">— choose —</option>{sel(refs)}
+            </select>
+          </Field>
+          <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setRefFile(e.target.files?.[0] ?? null)} /></Field>
+        </>
+      )}
+
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Mastering…" : mode === "auto" ? "Master (auto)" : mode === "gold" ? "Master (gold standard)" : "Master to reference"}</PrimaryButton>
     </div>
   );
 }

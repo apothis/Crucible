@@ -56,6 +56,7 @@ export const api = {
   tonePresets: () => jget("/api/tone/presets"),
   tone: (fd: FormData) => jform("/api/tone/apply", fd),
   master: (fd: FormData) => jform("/api/master/apply", fd),
+  masterOptions: () => jget("/api/master/options"),
   stripGuitar: (fd: FormData) => jform("/api/backing/strip-guitar", fd),
   guitarRender: (fd: FormData) => jform("/api/guitar/render-amp", fd),
   helixCapture: (name: string) => jpost("/api/helix/capture", { name }),

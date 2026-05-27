@@ -42,9 +42,13 @@ _WEB_DIST = os.path.join(ROOT, "web", "dist")
 FRONTEND = _WEB_DIST if os.path.isdir(_WEB_DIST) else os.path.join(ROOT, "frontend")
 LIBRARY = os.path.join(ROOT, "library")
 STEMS_DIR = os.path.join(LIBRARY, "stems")
+# Curated "gold standard" reference masters for the Master tool's gold mode — the user
+# drops a few well-mastered tracks they own here (named by vibe/genre); gitignored.
+MASTER_REFS = os.path.join(LIBRARY, "master_refs")
 DB = os.path.join(LIBRARY, "library.db")
 os.makedirs(LIBRARY, exist_ok=True)
 os.makedirs(STEMS_DIR, exist_ok=True)
+os.makedirs(MASTER_REFS, exist_ok=True)
 
 _CFG_PATH = os.path.join(ROOT, "app_config.json")
 if not os.path.exists(_CFG_PATH):  # fresh clone: fall back to the committed example
@@ -1526,31 +1530,87 @@ def _stash_input(work, label, file_bytes=None, filename=None, job_id=None):
     raise HTTPException(400, f"provide a file or job_id for {label}")
 
 
+_AUDIO_EXT = (".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg")
+
+
+def _gold_refs():
+    """Curated gold-standard reference masters (filename stem → path)."""
+    out = {}
+    if os.path.isdir(MASTER_REFS):
+        for fn in sorted(os.listdir(MASTER_REFS)):
+            if fn.lower().endswith(_AUDIO_EXT):
+                out[os.path.splitext(fn)[0]] = os.path.join(MASTER_REFS, fn)
+    return out
+
+
+@app.get("/api/master/options")
+def master_options():
+    """What the Master tool can do: which modes are available + their choices."""
+    return {
+        "reference": master_mod.available(),                 # match to a user reference (Matchering)
+        "gold": master_mod.available() and bool(_gold_refs()),  # match to a curated built-in reference
+        "auto": master_mod.auto_available(),                 # reference-free DSP chain to a LUFS target
+        "gold_refs": list(_gold_refs().keys()),
+        "tones": list(master_mod.TONE_CURVES.keys()),
+        "lufs_presets": master_mod.LUFS_PRESETS,
+    }
+
+
 @app.post("/api/master/apply")
 async def master_apply(job_id: str = Form(None),
                        ref_job_id: str = Form(None),
                        file: UploadFile = File(None),
                        ref_file: UploadFile = File(None),
-                       bit_depth: int = Form(16)):
-    """Reference-master a target track toward a reference master (Matchering, Mac)."""
-    if not master_mod.available():
-        raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")
+                       bit_depth: int = Form(16),
+                       mode: str = Form("reference"),       # reference | gold | auto
+                       target_lufs: float = Form(-12.0),    # auto: integrated LUFS target
+                       tone: str = Form("balanced"),        # auto: tonal curve
+                       ref_name: str = Form(None)):         # gold: which curated reference
+    """Master a target track. Three modes:
+    • reference — match to a user-supplied reference master (Matchering).
+    • gold — match to a curated built-in 'gold standard' reference (Matchering, no per-track ref).
+    • auto — reference-free DSP chain (tone + glue + limit) to a target loudness (pedalboard)."""
     work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
     os.makedirs(work, exist_ok=True)
     tgt, tgt_label = _stash_input(work, "target",
                                   await file.read() if file else None,
                                   file.filename if file else None, job_id)
-    ref, _ = _stash_input(work, "reference",
-                          await ref_file.read() if ref_file else None,
-                          ref_file.filename if ref_file else None, ref_job_id)
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.wav")
     try:
-        master_mod.master(tgt, ref, out, bit_depth=int(bit_depth))
+        if mode == "auto":
+            if not master_mod.auto_available():
+                raise HTTPException(500, "auto mastering needs pedalboard + pyloudnorm on the Mac")
+            _, lufs = master_mod.master_auto(tgt, out, target_lufs=float(target_lufs),
+                                             tone=tone, bit_depth=int(bit_depth))
+            note = f"auto master · {tone} · {round(float(target_lufs))} LUFS"
+            params = {"source": tgt_label, "mode": "auto", "tone": tone,
+                      "target_lufs": float(target_lufs), "lufs": lufs, "note": note}
+        elif mode == "gold":
+            if not master_mod.available():
+                raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")
+            refs = _gold_refs()
+            ref = refs.get(ref_name) or (next(iter(refs.values()), None))
+            if not ref:
+                raise HTTPException(400, "no gold-standard references — add audio files to library/master_refs/")
+            picked = ref_name if ref_name in refs else next(iter(refs.keys()))
+            master_mod.master(tgt, ref, out, bit_depth=int(bit_depth))
+            params = {"source": tgt_label, "mode": "gold", "reference": picked,
+                      "note": f"gold master · {picked}"}
+        else:  # reference
+            if not master_mod.available():
+                raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")
+            ref, _ = _stash_input(work, "reference",
+                                  await ref_file.read() if ref_file else None,
+                                  ref_file.filename if ref_file else None, ref_job_id)
+            master_mod.master(tgt, ref, out, bit_depth=int(bit_depth))
+            params = {"source": tgt_label, "mode": "reference", "reference": ref_job_id or "upload"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"mastering failed: {e}")
     shutil.rmtree(work, ignore_errors=True)
-    save_done_row(jid, "master", {"source": tgt_label, "reference": ref_job_id or "upload"}, out)
+    save_done_row(jid, "master", params, out)
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
 
 
