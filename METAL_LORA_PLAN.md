@@ -61,13 +61,13 @@ All box endpoints take **box-side paths** (`audio_dir`, `tensor_dir`, `lora_path
 2. **LAN share / manual copy:** user drops audio into a box folder; Crucible just points the engine at it. Zero-build fallback for the first real train.
 3. **Reuse ComfyUI input dir** (`comfy_input_dir`) as a staging area — already wired for transfers, but semantically odd.
 
-Decision: build (1) for the integrated flow; (2) unblocks the first GPU smoke-test immediately.
+**DECISION (2026-05-27): option (1), the box upload helper — built.** `backend/lora_upload_server.py` (box, :5080, no GPU) + `LORA-UPLOAD_AUTO_INSTALL.bat` + Mac client `backend/lora_upload_py.py` + `lora_upload_host` config. UX: a Crucible file picker → Crucible enriches each track (faster-whisper lyrics + librosa bpm/key + json) → uploads the bundle → the helper writes `{base}/{dataset}/{data,tensors,adapter}` and returns those box paths for `/v1/dataset/scan` → preprocess → train → export. Smoke-tested locally on the Mac (health/new/upload/list all pass). _To activate: run the installer on the box, start `run_lora_upload.bat`, set `lora_upload_host`._
 
 ## 7. Phased plan
 - **Phase 0 — Research + verify box** ✅ (RESEARCH §18; routes live-verified).
 - **Phase 1 — Box-driver client (Mac, no GPU)** ◀ _starting._ Extend `backend/acestep_py.py` (or new `acestep_train.py`) with thin helpers for every endpoint in §2 + poller for the `_status` endpoints. Verify against live `GET …/status`.
 - **Phase 2 — Dataset builder (Mac, no GPU).** Assemble a dataset folder from chosen library tracks: copy audio + write `{name}.lyrics.txt` (faster-whisper) + `{name}.json` (bpm/key via librosa/analyze; caption optional). Pure Mac-side; output is a ready-to-upload folder.
-- **Phase 3 — Transfer (box helper §6.1).** Upload the folder to the box; return the box path.
+- **Phase 3 — Transfer (box helper §6.1)** ✅ _built (needs install on the box)._ `lora_upload_server.py` (:5080) + installer + Mac client + config; smoke-tested locally.
 - **Phase 4 — Orchestration + UI.** Backend `/api/lora/*` endpoints chaining scan→auto_label→save→preprocess→train→export→status; a **Training tab** (pick library tracks → review labels → LoRA/LoKr + params → progress + loss curve → export → register). Serialize the GPU (free others first).
 - **Phase 5 — Inference integration.** `/v1/lora/load|scale|toggle|unload` wired into generate; a **"Metal LoRA" toggle + strength slider** in the engine tuning UI; adapters registered in config and shown in the ACE header chip.
 - **Phase 6 — First real train (GPU, flag first).** LoKr smoke-test on a handful of tracks → measure VRAM/epoch-time on the 3090 → then a full metal LoRA. Heavy GPU run → confirm with the user before kicking off.
