@@ -371,6 +371,7 @@ def generate(p: dict):
             free_gpu("ace")                            # free ComfyUI + RVC; keep ACE resident
         except Exception:
             pass
+        _acestep_ensure_model(fields["model"])         # /release_task won't auto-load — swap if the picked model isn't the loaded one
         try:
             task_id = acestep_py.submit(ACESTEP_HOST, fields)
         except Exception as e:
@@ -755,6 +756,7 @@ async def repaint(file: UploadFile = File(None), params: str = Form(...), job_id
             free_gpu("ace")
         except Exception:
             pass
+        _acestep_ensure_model(fields["model"])         # honor the picked model (no auto-load on /release_task)
         try:
             task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(data, label))
         except Exception as e:
@@ -917,6 +919,7 @@ async def _engine_lego(p, file, job_id, timbre, track):
         free_gpu("ace")
     except Exception:
         pass
+    _acestep_ensure_model(fields["model"])             # honor the picked model (no auto-load on /release_task)
     try:
         task_id = acestep_py.submit(ACESTEP_HOST, fields, src_audio=(backing_bytes, label), ref_audio=ref)
     except Exception as e:
