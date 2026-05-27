@@ -1480,6 +1480,13 @@ export function MixForm({ busy, ...ctx }: FormProps) {
 //  (b) stitch — generate each block to its exact length, then crossfade-concat
 //      via /api/stitch (exact lengths, per-block re-roll, lockable blocks).
 const SECTION_TYPES = ["Intro", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Solo", "Breakdown", "Outro"] as const;
+// Suggested per-section descriptors for the "[Section - descriptor]" tag. "whispered" and
+// "anthemic" are from the ACE-Step 1.5 guide; the rest are natural-language delivery/feel
+// steers ACE responds to (metal-leaning). Free-text — these are just autocomplete hints.
+const SECTION_STYLES = [
+  "spoken word", "whispered", "anthemic", "screamed", "growled", "gang vocals",
+  "shouted", "chanted", "falsetto", "harmonized", "soft", "intense", "half-time",
+] as const;
 const DEFAULT_SECS: Record<string, number> = {
   Intro: 8, Verse: 24, "Pre-Chorus": 12, Chorus: 24, Bridge: 16, Solo: 20, Breakdown: 16, Outro: 12,
 };
@@ -1554,7 +1561,7 @@ function SortableBlock({ b, drive, instrumental, upd, remove }: {
         <button onClick={() => remove(b.id)} className="text-[var(--color-muted)] hover:text-red-400" title="remove">✕</button>
       </div>
       <input className={`${inp} mt-2 text-xs`} value={b.style || ""} onChange={(e) => upd(b.id, { style: e.target.value })}
-        placeholder="section style — optional (e.g. spoken word, anthemic)"
+        list="section-styles" placeholder="section style — optional (e.g. spoken word, whispered)"
         title="appends a descriptor to this section's tag → [Intro - spoken word]" />
       {!instrumental && (
         <textarea className={`${inp} mt-2 text-xs`} rows={2} placeholder={`${b.type} lyrics (optional)`} value={b.lyrics} onChange={(e) => upd(b.id, { lyrics: e.target.value })} />
@@ -1830,6 +1837,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
       </div>
 
       <SectionTitle>Arrangement · {blocks.length} sections · {total}s total</SectionTitle>
+      <datalist id="section-styles">{SECTION_STYLES.map((s) => <option key={s} value={s} />)}</datalist>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={blocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
