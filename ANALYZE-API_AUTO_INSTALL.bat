@@ -22,7 +22,9 @@ rem ============================================================================
 
 set "PORT=5075"
 set "HERE=%~dp0"
-set "CUDA=cu124"
+rem allin1 is pinned to NATTEN 0.14.6, whose prebuilt wheels are torch 2.0.0 / cu118 — so
+rem this venv uses that exact stack (isolated; doesn't affect ComfyUI/ACE on the box).
+set "CUDA=cu118"
 
 if not exist "%HERE%analyze_server.py" (
     echo ERROR: analyze_server.py must be in the same folder as this installer.
@@ -63,10 +65,10 @@ set "VPY=%DEST%\venv\Scripts\python.exe"
 "%VPY%" -m pip install --upgrade pip wheel setuptools
 
 echo(
-echo -------- Installing CUDA torch (%CUDA%) --------
-rem torchvision is required by laion-clap (timm_model -> torchvision.ops); install all three
-rem from the same CUDA index so versions match.
-"%VPY%" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/%CUDA%
+echo -------- Installing torch 2.0.0 (%CUDA%) --------
+rem Pinned to torch 2.0.0 so the prebuilt NATTEN 0.14.6 wheel (which allin1 requires) matches.
+rem torchvision is also required by laion-clap (timm_model -> torchvision.ops).
+"%VPY%" -m pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/%CUDA%
 
 echo(
 echo -------- Build deps for madmom (Cython + numpy first) --------
@@ -83,17 +85,14 @@ rem install https://aka.ms/vs/17/release/vs_BuildTools.exe ("Desktop development
 if errorlevel 1 echo   [!] madmom failed to build - install the MS C++ Build Tools (see note above) then re-run.
 
 echo(
-echo -------- Installing NATTEN (neighborhood attention; allin1 needs it) --------
-rem NATTEN needs a wheel matching your torch+CUDA. Try the official wheel index; if this
-rem fails, see https://www.shi-labs.com/natten/ and install the wheel for your torch ver.
-for /f "tokens=*" %%V in ('"%VPY%" -c "import torch;print(torch.__version__.split(\"+\")[0])"') do set "TORCHV=%%V"
-echo   torch %TORCHV% / %CUDA%
-"%VPY%" -m pip install natten -f https://whl.natten.org/%CUDA%/torch%TORCHV%/index.html
+echo -------- Installing NATTEN 0.14.6 (the version allin1's API needs) --------
+rem allin1 imports the OLD natten API (natten1dav, ...), which exists only in 0.14.x.
+rem Use the prebuilt torch2.0.0/cu118 wheel (no compiling). Newer natten removed those names.
+"%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://shi-labs.com/natten/wheels
 if errorlevel 1 (
-    echo   [!] NATTEN wheel install failed for torch %TORCHV%/%CUDA%.
-    echo       Trying a plain pip install ^(may build from source^)...
-    "%VPY%" -m pip install natten
-    if errorlevel 1 echo   [!!] NATTEN still failed - visit https://www.shi-labs.com/natten/ and install the wheel matching torch %TORCHV% / %CUDA%, then re-run.
+    echo   [!] shi-labs wheel index failed; trying whl.natten.org...
+    "%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://whl.natten.org/wheels/cu118/torch2.0.0/index.html
+    if errorlevel 1 echo   [!!] NATTEN 0.14.6 wheel not found - see https://www.shi-labs.com/natten/ for the torch2.0.0/cu118 wheel, then re-run.
 )
 
 echo(
