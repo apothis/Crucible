@@ -3,6 +3,7 @@ import { api, type Config, type LibItem, type Project, type SongDraft } from "./
 import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { ImportForm } from "./Import";
+import { LoraTrainingForm } from "./LoraTraining";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
 import { DraftProvider, useDraftCtx } from "./drafts";
@@ -24,6 +25,7 @@ const MODES = [
   { id: "guitar", label: "Guitar" },
   { id: "master", label: "Master" },
   { id: "mix", label: "Mix" },
+  { id: "loratrain", label: "Train LoRA" },
 ] as const;
 
 // Grouped navigation (replaces the flat tab row) — by workflow stage.
@@ -32,6 +34,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Guitar", modes: ["backing", "guitar", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master"] },
+  { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
 
@@ -228,6 +231,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "guitar": return <GuitarForm {...p} song={song} />;
     case "master": return <MasterForm {...p} />;
     case "mix": return <MixForm {...p} />;
+    case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;
   }
 }

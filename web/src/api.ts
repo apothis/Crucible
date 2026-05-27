@@ -103,7 +103,39 @@ export const api = {
     if (!r.ok) throw new Error("delete failed");
     return r.json();
   },
+
+  // Metal LoRA training (drives the box engine pipeline)
+  loraStatus: () => jget("/api/lora/status"),
+  loraDatasetAdd: (fd: FormData) => jform("/api/lora/dataset/add", fd),
+  loraScan: (b: unknown) => jpost("/api/lora/dataset/scan", b),
+  loraSamples: () => jget("/api/lora/dataset/samples"),
+  loraSamplePut: (idx: number, b: unknown) => jmethod("PUT", `/api/lora/dataset/sample/${idx}`, b),
+  loraAutolabel: (b: unknown) => jpost("/api/lora/dataset/autolabel", b),
+  loraAutolabelStatus: () => jget("/api/lora/dataset/autolabel/status"),
+  loraSave: (b: unknown) => jpost("/api/lora/dataset/save", b),
+  loraPreprocess: (b: unknown) => jpost("/api/lora/dataset/preprocess", b),
+  loraPreprocessStatus: () => jget("/api/lora/dataset/preprocess/status"),
+  loraTrain: (b: unknown) => jpost("/api/lora/train", b),
+  loraTrainStatus: () => jget("/api/lora/train/status"),
+  loraTrainStop: () => jpost("/api/lora/train/stop", {}),
+  loraExport: (b: unknown) => jpost("/api/lora/export", b),
+  loraLoad: (b: unknown) => jpost("/api/lora/load", b),
+  loraScale: (b: unknown) => jpost("/api/lora/scale", b),
+  loraToggle: (b: unknown) => jpost("/api/lora/toggle", b),
+  loraUnload: () => jpost("/api/lora/unload", {}),
 };
+
+export type LoraStatus = {
+  train_available: boolean; upload_available: boolean;
+  engine?: { data?: { loaded_model?: string; loaded_lm_model?: string } }; engine_error?: string;
+  upload?: { ok?: boolean; base_dir?: string }; upload_error?: string;
+  training?: { is_training?: boolean; status?: string; current_epoch?: number; current_step?: number;
+               current_loss?: number | null; steps_per_second?: number; estimated_time_remaining?: number;
+               loss_history?: number[] };
+  lora?: { lora_loaded?: boolean; use_lora?: boolean; lora_scale?: number; adapters?: string[] };
+};
+export type LoraTrack = { name: string; bpm: number; keyscale: string; has_lyrics: boolean;
+                          lyrics_source: string; lyrics?: string; caption?: string; uploaded?: number };
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };
