@@ -25,11 +25,21 @@ if not exist "%HERE%lora_upload_server.py" (
 
 :ASK_DIR
 echo(
-echo Install folder for the LoRA upload helper (small; datasets you upload also live here),
+echo Install folder for the LoRA upload helper (small: just the venv + this script),
 echo e.g.  C:\AI\CrucibleLoRA
 set /p "DEST=Path: "
 if "%DEST%"=="" goto ASK_DIR
 if not exist "%DEST%" mkdir "%DEST%"
+
+:ASK_DATA
+echo(
+echo Dataset root - where uploaded audio + preprocessed tensors + trained adapters live.
+echo These can be LARGE (full songs x dozens, plus latents), so you may want a separate/big drive,
+echo e.g.  D:\CrucibleDatasets
+echo Leave blank to use  %DEST%\lora_data
+set /p "DATAROOT=Path: "
+if "%DATAROOT%"=="" set "DATAROOT=%DEST%\lora_data"
+if not exist "%DATAROOT%" mkdir "%DATAROOT%"
 
 rem ---- containment: pin the pip cache + temp inside the install dir ----
 set "DEST_CACHE=%DEST%\.cache"
@@ -63,7 +73,7 @@ rem ---- write the launcher ----
   echo setlocal
   echo set "HERE=%%~dp0"
   echo set "MG_LORA_PORT=%PORT%"
-  echo set "MG_LORA_DIR=%%HERE%%lora_data"
+  echo set "MG_LORA_DIR=!DATAROOT!"
   echo "%%HERE%%venv\Scripts\python.exe" "%%HERE%%lora_upload_server.py"
 )
 
@@ -73,6 +83,7 @@ echo  Installed. Start the helper with:
 echo     "%DEST%\run_lora_upload.bat"
 echo  It listens on port %PORT%. In Crucible's app_config.json set:
 echo     "lora_upload_host": "^<this-box-ip^>:%PORT%"
-echo  Datasets upload to: %DEST%\lora_data\^<dataset^>\
+echo  Datasets upload to: !DATAROOT!\^<dataset^>\
+echo  ^(change the root later by editing MG_LORA_DIR in run_lora_upload.bat^)
 echo ============================================================
 pause
