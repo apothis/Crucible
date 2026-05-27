@@ -72,10 +72,39 @@ def auto_available():
         return False
 
 
+def _stereo_width(x, sr, width: float, bass_mono_hz: float):
+    """Mid/Side widener. `width` scales the Side channel (1.0 = unchanged, >1 wider,
+    <1 narrower). `bass_mono_hz` (>0) high-passes the Side so lows stay centred — the
+    standard 'keep the bass mono' trick that widens without smearing the low end."""
+    import numpy as np
+    import pedalboard as pb
+    L, R = x[0], x[1]
+    mid = (L + R) * 0.5
+    side = (L - R) * 0.5 * float(width)
+    if bass_mono_hz and bass_mono_hz > 0:
+        hp = pb.Pedalboard([pb.HighpassFilter(cutoff_frequency_hz=float(bass_mono_hz))])
+        side = hp(side.reshape(1, -1).astype("float32"), sr).reshape(-1)
+    return np.stack([mid + side, mid - side], axis=0)
+
+
+def _saturate(x, amount: float):
+    """Gentle harmonic 'warmth' via soft (tanh) saturation, dry/wet-blended by `amount`
+    (0 = bypass, 1 = max). Adds analog-style glue/density without a hard distortion edge."""
+    import numpy as np
+    a = max(0.0, min(1.0, float(amount)))
+    if a <= 0:
+        return x
+    drive = 1.0 + 3.0 * a
+    wet = np.tanh(x * drive) / np.tanh(drive)
+    return (1.0 - a) * x + a * wet
+
+
 def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
-                tone: str = "balanced", ceiling_db: float = -1.0, bit_depth: int = 16):
-    """Reference-free master: tone curve → glue comp → normalize to target_lufs → limit.
-    Writes a WAV to out_path. Returns (out_path, measured_lufs_after)."""
+                tone: str = "balanced", ceiling_db: float = -1.0, bit_depth: int = 16,
+                width: float = 1.0, bass_mono_hz: float = 0.0, warmth: float = 0.0):
+    """Reference-free master: tone curve → glue comp → (stereo width) → (warmth) →
+    normalize to target_lufs → limit. Writes a WAV to out_path.
+    Returns (out_path, measured_lufs_after)."""
     import numpy as np
     import soundfile as sf
     import pedalboard as pb
@@ -92,6 +121,12 @@ def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
     plugins = [getattr(pb, name)(**kw) for name, kw in moves]
     plugins.append(pb.Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=15.0, release_ms=180.0))  # gentle glue
     pre = pb.Pedalboard(plugins)(x, sr)                                 # (ch, frames) — tone-shaped, pre-loudness
+
+    # Stereo + harmonic enhancement BEFORE the loudness/limit stage, so the limiter
+    # catches any peak lift these add (width=1 + bass_mono=0 + warmth=0 = exact no-op).
+    if float(width) != 1.0 or (bass_mono_hz and bass_mono_hz > 0):
+        pre = _stereo_width(pre, sr, width, bass_mono_hz)
+    pre = _saturate(pre, warmth)
 
     meter = pyln.Meter(sr)
     limiter = pb.Pedalboard([pb.Limiter(threshold_db=ceiling_db, release_ms=120.0)])

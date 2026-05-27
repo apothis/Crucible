@@ -1309,6 +1309,9 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
   const [refFile, setRefFile] = useState<File | null>(null);
   const [tone, setTone] = d.use("tone", "metal");
   const [lufs, setLufs] = d.use("lufs", -12);
+  const [width, setWidth] = d.use("width", 1);
+  const [bassMono, setBassMono] = d.use("bassMono", 0);
+  const [warmth, setWarmth] = d.use("warmth", 0);
   const [goldRef, setGoldRef] = d.use("goldRef", "");
   useEffect(() => { api.masterOptions().then(setOpts).catch(() => {}); }, []);
 
@@ -1323,7 +1326,10 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
       const fd = new FormData();
       fd.append("mode", mode);
       if (file) fd.append("file", file); else fd.append("job_id", job);
-      if (mode === "auto") { fd.append("target_lufs", String(lufs)); fd.append("tone", tone); }
+      if (mode === "auto") {
+        fd.append("target_lufs", String(lufs)); fd.append("tone", tone);
+        fd.append("width", String(width)); fd.append("bass_mono_hz", String(bassMono)); fd.append("warmth", String(warmth));
+      }
       else if (mode === "gold") { if (goldRef) fd.append("ref_name", goldRef); }
       else { if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob); }
       const r = await api.master(fd);
@@ -1374,6 +1380,20 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
             <select className={inp} value={tone} onChange={(e) => setTone(e.target.value)}>
               {(opts?.tones || ["balanced", "metal", "warm", "bright", "flat"]).map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
+          </Field>
+          <Field label={`Stereo width · ${width.toFixed(2)}×`} hint="M/S widener — 1.0 = unchanged, wider opens the mix, narrower tightens it">
+            <input type="range" min={0.5} max={1.8} step={0.05} value={width} onChange={(e) => setWidth(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+          </Field>
+          <Field label="Keep bass mono" hint="centres lows below this freq so widening doesn't smear the low end">
+            <div className="flex flex-wrap gap-1.5">
+              {[[0, "off"], [100, "100 Hz"], [120, "120 Hz"], [150, "150 Hz"]].map(([v, lbl]) => (
+                <button key={String(v)} onClick={() => setBassMono(v as number)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs ${bassMono === v ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{lbl}</button>
+              ))}
+            </div>
+          </Field>
+          <Field label={`Warmth · ${Math.round(warmth * 100)}%`} hint="gentle harmonic saturation for analog-style glue (0 = off)">
+            <input type="range" min={0} max={1} step={0.05} value={warmth} onChange={(e) => setWarmth(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
           </Field>
         </div>
       )}

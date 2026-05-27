@@ -1603,6 +1603,9 @@ async def master_apply(job_id: str = Form(None),
                        mode: str = Form("reference"),       # reference | gold | auto
                        target_lufs: float = Form(-12.0),    # auto: integrated LUFS target
                        tone: str = Form("balanced"),        # auto: tonal curve
+                       width: float = Form(1.0),            # auto: M/S stereo width (1.0 = unchanged)
+                       bass_mono_hz: float = Form(0.0),     # auto: keep Side mono below this Hz (0 = off)
+                       warmth: float = Form(0.0),           # auto: harmonic saturation amount 0..1
                        ref_name: str = Form(None)):         # gold: which curated reference
     """Master a target track. Three modes:
     • reference — match to a user-supplied reference master (Matchering).
@@ -1620,10 +1623,18 @@ async def master_apply(job_id: str = Form(None),
             if not master_mod.auto_available():
                 raise HTTPException(500, "auto mastering needs pedalboard + pyloudnorm on the Mac")
             _, lufs = master_mod.master_auto(tgt, out, target_lufs=float(target_lufs),
-                                             tone=tone, bit_depth=int(bit_depth))
-            note = f"auto master · {tone} · {round(float(target_lufs))} LUFS"
+                                             tone=tone, bit_depth=int(bit_depth),
+                                             width=float(width), bass_mono_hz=float(bass_mono_hz),
+                                             warmth=float(warmth))
+            extras = []
+            if float(width) != 1.0: extras.append(f"width {float(width):.2f}")
+            if float(bass_mono_hz) > 0: extras.append(f"bass-mono <{round(float(bass_mono_hz))}Hz")
+            if float(warmth) > 0: extras.append(f"warmth {round(float(warmth) * 100)}%")
+            note = f"auto master · {tone} · {round(float(target_lufs))} LUFS" + (" · " + " · ".join(extras) if extras else "")
             params = {"source": tgt_label, "mode": "auto", "tone": tone,
-                      "target_lufs": float(target_lufs), "lufs": lufs, "note": note}
+                      "target_lufs": float(target_lufs), "lufs": lufs,
+                      "width": float(width), "bass_mono_hz": float(bass_mono_hz),
+                      "warmth": float(warmth), "note": note}
         elif mode == "gold":
             if not master_mod.available():
                 raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")
