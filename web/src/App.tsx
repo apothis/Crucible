@@ -120,7 +120,7 @@ function AppInner() {
     const m = it.params?.song_meta;
     if (!m) return;
     const blocks = (m.blocks || []).map((b: any, i: number) => ({
-      id: `lib${Date.now()}_${i}`, type: b.type, seconds: b.seconds, lyrics: b.lyrics || "", locked: false,
+      id: `lib${Date.now()}_${i}`, type: b.type, seconds: b.seconds, lyrics: b.lyrics || "", style: b.style || "", locked: false,
     }));
     drafts.set("song", "blocks", blocks);
     drafts.set("song", "tags", m.tags || "");

@@ -1483,17 +1483,23 @@ const SECTION_TYPES = ["Intro", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Solo
 const DEFAULT_SECS: Record<string, number> = {
   Intro: 8, Verse: 24, "Pre-Chorus": 12, Chorus: 24, Bridge: 16, Solo: 20, Breakdown: 16, Outro: 12,
 };
-type Block = { id: string; type: string; seconds: number; lyrics: string; locked: boolean; url?: string };
+type Block = { id: string; type: string; seconds: number; lyrics: string; locked: boolean; style?: string; url?: string };
 
-const aceTag = (type: string) => `[${type.toLowerCase()}]`;
+// Optional per-section descriptor → ACE-Step's "[Section - descriptor]" syntax
+// (e.g. [Intro - spoken word], [Chorus - anthemic]). Empty = plain "[section]".
+const aceTag = (type: string, style?: string) => {
+  const s = (style || "").trim();
+  return s ? `[${type.toLowerCase()} - ${s}]` : `[${type.toLowerCase()}]`;
+};
 const blockTagged = (b: Block) => {
   const body = b.lyrics.trim();
-  return body ? `${aceTag(b.type)}\n${body}` : aceTag(b.type);
+  const tag = aceTag(b.type, b.style);
+  return body ? `${tag}\n${body}` : tag;
 };
 const compileLyrics = (blocks: Block[]) => blocks.map(blockTagged).join("\n\n");
 
 const newBlock = (type: string): Block =>
-  ({ id: rid(), type, seconds: DEFAULT_SECS[type] ?? 16, lyrics: "", locked: false });
+  ({ id: rid(), type, seconds: DEFAULT_SECS[type] ?? 16, lyrics: "", locked: false, style: "" });
 
 const SECTION_ABBR: Record<string, string> = {
   Intro: "In", Verse: "V", "Pre-Chorus": "PC", Chorus: "C", Bridge: "Br",
@@ -1547,6 +1553,9 @@ function SortableBlock({ b, drive, instrumental, upd, remove }: {
         )}
         <button onClick={() => remove(b.id)} className="text-[var(--color-muted)] hover:text-red-400" title="remove">✕</button>
       </div>
+      <input className={`${inp} mt-2 text-xs`} value={b.style || ""} onChange={(e) => upd(b.id, { style: e.target.value })}
+        placeholder="section style — optional (e.g. spoken word, anthemic)"
+        title="appends a descriptor to this section's tag → [Intro - spoken word]" />
       {!instrumental && (
         <textarea className={`${inp} mt-2 text-xs`} rows={2} placeholder={`${b.type} lyrics (optional)`} value={b.lyrics} onChange={(e) => upd(b.id, { lyrics: e.target.value })} />
       )}
@@ -1608,7 +1617,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
 
   // The full recipe stored with the rendered song so its card can re-open in the builder.
   const songMeta = () => ({
-    blocks: blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })),
+    blocks: blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics, style: b.style || "" })),
     key: tuning.keyscale, bpm: tuning.bpm, tags, instrumental, drive,
   });
 
