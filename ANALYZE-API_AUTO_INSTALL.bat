@@ -17,7 +17,7 @@ rem  demix/spectrogram byproducts. NOTHING is written to %USERPROFILE%, %LOCALAP
 rem  or anywhere else on the box. Delete the folder = fully uninstalled.
 rem
 rem  KEEP analyze_server.py IN THE SAME FOLDER AS THIS .BAT.
-rem  Best on Python 3.10 (madmom + NATTEN wheels are most reliable there).
+rem  Python 3.10 / 3.11 / 3.12 all work (prebuilt NATTEN 0.17.5 wheels exist for each).
 rem =============================================================================
 
 set "PORT=5075"
@@ -49,14 +49,14 @@ set "XDG_CACHE_HOME=%DEST_CACHE%"
 set "TRANSFORMERS_CACHE=%DEST_CACHE%\huggingface"
 for %%D in ("%DEST_CACHE%" "%PIP_CACHE_DIR%" "%HF_HOME%" "%TORCH_HOME%") do if not exist "%%~D" mkdir "%%~D"
 
-rem ---- find a Python (prefer 3.10 for madmom/NATTEN) ----
+rem ---- find a Python 3.10-3.12 (NATTEN 0.17.5 wheels exist for cp310/cp311/cp312) ----
 set "PY="
 for %%P in ("py -3.10" "py -3.11" "py -3.12" "python") do (
     %%~P --version >nul 2>&1 && ( set "PY=%%~P" & goto GOTPY )
 )
 :GOTPY
-if "%PY%"=="" ( echo ERROR: need Python 3.10+ on PATH. & pause & exit /b 1 )
-echo Using Python: %PY%   (3.10 recommended for madmom + NATTEN)
+if "%PY%"=="" ( echo ERROR: need Python 3.10-3.12 on PATH. & pause & exit /b 1 )
+echo Using Python: %PY%
 
 echo(
 echo -------- Creating venv (in the install dir) --------
@@ -93,6 +93,12 @@ echo   python tag: %PYTAG%  (NATTEN wheel must match this + torch 2.6.0 / cu126)
 if errorlevel 1 echo   [optional] prebuilt NATTEN 0.17.5 wheel not found for %PYTAG% - see https://huggingface.co/lldacing/NATTEN-windows ; structure stays on the Mac.
 "%VPY%" -m pip install all-in-one-fix
 if errorlevel 1 echo   [optional] all-in-one-fix not installed - tags-only mode (Mac handles structure).
+
+echo(
+echo -------- Enforcing numpy<2 (laion-clap requires it; torch/all-in-one-fix can bump it) --------
+rem MUST be the last dependency step: pip resolves each install independently, so torch and
+rem all-in-one-fix may have pulled numpy 2.x back in, which breaks laion-clap at runtime.
+"%VPY%" -m pip install "numpy<2"
 
 echo(
 echo -------- Installing the API server --------
