@@ -838,3 +838,57 @@ _P1 (Mac librosa) and P2 (box GPU) both shipped. P2 verified end-to-end: Mac `/a
 - **Gotchas that bit us (all fixed in the installer):** laion-clap needs torchvision (not just torch+torchaudio); the batch `for /f ('…')` PYTAG detection clashed with python f-string single-quotes (use `print(sys.version_info[1])`, quote-free); shi-labs SSL cert expired (`--trusted-host`, but the +localtag wheels aren't there anyway → use lldacing); `/health` must check `allin1fix` not `allin1`.
 - **`MG_ANALYZE_KEEP_RESIDENT=1`** keeps CLAP loaded between analyses; default unloads + empties CUDA cache after each (VRAM coordination, like SoulX/RoFormer).
 - **CLAP tags are metal-leaning** (the vocabulary) — a pop reference gets the nearest metal/rock labels, which suits Crucible's purpose.
+
+## 18. Training a custom metal LoRA on ACE-Step 1.5 (research, 2026-05-27 — verified against the upstream repo)
+
+_The long-term payoff of keeping the official ACE-Step engine over ComfyUI. Researched directly from `ace-step/ACE-Step-1.5` (docs + source), not assumed. Sources at end._
+
+**BOTTOM LINE — it's very feasible on our box, and the old blocker is gone.** The ACE-Step-1.5 repo ships a complete LoRA-training pipeline (data prep scripts → preprocess-to-tensors → trainer → export → load) usable three ways: a **Gradio one-click "LoRA Training" tab**, a **CLI (`train.py`)**, and an **HTTP API on `:8001` — the exact engine/port our `acestep_py` client already talks to.** Crucially, `--model-variant` officially accepts **`xl_turbo`, `xl_base`, `xl_sft` (XL/4B)** alongside the 2B `turbo/base/sft` — so we can train a LoRA **directly on `xl_sft`, our generation default.** (The earlier "LoRAs target 2B, not our XL 4B" caveat was about *pre-existing community* LoRAs, NOT the tooling — confirmed in `acestep/training_v2/cli/args.py`.)
+
+### What actually gets trained
+The **DiT music model** (the diffusion transformer) for the chosen variant. The **`acestep-5Hz-lm`** is used only during *data prep* to auto-caption (and isn't trained). So a "metal LoRA" teaches the music generator metal instrumentation/production/feel — exactly the gap (high-gain rhythm walls, aggressive mixes) that no off-the-shelf model nails. Inference applies it via `/v1/lora` with an **adjustable scale** (so "Metal LoRA strength" can be a slider).
+
+### Hardware (per the tutorial)
+- **16 GB min, 20 GB+ recommended; ~17 GB typical during training.** The **3090's 24 GB fits** — but the tutorial's table doesn't separate 2B from XL/4B, so **XL/4B training-VRAM headroom on the 3090 is the one thing to verify on first run.** Levers if tight: `gradient_checkpointing` (built-in flag), `use_fp8`, smaller `lora_rank`, and especially **LoKr** (below).
+- **LoKr is the consumer-GPU win:** "what used to take an hour now takes ~5 minutes" (Kronecker-product adapter, DoRA on by default). Separate `Train LoKr` tab + `/v1/training/start_lokr` endpoint. Recommend trying LoKr first on the 3090.
+
+### Data — what each song needs
+Per track, co-located in one folder:
+1. **Audio** — `.mp3/.wav/.flac/.ogg/.opus`.
+2. **Lyrics** — `{name}.lyrics.txt` (or `.txt`). Optional structural tags (`[Verse]`,`[Chorus]`) help the model learn structure. Instrumental tracks: set the dataset "All Instrumental" flag, no lyrics.
+3. **Annotations** — `{name}.json` (and/or `.caption.txt`, and/or a Key-BPM CSV): `caption`, `bpm`, `keyscale`, `timesignature`, `language` — all optional but caption+bpm+key matter.
+
+**Sourcing the labels (tooling, much of which we already run):**
+- **Captions:** the engine's Auto-Label (5Hz-LM, 0.6B/1.7B/4B) in Gradio, OR `scripts/lora_data_prepare/gemini_caption.py`. (Caption is the strongest conditioning signal — keep "genre ratio" at 0; LM genre strings are weaker than captions.)
+- **BPM/Key:** **Key-BPM-Finder (vocalremover.org), NOT the LM** — the tutorial explicitly warns the LM hallucinates BPM/key. We also already have **librosa** (our `sections.py`/`/api/beats`) and the **box analyze service** (§17a) that produce BPM/key — reusable to auto-annotate.
+- **Lyrics:** `scripts/lora_data_prepare/whisper_transcription.py` / `elevenlabs_transcription.py`, or `ACE-Step/acestep-transcriber`. **We already run faster-whisper** (`/api/transcribe`) → reusable. Transcripts MUST be hand-corrected.
+
+**Dataset size / epochs (tutorial guidance):** demo = **13 tracks → 500 epochs, batch 1**. Rules of thumb: **~100 songs → ~500 epochs; 10–20 songs → ~800 epochs.** So a focused metal LoRA is viable with a few dozen well-labeled tracks the user owns/generates. (Use your own works — the tutorial is emphatic about rights.)
+
+### The pipeline (end to end)
+1. **Prepare** a folder of metal tracks + lyrics + caption/bpm/key (scripts above).
+2. **Preprocess → tensors:** Gradio "LoRA Training" tab (scan → review → auto-label → save dataset JSON → preprocess) **or** `python train.py <mode> --preprocess --audio-dir … --tensor-output … --model-variant xl_sft`. Encodes audio to latents with the chosen variant. (Restart Gradio between LM-captioning and preprocess to free VRAM.)
+3. **Train:** "Train LoRA"/"Train LoKr" tab, **or** `python train.py fixed --checkpoint-dir ./checkpoints --model-variant xl_sft --dataset-dir <tensors> --output-dir <out>`, **or** the HTTP API (below). `fixed` = the corrected trainer (continuous timesteps + CFG dropout; the recommended path).
+4. **Export + load:** export the adapter, then load via `/v1/lora` (or Gradio) on the inference engine and generate.
+
+### HTTP training API (on our engine, `:8001`) — verified request schemas
+- `POST /v1/training/start` → `StartTrainingRequest`: `tensor_dir` (req), `lora_rank=64` (1–256), `lora_alpha=128` (1–512), `lora_dropout=0.1`, `learning_rate=1e-4`, `train_epochs=10` (⚠ schema default is a placeholder — use 500–800 per dataset size), `train_batch_size=1`, `gradient_accumulation=4`, `save_every_n_epochs=5`, `training_shift=3.0`, `training_seed=42`, `lora_output_dir`, `use_fp8=false`, `gradient_checkpointing=false`. Requires the model initialized + decoder present (`/v1/reinitialize` first); rejects if training already running.
+- `POST /v1/training/start_lokr` → `StartLoKRTrainingRequest`: `tensor_dir`, `lokr_linear_dim=64`, `lokr_linear_alpha=128`, `lokr_factor=-1` (auto), `lokr_weight_decompose=true` (DoRA), `learning_rate=0.03`, `train_epochs=500`, … same shared fields.
+- **Status/stop:** training status + stop endpoints mirror each other (TensorBoard logdir under the output dir; loss history streamed). Inference-side LoRA control: `GET /v1/lora/status`, load/unload, **scale** (per-adapter scales, multiple adapters supported).
+- CLI arg surface (`args.py`): `--model-variant {turbo,base,sft,xl_turbo,xl_base,xl_sft}`, `--base-model …`, `--lr 1e-4`, `--batch-size 1`, `--gradient-accumulation 4`, `--epochs 100`, `--warmup-steps 100`, `--weight-decay 0.01`, `--max-grad-norm 1.0`, precision `auto/bf16/fp16/fp32`, device `auto/cuda/mps/xpu/cpu`, optional DDP.
+
+### Metal-specific notes
+- **Train on `xl_sft`** to match Crucible's default (LoRAs are tied to the base they trained on; `--base-model` records it). If we ever default-flip to base, train an xl_base variant too.
+- **Caption vocabulary should mirror our genre registry** (`backend/genres.py`) + the §17a CLAP metal vocab, so the LoRA responds to the same tags our preset chips emit (power/thrash/doom/melodeath/etc.).
+- A **rhythm-guitar/high-gain LoRA** is the single highest-ceiling lever (RESEARCH §10/§15) — the weak spot ACE can't otherwise nail. Could also train **sub-LoRAs per subgenre** and expose them as selectable adapters with scale.
+
+### Crucible integration path (when we build it)
+A **Training tab** that: (1) builds a dataset from library tracks the user owns/generated (we already have audio + can auto-fill bpm/key via librosa/analyze + lyrics via faster-whisper), (2) drives `/v1/training/start[_lokr]` on the box via a thin extension of `acestep_py.py`, (3) polls status + shows the loss curve, (4) registers the exported adapter and exposes a **"Metal LoRA" toggle + strength slider** in the engine tuning UI via `/v1/lora`. **VRAM coordination:** training is a dedicated heavy job — free/stop ComfyUI/RVC/SoulX/RoFormer first (our `free_gpu` pattern), and don't run generation concurrently.
+
+### Open items to verify on the box (don't assume)
+- **XL/4B training VRAM on the 24 GB 3090** (tutorial's ~17 GB figure isn't variant-split). Try LoKr + `gradient_checkpointing` first; measure with `nvidia-smi`.
+- **Time per epoch** for XL/4B at our dataset size (LoRA ~"an hour" class; LoKr ~"5 min" class — confirm).
+- Whether the installed engine build exposes `/v1/training/*` (some API builds gate it) — check `/v1/` routes on our `:8001` before wiring.
+- Full fine-tune (not LoRA) is documented in `Large_Scale_SFT_Training_Guide.md` — far heavier; out of scope vs a LoRA/LoKr.
+
+**Sources (§18):** ACE-Step-1.5 LoRA tutorial `docs/en/LoRA_Training_Tutorial.md` · `train.py` + `acestep/training_v2/cli/args.py` (model variants incl. xl_*) · `acestep/api/train_api_models.py` (request schemas/defaults) · `acestep/api/train_api_lora_start_route.py`, `train_api_lokr_start_route.py`, `acestep/api/http/lora_routes.py` (`/v1/lora`) · data-prep scripts `scripts/lora_data_prepare/` · community advanced toolkit **Side-Step** (`github.com/koda-dernet/Side-Step`, bundled docs under `docs/sidestep/`) · Key-BPM-Finder (vocalremover.org) · existing metal-adjacent LoRA card (RESEARCH §15).
