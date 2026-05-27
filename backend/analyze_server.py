@@ -118,7 +118,10 @@ def _clap_tags(path, labels, top=10):
 def health():
     info = {"status": "ok", "service": "analyze", "clap_loaded": _clap is not None}
     try:
-        import allin1  # noqa: F401
+        try:
+            import allin1fix  # noqa: F401   # the fork we actually use
+        except Exception:
+            import allin1     # noqa: F401   # legacy fallback
         info["allin1"] = True
     except Exception as e:
         info["allin1"] = False
