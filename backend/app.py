@@ -2438,15 +2438,26 @@ def export_audio(pid: str, fmt: str = "mp3"):
     src = _lib_source_path(pid)
     if not src:
         raise HTTPException(404, "no audio")
-    # friendly download name from the job's note/tags/source
+    # friendly download name: the user-given song title wins (else note/tags/source),
+    # with a "-v2" suffix when the track is one of several versions of that name.
     name = pid
     try:
         with db() as conn:
-            row = conn.execute("SELECT params FROM jobs WHERE id=?", (pid,)).fetchone()
+            row = conn.execute("SELECT params,mode,created FROM jobs WHERE id=?", (pid,)).fetchone()
         if row and row["params"]:
             pp = json.loads(row["params"])
-            raw = pp.get("note") or pp.get("tags") or pp.get("source") or pid
+            title = str(pp.get("title") or "").strip()
+            raw = title or pp.get("note") or pp.get("tags") or pp.get("source") or pid
             slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(raw)).strip("_")[:48] or pid
+            if title:  # version among same mode + same title (oldest=v1)
+                with db() as conn:
+                    sibs = conn.execute(
+                        "SELECT id,params FROM jobs WHERE mode=? AND status='done' ORDER BY created ASC",
+                        (row["mode"],)).fetchall()
+                vers = [s["id"] for s in sibs
+                        if str((json.loads(s["params"]) if s["params"] else {}).get("title") or "").strip().lower() == title.lower()]
+                if len(vers) > 1 and pid in vers:
+                    slug = f"{slug}-v{vers.index(pid) + 1}"
             name = slug
     except Exception:
         pass

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { api, type Config, type Genre, type LibItem, type SongDraft } from "./api";
+import { api, trackLabel, type Config, type Genre, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, Slider, pollJob, waitJob, runSync, rid, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
@@ -422,7 +422,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
       <Field label="Source track" hint="a library track (incl. imported songs) or upload">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
           <option value="">— pick a library track —</option>
-          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.source || t.params.tags || t.id).slice(0, 40)}</option>)}
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
         </select>
       </Field>
       <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setJob(""); }} /></Field>
@@ -540,7 +540,7 @@ function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "
       <Field label="Source track">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
           <option value="">— pick a library track —</option>
-          {tracks.map((t) => <option key={t.id} value={t.id}>{(t.params.tags || t.params.source || t.id).slice(0, 40)}</option>)}
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks, false)}</option>)}
         </select>
       </Field>
       <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
@@ -682,7 +682,7 @@ export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
       <Field label="Backing track">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
           <option value="">— pick a library track —</option>
-          {tracks.map((t) => <option key={t.id} value={t.id}>{(t.params.tags || t.params.source || t.id).slice(0, 40)}</option>)}
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks, false)}</option>)}
         </select>
       </Field>
       <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
@@ -911,7 +911,7 @@ export function SwapForm({ busy, ...ctx }: FormProps) {
       <Field label="Vocal song (library)">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="">— choose —</option>
-          {songs.map((s) => <option key={s.id} value={s.id}>{s.mode}: {(s.params.tags || "").slice(0, 36)}</option>)}
+          {songs.map((s) => <option key={s.id} value={s.id}>{trackLabel(s, songs)}</option>)}
         </select>
       </Field>
       <Field label="…or upload a song"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
@@ -957,7 +957,7 @@ export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="">— choose —</option>
-          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.voice || "").slice(0, 36)}</option>)}
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
         </select>
       </Field>
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
@@ -1039,7 +1039,7 @@ export function ToneForm({ busy, ...ctx }: FormProps) {
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="">— choose —</option>
-          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.preset || "").slice(0, 36)}</option>)}
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
         </select>
       </Field>
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
@@ -1229,7 +1229,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
       <Field label="Mix onto backing (optional)">
         <select className={inp} value={backing} onChange={(e) => setBacking(e.target.value)}>
           <option value="">— DI + amp only —</option>
-          {backings.map((b) => <option key={b.id} value={b.id}>{(b.params.source || b.id).slice(0, 36)}</option>)}
+          {backings.map((b) => <option key={b.id} value={b.id}>{trackLabel(b, backings, false)}</option>)}
         </select>
       </Field>
       {backing && alignAvail && source !== "midi" && (
@@ -1278,7 +1278,7 @@ export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="">— choose —</option>
-          {tracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || "").slice(0, 36)}</option>)}
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
         </select>
       </Field>
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
@@ -1331,7 +1331,7 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
-  const sel = (list: any[]) => list.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.tags || t.params.source || t.params.preset || "").slice(0, 32)}</option>);
+  const sel = (list: LibItem[]) => list.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, list)}</option>);
   const MODES = [["auto", "Auto (no reference)"], ["gold", "Gold standard"], ["reference", "Reference"]] as const;
 
   return (
@@ -1719,7 +1719,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
             <Field label="Reference — library track">
               <select className={inp} value={refJob} onChange={(e) => { setRefJob(e.target.value); if (e.target.value) setRefFile(null); }}>
                 <option value="">— pick a library track —</option>
-                {refTracks.map((t) => <option key={t.id} value={t.id}>{t.mode}: {(t.params.title || t.params.source || t.params.tags || t.id).slice(0, 40)}</option>)}
+                {refTracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, refTracks)}</option>)}
               </select>
             </Field>
             <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setRefFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setRefJob(""); }} /></Field>

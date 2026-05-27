@@ -117,3 +117,33 @@ export type Score = { bpm: number; key: string; duration: number; provider: stri
 export type VocalEngine = { id: string; label: string; desc: string; sings_words: boolean; available: boolean; host: string };
 export type Project = { id: string; name: string; created: number; updated: number; data?: ProjectData };
 export type ProjectData = { drafts?: Record<string, Record<string, unknown>>; song?: SongDraft | null; mode?: string };
+
+// ---- Track naming / versioning (shared by the Library card + every track picker) ----
+
+// A track's user-given song name, or "" if it was never named.
+export function songTitle(it: LibItem): string {
+  const t = it.params?.title;
+  return (t && String(t).trim()) || "";
+}
+
+// Where a titled track sits among its siblings (same mode + same name), 1-based,
+// oldest→newest = v1..vN. null when the track is unnamed or the only one of its name.
+export function versionInfo(it: LibItem, all: LibItem[]): { v: number; total: number } | null {
+  const t = songTitle(it).toLowerCase();
+  if (!t) return null;
+  const sibs = all
+    .filter((x) => x.mode === it.mode && songTitle(x).toLowerCase() === t)
+    .sort((a, b) => a.created - b.created);
+  if (sibs.length < 2) return null;
+  const v = sibs.findIndex((x) => x.id === it.id) + 1;
+  return { v, total: sibs.length };
+}
+
+// Short, friendly label for a track in a picker: the song name when present (else
+// tags/source/etc.), plus a "v2"-style suffix when it's one of several versions.
+export function trackLabel(it: LibItem, all: LibItem[], withMode = true): string {
+  const p = it.params || {};
+  const name = songTitle(it) || String(p.tags || p.source || p.preset || p.voice || it.id);
+  const vi = versionInfo(it, all);
+  return `${withMode ? it.mode + ": " : ""}${name.slice(0, 40)}${vi ? ` · v${vi.v}` : ""}`;
+}

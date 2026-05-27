@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Config, type SongDraft, type Score, type VocalEngine } from "./api";
+import { api, trackLabel, type Config, type LibItem, type SongDraft, type Score, type VocalEngine } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, runSync, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 
@@ -68,8 +68,10 @@ export function VocalBuilderForm({ busy, song, ...ctx }: Props) {
   useEffect(() => { api.rvcVoices().then((v: any) => setVoices(v.voices || [])).catch(() => {}); }, []);
   useEffect(() => { if (!voice && voices.length) setVoice(voices[0]); }, [voices]);
   useEffect(() => {
-    api.library().then((l: any[]) => setRefs(l.filter((it) => ["vocal", "generate", "voiceswap"].includes(it.mode))
-      .map((it) => ({ id: it.id, label: `${it.mode}: ${(it.params.tags || it.params.voice || it.params.source || it.id).slice(0, 28)}` })))).catch(() => {});
+    api.library().then((l: LibItem[]) => {
+      const f = l.filter((it) => ["vocal", "generate", "voiceswap"].includes(it.mode));
+      setRefs(f.map((it) => ({ id: it.id, label: trackLabel(it, f) })));
+    }).catch(() => {});
   }, [score]);
 
   const hasLyrics = !!song?.blocks.some((b) => (b.lyrics || "").trim());
