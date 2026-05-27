@@ -8,6 +8,7 @@
   "soulx_host": "WINDOWS_PC_IP:5060",
   "roformer_host": "",
   "acestep_host": "",
+  "analyze_host": "",
   "acestep_dcw_ok": false,
   "acestep_repaint": false,
   "acestep_lego": false,

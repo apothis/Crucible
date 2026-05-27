@@ -32,6 +32,7 @@ from . import master as master_mod
 from . import guitar as guitar_mod
 from . import sections as sections_mod
 from . import analyze as analyze_mod
+from . import analyze_py
 from . import genres as genres_mod
 from . import llm as llm_mod
 from . import lyrics as lyrics_mod
@@ -60,6 +61,7 @@ CLIENT_ID = "musicgen-app"
 C = comfy.Comfy(HOST)
 ROFORMER_HOST = CFG.get("roformer_host", "")
 ACESTEP_HOST = CFG.get("acestep_host", "")   # official ACE-Step engine (cover etc.); empty = use ComfyUI
+ANALYZE_HOST = CFG.get("analyze_host", "")   # box analyze service (allin1+CLAP); empty = Mac librosa (P1)
 # DCW (Differential Correction in Wavelet domain) ships ON-by-default in the engine and
 # garbles XL text2music (full from-noise trajectory); it CANNOT be disabled over the HTTP
 # API (see HANDOFF). Until DCW is patched off on the box, gate engine text2music on the XL
@@ -280,7 +282,8 @@ def config():
             "acestep": bool(ACESTEP_HOST),
             "acestep_repaint": ACESTEP_REPAINT,
             "acestep_lego": ACESTEP_LEGO,
-            "analyze": analyze_mod.available(),
+            "analyze": analyze_mod.available() or bool(ANALYZE_HOST),
+            "analyze_box": bool(ANALYZE_HOST),
             "genres": genres}
 
 
@@ -2073,9 +2076,33 @@ async def reference_analyze(file: UploadFile = File(None), params: str = Form("{
         src, _ = _stash_input(work, "ref",
                               await file.read() if file else None,
                               file.filename if file else None, job_id)
+        # P2: prefer the box allin1+CLAP service (better structure + style tags) when set;
+        # fall back to the Mac librosa analyzer on any error.
+        if ANALYZE_HOST and not p.get("force_local"):
+            try:
+                b = analyze_py.analyze(ANALYZE_HOST, src, with_tags=True, with_key=True)
+                blocks = analyze_mod.blocks_from_allin1(b.get("segments"))
+                if not blocks:
+                    raise RuntimeError("no musical segments returned")
+                lyrics_text, has_vocals = "", False
+                if p.get("with_lyrics"):
+                    r = asr_mod.transcribe(src, size=p.get("model_size", "small"), with_segments=True)
+                    lyrics_text = (r.get("text") or "").strip(); has_vocals = bool(lyrics_text)
+                    musical = [s for s in b["segments"] if str(s.get("label", "")).lower() not in ("start", "end", "silence", "")]
+                    analyze_mod.map_lyric_segments(
+                        list(zip(blocks, [float(s["start"]) for s in musical], [float(s["end"]) for s in musical])),
+                        r.get("segments"))
+                tags = b.get("tags") if isinstance(b.get("tags"), list) else []
+                return {"bpm": b.get("bpm") or 120, "key": b.get("key") or "E minor",
+                        "duration": round(float(sum(x["seconds"] for x in blocks)), 1),
+                        "blocks": blocks, "has_vocals": has_vocals, "lyrics_text": lyrics_text,
+                        "tags": tags, "engine": "allin1"}
+            except Exception as e:
+                print(f"[analyze] box path failed ({e}); falling back to Mac librosa")
         try:
             res = analyze_mod.analyze_reference(src, with_lyrics=bool(p.get("with_lyrics")),
                                                 asr_size=p.get("model_size", "small"))
+            res["engine"] = "librosa"
         except Exception as e:
             raise HTTPException(500, f"analysis failed: {e}")
     finally:

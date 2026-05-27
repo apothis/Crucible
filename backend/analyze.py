@@ -22,6 +22,34 @@ _MINOR = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17
 _ROLE_MAP = {"intro": "Intro", "verse": "Verse", "prechorus": "Pre-Chorus", "pre-chorus": "Pre-Chorus",
              "chorus": "Chorus", "bridge": "Bridge", "solo": "Solo", "breakdown": "Breakdown", "outro": "Outro"}
 
+# allin1 (Harmonix) segment labels → Song-Constructor section types (for the P2 box path).
+_ALLIN1_MAP = {"intro": "Intro", "verse": "Verse", "chorus": "Chorus", "bridge": "Bridge",
+               "inst": "Solo", "solo": "Solo", "break": "Breakdown", "breakdown": "Breakdown",
+               "prechorus": "Pre-Chorus", "outro": "Outro"}
+
+
+def blocks_from_allin1(segments):
+    """Map allin1 segments [{start,end,label}] → Song-Constructor blocks
+    [{type,seconds,lyrics}], dropping non-musical markers (start/end/silence)."""
+    blocks = []
+    for s in segments or []:
+        lab = str(s.get("label", "")).lower().strip()
+        if lab in ("start", "end", "silence", ""):
+            continue
+        secs = max(1, int(round(float(s.get("end", 0)) - float(s.get("start", 0)))))
+        blocks.append({"type": _ALLIN1_MAP.get(lab, "Verse"), "seconds": secs, "lyrics": ""})
+    return blocks
+
+
+def map_lyric_segments(blocks_with_times, tsegs):
+    """Fill per-block lyrics from transcript segments by timestamp midpoint.
+    `blocks_with_times` = [(block_dict, start, end)]."""
+    for blk, t0, t1 in blocks_with_times:
+        txt = " ".join(t["text"] for t in (tsegs or [])
+                       if t0 <= (t["start"] + t["end"]) / 2.0 < t1).strip()
+        if txt:
+            blk["lyrics"] = txt
+
 
 def available():
     try:

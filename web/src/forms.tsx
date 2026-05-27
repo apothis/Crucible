@@ -1570,8 +1570,10 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
       setBlocks((r.blocks || []).map((b: any) => ({ ...newBlock(b.type), seconds: b.seconds, lyrics: b.lyrics || "" })));
       tuning.applyPreset({ name: "ref", tags: "", bpm: r.bpm, key: r.key });
       if (r.has_vocals) setInstrumental(false);
+      if (r.tags && r.tags.length) setTags(r.tags.join(", "));   // P2 box path auto-fills style tags
       setTpl(""); setDirty(true);
-      setRefMsg(`✓ ${r.bpm} BPM · ${r.key} · ${(r.blocks || []).length} sections${r.has_vocals ? " · lyrics filled" : ""} — review, then add style tags & generate`);
+      const tagNote = r.tags && r.tags.length ? " · tags filled" : "";
+      setRefMsg(`✓ ${r.bpm} BPM · ${r.key} · ${(r.blocks || []).length} sections${r.has_vocals ? " · lyrics filled" : ""}${tagNote} — review${r.tags && r.tags.length ? "" : ", add style tags"} & generate`);
     } catch (e) { setRefMsg("✗ " + (e as Error).message); }
     finally { setAnalyzing(false); }
   }
