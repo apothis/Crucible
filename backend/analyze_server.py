@@ -66,7 +66,19 @@ def _key_librosa(path):
     return best[1] if best else ""
 
 
-def _clap_tags(path, labels, top=8):
+def _merge_labels(extra):
+    """Union the curated DEFAULT_LABELS with caller-supplied labels (e.g. the Mac's genre
+    registry), de-duped case-insensitively, defaults first. So tagging scores across BOTH
+    the built-in metal/mood/instrument vocabulary AND the app's genres."""
+    seen, merged = set(), []
+    for x in list(DEFAULT_LABELS) + [str(v) for v in (extra or [])]:
+        k = x.lower().strip()
+        if k and k not in seen:
+            seen.add(k); merged.append(x)
+    return merged
+
+
+def _clap_tags(path, labels, top=10):
     global _clap
     try:
         import numpy as np
@@ -118,15 +130,15 @@ async def analyze(file: UploadFile = File(...), labels: str = Form(""),
         if str(with_key).lower() == "true":
             out["key"] = _key_librosa(src)
         if str(with_tags).lower() == "true":
-            lab = DEFAULT_LABELS
+            extra = []
             if labels:
                 try:
                     parsed = json.loads(labels)
-                    if isinstance(parsed, list) and parsed:
-                        lab = [str(x) for x in parsed]
+                    if isinstance(parsed, list):
+                        extra = parsed
                 except Exception:
                     pass
-            out["tags"] = _clap_tags(src, lab)
+            out["tags"] = _clap_tags(src, _merge_labels(extra))   # curated defaults ∪ caller's genres
         return out
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"analyze failed: {e}"})

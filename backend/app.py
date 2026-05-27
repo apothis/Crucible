@@ -2080,7 +2080,10 @@ async def reference_analyze(file: UploadFile = File(None), params: str = Form("{
         # fall back to the Mac librosa analyzer on any error.
         if ANALYZE_HOST and not p.get("force_local"):
             try:
-                b = analyze_py.analyze(ANALYZE_HOST, src, with_tags=True, with_key=True)
+                # Pass our top-level genres so CLAP scores across BOTH the box's curated
+                # metal/mood/instrument vocabulary AND our registry (the box unions them).
+                genre_labels = [g["label"] for g in genres_mod.GENRES if not g.get("parent")]
+                b = analyze_py.analyze(ANALYZE_HOST, src, labels=genre_labels, with_tags=True, with_key=True)
                 blocks = analyze_mod.blocks_from_allin1(b.get("segments"))
                 if not blocks:
                     raise RuntimeError("no musical segments returned")
