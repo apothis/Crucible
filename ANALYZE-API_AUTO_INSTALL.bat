@@ -73,6 +73,16 @@ echo -------- Build deps for madmom (Cython + numpy first) --------
 "%VPY%" -m pip install "cython>=0.29" "numpy<2"
 
 echo(
+echo -------- Installing madmom (from git) --------
+rem allin1 needs madmom, but the PyPI release won't build on modern Python/numpy. Install
+rem the maintained git version with --no-build-isolation so it compiles against the venv's
+rem pinned numpy<2 (not numpy 2). Needs git on PATH + the MS C++ Build Tools (the Cython
+rem extensions are compiled). If this fails with "Microsoft Visual C++ 14.0 required",
+rem install https://aka.ms/vs/17/release/vs_BuildTools.exe ("Desktop development with C++").
+"%VPY%" -m pip install --no-build-isolation git+https://github.com/CPJKU/madmom
+if errorlevel 1 echo   [!] madmom failed to build - install the MS C++ Build Tools (see note above) then re-run.
+
+echo(
 echo -------- Installing NATTEN (neighborhood attention; allin1 needs it) --------
 rem NATTEN needs a wheel matching your torch+CUDA. Try the official wheel index; if this
 rem fails, see https://www.shi-labs.com/natten/ and install the wheel for your torch ver.
