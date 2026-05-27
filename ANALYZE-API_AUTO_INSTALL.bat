@@ -87,7 +87,10 @@ rem  isn't found, the service still runs tags-only and the Mac handles structure
 rem =============================================================================
 echo(
 echo -------- [optional] all-in-one-fix structure (prebuilt NATTEN, no compiler) --------
-for /f %%T in ('"%VPY%" -c "import sys;print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PYTAG=%%T"
+rem NOTE: detect with NO quotes in the Python code — batch for/f ('...') is single-quote
+rem delimited, so a python f-string ('cp{..}') would clash and garble PYTAG.
+for /f %%T in ('"%VPY%" -c "import sys;print(sys.version_info[1])"') do set "PYMINOR=%%T"
+set "PYTAG=cp3%PYMINOR%"
 echo   python tag: %PYTAG%  (prebuilt NATTEN 0.17.5 wheels exist ONLY for cp310/cp311/cp312)
 if not "%PYTAG%"=="cp310" if not "%PYTAG%"=="cp311" if not "%PYTAG%"=="cp312" (
     echo   [optional] No prebuilt NATTEN wheel for %PYTAG% - SKIPPING allin1 ^(tags-only^).
