@@ -1544,8 +1544,33 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
   const [lyrProv, setLyrProv] = d.use("lyrProv", "local");
   const [lyrBusy, setLyrBusy] = useState(false);
   const [sungEnds, setSungEnds] = d.use("sungEnds", false);
+  const [title, setTitle] = d.use("title", "");          // song name → library title (re-import safe)
+  const [nameSugg, setNameSugg] = useState<string[]>([]); // ephemeral AI suggestions
+  const [naming, setNaming] = useState(false);
   const claude = useClaudeAvail();
   const tuning = useTuning("song", cfg, expert, true); // duration is computed from blocks
+
+  // The full recipe stored with the rendered song so its card can re-open in the builder.
+  const songMeta = () => ({
+    blocks: blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })),
+    key: tuning.keyscale, bpm: tuning.bpm, tags, instrumental, drive,
+  });
+
+  async function suggestNames() {
+    setNaming(true);
+    try {
+      const r: any = await api.llm({
+        provider: lyrProvOf(lyrProv), model: "", task: "names",
+        input: `Style/tags: ${tags}\n\nLyrics:\n${compileLyrics(blocks) || "(instrumental)"}`,
+      });
+      const lines = String(r.text || "").split("\n")
+        .map((s) => s.replace(/^[-*\d.)\s"']+/, "").replace(/["']$/, "").trim())
+        .filter(Boolean).slice(0, 6);
+      setNameSugg(lines);
+      if (!title && lines[0]) setTitle(lines[0]);
+    } catch (e) { alert("Naming failed: " + (e as Error).message); }
+    finally { setNaming(false); }
+  }
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -1609,7 +1634,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     const id = rid();
     ctx.setResults([{ id, title: `song · ${total}s · compiling`, status: "pending", pct: 0 }]);
     try {
-      const { job_id, seed } = await api.generate({ ...tuning.params(), duration: total, tags, instrumental, lyrics });
+      const { job_id, seed } = await api.generate({ ...tuning.params(), duration: total, tags, instrumental, lyrics, title, song_meta: songMeta(), from_builder: true });
       ctx.patch(id, { title: `song · ${total}s · seed ${seed}`, status: "running", pct: 5 });
       pollJob(job_id, id, ctx);
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -1642,7 +1667,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     ctx.patch(finalId, { status: "running", pct: 60 });
     try {
       const sections = blocks.map((b) => b.type).join(" · ");
-      const d = await api.stitch({ tracks: urls, crossfade_s: crossfade, tags, sections });
+      const d = await api.stitch({ tracks: urls, crossfade_s: crossfade, tags, sections, title, song_meta: songMeta() });
       ctx.patch(finalId, { status: "done", pct: 100, url: d.audio_url + "?t=" + Date.now() });
       ctx.onDone();
     } catch (e) { ctx.patch(finalId, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -1694,6 +1719,30 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
       ) : (
         <p className="text-[11px] text-[var(--color-muted)]">Uncheck “Instrumental” to auto-write sung lyrics per section with AI.</p>
       )}
+
+      <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
+        <div className="text-xs font-medium text-[var(--color-ink)]">🎵 Song name <span className="text-[10px] text-[var(--color-muted)]">— becomes the library title (versions auto-numbered)</span></div>
+        <div className="flex items-center gap-1.5">
+          <input className={`${inp} flex-1`} placeholder="name your song (or use AI →)" value={title} onChange={(e) => setTitle(e.target.value)} />
+          {claude && (
+            <select className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-2 py-2 text-xs" value={lyrProv} onChange={(e) => setLyrProv(e.target.value)}>
+              <option value="local">Gemma</option><option value="claude">Claude</option>
+            </select>
+          )}
+          <button onClick={suggestNames} disabled={naming || !tags.trim()}
+            className="whitespace-nowrap rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-2 text-xs text-[var(--color-ink)] hover:border-[var(--color-accent)] disabled:opacity-50">
+            {naming ? "Naming…" : "✨ Suggest names"}
+          </button>
+        </div>
+        {nameSugg.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {nameSugg.map((n) => (
+              <button key={n} onClick={() => setTitle(n)}
+                className={`rounded-full border px-2.5 py-1 text-xs ${title === n ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>{n}</button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <SectionTitle>Arrangement · {blocks.length} sections · {total}s total</SectionTitle>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>

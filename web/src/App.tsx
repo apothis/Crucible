@@ -101,6 +101,26 @@ function AppInner() {
     setCurrent(null);
     setMode("generate");
   }
+
+  // Re-open a builder-made song in the Song Builder: repopulate its drafts (arrangement,
+  // lyrics, tags, key/bpm, title) from the stored recipe, then switch to the Song tab.
+  function loadSongIntoBuilder(it: LibItem) {
+    const m = it.params?.song_meta;
+    if (!m) return;
+    const blocks = (m.blocks || []).map((b: any, i: number) => ({
+      id: `lib${Date.now()}_${i}`, type: b.type, seconds: b.seconds, lyrics: b.lyrics || "", locked: false,
+    }));
+    drafts.set("song", "blocks", blocks);
+    drafts.set("song", "tags", m.tags || "");
+    drafts.set("song", "instrumental", !!m.instrumental);
+    drafts.set("song", "drive", m.drive || "compile");
+    drafts.set("song", "title", it.params?.title || "");
+    drafts.set("song", "tpl", "");
+    drafts.set("song", "dirty", false);
+    drafts.set("song.tuning", "bpm", String(m.bpm ?? 120));
+    drafts.set("song.tuning", "keyscale", m.key || "E minor");
+    setMode("song");
+  }
   async function projectRename() {
     if (!current) return;
     const name = window.prompt("Rename project:", current.name);
@@ -138,11 +158,12 @@ function AppInner() {
         </section>
 
         {libOpen && (
-          <aside className="w-[360px] flex-none min-h-0 overflow-y-auto border-l border-[var(--color-line)] bg-[var(--color-panel)] p-4">
+          <aside className="w-[520px] flex-none min-h-0 overflow-y-auto border-l border-[var(--color-line)] bg-[var(--color-panel)] p-4">
             <Library items={library}
               onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100, url: it.audio_url + "?t=" + Date.now() }])}
               onDelete={(id) => api.deleteLib(id).then(refreshLib).catch(() => {})}
-              onBucket={(id, b) => api.setBucket(id, b).then(refreshLib).catch(() => {})} />
+              onBucket={(id, b) => api.setBucket(id, b).then(refreshLib).catch(() => {})}
+              onOpenInBuilder={loadSongIntoBuilder} />
           </aside>
         )}
       </main>
@@ -385,50 +406,117 @@ const LIB_SECTIONS = [
   { key: "source", label: "Source audio" },
 ];
 
-type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void };
+type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void; onOpenInBuilder?: (it: LibItem) => void };
 
-function LibCard({ it, inTests, onOpen, onDelete, onBucket }: { it: LibItem; inTests: boolean } & LibActions) {
+function libTitle(it: LibItem): string {
+  const t = it.params?.title;
+  return (t && String(t).trim()) || libDesc(it);
+}
+
+// Artwork header — shows a generated cover image when present (future image-gen),
+// else a typed gradient placeholder. Kept compact so the grid stays dense.
+function LibArtwork({ it }: { it: LibItem }) {
+  const url = it.params?.artwork_url;
+  if (url) return <img src={url} alt="" className="aspect-[16/9] w-full object-cover" />;
   return (
-    <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]">
-        <span className="rounded bg-[#2a1c19] px-1.5 py-0.5 text-[var(--color-accent2)]">{it.mode}</span>
-        <span className="text-[var(--color-muted)]">{hhmm(it.created)}</span>
-        <button onClick={() => onOpen(it)} className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Open in workspace">↗</button>
-        <a href={`/api/export/${it.id}?fmt=mp3`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Export as MP3 (320k)">⬇</a>
-        <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
-        <button onClick={() => { if (confirm("Delete this track permanently?")) onDelete(it.id); }} className="text-[var(--color-muted)] hover:text-red-400" title="Delete">✕</button>
+    <div className="flex aspect-[16/9] w-full items-center justify-center bg-gradient-to-br from-[#2a1c19] via-[var(--color-panel2)] to-[var(--color-panel)]">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)]">{it.mode}</span>
+    </div>
+  );
+}
+
+// One card per "group" (a song + its versions, or a single track). Versions share a base
+// title; chips switch which take the card shows/acts on (newest selected by default).
+function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder }: { group: LibItem[]; inTests: boolean } & LibActions) {
+  const [vi, setVi] = useState(group.length - 1);
+  const it = group[Math.min(vi, group.length - 1)] || group[0];
+  const multi = group.length > 1;
+  const canBuild = !!(it.params?.from_builder && it.params?.song_meta && onOpenInBuilder);
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)]">
+      <LibArtwork it={it} />
+      <div className="space-y-1.5 p-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+          <span className="rounded bg-[#2a1c19] px-1.5 py-0.5 text-[var(--color-accent2)]">{it.mode}</span>
+          <span className="text-[var(--color-muted)]">{hhmm(it.created)}</span>
+          {canBuild && <button onClick={() => onOpenInBuilder!(it)} className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Open in Song Builder (load arrangement, lyrics & tags)">↻</button>}
+          <button onClick={() => onOpen(it)} className={`${canBuild ? "" : "ml-auto"} text-[var(--color-muted)] hover:text-[var(--color-accent2)]`} title="Open in workspace">↗</button>
+          <a href={`/api/export/${it.id}?fmt=mp3`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Export as MP3 (320k)">⬇</a>
+          <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
+          <button onClick={() => { if (confirm("Delete this track permanently?")) onDelete(it.id); }} className="text-[var(--color-muted)] hover:text-red-400" title="Delete">✕</button>
+        </div>
+        <p className="line-clamp-2 text-[11px] font-medium text-[var(--color-ink)]" title={libTitle(it)}>{libTitle(it)}</p>
+        {multi && (
+          <div className="flex flex-wrap gap-1">
+            {group.map((g, i) => (
+              <button key={g.id} onClick={() => setVi(i)} title={hhmm(g.created)}
+                className={`rounded px-1.5 py-0.5 text-[10px] ${i === Math.min(vi, group.length - 1) ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>v{i + 1}</button>
+            ))}
+          </div>
+        )}
+        <audio className="h-8 w-full" controls src={it.audio_url} />
       </div>
-      <p className="mb-2 line-clamp-2 text-[11px] text-[var(--color-muted)]">{libDesc(it)}</p>
-      <audio className="h-8 w-full" controls src={it.audio_url} />
     </div>
   );
 }
 
-function LibSection({ label, items, defaultOpen, inTests, ...a }: { label: string; items: LibItem[]; defaultOpen: boolean; inTests?: boolean } & LibActions) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div>
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 py-1.5 text-xs font-semibold text-[var(--color-ink)]">
-        <span className="text-[var(--color-muted)]">{open ? "▾" : "▸"}</span>{label}
-        <span className="text-[10px] font-normal text-[var(--color-muted)]">({items.length})</span>
-      </button>
-      {open && <div className="mb-2 space-y-2.5">{items.map((it) => <LibCard key={it.id} it={it} inTests={!!inTests} {...a} />)}</div>}
-    </div>
-  );
-}
+function Library({ items, onOpenInBuilder, ...a }: { items: LibItem[] } & LibActions) {
+  const [tab, setTab] = useState("");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"new" | "old" | "name">("new");
 
-function Library({ items, ...a }: { items: LibItem[] } & LibActions) {
   const tests = items.filter((i) => i.bucket === "tests");
   const live = items.filter((i) => i.bucket !== "tests");
-  const groups = LIB_SECTIONS.map((s) => ({ ...s, items: live.filter((i) => i.mode === s.key) })).filter((g) => g.items.length);
+  const sectionsWith = LIB_SECTIONS.filter((s) => live.some((i) => i.mode === s.key));
   const other = live.filter((i) => !LIB_SECTIONS.some((s) => s.key === i.mode));
+  const tabs = [{ key: "__all", label: "All" }, ...sectionsWith.map((s) => ({ key: s.key, label: s.label })),
+    ...(other.length ? [{ key: "__other", label: "Other" }] : []),
+    ...(tests.length ? [{ key: "__tests", label: "Tests" }] : [])];
+  const active = tabs.some((t) => t.key === tab) ? tab : (tabs[0]?.key || "__all");
+  const inTests = active === "__tests";
+
+  let pool = active === "__all" ? live : active === "__tests" ? tests : active === "__other" ? other : live.filter((i) => i.mode === active);
+  if (q.trim()) {
+    const qq = q.toLowerCase();
+    pool = pool.filter((i) => (libTitle(i) + " " + (i.params?.tags || "")).toLowerCase().includes(qq));
+  }
+  pool = [...pool].sort((x, y) => sort === "name" ? libTitle(x).localeCompare(libTitle(y)) : sort === "old" ? x.created - y.created : y.created - x.created);
+
+  // Group versions: items sharing a base title (+ same type) collapse into one card.
+  const gmap = new Map<string, LibItem[]>();
+  for (const it of pool) {
+    const t = it.params?.title && String(it.params.title).trim();
+    const key = t ? `t:${it.mode}:${t.toLowerCase()}` : `id:${it.id}`;
+    (gmap.get(key) || gmap.set(key, []).get(key)!).push(it);
+  }
+  const groups = [...gmap.values()].map((g) => [...g].sort((m, n) => m.created - n.created));   // oldest→newest = v1..vN
+
   return (
-    <div>
-      <h2 className="mb-2 text-sm font-semibold">Library</h2>
-      {items.length === 0 && <p className="text-xs text-[var(--color-muted)]">No tracks yet.</p>}
-      {groups.map((g) => <LibSection key={g.key} label={g.label} items={g.items} defaultOpen {...a} />)}
-      {other.length > 0 && <LibSection label="Other" items={other} defaultOpen={false} {...a} />}
-      {tests.length > 0 && <LibSection label="Tests" items={tests} defaultOpen={false} inTests {...a} />}
+    <div className="flex h-full flex-col">
+      <div className="mb-2 flex items-center gap-2">
+        <h2 className="text-sm font-semibold">Library</h2>
+        <select value={sort} onChange={(e) => setSort(e.target.value as any)}
+          className="ml-auto rounded-md border border-[var(--color-line)] bg-[var(--color-panel2)] px-1.5 py-1 text-[11px] text-[var(--color-muted)]">
+          <option value="new">Newest</option><option value="old">Oldest</option><option value="name">Name</option>
+        </select>
+      </div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search title / tags…"
+        className="mb-2 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-2.5 py-1.5 text-xs text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]" />
+      <div className="-mx-1 mb-2 flex flex-none gap-1 overflow-x-auto px-1 pb-1">
+        {tabs.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] transition ${active === t.key ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>{t.label}</button>
+        ))}
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">No tracks yet.</p>
+      ) : groups.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">Nothing matches.</p>
+      ) : (
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(190px,1fr))]">
+          {groups.map((g) => <LibCard key={g[g.length - 1].id} group={g} inTests={inTests} onOpenInBuilder={onOpenInBuilder} {...a} />)}
+        </div>
+      )}
     </div>
   );
 }

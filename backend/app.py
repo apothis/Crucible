@@ -307,6 +307,23 @@ def generate(p: dict):
     if not (p.get("tags") or "").strip():
         raise HTTPException(400, "style tags are required (an empty prompt produces noise)")
 
+    # Song-Builder round-trip: when the request carries the song recipe, tag the row as a
+    # `song` (not a bare generate), store its title + full recipe (arrangement/key/bpm/…)
+    # so the card can show the name and re-open in the builder for a new version.
+    song_meta = p.get("song_meta")
+    title = (p.get("title") or "").strip()
+    from_builder = bool(p.get("from_builder") or song_meta)
+    gmode = "song" if from_builder else "generate"
+
+    def _decorate(resolved):
+        if from_builder:
+            resolved["from_builder"] = True
+        if title:
+            resolved["title"] = title
+        if song_meta:
+            resolved["song_meta"] = song_meta
+        return resolved
+
     eng_model = p.get("model") or "acestep-v15-xl-sft"
     eng_is_turbo = "turbo" in eng_model.lower()
     # Use the engine only when it won't hit the DCW garble bug: turbo is DCW-safe, and XL
@@ -354,14 +371,14 @@ def generate(p: dict):
         except Exception as e:
             raise HTTPException(500, f"acestep submit failed: {e}")
         pid = uuid.uuid4().hex
-        resolved = {"engine": "acestep", "tags": p.get("tags", ""), "seed": seed,
+        resolved = _decorate({"engine": "acestep", "tags": p.get("tags", ""), "seed": seed,
                     "model": fields["model"], "guidance_scale": fields["guidance_scale"],
-                    "steps": fields["inference_steps"], "duration": fields["duration"]}
+                    "steps": fields["inference_steps"], "duration": fields["duration"]})
         with LOCK:
-            JOBS[pid] = _new_job(resolved, "generate")
+            JOBS[pid] = _new_job(resolved, gmode)
             JOBS[pid]["status"] = "running"
         save_job(pid)
-        threading.Thread(target=_acestep_poll, args=(pid, task_id, "generate"), daemon=True).start()
+        threading.Thread(target=_acestep_poll, args=(pid, task_id, gmode), daemon=True).start()
         return {"job_id": pid, "seed": seed}
 
     # ----- ComfyUI text2music (fallback; also the safe path when the engine's DCW bug
@@ -375,7 +392,7 @@ def generate(p: dict):
         raise HTTPException(400, f"node errors: {res['node_errors']}")
     pid = res["prompt_id"]
     with LOCK:
-        JOBS[pid] = _new_job(resolved, "generate")
+        JOBS[pid] = _new_job(_decorate(resolved), gmode)
     save_job(pid)
     return {"job_id": pid, "seed": resolved["seed"]}
 
@@ -2041,11 +2058,15 @@ def stitch_tracks(body: dict):
     jid = uuid.uuid4().hex
     with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
         f.write(wav)
-    save_done_row(jid, "song", {"tags": body.get("tags", ""),
-                                "sections": body.get("sections", ""),
-                                "crossfade_s": body.get("crossfade_s", 1.0),
-                                "blocks": len(tracks)},
-                  os.path.join(LIBRARY, f"{jid}.wav"))
+    params = {"tags": body.get("tags", ""),
+              "sections": body.get("sections", ""),
+              "crossfade_s": body.get("crossfade_s", 1.0),
+              "blocks": len(tracks)}
+    if body.get("title"):
+        params["title"] = str(body["title"]).strip()
+    if body.get("song_meta"):
+        params["song_meta"] = body["song_meta"]; params["from_builder"] = True
+    save_done_row(jid, "song", params, os.path.join(LIBRARY, f"{jid}.wav"))
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
 
 
