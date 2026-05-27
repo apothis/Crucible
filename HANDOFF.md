@@ -5,7 +5,7 @@ _App name: **Crucible** (AI metal studio). Repo folder is still `MusicGen` and t
 
 _Read this first when picking up the project in a fresh context. It's the index to everything and a snapshot of where we are._
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 **Repository:** on GitHub at `git@github.com:apothis/Crucible.git` (public, `main`). `app_config.json` is gitignored (copy from `app_config.example.json`).
 
@@ -116,6 +116,19 @@ Scope includes **heavy rock** (Bon Jovi / Halestorm / Black Stone Cherry / AC/DC
 **UI redesign** (`UI_DESIGN.md §7`): grouped left **sidebar** (Create / Guitar / Vocals / Finish) replaced 13 flat tabs; working area shows **results inline**; **Library is a collapsible right drawer**. Fixed WavePlayer silent playback (MediaElement backend).
 
 ## Open / next (for a fresh context)
+
+### SESSION 2026-05-27 — workflow/UX + reference-analysis (all shipped, on `main`)
+A big feature/UX pass on top of the settled engine outcome. Everything below is built, verified, committed (user-only attribution) and pushed.
+
+- **Projects + per-page state persistence.** New `web/src/drafts.tsx` = a `DraftProvider` context + `useDrafts(ns).use(key,init)` (drop-in `useState`) lifted to the App root, so switching tabs no longer wipes a form's inputs. All 15 forms + `useTuning` + Vocal Builder converted (Files/fetched-lists stay ephemeral). On top: a **Projects** system — SQLite `projects` table + REST (`/api/projects` list/create/get(PUT save)/PATCH rename/DELETE) + a header **ProjectBar** (New/Open/Save/Save-As/Rename/Delete). A project serializes `{drafts, song, mode}`.
+- **COVER FIX — the big one (corrects the old "cover is a ceiling" verdict).** Cover was weak because we never set **`cover_noise_strength`** (the engine's *melody-retention* knob; default 0 = pure style transfer). Now `/api/cover` sets it (default 0.2) + defaults the model to **xl-sft**, and Restyle exposes a "Melody retention" slider. **By-ear validated** (Baby One More Time → metal): cns 0.2 keeps the tune; cns 0 was garbage. See memory [[acestep-engine-outcome]].
+- **Mastering — two new reference-free modes** (RESEARCH §16). `master.py` `master_auto()` = pedalboard tone-curve + glue comp + iterative loudness-drive to a target **LUFS** at −1 dBFS (pyloudnorm). Master tool now has **Auto** (no reference; tone presets + LUFS targets) · **Gold standard** (curated refs in `library/master_refs/`, Matchering) · **Reference** (original). New dep `pyloudnorm`.
+- **Library redesign.** Wider (520px) panel, **type tabs** (replacing stacked accordions), responsive **card grid**, search + sort, **version-grouping** (same-titled songs collapse w/ v1/v2 chips), **artwork-ready cards** (16:9 header shows `params.artwork_url` when a future image-gen sets it). Cards have a ↻ **"Open in Song Builder"** for builder songs.
+- **Song naming + re-import round-trip.** Song Builder "🎵 Name song" (LLM `names` task → pick a suggestion). Builder renders store the full recipe (`song_meta`: blocks/key/bpm/tags/instrumental/drive + `title`, `from_builder`) and save as mode `song`; the library card's ↻ repopulates the builder for a new version.
+- **Reference-to-Song analysis (NEW — RESEARCH §17).** Song Builder **"📥 Analyze a reference track"** → detect BPM/key/structure(+optional lyrics) → fill the arrangement → generate a *similar* song via text2music (NOT cover). **P1** = Mac/librosa (always). **P2** = box GPU service (`backend/analyze_server.py`, `ANALYZE-API_AUTO_INSTALL.bat`, port 5075, `analyze_host` in app_config) running **allin1fix** (functional section labels) + **CLAP** zero-shot tags (curated metal vocab ∪ our genre registry) + librosa key. **WORKING end-to-end on the box** (engine=allin1, proper Intro/Verse/Chorus/Bridge labels + tags). The Mac always computes structure and the box's allin1 overrides it when present; box failure → graceful tags-only/Mac-structure. VRAM-coordinated (frees ComfyUI/RVC before; self-unloads after).
+  - **Box install reality (hard-won; the installer encodes all of it):** needs **Python 3.10–3.12** (prebuilt NATTEN wheels are cp310/311/312 only) + **git** + **MS C++ Build Tools** (madmom compiles). Stack = **torch 2.6.0/cu126** + prebuilt **natten 0.17.5** wheel from `lldacing/NATTEN-windows` (no CUDA build) + **madmom from git** (`all-in-one-fix` imports it despite not declaring it) + **all-in-one-fix** + **`numpy<2`** (laion-clap needs it; re-pinned last). Fully self-contained: venv + pip/HF/torch caches + **TMP/TEMP** all under the install dir.
+- **Engine model-picker fixes.** `/release_task` does NOT auto-load a model (silently falls back to the loaded one) — added `_acestep_ensure_model()` to generate/cover/repaint/lego so the picked model actually swaps. AND Song mode's tuning is now engine-aware (`useTuning(... , !!cfg.acestep)`) — it was sending the inert ComfyUI variant, so base/sft never changed. Header now has an **ACE chip** (polls `/api/acestep/info`, shows the loaded model) so swaps are visible.
+- **Generate progress bar** folds the LM-thinking + DiT stages into one monotonic ramp (was resetting mid-run, looking like a 2nd take — it's one song).
 
 ### ENGINE MIGRATION — FINAL OUTCOME (2026-05-26): "Generate-only + LoRA-future"
 After full migration + investigation, the verdict: **the official ACE-Step engine is worth it ONLY for text2music (Generate) + as the future metal-LoRA platform. All audio-INPUT tasks stay on ComfyUI.**
