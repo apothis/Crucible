@@ -1548,7 +1548,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
   const [nameSugg, setNameSugg] = useState<string[]>([]); // ephemeral AI suggestions
   const [naming, setNaming] = useState(false);
   const claude = useClaudeAvail();
-  const tuning = useTuning("song", cfg, expert, true); // duration is computed from blocks
+  const tuning = useTuning("song", cfg, expert, true, !!cfg.acestep); // engine-aware (model picker) when on the ACE engine; duration computed from blocks
 
   // ── Analyze a reference track → fill this arrangement (RESEARCH §17 P1, Mac-side) ──
   const refTracks = useLibrary((it) => ["source", "generate", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
