@@ -88,11 +88,23 @@ rem ============================================================================
 echo(
 echo -------- [optional] all-in-one-fix structure (prebuilt NATTEN, no compiler) --------
 for /f %%T in ('"%VPY%" -c "import sys;print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PYTAG=%%T"
-echo   python tag: %PYTAG%  (NATTEN wheel must match this + torch 2.6.0 / cu126)
+echo   python tag: %PYTAG%  (prebuilt NATTEN 0.17.5 wheels exist ONLY for cp310/cp311/cp312)
+if not "%PYTAG%"=="cp310" if not "%PYTAG%"=="cp311" if not "%PYTAG%"=="cp312" (
+    echo   [optional] No prebuilt NATTEN wheel for %PYTAG% - SKIPPING allin1 ^(tags-only^).
+    echo              For structure, recreate this venv with Python 3.10-3.12 and re-run.
+    goto SKIP_ALLIN1
+)
 "%VPY%" -m pip install "https://huggingface.co/lldacing/NATTEN-windows/resolve/main/natten-0.17.5+torch260cu126-%PYTAG%-%PYTAG%-win_amd64.whl"
-if errorlevel 1 echo   [optional] prebuilt NATTEN 0.17.5 wheel not found for %PYTAG% - see https://huggingface.co/lldacing/NATTEN-windows ; structure stays on the Mac.
-"%VPY%" -m pip install all-in-one-fix
-if errorlevel 1 echo   [optional] all-in-one-fix not installed - tags-only mode (Mac handles structure).
+rem Only continue to all-in-one-fix if NATTEN actually imported. Otherwise pip would try to
+rem BUILD natten from source (needs CUDA, fails) — guard against that confusing cascade.
+"%VPY%" -c "import natten" 2>nul
+if errorlevel 1 (
+    echo   [optional] NATTEN wheel didn't install - SKIPPING allin1 ^(tags-only^).
+) else (
+    "%VPY%" -m pip install all-in-one-fix
+    if errorlevel 1 echo   [optional] all-in-one-fix install failed - tags-only mode.
+)
+:SKIP_ALLIN1
 
 echo(
 echo -------- Enforcing numpy<2 (laion-clap requires it; torch/all-in-one-fix can bump it) --------
