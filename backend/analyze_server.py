@@ -138,8 +138,11 @@ async def analyze(file: UploadFile = File(...), labels: str = Form(""),
         # allin1 (structure/beats) is OPTIONAL — needs madmom (a compiler on Windows). When
         # absent we still return tags + key, and the Mac uses its own (librosa) structure.
         try:
-            import allin1
-            result = allin1.analyze(
+            try:
+                import allin1fix as _allin1   # maintained fork (modern natten 0.17.5) — preferred
+            except Exception:
+                import allin1 as _allin1       # original (legacy natten 0.14.6)
+            result = _allin1.analyze(
                 src, device=DEVICE, keep_byproducts=False,
                 demix_dir=os.path.join(WORK, "demix"), spec_dir=os.path.join(WORK, "spec"),
             )

@@ -22,10 +22,9 @@ rem ============================================================================
 
 set "PORT=5075"
 set "HERE=%~dp0"
-rem Modern CUDA torch for CLAP (tags). allin1 would need an OLD torch 2.0.0/cu118 + the
-rem now-unavailable NATTEN 0.14.6 wheel, which also breaks CLAP — so we don't pin that here
-rem (allin1 is an advanced, manual-only extra; see the note further down).
-set "CUDA=cu124"
+rem torch 2.6.0 / cu126: runs CLAP AND matches the prebuilt NATTEN 0.17.5 Windows wheel
+rem that the all-in-one-fix fork needs — so we get structure too, with no CUDA build.
+set "CUDA=cu126"
 
 if not exist "%HERE%analyze_server.py" (
     echo ERROR: analyze_server.py must be in the same folder as this installer.
@@ -70,8 +69,8 @@ rem  CLAP tags + key — this is the whole service. Modern CUDA torch; torchvisi
 rem  required by laion-clap (timm_model -> torchvision.ops). The Mac handles structure.
 rem =============================================================================
 echo(
-echo -------- torch (%CUDA%) + CLAP + server deps --------
-"%VPY%" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/%CUDA%
+echo -------- torch 2.6.0 (%CUDA%) + CLAP + server deps --------
+"%VPY%" -m pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/%CUDA%
 "%VPY%" -m pip install "numpy<2" laion-clap librosa soundfile fastapi "uvicorn[standard]" python-multipart
 if errorlevel 1 ( echo   [!!] install failed - the service needs these. Fix the error above and re-run. & pause )
 
@@ -81,12 +80,19 @@ rem ~2 GB now so the first analysis isn't slow; lands under %HF_HOME% (in-dir).
 "%VPY%" -c "import laion_clap; m=laion_clap.CLAP_Module(enable_fusion=False); m.load_ckpt(); print('CLAP ckpt ready')" || echo   [!] CLAP prefetch skipped (will download on first use).
 
 rem =============================================================================
-rem  NOT INSTALLED HERE: allin1 (better labelled structure). It needs an OLD torch
-rem  2.0.0/cu118 + NATTEN 0.14.6, whose prebuilt wheels are no longer hosted (shi-labs
-rem  cert/host gone) and whose torch pin BREAKS CLAP in this same venv. The Mac's librosa
-rem  structure is used instead. To pursue allin1 you'd need the CUDA Toolkit to build
-rem  NATTEN from source in a SEPARATE venv — not worth it for a tweakable scaffold.
+rem  OPTIONAL — better labelled structure via the all-in-one-fix fork (modern NATTEN
+rem  0.17.5). NO CUDA build: install a PREBUILT Windows NATTEN wheel (lldacing) matched
+rem  to this Python + torch 2.6.0/cu126, then all-in-one-fix. Best-effort: if the wheel
+rem  isn't found, the service still runs tags-only and the Mac handles structure.
 rem =============================================================================
+echo(
+echo -------- [optional] all-in-one-fix structure (prebuilt NATTEN, no compiler) --------
+for /f %%T in ('"%VPY%" -c "import sys;print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PYTAG=%%T"
+echo   python tag: %PYTAG%  (NATTEN wheel must match this + torch 2.6.0 / cu126)
+"%VPY%" -m pip install "https://huggingface.co/lldacing/NATTEN-windows/resolve/main/natten-0.17.5+torch260cu126-%PYTAG%-%PYTAG%-win_amd64.whl"
+if errorlevel 1 echo   [optional] prebuilt NATTEN 0.17.5 wheel not found for %PYTAG% - see https://huggingface.co/lldacing/NATTEN-windows ; structure stays on the Mac.
+"%VPY%" -m pip install all-in-one-fix
+if errorlevel 1 echo   [optional] all-in-one-fix not installed - tags-only mode (Mac handles structure).
 
 echo(
 echo -------- Installing the API server --------
