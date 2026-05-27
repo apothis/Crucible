@@ -64,7 +64,9 @@ set "VPY=%DEST%\venv\Scripts\python.exe"
 
 echo(
 echo -------- Installing CUDA torch (%CUDA%) --------
-"%VPY%" -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/%CUDA%
+rem torchvision is required by laion-clap (timm_model -> torchvision.ops); install all three
+rem from the same CUDA index so versions match.
+"%VPY%" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/%CUDA%
 
 echo(
 echo -------- Build deps for madmom (Cython + numpy first) --------
