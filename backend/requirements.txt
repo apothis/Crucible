@@ -17,3 +17,4 @@ librosa>=0.10,<0.11   ; structural segmentation — align a symbolic guitar arra
 # python pkg: `brew install fluid-synth`, then drop a guitar .sf2 in soundfonts/ (CC0
 # FreePats EGuitar). Karplus-Strong is the zero-dep default; no install needed for it.
 faster-whisper
+mutagen

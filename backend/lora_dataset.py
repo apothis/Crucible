@@ -43,28 +43,42 @@ def detect_bpm_key(path):
     return bpm, keyscale
 
 
-def transcribe_lyrics(path, whisper_size="small", language="en"):
-    """Lyrics text via faster-whisper (Mac CPU). Returns '' on failure. For dense metal
-    mixes the caller may pass an already vocal-isolated clip for better accuracy."""
+def get_lyrics(path, *, filename=None, artist=None, title=None, duration=None,
+               allow_online=True, whisper_size="small", language="en"):
+    """Lyrics for a track: online lyrics DB for a known song (LRCLIB → lyrics.ovh),
+    falling back to faster-whisper. Returns {lyrics, source, artist, title}."""
     try:
-        from . import asr as asr_mod
-        out = asr_mod.transcribe(path, size=whisper_size, language=language)
-        return (out.get("text") or "").strip()
+        from . import lyrics_fetch
+        return lyrics_fetch.get_lyrics(path, filename=filename, artist=artist, title=title,
+                                       duration=duration, allow_online=allow_online,
+                                       whisper_size=whisper_size, language=language)
     except Exception:
-        return ""
+        return {"lyrics": "", "source": "", "artist": artist, "title": title}
 
 
 def build_labels(path, *, instrumental=False, want_lyrics=True, caption=None,
-                 language="en", timesignature="4", whisper_size="small"):
+                 language="en", timesignature="4", whisper_size="small",
+                 filename=None, artist=None, title=None, allow_online=True):
     """Compute the label payload for one track. Returns
-    {bpm, keyscale, lyrics, meta} where `meta` is the dict written to {name}.json."""
+    {bpm, keyscale, lyrics, lyrics_source, meta} where `meta` is the {name}.json dict.
+    Lyrics prefer an online DB (known song) and fall back to whisper."""
     bpm, keyscale = detect_bpm_key(path)
-    lyrics = "" if instrumental or not want_lyrics else transcribe_lyrics(path, whisper_size, language)
+    lyrics, source = "", ""
+    if not instrumental and want_lyrics:
+        try:
+            import soundfile as sf
+            dur = float(sf.info(path).duration)
+        except Exception:
+            dur = None
+        got = get_lyrics(path, filename=filename or path, artist=artist, title=title,
+                         duration=dur, allow_online=allow_online, whisper_size=whisper_size,
+                         language=language)
+        lyrics, source = got["lyrics"], got["source"]
     meta = {"bpm": bpm, "keyscale": keyscale, "timesignature": str(timesignature),
             "language": language}
     if caption:
         meta["caption"] = caption
-    return {"bpm": bpm, "keyscale": keyscale, "lyrics": lyrics, "meta": meta}
+    return {"bpm": bpm, "keyscale": keyscale, "lyrics": lyrics, "lyrics_source": source, "meta": meta}
 
 
 def _stem(filename):
@@ -72,11 +86,15 @@ def _stem(filename):
 
 
 def bundle_for_track(audio_bytes, filename, *, instrumental=False, want_lyrics=True,
-                     caption=None, language="en", timesignature="4", whisper_size="small"):
+                     caption=None, language="en", timesignature="4", whisper_size="small",
+                     artist=None, title=None, allow_online=True):
     """Build the upload bundle for ONE track from its audio bytes + original filename.
-    Writes the audio to a temp file to run librosa/whisper, then returns
+    Writes the audio to a temp file to run librosa/whisper/online-lookup, then returns
     (files, info) where `files` = [(name, bytes), ...] ready for lora_upload_py.upload()
-    and `info` = {name, bpm, keyscale, has_lyrics, caption}."""
+    and `info` = {name, bpm, keyscale, has_lyrics, lyrics_source, caption}.
+
+    Lyrics prefer an online DB for a known song (artist/title from args, embedded tags,
+    or a 'Artist - Title' filename) and fall back to whisper — see lyrics_fetch."""
     import tempfile
     suffix = os.path.splitext(filename)[1] or ".wav"
     name = _stem(filename)
@@ -86,7 +104,8 @@ def bundle_for_track(audio_bytes, filename, *, instrumental=False, want_lyrics=T
     try:
         lab = build_labels(tmp, instrumental=instrumental, want_lyrics=want_lyrics,
                            caption=caption, language=language, timesignature=timesignature,
-                           whisper_size=whisper_size)
+                           whisper_size=whisper_size, filename=filename, artist=artist,
+                           title=title, allow_online=allow_online)
     finally:
         try:
             os.remove(tmp)
@@ -97,5 +116,6 @@ def bundle_for_track(audio_bytes, filename, *, instrumental=False, want_lyrics=T
     if lab["lyrics"]:
         files.append((f"{name}.lyrics.txt", lab["lyrics"].encode("utf-8")))
     info = {"name": name, "bpm": lab["bpm"], "keyscale": lab["keyscale"],
-            "has_lyrics": bool(lab["lyrics"]), "caption": caption or ""}
+            "has_lyrics": bool(lab["lyrics"]), "lyrics_source": lab["lyrics_source"],
+            "caption": caption or ""}
     return files, info

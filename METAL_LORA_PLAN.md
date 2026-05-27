@@ -49,7 +49,7 @@ Same preprocessed tensors feed both; switching is cheap.
 Per track, co-located in a folder **on the box**: audio (`.mp3/.wav/.flac/.ogg/.opus`) + `{name}.lyrics.txt` + `{name}.json` (`caption`, `bpm`, `keyscale`, `timesignature`, `language`). Instrumental sets: `all_instrumental=true`, no lyrics.
 
 **Labeling — reuse what Crucible already has (don't hand-label):**
-- **Lyrics** → our **faster-whisper** (`/api/transcribe`), hand-corrected. (Or box auto_label `transcribe_lyrics`, but the tutorial warns LM transcription hallucinates.)
+- **Lyrics** → **online lyrics DB first, whisper fallback** (`backend/lyrics_fetch.py`, built 2026-05-28): for a *known* song, **LRCLIB** (lrclib.net — free, no key, community DB, good metal coverage, returns `plainLyrics`; `/api/get` exact → `/api/search` fuzzy) then **lyrics.ovh**; if not found, **faster-whisper** (`asr.py`). Whisper is hit-and-miss on accented/screamed metal, so DB lyrics are far better when available. Artist/title resolved from explicit args → embedded tags (**mutagen**) → "Artist - Title" filename. Lyrics still hand-correctable in the review step; `lyrics_source` is surfaced so whisper-sourced ones can be flagged for extra review. _Personal-use: lyrics are training labels, not redistributed._
 - **BPM/Key** → our **librosa** (`sections.py`/`/api/beats`) or the **box analyze service** (§17a). NOT the LM (hallucinates).
 - **Caption** → the box **`/v1/dataset/auto_label`** (5Hz-LM) is the cheapest; align vocabulary to `backend/genres.py` + the §17a CLAP metal vocab.
 
