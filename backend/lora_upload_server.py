@@ -41,11 +41,17 @@ def _safe(name: str) -> str:
 
 
 def _paths(name: str):
+    """All box-side paths the ACE engine's pipeline needs, computed here (correct
+    Windows separators) so the Mac passes them through verbatim."""
     root = os.path.join(BASE, _safe(name))
     return {
-        "data_dir": os.path.join(root, "data"),
-        "tensor_dir": os.path.join(root, "tensors"),
+        "dataset_dir": root,
+        "data_dir": os.path.join(root, "data"),            # audio + .lyrics.txt + .json (scan)
+        "dataset_json": os.path.join(root, "dataset.json"),  # saved dataset (save)
+        "tensor_dir": os.path.join(root, "tensors"),        # preprocess output / train input
+        "train_dir": os.path.join(root, "train"),           # training run output (checkpoints/logs)
         "adapter_dir": os.path.join(root, "adapter"),
+        "adapter_file": os.path.join(root, "adapter", "adapter_model.safetensors"),  # export target
     }
 
 
@@ -57,8 +63,8 @@ def health():
 @app.post("/dataset/new")
 def dataset_new(name: str = Form(...)):
     p = _paths(name)
-    for d in p.values():
-        os.makedirs(d, exist_ok=True)
+    for key in ("dataset_dir", "data_dir", "tensor_dir", "train_dir", "adapter_dir"):
+        os.makedirs(p[key], exist_ok=True)
     return p
 
 

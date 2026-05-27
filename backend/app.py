@@ -37,6 +37,9 @@ from . import genres as genres_mod
 from . import llm as llm_mod
 from . import lyrics as lyrics_mod
 from . import melody as melody_mod
+from . import acestep_train as ace_train
+from . import lora_upload_py as lora_up
+from . import lora_dataset as lora_ds
 from . import voicegen as voicegen_mod
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +65,7 @@ C = comfy.Comfy(HOST)
 ROFORMER_HOST = CFG.get("roformer_host", "")
 ACESTEP_HOST = CFG.get("acestep_host", "")   # official ACE-Step engine (cover etc.); empty = use ComfyUI
 ANALYZE_HOST = CFG.get("analyze_host", "")   # box analyze service (allin1+CLAP); empty = Mac librosa (P1)
+LORA_UPLOAD_HOST = CFG.get("lora_upload_host", "")   # box LoRA dataset upload helper (:5080); empty = disabled
 # DCW (Differential Correction in Wavelet domain) ships ON-by-default in the engine and
 # garbles XL text2music (full from-noise trajectory); it CANNOT be disabled over the HTTP
 # API (see HANDOFF). Until DCW is patched off on the box, gate engine text2music on the XL
@@ -284,6 +288,8 @@ def config():
             "acestep_lego": ACESTEP_LEGO,
             "analyze": analyze_mod.available() or bool(ANALYZE_HOST),
             "analyze_box": bool(ANALYZE_HOST),
+            "lora_train": bool(ACESTEP_HOST),       # train/use LoRAs on the official engine
+            "lora_upload": bool(LORA_UPLOAD_HOST),  # box dataset upload helper present
             "genres": genres}
 
 
@@ -2486,6 +2492,201 @@ def export_audio(pid: str, fmt: str = "mp3"):
     except Exception as e:
         raise HTTPException(500, f"mp3 export failed: {e}")
     return Response(content=out.stdout, media_type="audio/mpeg", headers=headers)
+
+
+# ==================== Metal LoRA training (drives the box engine pipeline) ====================
+# Mac orchestration over the box's HTTP pipeline (METAL_LORA_PLAN): enrich+upload a dataset
+# (Mac), then scan -> review -> auto-label -> save -> preprocess -> train -> export -> load.
+# The box upload helper returns all box-side paths; we pass them to the engine verbatim.
+
+def _lora_require_engine():
+    if not ACESTEP_HOST:
+        raise HTTPException(400, "acestep_host not set — the official ACE-Step engine is needed for LoRA training")
+
+def _lora_require_upload():
+    if not LORA_UPLOAD_HOST:
+        raise HTTPException(400, "lora_upload_host not set — install/run the box LoRA upload helper (LORA-UPLOAD_AUTO_INSTALL.bat)")
+
+def _lora_paths(dataset):
+    _lora_require_upload()
+    return lora_up.dataset_paths(LORA_UPLOAD_HOST, dataset)
+
+
+@app.get("/api/lora/status")
+def lora_status():
+    """Preflight for the Training tab: which box services are reachable + live state."""
+    out = {"train_available": bool(ACESTEP_HOST), "upload_available": bool(LORA_UPLOAD_HOST)}
+    if ACESTEP_HOST:
+        try: out["engine"] = acestep_py.health(ACESTEP_HOST)
+        except Exception as e: out["engine_error"] = str(e)
+        try: out["training"] = ace_train.training_status(ACESTEP_HOST)
+        except Exception: pass
+        try: out["lora"] = ace_train.lora_status(ACESTEP_HOST)
+        except Exception: pass
+    if LORA_UPLOAD_HOST:
+        try: out["upload"] = lora_up.health(LORA_UPLOAD_HOST)
+        except Exception as e: out["upload_error"] = str(e)
+    return out
+
+
+@app.post("/api/lora/dataset/add")
+async def lora_dataset_add(file: UploadFile = File(...), dataset: str = Form("crucible_metal"),
+                           instrumental: bool = Form(False), artist: str = Form(None),
+                           title: str = Form(None), allow_online: bool = Form(True),
+                           whisper_size: str = Form("small")):
+    """Enrich ONE picked track on the Mac (librosa bpm/key + online/whisper lyrics) and
+    upload the audio + {name}.json + {name}.lyrics.txt bundle to the box dataset folder.
+    Returns the per-track preview (bpm/key/lyrics/source) for the review table."""
+    _lora_require_upload()
+    data = await file.read()
+    files, info = lora_ds.bundle_for_track(
+        data, file.filename, instrumental=instrumental, artist=(artist or None),
+        title=(title or None), allow_online=allow_online, whisper_size=whisper_size)
+    lora_up.dataset_new(LORA_UPLOAD_HOST, dataset)
+    up = lora_up.upload(LORA_UPLOAD_HOST, dataset, files)
+    info["uploaded"] = up.get("count")
+    info["lyrics"] = next((d.decode("utf-8", "ignore") for (n, d) in files if n.endswith(".lyrics.txt")), "")
+    return info
+
+
+@app.post("/api/lora/dataset/scan")
+def lora_dataset_scan(body: dict):
+    """Load the uploaded dataset into the engine for review/training."""
+    _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    p = _lora_paths(dataset)
+    free_gpu("acestep")
+    return ace_train.dataset_scan(ACESTEP_HOST, p["data_dir"], dataset_name=dataset,
+                                  all_instrumental=bool(body.get("instrumental", False)))
+
+
+@app.get("/api/lora/dataset/samples")
+def lora_dataset_samples():
+    _lora_require_engine()
+    return ace_train.dataset_samples(ACESTEP_HOST)
+
+
+@app.put("/api/lora/dataset/sample/{idx}")
+def lora_dataset_sample_put(idx: int, body: dict):
+    """Save a corrected entry (lyrics/caption/bpm/keyscale) — the review step."""
+    _lora_require_engine()
+    return ace_train.dataset_put_sample(ACESTEP_HOST, idx, body)
+
+
+@app.post("/api/lora/dataset/autolabel")
+def lora_dataset_autolabel(body: dict):
+    """Caption the dataset via the box LM (keeps our lyrics/bpm/key). Returns the task; poll status."""
+    _lora_require_engine()
+    free_gpu("acestep")
+    return ace_train.dataset_auto_label_async(ACESTEP_HOST, only_unlabeled=bool(body.get("only_unlabeled", True)),
+                                              transcribe_lyrics=False, format_lyrics=False)
+
+
+@app.get("/api/lora/dataset/autolabel/status")
+def lora_dataset_autolabel_status():
+    _lora_require_engine()
+    return ace_train.auto_label_status(ACESTEP_HOST)
+
+
+@app.post("/api/lora/dataset/save")
+def lora_dataset_save(body: dict):
+    _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    p = _lora_paths(dataset)
+    return ace_train.dataset_save(ACESTEP_HOST, p["dataset_json"], dataset_name=dataset)
+
+
+@app.post("/api/lora/dataset/preprocess")
+def lora_dataset_preprocess(body: dict):
+    """Encode the dataset audio to latents/tensors on the box GPU (async)."""
+    _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    p = _lora_paths(dataset)
+    free_gpu("acestep")
+    return ace_train.dataset_preprocess_async(ACESTEP_HOST, p["tensor_dir"],
+                                              skip_existing=bool(body.get("skip_existing", False)))
+
+
+@app.get("/api/lora/dataset/preprocess/status")
+def lora_dataset_preprocess_status():
+    _lora_require_engine()
+    return ace_train.preprocess_status(ACESTEP_HOST)
+
+
+@app.post("/api/lora/train")
+def lora_train(body: dict):
+    """Start LoRA or LoKr training on the box from the preprocessed tensors. GPU-exclusive."""
+    _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    p = _lora_paths(dataset)
+    method = (body.get("method") or "lokr").lower()
+    free_gpu("acestep")
+    common = {k: body[k] for k in ("train_epochs", "train_batch_size", "gradient_accumulation",
+                                   "save_every_n_epochs", "learning_rate", "training_seed",
+                                   "gradient_checkpointing") if k in body}
+    if method == "lora":
+        return ace_train.train_lora(ACESTEP_HOST, p["tensor_dir"], p["train_dir"],
+                                    use_fp8=bool(body.get("use_fp8", False)),
+                                    lora_rank=int(body.get("lora_rank", 64)),
+                                    lora_alpha=int(body.get("lora_alpha", 128)),
+                                    lora_dropout=float(body.get("lora_dropout", 0.1)), **common)
+    return ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], p["train_dir"], **common)
+
+
+@app.get("/api/lora/train/status")
+def lora_train_status():
+    _lora_require_engine()
+    return ace_train.training_status(ACESTEP_HOST)
+
+
+@app.post("/api/lora/train/stop")
+def lora_train_stop():
+    _lora_require_engine()
+    return ace_train.training_stop(ACESTEP_HOST)
+
+
+@app.post("/api/lora/export")
+def lora_export(body: dict):
+    """Export the trained adapter to its .safetensors and (optionally) load it."""
+    _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    p = _lora_paths(dataset)
+    res = ace_train.training_export(ACESTEP_HOST, p["adapter_file"], p["train_dir"])
+    if body.get("load"):
+        try:
+            ace_train.lora_load(ACESTEP_HOST, p["adapter_file"], adapter_name=dataset)
+        except Exception as e:
+            res = {"export": res, "load_error": str(e)}
+    return res
+
+
+# inference-time LoRA control (Phase 5 wires these into Generate's tuning UI)
+@app.post("/api/lora/load")
+def lora_load(body: dict):
+    _lora_require_engine()
+    dataset = body.get("dataset")
+    path = body.get("lora_path") or (_lora_paths(dataset)["adapter_file"] if dataset else None)
+    if not path:
+        raise HTTPException(400, "lora_path or dataset required")
+    return ace_train.lora_load(ACESTEP_HOST, path, adapter_name=body.get("adapter_name") or dataset)
+
+
+@app.post("/api/lora/scale")
+def lora_scale(body: dict):
+    _lora_require_engine()
+    return ace_train.lora_scale(ACESTEP_HOST, float(body.get("scale", 1.0)), adapter_name=body.get("adapter_name"))
+
+
+@app.post("/api/lora/toggle")
+def lora_toggle(body: dict):
+    _lora_require_engine()
+    return ace_train.lora_toggle(ACESTEP_HOST, bool(body.get("use_lora", True)))
+
+
+@app.post("/api/lora/unload")
+def lora_unload():
+    _lora_require_engine()
+    return ace_train.lora_unload(ACESTEP_HOST)
 
 
 # static frontend at root (registered last so /api/* wins)
