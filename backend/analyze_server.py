@@ -49,6 +49,23 @@ DEFAULT_LABELS = [
 ]
 
 
+def _release_vram():
+    """Free this service's VRAM after each analyze so it doesn't sit on the shared 3090
+    between uses (mirrors SoulX/RoFormer). Set MG_ANALYZE_KEEP_RESIDENT=1 to keep CLAP
+    loaded for faster repeat runs at the cost of held VRAM."""
+    global _clap
+    if os.environ.get("MG_ANALYZE_KEEP_RESIDENT", "") != "1":
+        _clap = None
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def _key_librosa(path):
     import librosa
     import numpy as np
@@ -146,6 +163,7 @@ async def analyze(file: UploadFile = File(...), labels: str = Form(""),
     finally:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
+        _release_vram()                                 # don't hog the shared 3090 between analyses
 
 
 if __name__ == "__main__":

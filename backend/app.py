@@ -2086,6 +2086,10 @@ async def reference_analyze(file: UploadFile = File(None), params: str = Form("{
                 # Pass our top-level genres so CLAP scores across BOTH the box's curated
                 # metal/mood/instrument vocabulary AND our registry (the box unions them).
                 genre_labels = [g["label"] for g in genres_mod.GENRES if not g.get("parent")]
+                try:
+                    free_gpu("")                      # free ComfyUI + RVC before the box runs allin1/CLAP on the 3090
+                except Exception:
+                    pass
                 b = analyze_py.analyze(ANALYZE_HOST, src, labels=genre_labels, with_tags=True, with_key=True)
                 blocks = analyze_mod.blocks_from_allin1(b.get("segments"))
                 if not blocks:
