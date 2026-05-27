@@ -39,7 +39,10 @@ set /p "DEST=Path: "
 if "%DEST%"=="" goto ASK_DIR
 if not exist "%DEST%" mkdir "%DEST%"
 
-rem ---- CONTAINMENT: pin every cache INSIDE the install dir (install-time) ----
+rem ---- CONTAINMENT: pin every cache AND temp INSIDE the install dir (install-time) ----
+rem NOTE: PIP_CACHE_DIR only controls the download cache. pip's git-clone + wheel BUILD
+rem scratch uses %TMP%/%TEMP% (defaults to C:\Users\<you>\AppData\Local\Temp), so we
+rem redirect those too — otherwise building e.g. madmom from git writes outside this folder.
 set "DEST_CACHE=%DEST%\.cache"
 set "PIP_CACHE_DIR=%DEST_CACHE%\pip"
 set "HF_HOME=%DEST_CACHE%\huggingface"
@@ -47,7 +50,9 @@ set "HUGGINGFACE_HUB_CACHE=%DEST_CACHE%\huggingface\hub"
 set "TORCH_HOME=%DEST_CACHE%\torch"
 set "XDG_CACHE_HOME=%DEST_CACHE%"
 set "TRANSFORMERS_CACHE=%DEST_CACHE%\huggingface"
-for %%D in ("%DEST_CACHE%" "%PIP_CACHE_DIR%" "%HF_HOME%" "%TORCH_HOME%") do if not exist "%%~D" mkdir "%%~D"
+set "TMP=%DEST_CACHE%\tmp"
+set "TEMP=%DEST_CACHE%\tmp"
+for %%D in ("%DEST_CACHE%" "%PIP_CACHE_DIR%" "%HF_HOME%" "%TORCH_HOME%" "%TMP%") do if not exist "%%~D" mkdir "%%~D"
 
 rem ---- find a Python 3.10-3.12 (NATTEN 0.17.5 wheels exist for cp310/cp311/cp312) ----
 set "PY="
@@ -134,6 +139,8 @@ set "LAUNCH=%DEST%\run_analyze_api.bat"
 >> "%LAUNCH%" echo set "TRANSFORMERS_CACHE=%%~dp0.cache\huggingface"
 >> "%LAUNCH%" echo set "TORCH_HOME=%%~dp0.cache\torch"
 >> "%LAUNCH%" echo set "XDG_CACHE_HOME=%%~dp0.cache"
+>> "%LAUNCH%" echo set "TMP=%%~dp0.cache\tmp"
+>> "%LAUNCH%" echo set "TEMP=%%~dp0.cache\tmp"
 >> "%LAUNCH%" echo set "MG_ANALYZE_WORK=%%~dp0.work"
 >> "%LAUNCH%" echo set "MG_ANALYZE_DEVICE=cuda"
 >> "%LAUNCH%" echo set "MG_ANALYZE_PORT=%PORT%"
