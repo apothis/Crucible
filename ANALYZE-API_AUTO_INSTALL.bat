@@ -88,10 +88,12 @@ echo(
 echo -------- Installing NATTEN 0.14.6 (the version allin1's API needs) --------
 rem allin1 imports the OLD natten API (natten1dav, ...), which exists only in 0.14.x.
 rem Use the prebuilt torch2.0.0/cu118 wheel (no compiling). Newer natten removed those names.
-"%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://shi-labs.com/natten/wheels
+rem --trusted-host bypasses shi-labs' expired SSL cert (the +torchXXXcuXXX wheels live only
+rem there, not on PyPI). If you see an SSL "validity period" error, also check the box CLOCK.
+"%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://shi-labs.com/natten/wheels --trusted-host shi-labs.com
 if errorlevel 1 (
     echo   [!] shi-labs wheel index failed; trying whl.natten.org...
-    "%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://whl.natten.org/wheels/cu118/torch2.0.0/index.html
+    "%VPY%" -m pip install "natten==0.14.6+torch200cu118" -f https://whl.natten.org/wheels/cu118/torch2.0.0/index.html --trusted-host whl.natten.org
     if errorlevel 1 echo   [!!] NATTEN 0.14.6 wheel not found - see https://www.shi-labs.com/natten/ for the torch2.0.0/cu118 wheel, then re-run.
 )
 
