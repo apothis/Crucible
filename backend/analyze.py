@@ -120,6 +120,7 @@ def analyze_reference(path, with_lyrics=False, asr_size="small"):
 
     lyrics_text = ""
     has_vocals = False
+    tsegs = []
     if with_lyrics:
         try:
             from . import asr as asr_mod
@@ -138,4 +139,5 @@ def analyze_reference(path, with_lyrics=False, asr_size="small"):
             pass
 
     return {"bpm": bpm, "key": key, "duration": round(dur, 1),
-            "blocks": blocks, "has_vocals": has_vocals, "lyrics_text": lyrics_text}
+            "blocks": blocks, "has_vocals": has_vocals, "lyrics_text": lyrics_text,
+            "lyric_segments": tsegs}   # raw transcript (start/end/text) to remap onto box sections

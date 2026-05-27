@@ -129,22 +129,28 @@ def health():
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...), labels: str = Form(""),
                   with_tags: str = Form("true"), with_key: str = Form("true")):
-    import allin1
     tmp = tempfile.mkdtemp(dir=WORK)
     src = os.path.join(tmp, file.filename or "ref.wav")
     with open(src, "wb") as f:
         f.write(await file.read())
+    out = {"bpm": 0, "beats": [], "downbeats": [], "segments": []}
     try:
-        result = allin1.analyze(
-            src, device=DEVICE, keep_byproducts=False,
-            demix_dir=os.path.join(WORK, "demix"), spec_dir=os.path.join(WORK, "spec"),
-        )
-        segs = [{"start": float(s.start), "end": float(s.end), "label": str(s.label)}
-                for s in (result.segments or [])]
-        out = {"bpm": int(round(float(result.bpm))) if result.bpm else 0,
-               "beats": [float(b) for b in (result.beats or [])],
-               "downbeats": [float(b) for b in (result.downbeats or [])],
-               "segments": segs}
+        # allin1 (structure/beats) is OPTIONAL — needs madmom (a compiler on Windows). When
+        # absent we still return tags + key, and the Mac uses its own (librosa) structure.
+        try:
+            import allin1
+            result = allin1.analyze(
+                src, device=DEVICE, keep_byproducts=False,
+                demix_dir=os.path.join(WORK, "demix"), spec_dir=os.path.join(WORK, "spec"),
+            )
+            out["bpm"] = int(round(float(result.bpm))) if result.bpm else 0
+            out["beats"] = [float(b) for b in (result.beats or [])]
+            out["downbeats"] = [float(b) for b in (result.downbeats or [])]
+            out["segments"] = [{"start": float(s.start), "end": float(s.end), "label": str(s.label)}
+                               for s in (result.segments or [])]
+        except Exception as e:
+            out["structure_error"] = f"{type(e).__name__}: {e}"   # allin1 not installed → tags-only
+
         if str(with_key).lower() == "true":
             out["key"] = _key_librosa(src)
         if str(with_tags).lower() == "true":

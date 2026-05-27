@@ -2079,42 +2079,46 @@ async def reference_analyze(file: UploadFile = File(None), params: str = Form("{
         src, _ = _stash_input(work, "ref",
                               await file.read() if file else None,
                               file.filename if file else None, job_id)
-        # P2: prefer the box allin1+CLAP service (better structure + style tags) when set;
-        # fall back to the Mac librosa analyzer on any error.
-        if ANALYZE_HOST and not p.get("force_local"):
-            try:
-                # Pass our top-level genres so CLAP scores across BOTH the box's curated
-                # metal/mood/instrument vocabulary AND our registry (the box unions them).
-                genre_labels = [g["label"] for g in genres_mod.GENRES if not g.get("parent")]
-                try:
-                    free_gpu("")                      # free ComfyUI + RVC before the box runs allin1/CLAP on the 3090
-                except Exception:
-                    pass
-                b = analyze_py.analyze(ANALYZE_HOST, src, labels=genre_labels, with_tags=True, with_key=True)
-                blocks = analyze_mod.blocks_from_allin1(b.get("segments"))
-                if not blocks:
-                    raise RuntimeError("no musical segments returned")
-                lyrics_text, has_vocals = "", False
-                if p.get("with_lyrics"):
-                    r = asr_mod.transcribe(src, size=p.get("model_size", "small"), with_segments=True)
-                    lyrics_text = (r.get("text") or "").strip(); has_vocals = bool(lyrics_text)
-                    musical = [s for s in b["segments"] if str(s.get("label", "")).lower() not in ("start", "end", "silence", "")]
-                    analyze_mod.map_lyric_segments(
-                        list(zip(blocks, [float(s["start"]) for s in musical], [float(s["end"]) for s in musical])),
-                        r.get("segments"))
-                tags = b.get("tags") if isinstance(b.get("tags"), list) else []
-                return {"bpm": b.get("bpm") or 120, "key": b.get("key") or "E minor",
-                        "duration": round(float(sum(x["seconds"] for x in blocks)), 1),
-                        "blocks": blocks, "has_vocals": has_vocals, "lyrics_text": lyrics_text,
-                        "tags": tags, "engine": "allin1"}
-            except Exception as e:
-                print(f"[analyze] box path failed ({e}); falling back to Mac librosa")
+        # Structure / BPM / key / lyrics are computed on the Mac (P1) — always, no box deps.
         try:
             res = analyze_mod.analyze_reference(src, with_lyrics=bool(p.get("with_lyrics")),
                                                 asr_size=p.get("model_size", "small"))
             res["engine"] = "librosa"
         except Exception as e:
             raise HTTPException(500, f"analysis failed: {e}")
+        # If the box analyze service is set, fetch CLAP style tags (the GPU value-add) and
+        # merge them in. If the box also happens to have allin1 (optional), prefer its
+        # labelled structure too. Box failure → keep the Mac result.
+        if ANALYZE_HOST and not p.get("force_local"):
+            try:
+                free_gpu("")                          # free ComfyUI + RVC before the box uses the 3090
+            except Exception:
+                pass
+            try:
+                genre_labels = [g["label"] for g in genres_mod.GENRES if not g.get("parent")]
+                b = analyze_py.analyze(ANALYZE_HOST, src, labels=genre_labels, with_tags=True, with_key=True)
+                if isinstance(b.get("tags"), list) and b["tags"]:
+                    res["tags"] = b["tags"]
+                # allin1 present on the box → use its labelled structure + bpm/key, and
+                # remap the Mac transcript onto the allin1 sections so lyrics don't cost us
+                # the better structure.
+                boxblocks = analyze_mod.blocks_from_allin1(b.get("segments"))
+                if boxblocks:
+                    musical = [s for s in (b.get("segments") or [])
+                               if str(s.get("label", "")).lower() not in ("start", "end", "silence", "")]
+                    if p.get("with_lyrics") and res.get("lyric_segments") and len(musical) == len(boxblocks):
+                        analyze_mod.map_lyric_segments(
+                            list(zip(boxblocks, [float(s["start"]) for s in musical], [float(s["end"]) for s in musical])),
+                            res["lyric_segments"])
+                    res["blocks"] = boxblocks
+                    res["duration"] = round(float(sum(x["seconds"] for x in boxblocks)), 1)
+                    if b.get("bpm"):
+                        res["bpm"] = b["bpm"]
+                    if b.get("key"):
+                        res["key"] = b["key"]
+                    res["engine"] = "allin1"
+            except Exception as e:
+                print(f"[analyze] box tags unavailable ({e}); using Mac analysis only")
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return res
