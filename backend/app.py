@@ -378,7 +378,8 @@ def generate(p: dict):
             JOBS[pid] = _new_job(resolved, gmode)
             JOBS[pid]["status"] = "running"
         save_job(pid)
-        threading.Thread(target=_acestep_poll, args=(pid, task_id, gmode), daemon=True).start()
+        phases = 2 if fields.get("thinking") else 1     # LM 'thinking' stage + DiT = two ramps
+        threading.Thread(target=_acestep_poll, args=(pid, task_id, gmode, phases), daemon=True).start()
         return {"job_id": pid, "seed": seed}
 
     # ----- ComfyUI text2music (fallback; also the safe path when the engine's DCW bug
@@ -463,23 +464,34 @@ def _acestep_ensure_model(model):
         time.sleep(5)
 
 
-def _acestep_poll(pid, task_id, mode):
+def _acestep_poll(pid, task_id, mode, phases=1):
     """Background: poll the official ACE-Step engine until the task finishes, then
     download EVERY batch take — the first becomes the tracked job (pid), the rest are
     saved as their own library rows ('take 2', 'take 3'…) under the same `mode` so they
-    can be compared. Mirrors the ComfyUI job UX so the frontend's pollJob works unchanged."""
+    can be compared. Mirrors the ComfyUI job UX so the frontend's pollJob works unchanged.
+
+    `phases` = how many 0→100% progress ramps the engine emits for this task (e.g. 2 when
+    the 5Hz LM 'thinking' stage runs before DiT diffusion). We fold them into one monotonic
+    bar (each phase = a 1/phases segment) so it climbs once instead of resetting per stage."""
     start = time.time()
+    prog = {"phase": 0, "lastRaw": 0.0, "shown": 0.0}   # closure state for monotonic mapping
 
     def _on_progress(task):
-        # Live progress for the bar: prefer a parsed step/percent from the engine's log
-        # line; else a gentle time-based estimate so the bar still moves. JOBS stores
-        # progress/max → /api/job → frontend pct = 100*progress/max.
-        frac = acestep_py.progress_fraction(task)
-        if frac is None:
-            frac = min(0.92, (time.time() - start) / 75.0)   # ~75s typical; caps below 100
+        # Live progress for the bar. The engine emits a fresh "N/M" per stage, so detect a
+        # reset (the parsed fraction dropping back) → advance to the next phase segment, and
+        # never let the displayed value go backwards. JOBS progress/max → /api/job → frontend.
+        raw = acestep_py.progress_fraction(task)
+        if raw is not None:
+            if raw + 0.15 < prog["lastRaw"] and prog["phase"] < phases - 1:
+                prog["phase"] += 1                        # a stage finished and the next reset to ~0
+            prog["lastRaw"] = raw
+            cand = (prog["phase"] + raw) / max(1, phases)
+        else:
+            cand = min(0.92, (time.time() - start) / 75.0)  # no log yet → gentle time estimate
+        prog["shown"] = min(0.98, max(prog["shown"], cand))  # monotonic, capped below 100
         with LOCK:
             if pid in JOBS:
-                JOBS[pid]["progress"] = frac
+                JOBS[pid]["progress"] = prog["shown"]
                 JOBS[pid]["max"] = 1.0
 
     try:
@@ -911,7 +923,8 @@ async def _engine_lego(p, file, job_id, timbre, track):
         JOBS[pid] = _new_job(resolved, "layer")
         JOBS[pid]["status"] = "running"
     save_job(pid)
-    threading.Thread(target=_acestep_poll, args=(pid, task_id, "layer"), daemon=True).start()
+    phases = 2 if fields.get("thinking") else 1          # lego runs the LM stage too
+    threading.Thread(target=_acestep_poll, args=(pid, task_id, "layer", phases), daemon=True).start()
     return {"job_id": pid}
 
 
