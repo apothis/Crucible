@@ -51,7 +51,7 @@ def _rank(tag: str) -> int:
     return 5
 
 
-def merge_seed_with_lm(seed: str, lm: str, max_chars: int = 512) -> str:
+def merge_seed_with_lm(seed: str, lm: str, max_chars: int = 2000) -> str:
     """Combine our tag-list enrichment seed with the box LM's caption.
 
     Verified by probe (2026-05-28): the LM emits ~750-char prose like
@@ -66,7 +66,16 @@ def merge_seed_with_lm(seed: str, lm: str, max_chars: int = 512) -> str:
         with a period separator. Both signals preserved; the tokenizer sees
         them as distinct grammatical sections.
       - LM tag-list (rare for this engine but possible) → fall back to
-        _merge() with case-insensitive dedup."""
+        _merge() with case-insensitive dedup.
+
+    Length policy: the actual hard cap for training captions is the text
+    encoder's tokenizer max_length=256 *tokens* (preprocess_text.py:21),
+    not characters. 256 tokens is ~1000-1500 chars of English; overflow
+    is silently truncated by the tokenizer. Our char cap (default 2000) is
+    therefore a generous belt-and-braces — almost all LM outputs survive
+    intact and the tokenizer trims the tail only if it has to. We still
+    smart-truncate at the last sentence boundary so any visible truncation
+    is clean, not mid-word."""
     seed = (seed or "").strip()
     lm = (lm or "").strip()
     if not lm: return seed
