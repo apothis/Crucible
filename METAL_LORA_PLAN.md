@@ -83,5 +83,108 @@ All box endpoints take **box-side paths** (`audio_dir`, `tensor_dir`, `lora_path
 - Dataset transfer size (full songs × dozens) over LAN — fine, but note it.
 - Adapter is bound to `xl_sft`; if the default model ever changes, retrain.
 
-## 9. Sources
+## 10. Strategy: scoping LoRAs (broad vs subgenre vs single-band)
+
+_A LoRA's strength comes from focus. Bigger isn't better — narrower, well-scoped sets that capture a specific style usually beat a single "do-everything" LoRA, especially since the engine supports loading multiple adapters and blending them at inference time. Synthesized from the ACE-Step 1.5 docs + community Side-Step guide + general PEFT/LoRA practice. Sources at the end of this section._
+
+### 10.1 The four scopes
+
+**(a) Broad metal LoRA — your baseline sound.** Trained on a varied corpus across subgenres (heavy / power / thrash / doom / melodeath, etc.). Captures the production/mix/feel you generally want from Crucible — guitar character, drum tightness, overall heaviness — without being specific to any subgenre. Generalizes well; doesn't excel anywhere. Best as a low-strength "always on" base layer.
+
+**(b) Subgenre LoRA — the sweet spot.** Trained tightly on one subgenre (e.g. *thrash*, *funeral doom*, *Gothenburg melodeath*, *symphonic power*, *djent*). These styles sit far apart in feature space (tempo, mix bright/dark, vocal delivery, instrumentation density), so they benefit from dedicated adapters. This is where focused LoRAs reliably out-do a generic one.
+
+**(c) Band-cluster LoRA — recognizable era/scene without one-artist targeting.** A small cluster of 3–5 stylistically tight bands (e.g. *Big-4 thrash* = Metallica + Megadeth + Anthrax + Slayer; *NWOBHM* = Maiden + Priest + Saxon; *Gothenburg* = In Flames + Dark Tranquillity + At The Gates). Gets you most of the recognizable-style benefit of a single-band LoRA with materially less overfitting risk and far less ethical fog.
+
+**(d) Single-band LoRA — strongest fidelity, real downsides.** Maximum stylistic capture, BUT two genuine problems:
+- **Overfitting / memorization.** With ~10–15 tracks the model can memorize specific riffs/melodies instead of learning *style* — outputs may sound suspiciously close to source tracks rather than "in the style of." Image-LoRA community sees the same pattern: subject LoRAs with tiny sets memorize hard ([Apatero](https://apatero.com/blog/lora-training-parameters-subject-vs-style-guide-2025), [SeaArt](https://docs.seaart.ai/guide-1/3-advanced-guide/3-2-lora-training-advance)).
+- **Ethics / copyright.** Training on tracks you legally own for purely personal experimentation is broadly permissible, but a LoRA *named and aimed* at one artist crosses into identity-cloning territory. Recent RIAA-vs-Suno/Udio litigation specifically targets training-on-copyrighted-music products; private personal use is a different category but the closer your LoRA gets to "in the style of X," the more it raises eyebrows. **Don't share/redistribute single-artist LoRAs.**
+
+### 10.2 The recommended pyramid
+
+Start with the broad baseline so something useful is loaded by default, then add focused adapters as needs arise. Numbers below are good starting points; tune to loss-curve behavior on actual runs.
+
+| LoRA | Tracks | Method | Epochs (corrected/Side-Step) | Epochs (engine built-in) | Notes |
+|---|---|---|---|---|---|
+| Broad metal | 50–100 | LoKr / LoRA | ~50–100 | ~500 | wide variety; the everyday baseline |
+| Subgenre | 20–40 | **LoKr (fast iteration)** | ~100–200 | ~500–700 | the sweet spot — narrow & focused |
+| Band-cluster (3–5 bands) | 15–30 | LoKr / LoRA | ~150–250 | ~700–800 | recognizable era/scene |
+| Single band | 10–15 | LoRA, low rank | ~200–500 | ~800+ | accept overfit risk; keep private |
+
+**Why two epoch columns?** ACE-Step's built-in trainer and the community Side-Step trainer use different timestep-sampling schemes. Side-Step's **corrected mode** (continuous logit-normal + 15% CFG dropout) converges roughly an order of magnitude faster than the engine's default — *"1–10 songs: 200–500 epochs · 10–50: 100–200 · 50+: 50–100"* ([Side-Step Training Guide](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/sidestep/Training%20Guide.md)). The engine tutorial's *"~100 songs → 500 epochs · 10–20 → 800"* is the built-in numbers ([LoRA tutorial](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/LoRA_Training_Tutorial.md)). Crucible's HTTP path currently uses the built-in.
+
+### 10.3 Adapter stacking — the killer feature
+
+The engine exposes `/v1/lora/load` (with `adapter_name`), `/v1/lora/scale` (per-adapter `scale`), and the status response carries `adapters: []` + `scales: {}` — i.e. multi-adapter is a first-class concept, not a hack. Underneath, ACE-Step is built on PEFT/diffusers, where loaded adapters are blended by **weighted concatenation of their low-rank matrices**, weights set by `set_adapters(["a","b","c"], adapter_weights=[wa,wb,wc])` ([HF: Merge LoRAs](https://huggingface.co/docs/diffusers/main/en/using-diffusers/merge_loras)).
+
+What that gives you in Crucible:
+- **Layered styles.** Load `metal_broad@0.4` + `thrash@0.6` for "metal but thrash-leaning"; swap thrash for `doom@0.7` to flip the mood. Strength sliders let you dial each independently.
+- **Genre-blending.** `symphonic@0.5` + `thrash@0.6` = symphonic thrash even without a dedicated LoRA for that subgenre.
+- **One small LoRA can patch another.** Train a tight `gang_vocals@0.3` style LoRA and layer it over any base.
+
+Caveats worth knowing:
+- **Additive interference.** Diffusers' simple `set_adapters` does weighted-sum stacking → too many strong adapters cause oversaturation/conflicts; sum of effective scales ≲ ~1.0–1.5 is a reasonable safety band. PEFT's smarter merges — **TIES** (trim/sign-resolve/elect) and **DARE** (drop+rescale) — explicitly fix this ([HF PEFT merging](https://huggingface.co/blog/peft_merging)), but they're not exposed via `set_adapters`; if blending issues bite, that's the upstream lever to ask for.
+- **Rank-matching only matters for *merging* (fuse_lora), not stacking.** You can run adapters with different ranks side-by-side at inference; they only need identical ranks if you bake them into a single merged file.
+- **Personal-use guidance:** the engine has no per-prompt LoRA control (it's engine-global) — the Generate-tab Metal-LoRA toggle/scale we built sets the *current* engine state.
+
+### 10.4 Captioning is what makes the scope work
+
+The single biggest lever after dataset choice. The official tutorial is emphatic: keep the LM-generated *genre* descriptions ratio at 0, captions do the work. The community consensus across image+music LoRAs: **descriptive style captions generalize; band-name / trigger-word captions memorize**.
+
+For metal training data:
+- **Do** describe what the LoRA should *learn* to associate with the audio: genre + subgenre + instrumentation + vocal delivery + mix character + tempo feel.  
+  e.g. *"melodic death metal, fast tempo, blast beats, twin-guitar harmonies, tremolo picking, growled lead vocals with clean choruses, dense mix, dark/cold production"*
+- **Do** keep captions consistent across a subgenre LoRA's tracks — that's what the model latches onto.
+- **Don't** put the band name in the caption for a style/subgenre LoRA. That biases toward memorization and makes the LoRA only fire when you also prompt the band name.
+- **Don't** mix contradictory genre tags (`ambient, blackened thrash`) — confuses the model ([ACE-Step prompt guide](https://www.ambienceai.com/tutorials/ace-step-music-prompting-guide)).
+- **Captions under ~512 chars**; 3–7 well-chosen descriptors beats long lists ([RunComfy ACE-Step training](https://www.runcomfy.com/trainer/ai-toolkit/ace-step-1-5-lora-training)).
+
+In Crucible's flow this maps to: let the box LM Auto-Label generate the first-pass captions, **then edit them in the review step** to add the specific descriptors that define your scope. The review step is doing real work — don't skip it.
+
+### 10.5 Hyperparameter intuition by scope
+
+Same defaults as Side-Step's *"good default rank 64, alpha 128"* mostly hold, with these nudges:
+
+- **Style LoRAs (broad/subgenre)** — *style imprints fast.* Rank **32** is often enough; alpha ≈ rank. LR `1e-4`. Watch for early plateau on the loss curve and stop early — the best checkpoint is usually well before the final.
+- **Cluster / single-band** — closer to "subject" training. Rank **64** (the default); alpha = 2×rank (128). Higher epoch counts as in the table; expect more overfit risk.
+- **High-quality but small dataset** — drop rank to **16** (Side-Step's "low capacity, very small datasets"); reduces overfit pressure.
+- **Loss curve as ground truth.** "Should decrease over time. Spikes are normal but persistent increase means overfitting" ([Side-Step Guide](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/sidestep/Training%20Guide.md)). The default `save_every_n_epochs=5` means you can A/B mid-training checkpoints; **the best one is rarely the last one.**
+- **Audio quality matters more than people think.** Train on **WAV/FLAC at ≥44.1 kHz**, not transcoded MP3s; the model learns spectral artifacts otherwise ([RunComfy](https://www.runcomfy.com/trainer/ai-toolkit/ace-step-1-5-lora-training)).
+- **LoKr caveat.** ACE-Step's own tutorial loves LoKr (10× speed); the more-conservative Side-Step guide currently marks LoKr "Experimental — may have rough edges." So: **use LoKr to iterate cheaply**, but if a final adapter feels off and you can't tell why, retrain that one as a classic LoRA.
+
+### 10.6 Detecting overfitting (qualitatively, by ear)
+
+The loss curve is necessary-but-not-sufficient. Definitive signs *by ear*:
+- **Holdout failure.** Hold back one or two tracks from each set you *didn't* train on. If the LoRA outputs sound nothing like that style without the trained tracks "leaking in," it learned the style. If they don't sound like the style at all, undertrained; if they sound suspiciously like *specific* trained tracks, overtrained.
+- **Memorized motifs.** A recognizable riff/melody/lyric phrase from a training track turning up in unrelated prompts ⇒ overfit, pull the LoRA back to an earlier checkpoint.
+- **Prompt-insensitivity.** If outputs ignore your prompt and converge to one sound regardless ⇒ the LoRA is steamrolling the base; lower its scale at inference (the strength slider) and/or retrain with lower epochs.
+- **Style-strength inversion.** Outputs at LoRA strength 0.2 sound good; at 1.0 they're worse → the LoRA's signal is strong; use it as a *bias*, not a *replacement*.
+
+### 10.7 Concrete starting plan for Crucible
+
+A pragmatic sequence that avoids wasted GPU time:
+1. **Smoke test first.** LoKr, 5–8 tracks, low epochs (~50). Goal: confirm VRAM/timing on the 3090 + the whole pipeline runs end-to-end. Throw the adapter away after.
+2. **Subgenre v1 (your favorite first).** ~25 tracks, LoKr, ~150 epochs. Review labels carefully. A/B by-ear vs. the base model. This is your real first usable adapter.
+3. **Build out 2–3 more subgenre adapters** for the styles you'll actually want to swap between. By this point you'll know your dataset/epoch sweet spot empirically.
+4. **Then a broad baseline.** ~60 tracks pulling from across the subgenres, ~75 epochs. Always-loaded at low scale (e.g. 0.3) as a baseline-color layer; stack subgenres on top.
+5. **Band-cluster only if a specific era keeps escaping you** even with a good subgenre LoRA. Keep private; don't share.
+6. **Skip single-band LoRAs** unless you've genuinely exhausted the cluster approach.
+
+Throughout: caption review is the highest-leverage step. Five extra minutes editing the auto-labels per track is worth more than another 200 epochs.
+
+### 10.8 Sources for §10
+
+- [ACE-Step 1.5 LoRA Training Tutorial](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/LoRA_Training_Tutorial.md) (official; dataset/epoch guidance)
+- [Side-Step Training Guide](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/sidestep/Training%20Guide.md) (corrected mode + rank/epoch tables + overfit notes)
+- [ACE-Step Tutorials & Best Practices — DeepWiki](https://deepwiki.com/ace-step/ACE-Step-1.5/10-tutorials-and-best-practices)
+- [RunComfy: ACE-Step 1.5 LoRA training](https://www.runcomfy.com/trainer/ai-toolkit/ace-step-1-5-lora-training) (audio format + caption length)
+- [Apatero: LoRA Training Parameters — Subject vs Style 2025](https://apatero.com/blog/lora-training-parameters-subject-vs-style-guide-2025) (dataset-size / epoch heuristics by training type)
+- [SeaArt LoRA Training Advanced Guide](https://docs.seaart.ai/guide-1/3-advanced-guide/3-2-lora-training-advance) (subject vs style epochs/overfitting)
+- [Kohya LoRA Training Settings — PropelRC](https://www.propelrc.com/kohya-lora-training-settings-explained/) (rank/alpha guidance)
+- [HF Diffusers: Merge LoRAs](https://huggingface.co/docs/diffusers/main/en/using-diffusers/merge_loras) (`set_adapters` + adapter_weights mechanics)
+- [HF PEFT: new merging methods (TIES, DARE)](https://huggingface.co/blog/peft_merging) (smarter multi-adapter merges)
+- [HF PEFT for inference (LoRA)](https://huggingface.co/docs/diffusers/en/tutorials/using_peft_for_inference)
+- [Ambience AI: ACE-Step Prompt Guide](https://www.ambienceai.com/tutorials/ace-step-music-prompting-guide) (caption do's/don'ts)
+- [RIAA vs Suno / Udio (2024) — Wikipedia overview](https://en.wikipedia.org/wiki/Suno_(company)) (the legal context for music-AI training data — for the single-band ethics caveat)
+
+## 11. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
