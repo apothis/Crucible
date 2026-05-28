@@ -58,12 +58,15 @@ def get_lyrics(path, *, filename=None, artist=None, title=None, duration=None,
 
 def build_labels(path, *, instrumental=False, want_lyrics=True, caption=None,
                  language="en", timesignature="4", whisper_size="small",
-                 filename=None, artist=None, title=None, allow_online=True):
+                 filename=None, artist=None, title=None, allow_online=True,
+                 want_caption=True, analyze_host="", lastfm_key="", acoustid_key=""):
     """Compute the label payload for one track. Returns
-    {bpm, keyscale, lyrics, lyrics_source, meta} where `meta` is the {name}.json dict.
-    Lyrics prefer an online DB (known song) and fall back to whisper."""
+    {bpm, keyscale, lyrics, lyrics_source, caption, caption_sources, meta} where
+    `meta` is the {name}.json dict. Lyrics + caption both prefer online sources for
+    known songs (LRCLIB / MusicBrainz / Last.fm) and fall back to local/audio-based
+    analysis (whisper / CLAP). The user edits the seeded caption in the review step."""
     bpm, keyscale = detect_bpm_key(path)
-    lyrics, source = "", ""
+    lyrics, lyrics_source = "", ""
     if not instrumental and want_lyrics:
         try:
             import soundfile as sf
@@ -73,12 +76,31 @@ def build_labels(path, *, instrumental=False, want_lyrics=True, caption=None,
         got = get_lyrics(path, filename=filename or path, artist=artist, title=title,
                          duration=dur, allow_online=allow_online, whisper_size=whisper_size,
                          language=language)
-        lyrics, source = got["lyrics"], got["source"]
+        lyrics, lyrics_source = got["lyrics"], got["source"]
+        # let lyrics resolution upgrade artist/title for the caption fetcher below
+        artist = artist or got.get("artist")
+        title = title or got.get("title")
+
+    caption_sources = []
+    if want_caption and not caption:
+        try:
+            from . import caption_fetch
+            cap = caption_fetch.get_caption(audio_path=path, artist=artist, title=title,
+                                            lastfm_key=lastfm_key, acoustid_key=acoustid_key,
+                                            analyze_host=analyze_host, allow_clap=allow_online)
+            caption = cap.get("caption") or ""
+            caption_sources = cap.get("sources") or []
+            artist = artist or cap.get("artist")
+            title = title or cap.get("title")
+        except Exception:
+            caption = caption or ""
+
     meta = {"bpm": bpm, "keyscale": keyscale, "timesignature": str(timesignature),
             "language": language}
     if caption:
         meta["caption"] = caption
-    return {"bpm": bpm, "keyscale": keyscale, "lyrics": lyrics, "lyrics_source": source, "meta": meta}
+    return {"bpm": bpm, "keyscale": keyscale, "lyrics": lyrics, "lyrics_source": lyrics_source,
+            "caption": caption or "", "caption_sources": caption_sources, "meta": meta}
 
 
 def _stem(filename):
@@ -87,7 +109,8 @@ def _stem(filename):
 
 def bundle_for_track(audio_bytes, filename, *, instrumental=False, want_lyrics=True,
                      caption=None, language="en", timesignature="4", whisper_size="small",
-                     artist=None, title=None, allow_online=True):
+                     artist=None, title=None, allow_online=True,
+                     analyze_host="", lastfm_key="", acoustid_key=""):
     """Build the upload bundle for ONE track from its audio bytes + original filename.
     Writes the audio to a temp file to run librosa/whisper/online-lookup, then returns
     (files, info) where `files` = [(name, bytes), ...] ready for lora_upload_py.upload()
@@ -105,7 +128,9 @@ def bundle_for_track(audio_bytes, filename, *, instrumental=False, want_lyrics=T
         lab = build_labels(tmp, instrumental=instrumental, want_lyrics=want_lyrics,
                            caption=caption, language=language, timesignature=timesignature,
                            whisper_size=whisper_size, filename=filename, artist=artist,
-                           title=title, allow_online=allow_online)
+                           title=title, allow_online=allow_online, want_caption=True,
+                           analyze_host=analyze_host, lastfm_key=lastfm_key,
+                           acoustid_key=acoustid_key)
     finally:
         try:
             os.remove(tmp)
@@ -117,5 +142,5 @@ def bundle_for_track(audio_bytes, filename, *, instrumental=False, want_lyrics=T
         files.append((f"{name}.lyrics.txt", lab["lyrics"].encode("utf-8")))
     info = {"name": name, "bpm": lab["bpm"], "keyscale": lab["keyscale"],
             "has_lyrics": bool(lab["lyrics"]), "lyrics_source": lab["lyrics_source"],
-            "caption": caption or ""}
+            "caption": lab.get("caption", ""), "caption_sources": lab.get("caption_sources", [])}
     return files, info

@@ -10,6 +10,8 @@
   "acestep_host": "",
   "analyze_host": "",
   "lora_upload_host": "",
+  "lastfm_key": "",
+  "acoustid_key": "",
   "acestep_dcw_ok": false,
   "acestep_repaint": false,
   "acestep_lego": false,

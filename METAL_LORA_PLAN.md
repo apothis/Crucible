@@ -51,7 +51,13 @@ Per track, co-located in a folder **on the box**: audio (`.mp3/.wav/.flac/.ogg/.
 **Labeling — reuse what Crucible already has (don't hand-label):**
 - **Lyrics** → **online lyrics DB first, whisper fallback** (`backend/lyrics_fetch.py`, built 2026-05-28): for a *known* song, **LRCLIB** (lrclib.net — free, no key, community DB, good metal coverage, returns `plainLyrics`; `/api/get` exact → `/api/search` fuzzy) then **lyrics.ovh**; if not found, **faster-whisper** (`asr.py`). Whisper is hit-and-miss on accented/screamed metal, so DB lyrics are far better when available. Artist/title resolved from explicit args → embedded tags (**mutagen**) → "Artist - Title" filename. Lyrics still hand-correctable in the review step; `lyrics_source` is surfaced so whisper-sourced ones can be flagged for extra review. _Personal-use: lyrics are training labels, not redistributed._
 - **BPM/Key** → our **librosa** (`sections.py`/`/api/beats`) or the **box analyze service** (§17a). NOT the LM (hallucinates).
-- **Caption** → the box **`/v1/dataset/auto_label`** (5Hz-LM) is the cheapest; align vocabulary to `backend/genres.py` + the §17a CLAP metal vocab.
+- **Caption** → **`backend/caption_fetch.py`** (built 2026-05-28) layers sources, all optional with graceful degradation:
+  1. **MusicBrainz** (free, no key) — recording tags + artist disambiguation ("english heavy metal band") for known artist/title. Verified live: Iron Maiden / The Trooper → `heavy metal, metal, classic metal, rock, hard rock`.
+  2. **Last.fm** (free key, opt-in) — `track.getTopTags` richer subgenre tags. Set `lastfm_key` in `app_config.json`. Get one at https://www.last.fm/api/account/create.
+  3. **CLAP** via the box `analyze_host` service (§17a) — audio-based tags, works for unknown songs. Reuses what's already deployed.
+  4. **AcoustID + fpcalc** (free key + 1.2 MB binary, opt-in) — audio fingerprint → identify artist/title for *untagged* files, then loops back into (1)/(2). `acoustid_key` config + `brew install chromaprint`. Get a key at https://acoustid.org/api-key.
+  5. **Engine `/v1/dataset/auto_label`** — the box LM, exposed as a button in Training-tab Step 2 for the "fill in the blanks" pass.
+  Results get merged + de-duped + sorted with specific subgenres first; sources tagged per track in the Step 1 table so you know what to trust. **Then you edit in the review step** (caption is what makes the LoRA work — §10.4).
 
 **Dataset size:** a few dozen well-labeled metal tracks the **user owns/generates** is enough (13→500 epochs in the demo). Rights matter — own works only.
 

@@ -135,7 +135,8 @@ export type LoraStatus = {
   lora?: { lora_loaded?: boolean; use_lora?: boolean; lora_scale?: number; adapters?: string[] };
 };
 export type LoraTrack = { name: string; bpm: number; keyscale: string; has_lyrics: boolean;
-                          lyrics_source: string; lyrics?: string; caption?: string; uploaded?: number };
+                          lyrics_source: string; lyrics?: string; caption?: string;
+                          caption_sources?: string[]; uploaded?: number };
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };

@@ -175,14 +175,20 @@ export function LoraTrainingForm(_: { cfg: Config }) {
         {!!tracks.length && (
           <div className="overflow-hidden rounded-lg border border-[var(--color-line)]">
             <table className="w-full text-[11px]">
-              <thead className="bg-[var(--color-panel2)] text-[var(--color-muted)]"><tr><th className="px-2 py-1 text-left">Track</th><th className="px-2 py-1">BPM</th><th className="px-2 py-1">Key</th><th className="px-2 py-1">Lyrics</th></tr></thead>
+              <thead className="bg-[var(--color-panel2)] text-[var(--color-muted)]"><tr><th className="px-2 py-1 text-left">Track</th><th className="px-2 py-1">BPM</th><th className="px-2 py-1">Key</th><th className="px-2 py-1">Lyrics</th><th className="px-2 py-1 text-left">Caption seed</th></tr></thead>
               <tbody>
                 {tracks.map((t) => (
                   <tr key={t.name} className="border-t border-[var(--color-line)]">
-                    <td className="max-w-[180px] truncate px-2 py-1 text-[var(--color-ink)]" title={t.name}>{t.name}</td>
+                    <td className="max-w-[140px] truncate px-2 py-1 text-[var(--color-ink)]" title={t.name}>{t.name}</td>
                     <td className="px-2 py-1 text-center">{t.bpm}</td>
                     <td className="px-2 py-1 text-center">{t.keyscale}</td>
                     <td className="px-2 py-1 text-center">{srcBadge(t.lyrics_source)}</td>
+                    <td className="max-w-[260px] px-2 py-1">
+                      <div className="truncate text-[var(--color-muted)]" title={t.caption || "(empty — edit in Step 2)"}>{t.caption || <span className="italic text-[var(--color-muted)]/60">no seed — edit in Step 2</span>}</div>
+                      {!!(t.caption_sources && t.caption_sources.length) && (
+                        <div className="mt-0.5 flex flex-wrap gap-1">{t.caption_sources!.map((s) => <span key={s} className="rounded bg-[var(--color-panel)] px-1 py-0.5 text-[9px] text-[var(--color-muted)]">{s}</span>)}</div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

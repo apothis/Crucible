@@ -2541,7 +2541,9 @@ async def lora_dataset_add(file: UploadFile = File(...), dataset: str = Form("cr
     data = await file.read()
     files, info = lora_ds.bundle_for_track(
         data, file.filename, instrumental=instrumental, artist=(artist or None),
-        title=(title or None), allow_online=allow_online, whisper_size=whisper_size)
+        title=(title or None), allow_online=allow_online, whisper_size=whisper_size,
+        analyze_host=ANALYZE_HOST, lastfm_key=CFG.get("lastfm_key", ""),
+        acoustid_key=CFG.get("acoustid_key", ""))
     lora_up.dataset_new(LORA_UPLOAD_HOST, dataset)
     up = lora_up.upload(LORA_UPLOAD_HOST, dataset, files)
     info["uploaded"] = up.get("count")
