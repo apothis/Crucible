@@ -93,6 +93,18 @@ def dataset_clear(name: str = Form(...)):
     return {"ok": True, "data_dir": p["data_dir"]}
 
 
+@app.post("/dataset/delete")
+def dataset_delete(name: str = Form(...)):
+    """Remove the entire dataset folder (data + tensors + train + adapters). Useful for
+    cleaning up smoke tests or abandoned runs without box-side rmdir gymnastics."""
+    p = _paths(name)
+    removed = []
+    if os.path.isdir(p["dataset_dir"]):
+        shutil.rmtree(p["dataset_dir"], ignore_errors=True)
+        removed.append(p["dataset_dir"])
+    return {"ok": True, "removed": removed}
+
+
 @app.get("/dataset/paths")
 def dataset_paths(name: str):
     p = _paths(name)

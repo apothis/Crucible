@@ -40,6 +40,13 @@ def dataset_clear(host, name):
     return r.json()
 
 
+def dataset_delete(host, name):
+    """Remove the entire dataset folder (data + tensors + train + adapters)."""
+    r = requests.post(_base(host) + "/dataset/delete", data={"name": name}, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
 def dataset_list(host, name):
     r = requests.get(_base(host) + "/dataset/list", params={"name": name}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
