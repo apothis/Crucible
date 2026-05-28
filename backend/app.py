@@ -2608,18 +2608,94 @@ def lora_dataset_sample_put(idx: int, body: dict):
     return ace_train.dataset_put_sample(ACESTEP_HOST, idx, body)
 
 
+# Per-dataset cache of caption seeds (Crucible enrichment) captured RIGHT BEFORE the LM
+# runs, so we can merge them with the LM's output afterward (preserves MB/Last.fm/CLAP
+# signal while still letting the LM contribute on every track).
+_AUTOLABEL_SEED: dict = {}
+
+
+def _samples_list(host):
+    """Normalize the engine's samples response into a list of dicts."""
+    s = ace_train.dataset_samples(host) or []
+    if isinstance(s, dict):
+        s = s.get("samples") or s.get("data") or []
+    return list(s) if s else []
+
+
+def _sample_idx(s, i):
+    v = s.get("sample_idx")
+    if v is None:
+        v = s.get("index", i)
+    return v
+
+
 @app.post("/api/lora/dataset/autolabel")
 def lora_dataset_autolabel(body: dict):
-    """Caption the dataset via the box LM (keeps our lyrics/bpm/key — only writes the
-    'caption' field). Ensures the LM is loaded first (a prior training run will have
-    dropped it via _ensure_training_ready). Returns the task; poll status."""
+    """Caption the dataset via the box LM (writes only the 'caption' field; lyrics/bpm/
+    key/etc untouched). Ensures the LM is loaded first (a prior training run will have
+    dropped it via _ensure_training_ready). Returns the task; poll status.
+
+    Default behavior is **merge=True**: caption seeds (our MB / Last.fm / CLAP signal)
+    are cached BEFORE the LM runs, and only_unlabeled is forced to False so the LM
+    captions every track. Call /autolabel_merge after the task completes to combine
+    seed + LM tags back into each track's caption."""
     _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    merge = bool(body.get("merge", True))
     free_gpu("acestep")
     _ensure_labeling_ready(ACESTEP_HOST, lm_model_path=body.get("lm_model_path"))
+    if merge:
+        try:
+            samples = _samples_list(ACESTEP_HOST)
+            _AUTOLABEL_SEED[dataset] = {_sample_idx(s, i): (s.get("caption") or "")
+                                        for i, s in enumerate(samples)}
+        except Exception as e:
+            print(f"[lora] autolabel seed-cache failed: {e}")
+            _AUTOLABEL_SEED.pop(dataset, None)
+    only_unlabeled = False if merge else bool(body.get("only_unlabeled", True))
     return ace_train.dataset_auto_label_async(ACESTEP_HOST,
-                                              only_unlabeled=bool(body.get("only_unlabeled", True)),
+                                              only_unlabeled=only_unlabeled,
                                               transcribe_lyrics=False, format_lyrics=False,
                                               lm_model_path=body.get("lm_model_path"))
+
+
+@app.post("/api/lora/dataset/autolabel_merge")
+def lora_dataset_autolabel_merge(body: dict):
+    """After /autolabel (merge=True) completes, combine each track's cached seed
+    caption with the LM-produced caption (de-duped, specific subgenres first via
+    caption_fetch._merge), and PUT the merged caption back to the engine. Preserves
+    MB / Last.fm / CLAP signal while keeping the LM's contribution."""
+    _lora_require_engine()
+    from . import caption_fetch
+    dataset = body.get("dataset", "crucible_metal")
+    seeds = _AUTOLABEL_SEED.pop(dataset, None)
+    if not seeds:
+        raise HTTPException(400, "no seed cache for this dataset — call /autolabel with merge=true first")
+    samples = _samples_list(ACESTEP_HOST)
+    results = []
+    for i, s in enumerate(samples):
+        idx = _sample_idx(s, i)
+        seed = (seeds.get(idx) or "").strip()
+        lm_cap = (s.get("caption") or "").strip()
+        seed_tags = [t.strip() for t in seed.split(",") if t.strip()]
+        lm_tags = [t.strip() for t in lm_cap.split(",") if t.strip()]
+        merged_tags = caption_fetch._merge([seed_tags, lm_tags], limit=12)
+        merged = ", ".join(merged_tags) if merged_tags else (lm_cap or seed)
+        if merged and merged != lm_cap:
+            put_body = {"sample_idx": idx, "caption": merged}
+            for k in ("lyrics", "bpm", "keyscale", "timesignature", "language",
+                      "is_instrumental", "genre", "prompt_override"):
+                if s.get(k) is not None:
+                    put_body[k] = s.get(k)
+            try:
+                ace_train.dataset_put_sample(ACESTEP_HOST, idx, put_body)
+                results.append({"idx": idx, "seed": seed, "lm": lm_cap, "merged": merged})
+            except Exception as e:
+                results.append({"idx": idx, "error": str(e)})
+        else:
+            results.append({"idx": idx, "skipped": True, "caption": merged or lm_cap})
+    return {"ok": True, "merged_count": sum(1 for r in results if r.get("merged")),
+            "results": results}
 
 
 @app.get("/api/lora/dataset/autolabel/status")

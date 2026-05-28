@@ -203,7 +203,19 @@ export function LoraTrainingForm(_: { cfg: Config }) {
         <Info>Loads the dataset into the engine so you can fix anything the auto-labeler got wrong — <b>especially whisper-sourced lyrics</b> (the tutorial says correcting them is required for a good result). You can also have the box write style <b>captions</b> with its LM.</Info>
         <div className="flex flex-wrap gap-2">
           <GhostButton onClick={() => act("Load dataset", async () => { await api.loraScan({ dataset, instrumental }); setScanned(true); await loadSamples(); })}>Load dataset into engine</GhostButton>
-          <GhostButton onClick={() => act("Auto-caption (box LM)", async () => { await api.loraAutolabel({ only_unlabeled: true }); })}>Auto-caption (box LM)</GhostButton>
+          <GhostButton onClick={() => act("Auto-caption (box LM) + merge", async () => {
+              await api.loraAutolabel({ dataset, merge: true });
+              // Poll engine until done (LM caption: ~10-30 s/track), then merge seeds+LM
+              for (;;) {
+                await new Promise((r) => setTimeout(r, 4000));
+                const st: any = await api.loraAutolabelStatus();
+                const s = String(st?.status || st?.state || "").toLowerCase();
+                if (st?.error || s === "error" || s === "failed") throw new Error(st?.progress || s);
+                if (st?.done || s === "completed" || s === "complete" || s === "done" || s === "idle") break;
+              }
+              await api.loraAutolabelMerge({ dataset });
+              await loadSamples();
+            })}>Auto-caption + merge</GhostButton>
           {scanned && <GhostButton onClick={() => act("Refresh", loadSamples)}>Refresh</GhostButton>}
         </div>
         {scanned && !samples.length && <Info>Loaded — no editable samples returned yet (auto-caption may still be running; hit Refresh).</Info>}

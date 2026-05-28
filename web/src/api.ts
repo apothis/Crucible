@@ -112,6 +112,7 @@ export const api = {
   loraSamplePut: (idx: number, b: unknown) => jmethod("PUT", `/api/lora/dataset/sample/${idx}`, b),
   loraAutolabel: (b: unknown) => jpost("/api/lora/dataset/autolabel", b),
   loraAutolabelStatus: () => jget("/api/lora/dataset/autolabel/status"),
+  loraAutolabelMerge: (b: unknown) => jpost("/api/lora/dataset/autolabel_merge", b),
   loraSave: (b: unknown) => jpost("/api/lora/dataset/save", b),
   loraPreprocess: (b: unknown) => jpost("/api/lora/dataset/preprocess", b),
   loraPreprocessStatus: () => jget("/api/lora/dataset/preprocess/status"),
