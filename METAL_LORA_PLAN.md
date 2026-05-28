@@ -81,6 +81,17 @@ All box endpoints take **box-side paths** (`audio_dir`, `tensor_dir`, `lora_path
 - **Phase 6 — First real train (GPU, flag first).** LoKr smoke-test on a handful of tracks → measure VRAM/epoch-time on the 3090 → then a full metal LoRA. Heavy GPU run → confirm with the user before kicking off.
 - **Phase 7 — Evaluation/iteration loop.** A/B the trained adapter: same prompt with LoRA off vs on at a few strengths, judge by ear, then decide add-data / change-epochs / retrain. Closes the quality loop (user works by ear).
 
+## 7a. Engine patches required on the box (re-apply on every engine update)
+
+Like the DCW patch (HANDOFF), the box-side `ACE-Step-1.5` source has bugs we work around with one-line patches. These get reverted by any `git pull` (i.e. re-running `ACESTEP-ENGINE_AUTO_INSTALL.bat`).
+
+| Patch | File | Fix | Why |
+|---|---|---|---|
+| DCW off (XL gen) | `acestep/inference.py` ~L148 | `dcw_enabled = False` | XL text2music garbled with DCW=True (HANDOFF) |
+| Auto-label kwargs | `acestep/training/dataset_builder_modules/label_all.py` ~L17 | Add `**_ignored,` to `label_all_samples` signature before `)` | Engine route refactor (commit `d19c2f3`, 2026-03-05) passes `chunk_size=…, batch_size=…` to a method that doesn't accept them; method last updated 2026-02-06. Verified live: probe failed with `LabelAllMixin.label_all_samples() got an unexpected keyword argument 'chunk_size'`. Pydantic fills the default (16) when the body omits it, so we can't fix this client-side. The `**_ignored` accept-and-discards the bogus kwargs. |
+
+Worth upstreaming both as PRs.
+
 ## 8. Risks / open questions
 - XL/4B **training VRAM + epoch time** on the 3090 (empirical; Phase 6).
 - Exact `/v1/init` vs `/v1/reinitialize` payloads for the label→preprocess VRAM swap (confirm on first run).

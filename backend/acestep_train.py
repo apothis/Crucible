@@ -83,12 +83,17 @@ def dataset_put_sample(host, idx, sample):
 
 
 def dataset_auto_label_async(host, only_unlabeled=False, transcribe_lyrics=False,
-                             format_lyrics=False, lm_model_path=None, save_path=None,
-                             chunk_size=16, batch_size=1):
+                             format_lyrics=False, lm_model_path=None, save_path=None):
     """Caption the scanned dataset via the box LM (async). Returns a task handle; poll
-    auto_label_status(). NOTE: the LM hallucinates BPM/key — supply those ourselves."""
-    body = {"only_unlabeled": bool(only_unlabeled), "transcribe_lyrics": bool(transcribe_lyrics),
-            "format_lyrics": bool(format_lyrics), "chunk_size": chunk_size, "batch_size": batch_size}
+    auto_label_status(). NOTE: the LM hallucinates BPM/key — supply those ourselves.
+
+    The engine's openapi advertises chunk_size + batch_size params, but those don't
+    actually reach label_all_samples() — passing them errors with 'unexpected keyword
+    argument' (engine schema/impl drift, verified 2026-05-28). So we deliberately
+    DON'T send them; the engine uses its internal defaults."""
+    body = {"only_unlabeled": bool(only_unlabeled),
+            "transcribe_lyrics": bool(transcribe_lyrics),
+            "format_lyrics": bool(format_lyrics)}
     if lm_model_path:
         body["lm_model_path"] = lm_model_path
     if save_path:
