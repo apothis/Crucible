@@ -51,13 +51,17 @@ def _rank(tag: str) -> int:
     return 5
 
 
-def _merge(tag_lists, limit=10):
-    """Union + de-dupe + sort by specificity."""
+def _merge(tag_lists, limit=10, max_unit_chars=120):
+    """Union + de-dupe + sort by specificity. Case-insensitive dedup; drops generic
+    noise. The length cap accepts both comma-tag style and a single prose sentence
+    (the LM auto-label is documented prose-style elsewhere in ACE-Step's docs), so a
+    one-sentence LM caption survives intact even when seed tags are short.
+    Repeated text would be over-weighted by the text encoder — dedup prevents that."""
     seen, out = set(), []
     for src in tag_lists:
         for t in src:
             t = _clean(t)
-            if not t or t in seen or t in _GENERIC or len(t) > 40:
+            if not t or t in seen or t in _GENERIC or len(t) > max_unit_chars:
                 continue
             seen.add(t)
             out.append(t)
