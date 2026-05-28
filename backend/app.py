@@ -2512,6 +2512,25 @@ def _lora_paths(dataset):
     return lora_up.dataset_paths(LORA_UPLOAD_HOST, dataset)
 
 
+def _ensure_training_ready(host):
+    """Drop the LM and reload the currently-loaded DiT so the engine is in a known
+    training-ready state. Without this, the LM stays resident (~10 GB VRAM) and the
+    engine's prior inference-state can make Lightning Fabric setup run slowly or get
+    stuck — the failure mode behind the original 50-epoch smoke run. The engine's
+    LoRA tutorial says 'restart and do NOT select the LM model'; this is that, via API."""
+    try:
+        h = acestep_py.health(host)
+        model = (h.get("data") or {}).get("loaded_model") or "acestep-v15-xl-sft"
+    except Exception:
+        model = "acestep-v15-xl-sft"
+    try:
+        ace_train.init(host, model=model, init_llm=False, timeout=600)
+    except Exception as e:
+        # Surface the failure but don't block — the train start will fail with a
+        # clearer error if the engine isn't actually ready.
+        print(f"[lora] _ensure_training_ready warning: {e}")
+
+
 @app.get("/api/lora/status")
 def lora_status():
     """Preflight for the Training tab: which box services are reachable + live state."""
@@ -2600,11 +2619,15 @@ def lora_dataset_save(body: dict):
 
 @app.post("/api/lora/dataset/preprocess")
 def lora_dataset_preprocess(body: dict):
-    """Encode the dataset audio to latents/tensors on the box GPU (async)."""
+    """Encode the dataset audio to latents/tensors on the box GPU (async).
+    Forces the engine into a clean DiT-only state first (drops the LM to free ~10GB
+    of VRAM) — without this the engine can stay in inference-state and Fabric setup
+    runs slow/stuck against a saturated memory footprint."""
     _lora_require_engine()
     dataset = body.get("dataset", "crucible_metal")
     p = _lora_paths(dataset)
     free_gpu("acestep")
+    _ensure_training_ready(ACESTEP_HOST)
     return ace_train.dataset_preprocess_async(ACESTEP_HOST, p["tensor_dir"],
                                               skip_existing=bool(body.get("skip_existing", False)))
 
@@ -2617,12 +2640,15 @@ def lora_dataset_preprocess_status():
 
 @app.post("/api/lora/train")
 def lora_train(body: dict):
-    """Start LoRA or LoKr training on the box from the preprocessed tensors. GPU-exclusive."""
+    """Start LoRA or LoKr training on the box from the preprocessed tensors. GPU-exclusive.
+    Forces the engine into a clean DiT-only state first (LM dropped) — the tutorial's
+    'restart and do NOT select the LM model' rule, via API."""
     _lora_require_engine()
     dataset = body.get("dataset", "crucible_metal")
     p = _lora_paths(dataset)
     method = (body.get("method") or "lokr").lower()
     free_gpu("acestep")
+    _ensure_training_ready(ACESTEP_HOST)
     common = {k: body[k] for k in ("train_epochs", "train_batch_size", "gradient_accumulation",
                                    "save_every_n_epochs", "learning_rate", "training_seed",
                                    "gradient_checkpointing") if k in body}

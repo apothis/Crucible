@@ -146,6 +146,31 @@ For metal training data:
 
 In Crucible's flow this maps to: let the box LM Auto-Label generate the first-pass captions, **then edit them in the review step** to add the specific descriptors that define your scope. The review step is doing real work — don't skip it.
 
+### 10.4a Measured numbers (this box: RTX 3090 24 GB, xl-sft 4B, 2026-05-28)
+
+A/B calibration on 6 power-metal tracks, LoKr (rank 64, lr 0.03, batch 1, grad-accum 4):
+
+| | grad_ckpt **ON** | grad_ckpt **OFF** |
+|---|---|---|
+| Epoch 1 (incl. warmup) | 61 s | 127 s |
+| Post-warmup epochs (avg) | **~42 s/epoch** | **~104 s/epoch** |
+| 5-epoch total | 227 s | 544 s |
+
+**Surprise: grad_ckpt=ON is ~2.5× FASTER here**, opposite the textbook prior. On this card, the 4B XL decoder backward without checkpointing saturates VRAM bandwidth and the GPU stalls waiting on memory (bandwidth-bound). With checkpointing it's compute-bound and SMs stay hot (audible via the GPU fan during A vs near-silent during B). **Make `gradient_checkpointing=True` the default for XL/4B LoKr training.**
+
+Real-world planning numbers on this rig:
+- **50-epoch run ≈ 35 minutes** (epoch 1 ~60 s + 49 × ~42 s)
+- **500-epoch run ≈ 5.8 hours**
+- Preprocess: ~25 s for 6 tracks → ~4 s/track
+
+**Clean engine state before training matters — bake it in.** The very first attempt was stuck at ~170 s/step for 5 minutes (CPU-bound, GPU idle). Root cause: the engine was in default *inference* state (DiT + LM both loaded for captioning) when training started; Lightning Fabric setup against that saturated state ran slow. The fix is what the tutorial calls "restart and do NOT select the LM model" — via API that's:
+
+```
+POST /v1/init {"model": "<current>", "init_llm": false}
+```
+
+before `dataset/preprocess_async` or `training/start[_lokr]`. The backend's `/api/lora/dataset/preprocess` and `/api/lora/train` now do this automatically (`_ensure_training_ready`).
+
 ### 10.5 Hyperparameter intuition by scope
 
 Same defaults as Side-Step's *"good default rank 64, alpha 128"* mostly hold, with these nudges:
