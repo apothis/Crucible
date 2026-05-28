@@ -45,6 +45,8 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   const [whisper, setWhisper] = useState("small");
   const [adding, setAdding] = useState("");
   const [scanned, setScanned] = useState(false);
+  const [samples, setSamples] = useState<Record<string, any>[]>([]);
+  const [savingIdx, setSavingIdx] = useState(-1);
   const [method, setMethod] = useState<"lokr" | "lora">("lokr");
   const [epochs, setEpochs] = useState(500);
   const [advanced, setAdvanced] = useState(false);
@@ -93,6 +95,29 @@ export function LoraTrainingForm(_: { cfg: Config }) {
     try { await fn(); setMsg(`✓ ${label}`); refresh(); }
     catch (e) { setMsg(`✗ ${label}: ${(e as Error).message}`); }
   }
+
+  async function loadSamples() {
+    const d: any = await api.loraSamples();
+    setSamples(Array.isArray(d) ? d : (d?.samples || d?.data || []));
+  }
+  const updSample = (i: number, patch: Record<string, any>) =>
+    setSamples((ss) => ss.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  async function saveSample(i: number) {
+    const s = samples[i];
+    const idx = s.sample_idx ?? s.index ?? i;
+    setSavingIdx(idx);
+    try {
+      // engine UpdateSampleRequest fields (merge so we don't drop anything)
+      const body: Record<string, any> = { sample_idx: idx };
+      for (const k of ["caption", "genre", "prompt_override", "lyrics", "bpm", "keyscale", "timesignature", "language", "is_instrumental"])
+        if (s[k] !== undefined) body[k] = s[k];
+      await api.loraSamplePut(idx, body);
+      setMsg(`✓ saved ${s.name || s.filename || "#" + idx}`);
+    } catch (e) { setMsg(`✗ save: ${(e as Error).message}`); }
+    finally { setSavingIdx(-1); }
+  }
+  const sampleName = (s: Record<string, any>, i: number) =>
+    s.name || s.filename || (s.audio_path ? String(s.audio_path).split(/[\\/]/).pop() : "") || `#${s.sample_idx ?? i}`;
 
   const epochHint = tracks.length >= 80 ? "~500 for ~100 tracks" : tracks.length ? "~800 for 10–20 tracks" : "add tracks first";
 
@@ -171,10 +196,40 @@ export function LoraTrainingForm(_: { cfg: Config }) {
       <Step n={2} title="Load & review labels" sub="correct the auto-labels before training" done={scanned} disabled={!ready || !tracks.length}>
         <Info>Loads the dataset into the engine so you can fix anything the auto-labeler got wrong — <b>especially whisper-sourced lyrics</b> (the tutorial says correcting them is required for a good result). You can also have the box write style <b>captions</b> with its LM.</Info>
         <div className="flex flex-wrap gap-2">
-          <GhostButton onClick={() => act("Load dataset", async () => { await api.loraScan({ dataset, instrumental }); setScanned(true); })}>Load dataset into engine</GhostButton>
-          <GhostButton onClick={() => act("Auto-caption (box LM)", () => api.loraAutolabel({ only_unlabeled: true }))}>Auto-caption (box LM)</GhostButton>
+          <GhostButton onClick={() => act("Load dataset", async () => { await api.loraScan({ dataset, instrumental }); setScanned(true); await loadSamples(); })}>Load dataset into engine</GhostButton>
+          <GhostButton onClick={() => act("Auto-caption (box LM)", async () => { await api.loraAutolabel({ only_unlabeled: true }); })}>Auto-caption (box LM)</GhostButton>
+          {scanned && <GhostButton onClick={() => act("Refresh", loadSamples)}>Refresh</GhostButton>}
         </div>
-        <Info>Review/edit per-track lyrics &amp; captions opens here once loaded (engine sample editor). BPM/key were computed locally (the LM hallucinates those, so we don’t let it touch them).</Info>
+        {scanned && !samples.length && <Info>Loaded — no editable samples returned yet (auto-caption may still be running; hit Refresh).</Info>}
+        {!!samples.length && (
+          <div className="space-y-2">
+            <Info>Fix anything wrong below — <b>especially whisper-flagged lyrics</b>. <b>Caption</b> is the style description the model learns from (e.g. “melodic death metal, blast beats, tremolo guitars, growled vocals”). BPM/key were measured locally and are usually right. Click <b>Save</b> on each track you edit.</Info>
+            {samples.map((s, i) => {
+              const idx = s.sample_idx ?? s.index ?? i;
+              const nm = sampleName(s, i);
+              const src = tracks.find((t) => nm.includes(t.name) || (t.name && nm.replace(/\.[^.]+$/, "") === t.name));
+              return (
+                <div key={idx} className="space-y-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className="flex-1 truncate text-[var(--color-ink)]" title={nm}>{nm}</span>
+                    {src && srcBadge(src.lyrics_source)}
+                    <span className="text-[var(--color-muted)]">{s.bpm ?? "?"} bpm · {s.keyscale ?? "?"}</span>
+                  </div>
+                  <input className={`${inp} text-xs`} value={s.caption || ""} placeholder="caption — style description (what the LoRA learns)"
+                    onChange={(e) => updSample(i, { caption: e.target.value })} />
+                  {!s.is_instrumental && (
+                    <textarea className={`${inp} text-xs`} rows={3} value={s.lyrics || ""} placeholder="lyrics (correct any whisper errors)"
+                      onChange={(e) => updSample(i, { lyrics: e.target.value })} />
+                  )}
+                  <button onClick={() => saveSample(i)} disabled={savingIdx === idx}
+                    className="rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
+                    {savingIdx === idx ? "saving…" : "Save"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Step>
 
       {/* Step 3 — train */}
