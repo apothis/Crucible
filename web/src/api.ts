@@ -123,7 +123,15 @@ export const api = {
   loraScale: (b: unknown) => jpost("/api/lora/scale", b),
   loraToggle: (b: unknown) => jpost("/api/lora/toggle", b),
   loraUnload: () => jpost("/api/lora/unload", {}),
+
+  // Settings panel — curated app_config.json editor
+  settings: () => jget("/api/settings"),
+  settingsSave: (b: Record<string, unknown>) => jmethod("PUT", "/api/settings", b),
 };
+
+export type SettingsField = { group: string; key: string; type: string; label: string;
+                              hint: string; value: string | boolean };
+export type SettingsResponse = { fields: SettingsField[]; config_path: string };
 
 export type LoraStatus = {
   train_available: boolean; upload_available: boolean;

@@ -4,6 +4,7 @@ import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm
 import { VocalBuilderForm } from "./VocalBuilder";
 import { ImportForm } from "./Import";
 import { LoraTrainingForm } from "./LoraTraining";
+import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
 import { DraftProvider, useDraftCtx } from "./drafts";
@@ -55,6 +56,7 @@ function AppInner() {
   const [song, setSong] = useState<SongDraft | null>(null);
   const [handoff, setHandoff] = useState<{ tags?: string; lyrics?: string } | null>(null);
   const [libOpen, setLibOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<string[]>(GROUPS.map((g) => g.name));
   // Projects — a saved bundle of every page's drafts + the song arrangement + tab.
   const [projects, setProjects] = useState<Project[]>([]);
@@ -152,7 +154,8 @@ function AppInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <Header cfg={cfg} ace={ace} libOpen={libOpen} toggleLib={() => setLibOpen((v) => !v)} />
+      <Header cfg={cfg} ace={ace} libOpen={libOpen} toggleLib={() => setLibOpen((v) => !v)} onOpenSettings={() => setSettingsOpen(true)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ProjectBar projects={projects} current={current}
         onNew={projectNew} onOpen={projectOpen} onSave={projectSave} onSaveAs={projectSaveAs}
         onRename={projectRename} onDelete={projectDelete} />
@@ -241,7 +244,7 @@ function shortModel(m?: string): string {
   return m.replace(/^acestep-v15-/, "").replace(/^acestep-/, "");   // acestep-v15-xl-sft → xl-sft
 }
 
-function Header({ cfg, ace, libOpen, toggleLib }: { cfg: Config | null; ace: { reachable: boolean; model?: string } | null; libOpen: boolean; toggleLib: () => void }) {
+function Header({ cfg, ace, libOpen, toggleLib, onOpenSettings }: { cfg: Config | null; ace: { reachable: boolean; model?: string } | null; libOpen: boolean; toggleLib: () => void; onOpenSettings: () => void }) {
   return (
     <header className="flex items-center justify-between border-b border-[var(--color-line)] px-5 py-3">
       <div className="flex items-baseline gap-2">
@@ -255,6 +258,10 @@ function Header({ cfg, ace, libOpen, toggleLib }: { cfg: Config | null; ace: { r
           <Chip ok={!!ace?.reachable}
             label={`ACE ${ace ? (ace.reachable ? "· " + (shortModel(ace.model) || "loading…") : "· off") : "…"}`} />
         )}
+        <button onClick={onOpenSettings} title="Settings — hosts, API keys, engine flags"
+          className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-2.5 py-1 text-[var(--color-muted)] transition hover:text-[var(--color-ink)]">
+          ⚙
+        </button>
         <button onClick={toggleLib}
           className={`rounded-lg border px-2.5 py-1 transition ${libOpen ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
           {libOpen ? "Library ▸" : "◂ Library"}

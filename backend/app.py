@@ -2691,6 +2691,100 @@ def lora_unload():
     return ace_train.lora_unload(ACESTEP_HOST)
 
 
+# ==================== Settings panel (curated app_config.json editor) ====================
+# A whitelist + per-field metadata so the UI can render a self-documenting form for
+# the values the user actually changes. Saving writes app_config.json *preserving*
+# any non-whitelisted keys. Most changes need a ./run.sh restart to take effect.
+SETTINGS_FIELDS = [
+    # Box services (hosts) -------------------------------------------------------
+    {"group": "Box services", "key": "comfy_host", "type": "host",
+     "label": "ComfyUI", "hint": "default :8188 · ACE-Step generation via ComfyUI (fallback path)"},
+    {"group": "Box services", "key": "acestep_host", "type": "host",
+     "label": "ACE-Step engine", "hint": "default :8001 · Generate / Cover / LoRA training (the official engine)"},
+    {"group": "Box services", "key": "analyze_host", "type": "host",
+     "label": "Analyze service", "hint": "default :5075 · allin1 structure + CLAP tags; also seeds LoRA captions (§17a)"},
+    {"group": "Box services", "key": "lora_upload_host", "type": "host",
+     "label": "LoRA upload helper", "hint": "default :5080 · run LORA-UPLOAD_AUTO_INSTALL.bat on the box"},
+    {"group": "Box services", "key": "roformer_host", "type": "host",
+     "label": "BS-Roformer separator", "hint": "default :5070 · SOTA 6-stem separation"},
+    {"group": "Box services", "key": "soulx_host", "type": "host",
+     "label": "SoulX-Singer", "hint": "default :5060 · zero-shot vocal synthesis"},
+    {"group": "Box services", "key": "rvc_python_host", "type": "host",
+     "label": "RVC API server", "hint": "default :5050 · voice conversion"},
+    # Engine feature flags ------------------------------------------------------
+    {"group": "Engine flags", "key": "acestep_dcw_ok", "type": "bool",
+     "label": "ACE DCW patched on box",
+     "hint": "true when xl-base/sft DCW is patched OFF on the box; otherwise Generate falls back to ComfyUI (HANDOFF)"},
+    {"group": "Engine flags", "key": "acestep_repaint", "type": "bool",
+     "label": "Use engine for Repaint",
+     "hint": "OFF (recommended) → ComfyUI · engine repaint is weak (silence-seed, no LM, no loudness match)"},
+    {"group": "Engine flags", "key": "acestep_lego", "type": "bool",
+     "label": "Use engine for Add-a-Layer",
+     "hint": "OFF (recommended) → ComfyUI · engine lego garbles regions in current testing"},
+    # API keys ------------------------------------------------------------------
+    {"group": "API keys", "key": "lastfm_key", "type": "secret",
+     "label": "Last.fm API key",
+     "hint": "Richer LoRA caption tags for known songs · free key at https://www.last.fm/api/account/create"},
+    {"group": "API keys", "key": "acoustid_key", "type": "secret",
+     "label": "AcoustID API key",
+     "hint": "Identify untagged audio by fingerprint · needs `brew install chromaprint` for fpcalc · key at https://acoustid.org/api-key"},
+    # Mac server ----------------------------------------------------------------
+    {"group": "Mac server", "key": "server_host", "type": "host",
+     "label": "Mac listen address",
+     "hint": "127.0.0.1 = local only · 0.0.0.0 = reachable on the LAN at http://<this-mac-ip>:8000 (no auth — trusted networks only)"},
+    {"group": "Mac server", "key": "rvc_driver", "type": "select:auto,rvc_python,gradio",
+     "label": "RVC driver",
+     "hint": "auto picks the clean API server, falls back to the legacy WebUI"},
+]
+SETTINGS_KEYS = {f["key"] for f in SETTINGS_FIELDS}
+SETTINGS_TYPES = {f["key"]: f["type"] for f in SETTINGS_FIELDS}
+
+
+@app.get("/api/settings")
+def get_settings():
+    """Return the curated, self-documenting field list with current values."""
+    return {"fields": [{**f, "value": CFG.get(f["key"], "")} for f in SETTINGS_FIELDS],
+            "config_path": _CFG_PATH}
+
+
+@app.put("/api/settings")
+def put_settings(body: dict):
+    """Write whitelisted keys to app_config.json, preserving any others.
+    Most changes need a ./run.sh restart to take effect (module-level vars are
+    read at startup); the response flags whether any changes actually landed."""
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be an object")
+    # load the current file (preserve unrelated keys)
+    cur = {}
+    if os.path.exists(_CFG_PATH):
+        try:
+            with open(_CFG_PATH) as f:
+                cur = json.load(f)
+        except Exception:
+            cur = {}
+    changes = []
+    for k, v in body.items():
+        if k not in SETTINGS_KEYS:
+            continue
+        t = SETTINGS_TYPES[k]
+        if t == "bool":
+            v = bool(v)
+        elif t.startswith("select:"):
+            choices = t.split(":", 1)[1].split(",")
+            if str(v) not in choices:
+                continue
+            v = str(v)
+        else:  # host / secret / string
+            v = str(v).strip()
+        if cur.get(k) != v:
+            cur[k] = v
+            changes.append(k)
+    if changes:
+        with open(_CFG_PATH, "w") as f:
+            json.dump(cur, f, indent=2)
+    return {"ok": True, "changes": changes, "restart_required": bool(changes)}
+
+
 # static frontend at root (registered last so /api/* wins)
 app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
 
