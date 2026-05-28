@@ -35,9 +35,12 @@ if not exist "%DEST%" mkdir "%DEST%"
 echo(
 echo Dataset root - where uploaded audio + preprocessed tensors + trained adapters live.
 echo *** IMPORTANT *** the ACE-Step engine's training pipeline has a path-safety check that
-echo rejects dataset paths OUTSIDE its launch directory (acestep/training/path_safety.py).
-echo So this root MUST be a subfolder of the folder where run_acestep_api.bat lives,
-echo e.g.  E:\AI\MusicGen\AceStep\lora_data  (when the engine is at E:\AI\MusicGen\AceStep)
+echo rejects dataset paths OUTSIDE its working directory at launch (acestep/training/path_safety.py).
+echo Our engine launcher does  cd /d "<install>\ACE-Step-1.5"  so the engine's safe root is
+echo the cloned-repo subfolder, NOT the install root. This dataset root MUST be a subfolder
+echo of that  ACE-Step-1.5  directory, e.g.
+echo     E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data
+echo (when the engine is at E:\AI\MusicGen\AceStep)
 echo Leave blank to use  %DEST%\lora_data  (only safe if THIS helper is installed inside the engine dir)
 set /p "DATAROOT=Path: "
 if "%DATAROOT%"=="" set "DATAROOT=%DEST%\lora_data"
