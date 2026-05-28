@@ -65,41 +65,118 @@ def _merge(tag_lists, limit=10):
 
 
 def musicbrainz_tags(artist, title, timeout=10):
-    """Recording-level tags + artist disambiguation. Free, no key.
-    Returns (tags:list, artist_blurb:str)."""
+    """Recording-level tags + artist disambiguation + best inline release title.
+    Free, no key. Returns (tags:list, artist_blurb:str, album:str). Album-picking
+    prefers studio releases over live/compilation matches when multiple exist."""
     if not (artist and title):
-        return [], ""
+        return [], "", ""
     try:
         q = f'recording:"{title}" AND artist:"{artist}"'
         r = requests.get(f"{_MB}/recording", params={"query": q, "fmt": "json", "limit": 3},
                          headers={"User-Agent": UA, "Accept": "application/json"}, timeout=timeout)
         if r.status_code != 200:
-            return [], ""
+            return [], "", ""
         recs = r.json().get("recordings") or []
         if not recs:
-            return [], ""
-        tags = [t["name"] for t in (recs[0].get("tags") or []) if t.get("name")]
-        ac = (recs[0].get("artist-credit") or [{}])[0]
+            return [], "", ""
+        rec = recs[0]
+        tags = [t["name"] for t in (rec.get("tags") or []) if t.get("name")]
+        ac = (rec.get("artist-credit") or [{}])[0]
         blurb = _clean(((ac.get("artist") or {}).get("disambiguation") or ""))
-        return tags, blurb
+        rels = rec.get("releases") or []
+
+        def _is_studio(rel):
+            rg = rel.get("release-group") or {}
+            sec = [s.lower() for s in (rg.get("secondary-types") or [])]
+            return "live" not in sec and "compilation" not in sec
+        chosen = next((x for x in rels if _is_studio(x)), rels[0] if rels else None)
+        album = ((chosen or {}).get("title") or "").strip()
+        return tags, blurb, album
     except Exception:
-        return [], ""
+        return [], "", ""
 
 
-def lastfm_tags(artist, title, key, timeout=10):
-    """track.getTopTags via Last.fm (requires free key). Empty list when key missing."""
-    if not (artist and title and key):
+def lastfm_album_tags(artist, album, key, timeout=10):
+    """album.getTopTags via Last.fm — popularity-filtered, drops artist/album name noise.
+    Often the richest folksonomy layer for back-catalog metal (track tags are usually empty,
+    artist tags are broad, album tags sit in the useful middle)."""
+    if not (artist and album and key):
         return []
     try:
-        r = requests.get(_LFM, params={"method": "track.getTopTags", "artist": artist,
-                                       "track": title, "api_key": key, "format": "json",
+        r = requests.get(_LFM, params={"method": "album.getTopTags", "artist": artist,
+                                       "album": album, "api_key": key, "format": "json",
                                        "autocorrect": 1}, timeout=timeout)
         if r.status_code != 200:
             return []
-        tags = (r.json().get("toptags") or {}).get("tag") or []
-        return [t["name"] for t in tags[:10] if t.get("name")]
+        out, drop = [], {artist.lower(), album.lower()}
+        for t in (r.json().get("toptags") or {}).get("tag") or []:
+            if (t.get("count") or 0) < 10:
+                continue
+            n = (t.get("name") or "").strip()
+            if n and n.lower() not in drop:
+                out.append(n)
+                if len(out) >= 10:
+                    break
+        return out
     except Exception:
         return []
+
+
+def read_album_tag(audio_path):
+    """ALBUM via mutagen, or ''. Prefer the user's local tag — usually the original
+    studio album, more useful than MB's first release-match (often a live/compilation)."""
+    if not (audio_path and os.path.exists(audio_path)):
+        return ""
+    try:
+        from mutagen import File as MFile
+        m = MFile(audio_path, easy=True)
+        if not m:
+            return ""
+        a = (m.get("album") or [""])[0]
+        return (a or "").strip()
+    except Exception:
+        return ""
+
+
+def lastfm_tags(artist, title, key, timeout=10):
+    """Last.fm folksonomy. Track tags first; merges with artist-level tags
+    (popularity-filtered) because Last.fm leaves many tracks untagged even when
+    the artist is well-tagged. Drops the artist name itself + low-popularity noise."""
+    if not (artist and title and key):
+        return []
+    out, seen = [], set()
+
+    def _add(name):
+        n = (name or "").strip()
+        k = n.lower()
+        if n and k not in seen:
+            seen.add(k); out.append(n)
+
+    def _call(method, params):
+        try:
+            r = requests.get(_LFM, params={"method": method, "api_key": key,
+                                           "format": "json", "autocorrect": 1, **params},
+                             timeout=timeout)
+            if r.status_code != 200:
+                return []
+            return (r.json().get("toptags") or {}).get("tag") or []
+        except Exception:
+            return []
+
+    # 1) track-level (specific but often empty for metal back-catalog)
+    for t in _call("track.getTopTags", {"artist": artist, "track": title})[:10]:
+        _add(t.get("name"))
+    # 2) artist-level fallback/merge (popularity-filtered; drop the artist's own name)
+    artist_lc = artist.lower()
+    for t in _call("artist.getTopTags", {"artist": artist}):
+        if (t.get("count") or 0) < 10:
+            continue
+        if (t.get("name") or "").lower() == artist_lc:
+            continue
+        _add(t.get("name"))
+        if len(out) >= 15:
+            break
+    return out
 
 
 def acoustid_identify(audio_path, key, fpcalc_bin="fpcalc", timeout=25):
@@ -157,26 +234,33 @@ def get_caption(audio_path=None, *, artist=None, title=None,
         if ident:
             artist, title = ident
             sources.append("acoustid")
-    # 2. MusicBrainz tags + artist disambiguation
-    mb_tags, artist_info = ([], "")
+    # 2. MusicBrainz tags + artist disambiguation + album (inline release title)
+    mb_tags, artist_info, mb_album = ([], "", "")
     if artist and title:
-        mb_tags, artist_info = musicbrainz_tags(artist, title)
-        if mb_tags or artist_info:
+        mb_tags, artist_info, mb_album = musicbrainz_tags(artist, title)
+        if mb_tags or artist_info or mb_album:
             sources.append("musicbrainz")
-    # 3. Last.fm tags (richer; opt-in)
+    # 3. Album: prefer the user's local ALBUM tag (studio album) over MB's first
+    #    release-match (which can be a live/compilation release of the same recording)
+    album = (read_album_tag(audio_path) if audio_path else "") or mb_album
+    # 4. Last.fm track + artist tags
     lfm = lastfm_tags(artist, title, lastfm_key) if (artist and title and lastfm_key) else []
     if lfm:
         sources.append("lastfm")
-    # 4. CLAP audio-based tags from the box (works without artist/title)
+    # 5. Last.fm album tags — often the richest middle layer for known songs
+    lfm_alb = lastfm_album_tags(artist, album, lastfm_key) if (album and lastfm_key) else []
+    if lfm_alb:
+        sources.append("lastfm-album")
+    # 6. CLAP audio-based tags from the box (works without artist/title)
     clap = clap_tags(audio_path, analyze_host) if (allow_clap and analyze_host and audio_path) else []
     if clap:
         sources.append("clap")
 
-    tags = _merge([mb_tags, lfm, clap], limit=max_tags)
+    tags = _merge([mb_tags, lfm, lfm_alb, clap], limit=max_tags)
     pieces = []
     if artist_info:    # e.g. "english heavy metal band"
         pieces.append(artist_info)
     pieces.extend(tags)
     caption = ", ".join(pieces)
     return {"caption": caption, "tags": tags, "sources": sources,
-            "artist": artist, "title": title, "artist_info": artist_info}
+            "artist": artist, "title": title, "album": album, "artist_info": artist_info}
