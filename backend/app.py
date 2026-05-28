@@ -2512,6 +2512,13 @@ def _lora_paths(dataset):
     return lora_up.dataset_paths(LORA_UPLOAD_HOST, dataset)
 
 
+def _current_engine_model(host, default="acestep-v15-xl-sft"):
+    try:
+        return (acestep_py.health(host).get("data") or {}).get("loaded_model") or default
+    except Exception:
+        return default
+
+
 def _ensure_training_ready(host):
     """Drop the LM and reload the currently-loaded DiT so the engine is in a known
     training-ready state. Without this, the LM stays resident (~10 GB VRAM) and the
@@ -2519,16 +2526,23 @@ def _ensure_training_ready(host):
     stuck — the failure mode behind the original 50-epoch smoke run. The engine's
     LoRA tutorial says 'restart and do NOT select the LM model'; this is that, via API."""
     try:
-        h = acestep_py.health(host)
-        model = (h.get("data") or {}).get("loaded_model") or "acestep-v15-xl-sft"
-    except Exception:
-        model = "acestep-v15-xl-sft"
-    try:
-        ace_train.init(host, model=model, init_llm=False, timeout=600)
+        ace_train.init(host, model=_current_engine_model(host), init_llm=False, timeout=600)
     except Exception as e:
         # Surface the failure but don't block — the train start will fail with a
         # clearer error if the engine isn't actually ready.
         print(f"[lora] _ensure_training_ready warning: {e}")
+
+
+def _ensure_labeling_ready(host, lm_model_path=None):
+    """Symmetric counterpart of _ensure_training_ready: make sure the LM is loaded
+    so auto-label / captioning can run. Without this, calling auto-label after a
+    training run (which drops the LM) fails with 'llm not initialized'. Re-loads
+    the LM idempotently — engine no-ops if already loaded."""
+    try:
+        ace_train.init(host, model=_current_engine_model(host), init_llm=True,
+                       lm_model_path=lm_model_path, timeout=600)
+    except Exception as e:
+        print(f"[lora] _ensure_labeling_ready warning: {e}")
 
 
 @app.get("/api/lora/status")
@@ -2596,11 +2610,16 @@ def lora_dataset_sample_put(idx: int, body: dict):
 
 @app.post("/api/lora/dataset/autolabel")
 def lora_dataset_autolabel(body: dict):
-    """Caption the dataset via the box LM (keeps our lyrics/bpm/key). Returns the task; poll status."""
+    """Caption the dataset via the box LM (keeps our lyrics/bpm/key — only writes the
+    'caption' field). Ensures the LM is loaded first (a prior training run will have
+    dropped it via _ensure_training_ready). Returns the task; poll status."""
     _lora_require_engine()
     free_gpu("acestep")
-    return ace_train.dataset_auto_label_async(ACESTEP_HOST, only_unlabeled=bool(body.get("only_unlabeled", True)),
-                                              transcribe_lyrics=False, format_lyrics=False)
+    _ensure_labeling_ready(ACESTEP_HOST, lm_model_path=body.get("lm_model_path"))
+    return ace_train.dataset_auto_label_async(ACESTEP_HOST,
+                                              only_unlabeled=bool(body.get("only_unlabeled", True)),
+                                              transcribe_lyrics=False, format_lyrics=False,
+                                              lm_model_path=body.get("lm_model_path"))
 
 
 @app.get("/api/lora/dataset/autolabel/status")
