@@ -2677,10 +2677,10 @@ def lora_dataset_autolabel_merge(body: dict):
         idx = _sample_idx(s, i)
         seed = (seeds.get(idx) or "").strip()
         lm_cap = (s.get("caption") or "").strip()
-        seed_tags = [t.strip() for t in seed.split(",") if t.strip()]
-        lm_tags = [t.strip() for t in lm_cap.split(",") if t.strip()]
-        merged_tags = caption_fetch._merge([seed_tags, lm_tags], limit=12)
-        merged = ", ".join(merged_tags) if merged_tags else (lm_cap or seed)
+        # The LM produces prose (verified by probe — long descriptive sentences); naive
+        # comma-split dedup would drop big chunks. merge_seed_with_lm picks the right
+        # strategy per detected format.
+        merged = caption_fetch.merge_seed_with_lm(seed, lm_cap)
         if merged and merged != lm_cap:
             put_body = {"sample_idx": idx, "caption": merged}
             for k in ("lyrics", "bpm", "keyscale", "timesignature", "language",

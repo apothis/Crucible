@@ -51,6 +51,48 @@ def _rank(tag: str) -> int:
     return 5
 
 
+def merge_seed_with_lm(seed: str, lm: str, max_chars: int = 512) -> str:
+    """Combine our tag-list enrichment seed with the box LM's caption.
+
+    Verified by probe (2026-05-28): the LM emits ~750-char prose like
+    "An explosive modern metal track driven by high-gain... around the
+    two-and-a-half-minute mark... powerful chorus and an abrupt, impactful
+    ending." Comma-splitting prose to dedup against tag-list seed loses too
+    much — long comma-fragments get filtered, and there's no semantic dedup
+    between a tag like "power metal" and a phrase mentioning "metal track".
+
+    Strategy: detect the LM's format and use the right merger.
+      - LM prose (sentences) → two-section caption: "<seed tags>. <LM prose>"
+        with a period separator. Both signals preserved; the tokenizer sees
+        them as distinct grammatical sections.
+      - LM tag-list (rare for this engine but possible) → fall back to
+        _merge() with case-insensitive dedup."""
+    seed = (seed or "").strip()
+    lm = (lm or "").strip()
+    if not lm: return seed
+    if not seed: return lm
+    parts = [p.strip() for p in lm.split(",") if p.strip()]
+    longest = max((len(p) for p in parts), default=0)
+    # Prose detection: multiple sentences OR any long comma-fragment.
+    is_prose = lm.count(".") >= 2 or longest > 40
+    if is_prose:
+        sep = " " if seed.endswith((".", "!", "?")) else ". "
+        budget = max_chars - len(seed) - len(sep)
+        if budget < 60:
+            return seed[:max_chars]
+        lm_part = lm[:budget]
+        # If we sliced mid-sentence, back up to the last sentence-end so the caption
+        # doesn't end mid-word. Only if that keeps >50% of the budget — otherwise the
+        # mid-cut is preferable to a one-sentence cliff.
+        last_end = max(lm_part.rfind("."), lm_part.rfind("!"), lm_part.rfind("?"))
+        if last_end > budget * 0.5:
+            lm_part = lm_part[: last_end + 1]
+        return f"{seed}{sep}{lm_part}"
+    seed_tags = [t.strip() for t in seed.split(",") if t.strip()]
+    lm_tags = [t.strip() for t in lm.split(",") if t.strip()]
+    return ", ".join(_merge([seed_tags, lm_tags], limit=14))[:max_chars]
+
+
 def _merge(tag_lists, limit=10, max_unit_chars=120):
     """Union + de-dupe + sort by specificity. Case-insensitive dedup; drops generic
     noise. The length cap accepts both comma-tag style and a single prose sentence
