@@ -140,7 +140,10 @@ export type LoraStatus = {
   upload?: { ok?: boolean; base_dir?: string }; upload_error?: string;
   training?: { is_training?: boolean; status?: string; current_epoch?: number; current_step?: number;
                current_loss?: number | null; steps_per_second?: number; estimated_time_remaining?: number;
-               loss_history?: number[] };
+               loss_history?: number[]; training_log?: string; tensorboard_url?: string | null;
+               start_time?: number | null; error?: string | null; config?: Record<string, any> };
+  preprocess?: { task_id?: string | null; status?: string; progress?: string;
+                 current?: number; total?: number };
   lora?: { lora_loaded?: boolean; use_lora?: boolean; lora_scale?: number; adapters?: string[] };
 };
 export type LoraTrack = { name: string; bpm: number; keyscale: string; has_lyrics: boolean;

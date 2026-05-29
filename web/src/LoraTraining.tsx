@@ -25,6 +25,49 @@ function Step({ n, title, sub, done, disabled, children }: {
     </div>
   );
 }
+function ProgressBar({ pct, tone = "accent" }: { pct: number; tone?: "accent" | "emerald" | "amber" }) {
+  const p = Math.max(0, Math.min(100, pct));
+  const fill = tone === "emerald" ? "bg-emerald-500" : tone === "amber" ? "bg-amber-500" : "bg-[var(--color-accent)]";
+  return (
+    <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-panel)]">
+      <div className={`h-full ${fill} transition-[width] duration-500 ease-out`} style={{ width: `${p}%` }} />
+    </div>
+  );
+}
+
+// Engine returns loss_history as an array of {step, loss} objects (not just numbers).
+// Defensively unwrap either shape, drop NaNs/non-finite, render only what's valid.
+function LossSparkline({ history }: { history: Array<number | { loss?: number; step?: number }> }) {
+  const vals = (history || [])
+    .map((v: any) => (typeof v === "number" ? v : Number(v?.loss)))
+    .filter((n: number) => Number.isFinite(n));
+  if (vals.length < 2) return null;
+  const W = 240, H = 36, P = 2;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 1;
+  const path = vals.map((v, i) => {
+    const x = P + (i * (W - 2 * P)) / Math.max(1, vals.length - 1);
+    const y = P + (H - 2 * P) * (1 - (v - min) / range);
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const last = vals[vals.length - 1];
+  return (
+    <div className="flex items-center gap-2">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-9 flex-1 text-[var(--color-accent)]">
+        <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      <span className="font-mono text-[10px] text-[var(--color-muted)]">loss<br /><b className="text-[var(--color-ink)]">{last.toFixed(4)}</b></span>
+    </div>
+  );
+}
+
+function fmtEta(s: number | undefined) {
+  if (!s || s <= 0) return "—";
+  if (s < 60) return `${Math.round(s)} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} m ${Math.round(s % 60)} s`;
+  return `${(s / 3600).toFixed(1)} h`;
+}
+
 function srcBadge(src: string) {
   const map: Record<string, [string, string]> = {
     lrclib: ["LRCLIB", "bg-emerald-500/15 text-emerald-300"],
@@ -54,18 +97,27 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   const [alpha, setAlpha] = useState(128);
   const [gradckpt, setGradckpt] = useState(true);
   const [msg, setMsg] = useState("");
+  // Chain phase tracker — drives the prominent "running" banner + faster polling
+  // from the moment the user clicks (don't wait for /api/lora/status to catch up).
+  const [chainPhase, setChainPhase] = useState<null | "saving" | "preprocessing" | "starting-train">(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = () => api.loraStatus().then(setStatus).catch(() => {});
   useEffect(() => { refresh(); }, []);
   const training = status?.training;
+  const preprocess = status?.preprocess;
   const isTraining = !!training?.is_training;
-  // poll: slow when idle, fast while training/working
+  const isPreprocessing = (preprocess?.status || "").toLowerCase() === "running";
+  // inProgress combines observable engine state + local chain phase so the polling
+  // cadence + progress UI bump up the instant the button is clicked, not 12 s later
+  // when the slow idle poller finally sees the engine change state.
+  const inProgress = isTraining || isPreprocessing || chainPhase !== null;
+  // poll: slow when idle, fast while either preprocess or training is live
   useEffect(() => {
-    const ms = isTraining ? 4000 : 12000;
+    const ms = inProgress ? 4000 : 12000;
     const t = setInterval(refresh, ms);
     return () => clearInterval(t);
-  }, [isTraining]);
+  }, [inProgress]);
 
   const engineOk = !!status?.engine && !status?.engine_error;
   const uploadOk = !!status?.upload && !status?.upload_error;
@@ -306,25 +358,135 @@ export function LoraTrainingForm(_: { cfg: Config }) {
         <Warn>Training fully occupies the 3090 — other box GPU jobs (ComfyUI/RVC/etc.) are freed first and you can’t generate while it runs. First run on XL/4B: watch VRAM (24 GB should fit; LoKr + checkpointing help).</Warn>
         {!isTraining ? (
           <PrimaryButton onClick={() => act("Save + preprocess + train", async () => {
+            setChainPhase("saving");
+            try {
             await api.loraSave({ dataset });
-            await api.loraPreprocess({ dataset });
+            // Capture the engine's PREVIOUS preprocess task_id so we can tell when our
+            // new task takes over — otherwise the first poll can race and grab the
+            // engine's stale "completed" status from an earlier failed run (which has
+            // num_tensors=0, triggering a false-positive failure).
+            const prev: any = await api.loraPreprocessStatus().catch(() => ({}));
+            const prevId = prev?.task_id;
+            setChainPhase("preprocessing");
+            const preprocessKick = await api.loraPreprocess({ dataset }) as any;
+            const newId = preprocessKick?.task_id || preprocessKick?.id;
+            // Wait for the encode-to-tensors task to finish before kicking off train —
+            // /api/lora/dataset/preprocess returns the async task handle immediately, and
+            // train against an empty tensor dir bails with "No valid samples found".
+            const deadline = Date.now() + 5 * 60 * 1000;  // 5 min hard cap (smoke: ~25 s)
+            for (;;) {
+              await new Promise((r) => setTimeout(r, 3000));
+              if (Date.now() > deadline) throw new Error("preprocess timed out (>5 min)");
+              const st: any = await api.loraPreprocessStatus();
+              // Ignore the stale prior task until the engine flips over to ours.
+              const sameAsPrev = prevId && st?.task_id === prevId;
+              const matchesNew = newId ? st?.task_id === newId : !sameAsPrev;
+              if (!matchesNew) continue;
+              const s = String(st?.status || "").toLowerCase();
+              const prog = String(st?.progress || "");
+              if (s === "error" || s === "failed" || prog.startsWith("❌")) {
+                throw new Error(prog || s || "preprocess failed");
+              }
+              if (s === "completed" || s === "complete" || s === "done") {
+                // Belt-and-braces: completed status doesn't guarantee tensors got written.
+                const n = st?.result?.num_tensors ?? 0;
+                if (!n) throw new Error(prog || "preprocess wrote 0 tensors — check engine state");
+                break;
+              }
+            }
+            setChainPhase("starting-train");
             await api.loraTrain({ dataset, method, train_epochs: epochs, gradient_checkpointing: gradckpt,
               ...(method === "lora" ? { lora_rank: rank, lora_alpha: alpha } : {}) });
+            // Refresh status so the engine training state is visible immediately;
+            // leave chainPhase=null so the rich TrainingBlock takes over from here.
+            await refresh();
+            } finally { setChainPhase(null); }
           })}>Save + preprocess + train</PrimaryButton>
         ) : (
           <GhostButton onClick={() => act("Stop training", () => api.loraTrainStop())}>Stop training</GhostButton>
         )}
-        {training && (
-          <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5 text-[11px] text-[var(--color-muted)]">
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              <span>status: <b className="text-[var(--color-ink)]">{training.status || "—"}</b></span>
-              <span>epoch: {training.current_epoch ?? 0}</span>
-              <span>step: {training.current_step ?? 0}</span>
-              <span>loss: {training.current_loss != null ? training.current_loss.toFixed(4) : "—"}</span>
-              {!!training.estimated_time_remaining && <span>ETA: {Math.round(training.estimated_time_remaining / 60)}m</span>}
+        {/* Chain-phase banner — visible from the instant the orange button is clicked.
+            Bridges the gap between click and engine status (~12 s otherwise). The richer
+            phase-specific blocks below take over once engine state catches up. */}
+        {chainPhase && (
+          <div className="space-y-1 rounded-lg border border-[var(--color-accent)]/40 bg-[#2a1c19] p-2.5 text-[11px] text-[var(--color-ink)]">
+            <div className="flex items-center gap-2">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--color-accent)]" />
+              <span>
+                {chainPhase === "saving" && <b>1 / 3 · Saving dataset config to box…</b>}
+                {chainPhase === "preprocessing" && <b>2 / 3 · Preprocessing on 3090 — encoding audio → latents</b>}
+                {chainPhase === "starting-train" && <b>3 / 3 · Starting LoKr training on 3090…</b>}
+              </span>
             </div>
+            <p className="pl-4 text-[10px] text-[var(--color-muted)]">
+              {chainPhase === "saving" && "Writing dataset.json (fast — usually under 1 s)."}
+              {chainPhase === "preprocessing" && "First time on a fresh dataset: ~25 s for 6 tracks. The bar below updates once the engine reports running."}
+              {chainPhase === "starting-train" && "Engine is warming up Lightning Fabric + loading tensors. Epoch 1 should appear within ~30 s."}
+            </p>
           </div>
         )}
+        {/* Preprocess phase — visible during the encode-to-tensors step (the long pause
+            between clicking train and seeing epoch 1). Engine reports current/total samples. */}
+        {isPreprocessing && (
+          <div className="space-y-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5 text-[11px] text-[var(--color-muted)]">
+            <div className="flex items-center justify-between">
+              <span><b className="text-[var(--color-ink)]">Preprocessing on the 3090</b> · encoding audio → latents</span>
+              <span className="font-mono">{preprocess?.current ?? 0} / {preprocess?.total ?? "?"}</span>
+            </div>
+            <ProgressBar pct={preprocess?.total ? (100 * (preprocess.current || 0)) / preprocess.total : 0} tone="amber" />
+            {preprocess?.progress && <p className="truncate text-[10px]" title={preprocess.progress}>{preprocess.progress}</p>}
+          </div>
+        )}
+        {/* Rich training block — epoch %, loss sparkline, ETA, log tail, tensorboard link. */}
+        {training && (isTraining || (training.current_epoch ?? 0) > 0 || (training.loss_history?.length ?? 0) > 0) && (() => {
+          // Engine returns this as `epochs` in its training config; the other names
+          // are defensive fallbacks for engine versions / forks that name it differently.
+          // Engine returns this as `epochs` in its training config; the other names
+          // are defensive fallbacks for engine versions / forks that name it differently.
+          const totalEpochs = Number(training.config?.epochs ?? training.config?.train_epochs ?? training.config?.num_train_epochs ?? epochs) || epochs;
+          const curEpoch = training.current_epoch ?? 0;
+          const epochPct = totalEpochs ? (100 * curEpoch) / totalEpochs : 0;
+          const startedAgo = training.start_time ? Math.max(0, (Date.now() / 1000) - training.start_time) : 0;
+          // Engine returns steps_per_second / estimated_time_remaining as 0.0 — it doesn't
+          // compute them. Derive client-side from what we DO have: loss_history grows by 1
+          // per optimizer step, start_time anchors elapsed, current_epoch gives progress.
+          const stepsSoFar = training.loss_history?.length ?? 0;
+          const engineSps = training.steps_per_second || 0;
+          const sps = engineSps > 0 ? engineSps : (startedAgo > 0 && stepsSoFar > 0 ? stepsSoFar / startedAgo : 0);
+          const engineEta = training.estimated_time_remaining || 0;
+          const derivedEta = (curEpoch > 0 && totalEpochs > curEpoch && startedAgo > 0)
+            ? ((totalEpochs - curEpoch) * startedAgo) / curEpoch
+            : 0;
+          const eta = engineEta > 0 ? engineEta : derivedEta;
+          const logLines = String(training.training_log || "").split("\n").filter(Boolean).slice(-4);
+          return (
+            <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5 text-[11px] text-[var(--color-muted)]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span><b className="text-[var(--color-ink)]">{training.status || (isTraining ? "Training" : "Done")}</b>
+                  {!!startedAgo && <span className="ml-2 text-[10px]">started {fmtEta(startedAgo)} ago</span>}</span>
+                {training.tensorboard_url && <a href={training.tensorboard_url} target="_blank" rel="noreferrer" className="text-[10px] text-[var(--color-accent2)] hover:underline">TensorBoard ↗</a>}
+              </div>
+              <div className="space-y-1">
+                <div className="flex justify-between font-mono text-[10px]"><span>epoch {curEpoch}/{totalEpochs}</span><span>{epochPct.toFixed(1)}%</span></div>
+                <ProgressBar pct={epochPct} tone={isTraining ? "accent" : "emerald"} />
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+                <span>step <b className="text-[var(--color-ink)]">{training.current_step ?? 0}</b></span>
+                <span>loss <b className="text-[var(--color-ink)]">{training.current_loss != null ? training.current_loss.toFixed(4) : "—"}</b></span>
+                <span>rate <b className="text-[var(--color-ink)]">{sps ? sps.toFixed(2) : "—"}</b> steps/s</span>
+                <span>ETA <b className="text-[var(--color-ink)]">{fmtEta(eta)}</b></span>
+              </div>
+              {(training.loss_history?.length ?? 0) > 1 && <LossSparkline history={training.loss_history!} />}
+              {!!logLines.length && (
+                <details className="text-[10px]">
+                  <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-ink)]">log ▾</summary>
+                  <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded bg-[var(--color-panel)] p-1.5 font-mono leading-tight text-[var(--color-muted)]">{logLines.join("\n")}</pre>
+                </details>
+              )}
+              {training.error && <p className="rounded border border-red-500/30 bg-red-500/10 p-1.5 text-[10px] text-red-300">✗ {training.error}</p>}
+            </div>
+          );
+        })()}
       </Step>
 
       {/* Step 4 — use */}
