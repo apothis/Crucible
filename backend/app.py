@@ -2836,6 +2836,11 @@ def lora_train(body: dict):
     # LoKr safety defaults — engine's defaults are broken-together (see docstring).
     common.setdefault("lokr_weight_decompose", False)
     common.setdefault("learning_rate", 0.01)
+    # val_split: opt-in. Requires the 2026-05-29 engine patches (see
+    # METAL_LORA_PLAN §7a). Default 0.1 when not specified — small enough to
+    # train mostly on the corpus, large enough to give the best-checkpoint
+    # tracking a signal on small (6-track) datasets.
+    common["val_split"] = float(body["val_split"]) if "val_split" in body else 0.1
     return ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], p["train_dir"], **common)
 
 

@@ -149,8 +149,11 @@ def train_lokr(host, tensor_dir, output_dir, *, lokr_linear_dim=64, lokr_linear_
                lokr_use_tucker=False, lokr_use_scalar=False, learning_rate=0.03,
                train_epochs=500, train_batch_size=1, gradient_accumulation=4,
                save_every_n_epochs=5, training_shift=3.0, training_seed=42,
-               gradient_checkpointing=False):
-    return _post(host, "/v1/training/start_lokr", {
+               gradient_checkpointing=False, val_split=None):
+    # val_split is Crucible-patched server-side (2026-05-29 engine patches).
+    # Only sent when caller provides it explicitly so we stay compatible with
+    # the unpatched engine.
+    body = {
         "tensor_dir": tensor_dir, "output_dir": output_dir,
         "lokr_linear_dim": lokr_linear_dim, "lokr_linear_alpha": lokr_linear_alpha,
         "lokr_factor": lokr_factor, "lokr_weight_decompose": lokr_weight_decompose,
@@ -159,7 +162,10 @@ def train_lokr(host, tensor_dir, output_dir, *, lokr_linear_dim=64, lokr_linear_
         "train_epochs": train_epochs, "train_batch_size": train_batch_size,
         "gradient_accumulation": gradient_accumulation, "save_every_n_epochs": save_every_n_epochs,
         "training_shift": training_shift, "training_seed": training_seed,
-        "gradient_checkpointing": gradient_checkpointing})
+        "gradient_checkpointing": gradient_checkpointing}
+    if val_split is not None:
+        body["val_split"] = float(val_split)
+    return _post(host, "/v1/training/start_lokr", body)
 
 
 def training_status(host):
