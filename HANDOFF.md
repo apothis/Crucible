@@ -117,6 +117,67 @@ Scope includes **heavy rock** (Bon Jovi / Halestorm / Black Stone Cherry / AC/DC
 
 ## Open / next (for a fresh context)
 
+### SESSION 2026-05-29 — Engine memory-leak diagnosed + DoRA bug + 1st-and-2nd LoKr trained + 3 engine bugs found
+
+Marathon training day. Pipeline VERIFIED end-to-end on the box (uploaded → captioned → preprocessed → trained → exported → loaded → generated), but adapter quality is held back by engine-level bugs. Findings deep enough that next session should patch the engine before another training run.
+
+**🐛 Engine memory leak in `/v1/init` — diagnosed + fixed Mac-side**
+- The engine's `/v1/init` handler reassigns `self.model/self.vae/self.text_encoder` when loading new models but only sets the OLD ones to `None` on FAILURE paths. On success it never calls `gc.collect()` or `torch.cuda.empty_cache()` (verified in `acestep/core/generation/handler/init_service_orchestrator.py:144-217`).
+- Each `/v1/init` leaks ~4 GB of orphaned CUDA tensors. Over a multi-init session, leaks compound until VRAM saturates (24 GB) and training goes memory-bandwidth-bound: **99% GPU util + silent fan + ~7× slower steps** (315 s/epoch vs the smoke's 42 s/epoch).
+- **Fix shipped (commit 7b2c427)**: `_ensure_training_ready` now calls `/v1/reinitialize` instead of `/v1/init`. The engine endpoint runs `gc.collect() + torch.cuda.empty_cache()` AND is documented in the engine's own `start_lokr` error message (`"Decoder not found. Please reload the model via /v1/reinitialize before training."`). The engine's `start_lokr` handler does its OWN component management (`mgr.unload_llm()` + decoder-to-GPU + VAE offload) — Mac doesn't need to drop the LM.
+- `_ensure_labeling_ready` made idempotent: skips `/v1/init` when engine state already matches (xl-sft + 4B LM loaded). Dodges the leak on the no-op case.
+
+**🐛 LoKr DoRA + lr 0.03 catastrophic combo — diagnosed + safer defaults shipped**
+- Engine ships `lokr_weight_decompose=True` (DoRA) + `learning_rate=0.03` as defaults. **These are catastrophically incompatible.** DoRA's `dora_scale` magnitude parameter needs lr~1e-4..1e-3 (separate param group ideally), not 0.03.
+- First 100-epoch run produced corrupted weights: dora_scale tensors mean=2.99..4.62, max=**19.18** (initialized at norm of base column ≈ 1-2). Loss "spike" at last step (0.211 → 0.852) wasn't divergence — it's an engine artifact where the trainer emits an aggregated loss at the final-save event. The weights are bad because DoRA's magnitude is blown up, not because of divergence.
+- Garbled output at ANY strength because LyCORIS's `set_multiplier(0)` only zeros the delta term, but **`dora_scale` keeps scaling the base computation independently** (`y = (dora_scale/norm) * direction(x) + multiplier * delta(x)`). Toggle-off → garbled. Only full UNLOAD restored clean base.
+- **Fix shipped (commit 7b2c427)**: `/api/lora/train` now defaults `lokr_weight_decompose=False` and `learning_rate=0.01`. Plain LoKr — no DoRA, no exploded magnitudes. Callers can opt in to DoRA explicitly when paired with a low lr.
+
+**🐛 Three more engine bugs discovered (not yet patched — see task #19)**
+1. **`lokr_config.target_modules` is silently IGNORED.** Engine's `inject_lokr_into_dit` calls `LycorisNetwork.apply_preset({"target_name": user_targets})` BEFORE `create_lycoris()`. But `create_lycoris` defaults `preset="full"` and calls `apply_preset(PRESET["full"])` AGAIN, overwriting. Whatever the user passes is discarded — they always get LyCORIS's `"full"` preset.
+2. **Time-embed layers wrapped but learn nothing** — 104/360 `lokr_w2` tensors all-zero in the trained adapter. Structural: timestep input is random per-batch, no consistent gradient signal. ~29% of adapter capacity wasted. Engine should exclude time_embed-style layers from default wrapping.
+3. **`val_split` hardcoded to 0.0** in `TrainingConfig`, not exposed via `StartLoKRTrainingRequest`. → No validation loss tracking → `checkpoints/best/` never written → we have no way to pick the best mid-training checkpoint, only "final" (which is post-aggregated-loss artifact).
+
+**🐛 VRAM never physically releases** (task #18) — logically the engine reports LM unloaded (`loaded_lm_model: None`), but VRAM stays at 22+ GB. Even `/v1/reinitialize`'s `empty_cache()` only freed ~4 GB in our run, the rest stuck in PyTorch's caching allocator + vLLM's pool. Only OS restart truly releases. Investigation pending.
+
+**Marathon training results (the 6-track power-metal corpus from previous smoke):**
+- **Run 1 — broken (DoRA + lr 0.03)**: 100 epochs in 55 min on 3090. Output garbled at any strength even toggle-off. File inspection of safetensors confirmed dora_scale explosion (max 19.18). Adapter mounted but `discover_adapter_names()` returned `[]` (this is normal for LoKr — discovery only checks PEFT attrs).
+- **Run 2 — plain LoKr (lr 0.01, no DoRA)**: 50 epochs in 38 min. File inspection confirmed clean weights (zero NaN/Inf, magnitudes 3-4× smaller than Run 1). Output produces real music, scale gradient works (0.3 less garbled than 0.75), but quality is "messy" — adapter learned noise rather than coherent metal directions. Held back by the 3 engine bugs above + small 6-track dataset.
+
+**Other UI/UX improvements shipped this session (commit 60ce396):**
+- **Rich training progress block** — epoch %, step counter, derived rate (steps/s) and ETA (engine reports both as 0.0; UI derives from `loss_history.length + start_time + current_epoch`), loss sparkline (NaN-safe, handles engine's `{step,loss}` object shape), collapsible log tail, TensorBoard ↗ link.
+- **TensorBoard URL rewrite** — engine reports `http://localhost:6006` (loopback ON THE BOX); Mac now rewrites to `http://<acestep_host>:6006` so the link works from any LAN browser.
+- **Chain robustness** — Save+preprocess+train button now WAITS for preprocess to finish (was firing train immediately → empty tensor dir bail). Polls preprocess status, detects engine `"❌"` errors, verifies `num_tensors > 0`. Captures prior task_id to skip stale "completed" states from earlier runs.
+- **chainPhase banner** — "1/3 Saving... 2/3 Preprocessing... 3/3 Starting training..." visible from the click moment (bridges the 12s gap before status poll catches up).
+- **Train LoRA tab rehydrates** from engine `/samples` on mount → hard-refresh during a long upload no longer wipes back to Step 1.
+- **Caption editor is a 5-row textarea** (merged captions run 700-900c).
+- **Step ✓ badges are emerald** (was red/orange via `--color-accent`).
+- **gradient_checkpointing default ON** (smoke calibration: ~2.5× faster on XL/4B LoKr).
+- **Epoch progress reads `training.config.epochs`** (the engine's actual field name — was looking at `train_epochs`/`num_train_epochs` and falling back to React state which defaulted to 500 → bar showed 56/500 for a 100-epoch run).
+- **Last.fm tag filter tightened** (count ≥ 10 on track-level too — was only artist + album; track-level was getting fan-folksonomy noise like "metalcore" tagged on Sabaton by ~3 users).
+
+**Verified-working pipeline as of end-of-session:**
+- Mac fixes have made it leak-resistant. Plain LoKr default avoids the DoRA blowup. Training produces real (if rough) adapters.
+- Engine state hygiene is a real ongoing concern. After a marathon session of inits/loads/unloads, VRAM stays pegged at 22 GB and base inference quality degrades (we saw base-only generation become "garbled" by end of session; full LoRA unload restored it).
+- For best results next session: **start with a fresh engine boot** (OS-level restart of `run_acestep_api.bat`) before any training, to get clean baseline VRAM and clean decoder state.
+
+**Where to start next session (in order of recommended priority):**
+1. **Patch the 3 engine bugs (task #19)** — they're all upstreamable. Local patches per `[[engine-patches]]` pattern: (a) pass user preset to `create_lycoris`, (b) exclude time_embed from default targeting, (c) expose `val_split` in `StartLoKRTrainingRequest`. Together they enable a meaningful retrain.
+2. **Expand the dataset to ~25 tracks** per METAL_LORA_PLAN §10.2 pyramid recommendation. 6 tracks is structurally too few for the LoKr to extract a coherent style direction.
+3. **Then retrain** with: tighter target_modules (just q/k/v/o on attention, skip MLP/time_embed/condition), `val_split=0.1`, lr=0.01 plain LoKr, 50 epochs first then dial up. Check `checkpoints/best/` exists at end.
+4. **Ship UI controls** for DoRA toggle + lr override + val_split (#17). Once engine accepts val_split, expose in Advanced.
+5. **Investigate VRAM-stickiness (#18)** — likely PyTorch caching allocator + vLLM pool not releasing. Worth a small engine patch with `torch.cuda.caching_allocator_delete` or explicit pool reset.
+6. **Autolabel + chain UI cohesion (#14, #10)** — autolabel has no progress block today, and the orange chain button isn't disabled mid-autolabel. Both ship-tomorrow polish.
+
+**Tasks open as of end-of-session:**
+- #10 Cohesive chain UI (stitch save → preprocess → training as ONE visual flow)
+- #14 Autolabel progress block + disable chain button during autolabel
+- #15 Clean A/B: grad_ckpt OFF vs ON on a clean engine (the original smoke confounded)
+- #16 Retrain LoKr (covered by recommendations above)
+- #17 UI toggle for DoRA + LR override
+- #18 Investigate why VRAM never released after engine logical LM unload
+- #19 Engine patches: target_modules + time_embed exclusion + val_split
+
 ### SESSION 2026-05-28 — Metal LoRA pipeline + smoke-tested + UI polish (all shipped, on `main`)
 The big LoRA-training push: full Mac→box pipeline built, calibrated on the 3090, one upstream PR opened, one engine source patch you must keep applied locally. **Plus a lot of unrelated UI polish that landed this session — listed first.**
 
