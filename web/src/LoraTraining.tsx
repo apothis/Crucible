@@ -15,7 +15,7 @@ function Step({ n, title, sub, done, disabled, children }: {
   return (
     <div className={`rounded-xl border p-3.5 ${disabled ? "border-[var(--color-line)] opacity-55" : "border-[var(--color-line)]"} bg-[var(--color-panel)]`}>
       <div className="mb-2 flex items-center gap-2">
-        <span className={`flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-bold ${done ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{done ? "✓" : n}</span>
+        <span className={`flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-bold ${done ? "bg-emerald-500 text-white" : "bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{done ? "✓" : n}</span>
         <div>
           <div className="text-sm font-semibold text-[var(--color-ink)]">{title}</div>
           {sub && <div className="text-[11px] text-[var(--color-muted)]">{sub}</div>}
@@ -52,7 +52,7 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   const [advanced, setAdvanced] = useState(false);
   const [rank, setRank] = useState(64);
   const [alpha, setAlpha] = useState(128);
-  const [gradckpt, setGradckpt] = useState(false);
+  const [gradckpt, setGradckpt] = useState(true);
   const [msg, setMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -70,6 +70,35 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   const engineOk = !!status?.engine && !status?.engine_error;
   const uploadOk = !!status?.upload && !status?.upload_error;
   const ready = engineOk && uploadOk;
+
+  // Rehydrate from the engine on mount (and when the engine becomes ready / dataset
+  // changes). A hard-refresh wipes local React state, but the box still has the
+  // uploaded audio + the engine still holds the scanned dataset — pull that back so
+  // Step 2 doesn't lock the user out of a multi-minute upload they already paid for.
+  const rehydratedRef = useRef(false);
+  useEffect(() => {
+    if (!ready || rehydratedRef.current) return;
+    (async () => {
+      try {
+        const d: any = await api.loraSamples();
+        const ss = Array.isArray(d) ? d : (d?.samples || d?.data || []);
+        if (!ss.length) return;
+        rehydratedRef.current = true;
+        setScanned(true);
+        setSamples(ss);
+        // Synthesize LoraTrack rows from engine samples so Step 2's gate (tracks.length) unlocks.
+        setTracks(ss.map((s: any) => ({
+          name: (s.filename || (s.audio_path ? String(s.audio_path).split(/[\\/]/).pop() : "")) as string,
+          bpm: s.bpm ?? 0,
+          keyscale: s.keyscale || s.key_scale || s.key || "",
+          has_lyrics: !!(s.lyrics && String(s.lyrics).trim()),
+          lyrics_source: "",
+          lyrics: s.lyrics || "",
+          caption: s.caption || "",
+        } as LoraTrack)).filter((t: LoraTrack) => t.name));
+      } catch { /* engine may not have a dataset loaded yet — fine */ }
+    })();
+  }, [ready, dataset]);
 
   async function onFiles(files: FileList | null) {
     if (!files || !files.length) return;
@@ -233,7 +262,7 @@ export function LoraTrainingForm(_: { cfg: Config }) {
                     {src && srcBadge(src.lyrics_source)}
                     <span className="text-[var(--color-muted)]">{s.bpm ?? "?"} bpm · {s.keyscale ?? "?"}</span>
                   </div>
-                  <input className={`${inp} text-xs`} value={s.caption || ""} placeholder="caption — style description (what the LoRA learns)"
+                  <textarea className={`${inp} text-xs leading-relaxed`} rows={5} value={s.caption || ""} placeholder="caption — style description (what the LoRA learns)"
                     onChange={(e) => updSample(i, { caption: e.target.value })} />
                   {!s.is_instrumental && (
                     <textarea className={`${inp} text-xs`} rows={3} value={s.lyrics || ""} placeholder="lyrics (correct any whisper errors)"
