@@ -56,6 +56,50 @@ def get_lyrics(path, *, filename=None, artist=None, title=None, duration=None,
         return {"lyrics": "", "source": "", "artist": artist, "title": title}
 
 
+def _resolve_artist_title_full(path, *, filename=None, artist=None, title=None,
+                               acoustid_key=""):
+    """Resolve (artist, title) with full priority chain. Higher entries win:
+        1. explicit args (caller passed them in)
+        2. ID3 tags via mutagen (we trust the file's own metadata)
+        3. AcoustID fingerprint (only when tags don't yield both)
+        4. "Artist - Title" filename parse
+
+    Returns (artist, title, source) where source ∈ {'explicit','tags','acoustid',
+    'filename',''}. Promoting AcoustID above filename-parse means tag-less tracks
+    still feed an accurate artist into LRCLIB so the lyric stage can succeed
+    without falling back to whisper. ID3 wins over AcoustID per user preference
+    — the file's own tags are higher signal than fingerprint guesswork."""
+    src = ""
+    try:
+        from . import lyrics_fetch
+        # Tier 1+2: explicit + ID3 tags (lyrics_fetch.resolve_artist_title handles both)
+        a, t = lyrics_fetch.resolve_artist_title(path=path, filename=None,
+                                                  artist=artist, title=title)
+        if a and t:
+            src = "explicit" if (artist and title) else "tags"
+            return a, t, src
+        # Tier 3: AcoustID fingerprint (only if we still need it)
+        if acoustid_key:
+            try:
+                from . import caption_fetch
+                ident = caption_fetch.acoustid_identify(path, acoustid_key)
+                if ident:
+                    ai, ti = ident
+                    a = a or ai
+                    t = t or ti
+                    if a and t:
+                        return a, t, "acoustid"
+            except Exception:
+                pass
+        # Tier 4: "Artist - Title" filename parse (last resort, often noisy)
+        a2, t2 = lyrics_fetch.parse_filename(filename or path or "")
+        if (a2 and not a) or (t2 and not t):
+            src = "filename"
+        return (a or a2), (t or t2), src
+    except Exception:
+        return artist, title, src
+
+
 def build_labels(path, *, instrumental=False, want_lyrics=True, caption=None,
                  language="en", timesignature="4", whisper_size="small",
                  filename=None, artist=None, title=None, allow_online=True,
@@ -64,8 +108,17 @@ def build_labels(path, *, instrumental=False, want_lyrics=True, caption=None,
     {bpm, keyscale, lyrics, lyrics_source, caption, caption_sources, meta} where
     `meta` is the {name}.json dict. Lyrics + caption both prefer online sources for
     known songs (LRCLIB / MusicBrainz / Last.fm) and fall back to local/audio-based
-    analysis (whisper / CLAP). The user edits the seeded caption in the review step."""
+    analysis (whisper / CLAP). The user edits the seeded caption in the review step.
+
+    artist+title are pre-resolved here (explicit → ID3 → AcoustID → filename) so
+    BOTH the lyric stage and the caption stage start with the best-available
+    identifiers, and AcoustID fires only once per track (caption_fetch's own
+    AcoustID block is guarded by `if not (artist and title)` so it skips when
+    we've already resolved)."""
     bpm, keyscale = detect_bpm_key(path)
+    artist, title, _id_source = _resolve_artist_title_full(
+        path, filename=filename, artist=artist, title=title,
+        acoustid_key=acoustid_key)
     lyrics, lyrics_source = "", ""
     if not instrumental and want_lyrics:
         try:
