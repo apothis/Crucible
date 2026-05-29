@@ -218,18 +218,28 @@ def lastfm_tags(artist, title, key, timeout=10):
         except Exception:
             return []
 
-    # 1) track-level (specific but often empty for metal back-catalog)
-    for t in _call("track.getTopTags", {"artist": artist, "track": title})[:10]:
-        _add(t.get("name"))
-    # 2) artist-level fallback/merge (popularity-filtered; drop the artist's own name)
+    # 1) track-level (specific but often empty for metal back-catalog) — apply the
+    # same popularity floor as artist/album so fan-folksonomy noise (e.g. <10 users
+    # who tagged Sabaton's "Primo Victoria" as metalcore) doesn't poison the seed.
+    # Cap at top 6 by popularity — Last.fm returns highest-count first.
     artist_lc = artist.lower()
+    track_kept = 0
+    for t in _call("track.getTopTags", {"artist": artist, "track": title}):
+        if (t.get("count") or 0) < 10:
+            continue
+        if (t.get("name") or "").lower() == artist_lc:
+            continue
+        _add(t.get("name")); track_kept += 1
+        if track_kept >= 6:
+            break
+    # 2) artist-level fallback/merge (popularity-filtered; drop the artist's own name)
     for t in _call("artist.getTopTags", {"artist": artist}):
         if (t.get("count") or 0) < 10:
             continue
         if (t.get("name") or "").lower() == artist_lc:
             continue
         _add(t.get("name"))
-        if len(out) >= 15:
+        if len(out) >= 12:
             break
     return out
 
