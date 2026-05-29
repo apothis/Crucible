@@ -14,6 +14,7 @@ import uuid
 
 import requests
 import websocket  # websocket-client
+from typing import Any, Dict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -2798,6 +2799,132 @@ def lora_dataset_preprocess_status():
     return ace_train.preprocess_status(ACESTEP_HOST)
 
 
+# ==================== LoRA training history capture ====================
+# The engine's /v1/training/status route doesn't expose plot_best_step or the
+# per-epoch val curve (even though Patch D writes them into training_state
+# server-side). Without that we can't tell what epoch the best checkpoint
+# landed at — making it impossible to rationally tune train_epochs for the
+# NEXT run. Fix: poll /v1/training/status fast enough to catch the 🏆 / 🧪
+# status strings (which my Patch D yields on every val + best save), parse +
+# dedupe them, persist on training end. No engine patch required.
+_LORA_TRAIN_HISTORY: Dict[str, Dict[str, Any]] = {}
+_LORA_TRAIN_HISTORY_LOCK = threading.Lock()
+_LORA_TRAIN_HISTORY_DIR = os.path.join(LIBRARY, "lora_train_history")
+_BEST_STATUS_RE = re.compile(r"New best val_loss ([\d.]+) at epoch (\d+)")
+_VAL_STATUS_RE = re.compile(r"Val loss @ epoch (\d+):\s*([\d.]+)")
+
+
+def _lora_history_path(dataset: str) -> str:
+    return os.path.join(_LORA_TRAIN_HISTORY_DIR, f"{dataset}.json")
+
+
+def _lora_history_load(dataset: str) -> Dict[str, Any]:
+    path = _lora_history_path(dataset)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _lora_history_persist(dataset: str) -> None:
+    with _LORA_TRAIN_HISTORY_LOCK:
+        snap = dict(_LORA_TRAIN_HISTORY.get(dataset, {}))
+    os.makedirs(_LORA_TRAIN_HISTORY_DIR, exist_ok=True)
+    try:
+        with open(_lora_history_path(dataset), "w") as f:
+            json.dump(snap, f, indent=2)
+    except Exception as e:
+        print(f"[lora] history persist warning ({dataset}): {e}")
+
+
+def _lora_train_history_poller(dataset: str, host: str, started_at: float) -> None:
+    """Watch engine training status for Patch D's 🏆/🧪 messages.
+
+    Polls every ~2s because engine yields fly fast (~5-7 per epoch at ~38s/ep
+    → status string changes every ~5-6s). Misses are tolerable for the val
+    curve (sparse data is still useful) but we really want to catch the
+    🏆-best messages — those are how we pick `train_epochs` going forward.
+    """
+    seen_best: set = set()
+    seen_val: set = set()
+    consecutive_idle = 0
+    while True:
+        try:
+            res = ace_train.training_status(host)
+            d = res.get("data", res) if isinstance(res, dict) else {}
+            status = str(d.get("status", "") or "")
+            is_training = bool(d.get("is_training", False))
+
+            for m in _BEST_STATUS_RE.finditer(status):
+                val_loss = float(m.group(1)); epoch = int(m.group(2))
+                key = (epoch, val_loss)
+                if key in seen_best:
+                    continue
+                seen_best.add(key)
+                with _LORA_TRAIN_HISTORY_LOCK:
+                    h = _LORA_TRAIN_HISTORY.setdefault(dataset, {
+                        "started_at": started_at, "best": [], "val": [],
+                    })
+                    h["best"].append({
+                        "epoch": epoch, "val_loss": val_loss, "ts": time.time(),
+                    })
+                _lora_history_persist(dataset)
+
+            for m in _VAL_STATUS_RE.finditer(status):
+                epoch = int(m.group(1)); val_loss = float(m.group(2))
+                key = (epoch, val_loss)
+                if key in seen_val:
+                    continue
+                seen_val.add(key)
+                with _LORA_TRAIN_HISTORY_LOCK:
+                    h = _LORA_TRAIN_HISTORY.setdefault(dataset, {
+                        "started_at": started_at, "best": [], "val": [],
+                    })
+                    h["val"].append({
+                        "epoch": epoch, "val_loss": val_loss, "ts": time.time(),
+                    })
+
+            if not is_training:
+                consecutive_idle += 1
+                # Give the engine a couple of poll cycles to finalize, in case
+                # there's a trailing 🏆 status between is_training flipping
+                # False and the very last yield being read.
+                if consecutive_idle >= 2:
+                    with _LORA_TRAIN_HISTORY_LOCK:
+                        h = _LORA_TRAIN_HISTORY.setdefault(dataset, {
+                            "started_at": started_at, "best": [], "val": [],
+                        })
+                        h["completed_at"] = time.time()
+                        h["final_status"] = status
+                        h["final_epoch"] = int(d.get("current_epoch", 0) or 0)
+                        h["final_step"] = int(d.get("current_step", 0) or 0)
+                    _lora_history_persist(dataset)
+                    return
+            else:
+                consecutive_idle = 0
+        except Exception as e:
+            print(f"[lora] history poller warning ({dataset}): {e}")
+        time.sleep(2)
+
+
+@app.get("/api/lora/train/best_history")
+def lora_train_best_history(dataset: str = "crucible_metal"):
+    """Return per-dataset training history: best-ckpt updates + val curve.
+
+    Sourced from the Mac's status poller (see _lora_train_history_poller). The
+    engine itself doesn't expose plot_best_step / plot_val_loss — this is the
+    only way to know what epoch the val-minimum landed at, which we need to
+    tune train_epochs rationally on the next run."""
+    with _LORA_TRAIN_HISTORY_LOCK:
+        h = dict(_LORA_TRAIN_HISTORY.get(dataset, {}))
+    if not h:
+        h = _lora_history_load(dataset)
+    return h
+
+
 @app.post("/api/lora/train")
 def lora_train(body: dict):
     """Start LoRA or LoKr training on the box from the preprocessed tensors. GPU-exclusive.
@@ -2841,7 +2968,21 @@ def lora_train(body: dict):
     # train mostly on the corpus, large enough to give the best-checkpoint
     # tracking a signal on small (6-track) datasets.
     common["val_split"] = float(body["val_split"]) if "val_split" in body else 0.1
-    return ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], p["train_dir"], **common)
+    # Reset history for this dataset's new run, then spawn background poller.
+    # See _lora_train_history_poller for why this exists (engine doesn't expose
+    # plot_best_step). Daemon thread → dies with the process; persisted JSON
+    # at library/lora_train_history/<dataset>.json survives restarts.
+    with _LORA_TRAIN_HISTORY_LOCK:
+        _LORA_TRAIN_HISTORY[dataset] = {
+            "started_at": time.time(), "best": [], "val": [],
+        }
+    res = ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], p["train_dir"], **common)
+    threading.Thread(
+        target=_lora_train_history_poller,
+        args=(dataset, ACESTEP_HOST, time.time()),
+        daemon=True,
+    ).start()
+    return res
 
 
 @app.get("/api/lora/train/status")
