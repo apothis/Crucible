@@ -2524,27 +2524,59 @@ LORA_LM_MODEL  = "acestep-5Hz-lm-4B"
 
 
 def _ensure_training_ready(host, dit_model=None):
-    """Force the engine into a clean DiT-only state for training: pinned model + LM
-    dropped. Tutorial rule 'restart and do NOT select the LM model', via API. Without
-    this, the LM stays resident (~10 GB VRAM) and prior inference-state can make
-    Lightning Fabric setup run slowly or get stuck — the failure mode behind the
-    original 50-epoch smoke run."""
+    """Prep engine for training via /v1/reinitialize.
+
+    The engine's start_lokr/start handlers do their OWN component management at
+    training start (`RuntimeComponentManager.unload_llm()` + decoder-to-GPU + VAE
+    offload) — verified in acestep/api/train_api_lokr_start_route.py. So we do NOT
+    need to call /v1/init {init_llm: false} ourselves. In fact, doing so is harmful:
+
+        acestep/core/generation/handler/init_service_orchestrator.py `initialize_service`
+        REASSIGNS self.model/self.vae/self.text_encoder when loading new ones, but
+        only sets the OLD ones to None on FAILURE paths. On success it never calls
+        gc.collect() or torch.cuda.empty_cache(). Each /v1/init leaks ~4 GB of
+        orphaned CUDA tensors. Over a session of many init calls (e.g. our model-
+        pinning fix-up loop) the leaks compound until VRAM saturates and training
+        goes bandwidth-bound (the symptom: 99% GPU util + 24 GB VRAM + silent fan
+        + ~7x slower steps; observed 2026-05-29).
+
+    /v1/reinitialize is the documented fix — the engine's own start_lokr error path
+    literally says "reload the model via /v1/reinitialize before training." It runs
+    gc.collect() + torch.cuda.empty_cache() and moves the decoder to GPU. It will
+    reload the LM if previously unloaded (so the next training start can properly
+    unload+empty_cache it) but skips it if already loaded. Cheap, idempotent.
+
+    `dit_model` is accepted for API compat but unused — the engine's reinitialize
+    uses last_init_params, so the currently-loaded DiT (set via /v1/init earlier
+    by _ensure_labeling_ready) is preserved."""
+    _ = dit_model  # api compat
     try:
-        ace_train.init(host, model=dit_model or LORA_DIT_MODEL,
-                       init_llm=False, timeout=600)
+        ace_train.reinitialize(host, timeout=600)
     except Exception as e:
-        # Surface the failure but don't block — the train start will fail with a
-        # clearer error if the engine isn't actually ready.
-        print(f"[lora] _ensure_training_ready warning: {e}")
+        print(f"[lora] _ensure_training_ready /v1/reinitialize warning: {e}")
 
 
 def _ensure_labeling_ready(host, lm_model_path=None, dit_model=None):
-    """Force the engine into a clean labeling state: pinned DiT + pinned LM. Without
-    explicit `lm_model_path` the engine loads its 0.6B LM (weak captions) — we pin
-    the 4B."""
+    """Make sure the engine has pinned DiT + LM loaded for labeling/preprocess.
+
+    Idempotent: skips the /v1/init call entirely when the engine is already in the
+    target state. Avoiding /v1/init when not needed dodges the leak documented in
+    _ensure_training_ready (orphaned CUDA tensors per init). When the state is
+    wrong (e.g. 0.6B LM loaded instead of 4B, or wrong DiT), we DO init — the cost
+    of one leaked re-init is worth the correctness."""
+    want_dit = dit_model or LORA_DIT_MODEL
+    want_lm = lm_model_path or LORA_LM_MODEL
     try:
-        ace_train.init(host, model=dit_model or LORA_DIT_MODEL, init_llm=True,
-                       lm_model_path=lm_model_path or LORA_LM_MODEL, timeout=600)
+        health = (acestep_py.health(host).get("data") or {})
+        if (health.get("loaded_model") == want_dit
+                and health.get("llm_initialized")
+                and health.get("loaded_lm_model") == want_lm):
+            return  # already correct — skip the leak-prone init
+    except Exception:
+        pass  # fall through to the explicit init
+    try:
+        ace_train.init(host, model=want_dit, init_llm=True,
+                       lm_model_path=want_lm, timeout=600)
     except Exception as e:
         print(f"[lora] _ensure_labeling_ready warning: {e}")
 
@@ -2556,7 +2588,31 @@ def lora_status():
     if ACESTEP_HOST:
         try: out["engine"] = acestep_py.health(ACESTEP_HOST)
         except Exception as e: out["engine_error"] = str(e)
-        try: out["training"] = ace_train.training_status(ACESTEP_HOST)
+        try:
+            tr = ace_train.training_status(ACESTEP_HOST)
+            # Engine sets tensorboard_url to http://localhost:6006 — that's loopback
+            # on the BOX, useless from any other machine. Rewrite to the box's actual
+            # host so the UI link works from the Mac browser. Best-effort: only swap
+            # the host part, preserve the port + path.
+            try:
+                tb = (tr or {}).get("tensorboard_url") or ""
+                if tb and ("localhost" in tb or "127.0.0.1" in tb):
+                    from urllib.parse import urlparse
+                    # ACESTEP_HOST may be stored without a scheme (e.g. "192.168.1.201:8001");
+                    # urlparse needs a scheme to populate .hostname, so add one if missing.
+                    host_str = ACESTEP_HOST if "://" in ACESTEP_HOST else f"http://{ACESTEP_HOST}"
+                    box_host = urlparse(host_str).hostname or ""
+                    if box_host:
+                        tr["tensorboard_url"] = tb.replace("localhost", box_host).replace("127.0.0.1", box_host)
+            except Exception:
+                pass
+            out["training"] = tr
+        except Exception: pass
+        # Preprocess lives in its own engine task pool — include it here so a single
+        # status poll covers the whole Save → Preprocess → Train chain. Otherwise the
+        # encode-to-tensors step (the long pause between clicking the train button and
+        # seeing epoch 1) is invisible.
+        try: out["preprocess"] = ace_train.preprocess_status(ACESTEP_HOST)
         except Exception: pass
         try: out["lora"] = ace_train.lora_status(ACESTEP_HOST)
         except Exception: pass
@@ -2721,14 +2777,17 @@ def lora_dataset_save(body: dict):
 @app.post("/api/lora/dataset/preprocess")
 def lora_dataset_preprocess(body: dict):
     """Encode the dataset audio to latents/tensors on the box GPU (async).
-    Forces the engine into a clean DiT-only state first (drops the LM to free ~10GB
-    of VRAM) — without this the engine can stay in inference-state and Fabric setup
-    runs slow/stuck against a saturated memory footprint."""
+    Pinned LM + xl-sft DiT BEFORE preprocess: the engine's preprocess pipeline uses
+    the LM to encode captions into the training tensors, then offloads it during the
+    GPU-heavy audio encode (engine log: 'LLM was temporarily unloaded during
+    preprocessing and restored afterward'). Without an LM at start the engine bails
+    with '❌ Model not initialized' and writes 0 tensors. Train (the next step) is
+    what needs the LM DROPPED — handled separately on /api/lora/train."""
     _lora_require_engine()
     dataset = body.get("dataset", "crucible_metal")
     p = _lora_paths(dataset)
     free_gpu("acestep")
-    _ensure_training_ready(ACESTEP_HOST, dit_model=body.get("dit_model"))
+    _ensure_labeling_ready(ACESTEP_HOST, dit_model=body.get("dit_model"))
     return ace_train.dataset_preprocess_async(ACESTEP_HOST, p["tensor_dir"],
                                               skip_existing=bool(body.get("skip_existing", False)))
 
@@ -2742,23 +2801,41 @@ def lora_dataset_preprocess_status():
 @app.post("/api/lora/train")
 def lora_train(body: dict):
     """Start LoRA or LoKr training on the box from the preprocessed tensors. GPU-exclusive.
-    Forces the engine into a clean DiT-only state first (LM dropped) — the tutorial's
-    'restart and do NOT select the LM model' rule, via API."""
+
+    Engine default-mismatch guardrails (LoKr method):
+    - Engine ships `lokr_weight_decompose=True` (DoRA on) + `learning_rate=0.03`.
+      These two are catastrophically incompatible: DoRA's dora_scale param needs
+      lr~1e-4..1e-3, while 0.03 blows it up (verified 2026-05-29: 100-epoch run
+      produced dora_scale max=19.18 → garbled output even at toggle-off, since
+      set_multiplier(0) only zeros the delta, not the magnitude scaling).
+    - We default this route to plain LoKr (`lokr_weight_decompose=False`) + a safer
+      `learning_rate=0.01`. Callers can re-enable DoRA explicitly when paired with
+      a low lr (e.g. 0.001) — that's the documented sweet spot for higher quality.
+
+    `_ensure_training_ready` clears any residual CUDA tensors via /v1/reinitialize
+    (it does NOT call /v1/init, which leaks ~4 GB orphans per call — see that fn)."""
     _lora_require_engine()
     dataset = body.get("dataset", "crucible_metal")
     p = _lora_paths(dataset)
     method = (body.get("method") or "lokr").lower()
     free_gpu("acestep")
     _ensure_training_ready(ACESTEP_HOST, dit_model=body.get("dit_model"))
+    # LoKr-specific keys we plumb through; defaults applied below for safety.
+    lokr_keys = ("lokr_linear_dim", "lokr_linear_alpha", "lokr_factor",
+                 "lokr_decompose_both", "lokr_use_tucker", "lokr_use_scalar",
+                 "lokr_weight_decompose")
     common = {k: body[k] for k in ("train_epochs", "train_batch_size", "gradient_accumulation",
                                    "save_every_n_epochs", "learning_rate", "training_seed",
-                                   "gradient_checkpointing") if k in body}
+                                   "gradient_checkpointing") + lokr_keys if k in body}
     if method == "lora":
         return ace_train.train_lora(ACESTEP_HOST, p["tensor_dir"], p["train_dir"],
                                     use_fp8=bool(body.get("use_fp8", False)),
                                     lora_rank=int(body.get("lora_rank", 64)),
                                     lora_alpha=int(body.get("lora_alpha", 128)),
                                     lora_dropout=float(body.get("lora_dropout", 0.1)), **common)
+    # LoKr safety defaults — engine's defaults are broken-together (see docstring).
+    common.setdefault("lokr_weight_decompose", False)
+    common.setdefault("learning_rate", 0.01)
     return ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], p["train_dir"], **common)
 
 
