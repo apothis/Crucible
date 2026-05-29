@@ -2512,35 +2512,39 @@ def _lora_paths(dataset):
     return lora_up.dataset_paths(LORA_UPLOAD_HOST, dataset)
 
 
-def _current_engine_model(host, default="acestep-v15-xl-sft"):
-    try:
-        return (acestep_py.health(host).get("data") or {}).get("loaded_model") or default
-    except Exception:
-        return default
+# Canonical LoRA training/labeling models. Pinned, NOT read from engine live state —
+# if the engine was restarted (or another flow swapped models), we must put it back
+# into the known-good config rather than preserve whatever happens to be loaded.
+# - xl-sft is the project default per [[base-sft-default]]; we train against it so
+#   the LoRA matches what Generate uses.
+# - 4B LM produces the rich prose captions the merge layer is designed around;
+#   0.6B (the engine's default when lm_model_path is omitted) gives weaker tags.
+LORA_DIT_MODEL = "acestep-v15-xl-sft"
+LORA_LM_MODEL  = "acestep-5Hz-lm-4B"
 
 
-def _ensure_training_ready(host):
-    """Drop the LM and reload the currently-loaded DiT so the engine is in a known
-    training-ready state. Without this, the LM stays resident (~10 GB VRAM) and the
-    engine's prior inference-state can make Lightning Fabric setup run slowly or get
-    stuck — the failure mode behind the original 50-epoch smoke run. The engine's
-    LoRA tutorial says 'restart and do NOT select the LM model'; this is that, via API."""
+def _ensure_training_ready(host, dit_model=None):
+    """Force the engine into a clean DiT-only state for training: pinned model + LM
+    dropped. Tutorial rule 'restart and do NOT select the LM model', via API. Without
+    this, the LM stays resident (~10 GB VRAM) and prior inference-state can make
+    Lightning Fabric setup run slowly or get stuck — the failure mode behind the
+    original 50-epoch smoke run."""
     try:
-        ace_train.init(host, model=_current_engine_model(host), init_llm=False, timeout=600)
+        ace_train.init(host, model=dit_model or LORA_DIT_MODEL,
+                       init_llm=False, timeout=600)
     except Exception as e:
         # Surface the failure but don't block — the train start will fail with a
         # clearer error if the engine isn't actually ready.
         print(f"[lora] _ensure_training_ready warning: {e}")
 
 
-def _ensure_labeling_ready(host, lm_model_path=None):
-    """Symmetric counterpart of _ensure_training_ready: make sure the LM is loaded
-    so auto-label / captioning can run. Without this, calling auto-label after a
-    training run (which drops the LM) fails with 'llm not initialized'. Re-loads
-    the LM idempotently — engine no-ops if already loaded."""
+def _ensure_labeling_ready(host, lm_model_path=None, dit_model=None):
+    """Force the engine into a clean labeling state: pinned DiT + pinned LM. Without
+    explicit `lm_model_path` the engine loads its 0.6B LM (weak captions) — we pin
+    the 4B."""
     try:
-        ace_train.init(host, model=_current_engine_model(host), init_llm=True,
-                       lm_model_path=lm_model_path, timeout=600)
+        ace_train.init(host, model=dit_model or LORA_DIT_MODEL, init_llm=True,
+                       lm_model_path=lm_model_path or LORA_LM_MODEL, timeout=600)
     except Exception as e:
         print(f"[lora] _ensure_labeling_ready warning: {e}")
 
@@ -2642,8 +2646,10 @@ def lora_dataset_autolabel(body: dict):
     _lora_require_engine()
     dataset = body.get("dataset", "crucible_metal")
     merge = bool(body.get("merge", True))
+    lm_model_path = body.get("lm_model_path") or LORA_LM_MODEL
     free_gpu("acestep")
-    _ensure_labeling_ready(ACESTEP_HOST, lm_model_path=body.get("lm_model_path"))
+    _ensure_labeling_ready(ACESTEP_HOST, lm_model_path=lm_model_path,
+                           dit_model=body.get("dit_model"))
     if merge:
         try:
             samples = _samples_list(ACESTEP_HOST)
@@ -2656,7 +2662,7 @@ def lora_dataset_autolabel(body: dict):
     return ace_train.dataset_auto_label_async(ACESTEP_HOST,
                                               only_unlabeled=only_unlabeled,
                                               transcribe_lyrics=False, format_lyrics=False,
-                                              lm_model_path=body.get("lm_model_path"))
+                                              lm_model_path=lm_model_path)
 
 
 @app.post("/api/lora/dataset/autolabel_merge")
@@ -2722,7 +2728,7 @@ def lora_dataset_preprocess(body: dict):
     dataset = body.get("dataset", "crucible_metal")
     p = _lora_paths(dataset)
     free_gpu("acestep")
-    _ensure_training_ready(ACESTEP_HOST)
+    _ensure_training_ready(ACESTEP_HOST, dit_model=body.get("dit_model"))
     return ace_train.dataset_preprocess_async(ACESTEP_HOST, p["tensor_dir"],
                                               skip_existing=bool(body.get("skip_existing", False)))
 
@@ -2743,7 +2749,7 @@ def lora_train(body: dict):
     p = _lora_paths(dataset)
     method = (body.get("method") or "lokr").lower()
     free_gpu("acestep")
-    _ensure_training_ready(ACESTEP_HOST)
+    _ensure_training_ready(ACESTEP_HOST, dit_model=body.get("dit_model"))
     common = {k: body[k] for k in ("train_epochs", "train_batch_size", "gradient_accumulation",
                                    "save_every_n_epochs", "learning_rate", "training_seed",
                                    "gradient_checkpointing") if k in body}
