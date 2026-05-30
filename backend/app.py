@@ -3066,6 +3066,24 @@ def lora_train(body: dict):
     # train mostly on the corpus, large enough to give the best-checkpoint
     # tracking a signal on small (6-track) datasets.
     common["val_split"] = float(body["val_split"]) if "val_split" in body else 0.1
+    # Per-run output dir: never overwrite a prior adapter. Format encodes the
+    # config so we can identify the run later by name alone.
+    # Pattern: <dataset>/train_<YYYYMMDD-HHMMSS>__<adapter>_<epochs>ep_<sampling>
+    # Example: crucible_nightwish/train_20260530-150524__lokr_150ep_continuous
+    import datetime as _dt
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    suffix = (
+        f"train_{ts}__{method}_{common.get('train_epochs','?')}ep_"
+        f"{common.get('timestep_sampling_mode','discrete')}"
+    )
+    # train_dir is `<dataset_dir>/train` per the upload helper; replace last
+    # path segment with our timestamped subdir. Uses forward slashes — the
+    # engine on Windows accepts them.
+    base_train = p["train_dir"]
+    sep = "\\" if "\\" in base_train else "/"
+    parts = base_train.rstrip(sep).split(sep)
+    parts[-1] = suffix
+    per_run_train_dir = sep.join(parts)
     # Reset history for this dataset's new run, then spawn background poller.
     # See _lora_train_history_poller for why this exists (engine doesn't expose
     # plot_best_step). Daemon thread → dies with the process; persisted JSON
@@ -3073,14 +3091,70 @@ def lora_train(body: dict):
     with _LORA_TRAIN_HISTORY_LOCK:
         _LORA_TRAIN_HISTORY[dataset] = {
             "started_at": time.time(), "best": [], "val": [],
+            "output_dir": per_run_train_dir,
+            "run_label": suffix,
+            "config_at_start": dict(common),
         }
-    res = ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], p["train_dir"], **common)
+    res = ace_train.train_lokr(ACESTEP_HOST, p["tensor_dir"], per_run_train_dir, **common)
     threading.Thread(
         target=_lora_train_history_poller,
         args=(dataset, ACESTEP_HOST, time.time()),
         daemon=True,
     ).start()
+    # Return the per-run dir so the caller knows where best/ and final/ landed
+    if isinstance(res, dict):
+        res["output_dir"] = per_run_train_dir
+        res["run_label"] = suffix
     return res
+
+
+@app.get("/api/lora/adapters")
+def lora_adapters_list(dataset: str = "crucible_metal"):
+    """Enumerate archived adapters for a dataset.
+
+    Without this, every training run overwrote the previous adapter (we lost
+    the 2026-05-30 6-track Nightwish discrete one this way). Now each run
+    writes to a unique `<dataset>/train_<timestamp>__<config>/` and this
+    endpoint lists them so you can load any of them by run_label.
+
+    For now we infer the list from on-Mac history (started_at + output_dir
+    recorded by the per-run poller). Box-side enumeration via a directory
+    listing would be a follow-up — for runs predating this commit, history
+    points at the legacy `train/` dir which has been overwritten.
+    """
+    out = []
+    # Pull from in-memory + persisted history
+    with _LORA_TRAIN_HISTORY_LOCK:
+        h = dict(_LORA_TRAIN_HISTORY.get(dataset, {}))
+    if not h:
+        h = _lora_history_load(dataset)
+    if h and h.get("output_dir"):
+        out.append({
+            "run_label": h.get("run_label") or "current",
+            "output_dir": h.get("output_dir"),
+            "started_at": h.get("started_at"),
+            "completed_at": h.get("completed_at"),
+            "config": h.get("config_at_start") or {},
+            "best_lora_path": (
+                (h.get("output_dir") or "") +
+                ("\\" if "\\" in (h.get("output_dir") or "") else "/")
+                + "checkpoints"
+                + ("\\" if "\\" in (h.get("output_dir") or "") else "/")
+                + "best"
+                + ("\\" if "\\" in (h.get("output_dir") or "") else "/")
+                + "lokr_weights.safetensors"
+            ),
+            "final_lora_path": (
+                (h.get("output_dir") or "") +
+                ("\\" if "\\" in (h.get("output_dir") or "") else "/")
+                + "final"
+                + ("\\" if "\\" in (h.get("output_dir") or "") else "/")
+                + "lokr_weights.safetensors"
+            ),
+        })
+    # TODO v2: scan box-side via upload helper for additional run_TIMESTAMP
+    # subfolders. Requires adding a directory-listing endpoint to the helper.
+    return {"dataset": dataset, "adapters": out}
 
 
 @app.get("/api/lora/train/status")
