@@ -135,7 +135,7 @@ export function LoraTrainingForm(_: { cfg: Config }) {
     if (!ready || rehydratedRef.current) return;
     (async () => {
       try {
-        const d: any = await api.loraSamples();
+        const d: any = await api.loraSamples(dataset);
         const ss = Array.isArray(d) ? d : (d?.samples || d?.data || []);
         if (!ss.length) return;
         rehydratedRef.current = true;
@@ -184,7 +184,7 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   }
 
   async function loadSamples() {
-    const d: any = await api.loraSamples();
+    const d: any = await api.loraSamples(dataset);
     setSamples(Array.isArray(d) ? d : (d?.samples || d?.data || []));
   }
   const updSample = (i: number, patch: Record<string, any>) =>

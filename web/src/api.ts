@@ -108,7 +108,7 @@ export const api = {
   loraStatus: (dataset?: string) => jget(`/api/lora/status${dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""}`),
   loraDatasetAdd: (fd: FormData) => jform("/api/lora/dataset/add", fd),
   loraScan: (b: unknown) => jpost("/api/lora/dataset/scan", b),
-  loraSamples: () => jget("/api/lora/dataset/samples"),
+  loraSamples: (dataset?: string) => jget(`/api/lora/dataset/samples${dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""}`),
   loraSamplePut: (idx: number, b: unknown) => jmethod("PUT", `/api/lora/dataset/sample/${idx}`, b),
   loraAutolabel: (b: unknown) => jpost("/api/lora/dataset/autolabel", b),
   loraAutolabelStatus: () => jget("/api/lora/dataset/autolabel/status"),

@@ -2665,9 +2665,32 @@ def lora_dataset_scan(body: dict):
 
 
 @app.get("/api/lora/dataset/samples")
-def lora_dataset_samples():
+def lora_dataset_samples(dataset: str = "crucible_metal"):
+    """Engine's loaded-samples list. Auto-loads the dataset.json on demand if
+    the engine has no dataset in memory — engine state is wiped on every
+    restart, but the on-disk dataset.json is durable. This keeps the UI
+    sample table populated across engine restarts without making the user
+    re-click Step 2's 'Load dataset into engine' button."""
     _lora_require_engine()
-    return ace_train.dataset_samples(ACESTEP_HOST)
+    out = ace_train.dataset_samples(ACESTEP_HOST)
+    # Empty / missing samples → try to load the dataset.json on the box if it
+    # exists, then re-query. Best effort; ignore errors to keep the route
+    # behavior compatible with no-dataset-configured callers.
+    samples = (out.get("data", out).get("samples", []) if isinstance(out, dict) else []) or []
+    if not samples and dataset:
+        try:
+            if LORA_UPLOAD_HOST:
+                p = _lora_paths(dataset)
+                eng = ACESTEP_HOST if ACESTEP_HOST.startswith("http") else f"http://{ACESTEP_HOST}"
+                # Use raw requests — ace_train doesn't expose dataset_load yet.
+                import requests as _r
+                r = _r.post(f"{eng}/v1/dataset/load",
+                            json={"dataset_path": p["dataset_json"]}, timeout=120)
+                if r.status_code == 200:
+                    out = ace_train.dataset_samples(ACESTEP_HOST)
+        except Exception:
+            pass
+    return out
 
 
 @app.put("/api/lora/dataset/sample/{idx}")
