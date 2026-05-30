@@ -117,6 +117,49 @@ Scope includes **heavy rock** (Bon Jovi / Halestorm / Black Stone Cherry / AC/DC
 
 ## Open / next (for a fresh context)
 
+### SESSION 2026-05-30 — Scaling experiment + research deep-dive + new plans + Nightwish control
+
+**Headline finding:** **35 tracks made the LoRA WORSE, not better, despite lower val_loss.** The 6-track / 150-ep run from session 2026-05-29 remains our best-sounding adapter. User listening tests on 4 takes (best+final × 0.3+0.5 strengths, fixed seed+prompt) confirmed regression. **val_loss is misleading at our scale** — lower MSE on 5 val samples ≠ better perceptual quality.
+
+**Pipeline rebuild + 200-ep overnight run (35 power-metal tracks):**
+- New AcoustID-first artist resolution in `backend/lora_dataset.py:_resolve_artist_title_full` (commit `60896ce`) — priority chain is explicit args → ID3 tags → AcoustID fingerprint → filename parse. Promotes AcoustID above filename-parse so tag-less audio still feeds accurate artist into LRCLIB. ID3 wins over AcoustID per user preference.
+- Mac-side training history capture (commit `9f6b613`) — spawned from `/api/lora/train`, polls `/v1/training/status` every 2s, parses Patch D's `🧪 / 🏆` status messages, persists per-dataset to `library/lora_train_history/<dataset>.json`. Engine never exposed `plot_best_step`; this fills the gap. New `GET /api/lora/train/best_history?dataset=X`. Caught the full 200-ep curve: 5 best updates, ep 1 → 105, val 0.808 → 0.692.
+- Lyrics_source persisted in per-track .json meta (commit `e618691`) — UI badge survives reload. Future uploads benefit; existing crucible_metal + crucible_nightwish keep "none" badges since their JSONs predate the fix.
+- 200-ep / 35-track overnight run completed cleanly: 8h 44m, 1600 steps, best at epoch 105 (val 0.6919). **But epoch 27 was statistically tied (val 0.697, Δ=0.005 inside noise band of 0.20)**. Useful learning concentrates in first ~30 epochs. **Future runs on similar-sized data should use 50 epochs not 200.**
+
+**Research deep-dive + new plans written into METAL_LORA_PLAN (commit `0434ed6`):**
+- **§11 Plan 1 — Improved evaluation (no VRAM risk)**: CPU-only weight introspection during training (norm growth, dora_scale, SV spectrum, train/val gap) + post-training per-checkpoint CLAP fitness scoring + centroid distance via embedding of training corpus. Architecturally avoids in-training generation (VRAM swap-in cost is the killer). Explicit checks #1A/#1B/#1C with stop conditions.
+- **§12 Plan 2 — Continuous timestep sampling A/B (engine Patch 7)**: hypothesis that v1's discrete-8-timestep training distribution doesn't match xl-sft's 32-64-step continuous inference path, possibly explaining the smear. Pre-flight 2.0 captures reference takes; phase 2.1 patches the trainer with toggleable mode; phase 2.2 fires a calibrated 50-ep A/B; phase 2.3 runs Plan 1's post-eval. Concrete win/tie/loss decision criteria with actions for each.
+- **§13 — Overnight 200-ep / 35-track stats** measured on our box.
+- **§13a — Research catalog** (new, this session): the 3 training paths that exist (v1 HTTP API we use, v2 CLI in-tree, Side-Step community); existing HF LoRA collections + why they don't load on our XL 4B; adapter algorithm landscape (LoRA / DoRA / LoKr / LoHA / OFT / BOFT) with which paths support which; quality measurement landscape (7 approaches evaluated, why CLAP wins on ROI for us); val-loss-is-misleading empirical finding; DoRA discussion + Plan 3 deferral.
+
+**Nightwish single-band 6-track control experiment** (task #12, in flight):
+- Hypothesis test: does single-band, single-vocalist scope reduce the smear seen in 35-track mixed? Or is the training process itself the issue (Plan 2's hypothesis)?
+- 6 Tarja-era Nightwish tracks: Sleeping Sun, Ghost Love Score, End Of All Hope, Wishmaster, She Is My Sin, Sacrament Of Wilderness. Spans tempo (99-172 BPM) + dynamics (intimate ballad to epic 10-min) + key (D/F/G/A minor) but holds vocal/production era constant.
+- Dataset name `crucible_nightwish` (separate from `crucible_metal` 35-track) so prior artifacts stay intact for future comparison.
+- Pipeline status as of this commit: ✅ uploaded, ✅ scanned, ✅ saved, ✅ autolabeled (6/6, 12 min). Merge + preprocess + engine restart + training next.
+- Training config: SAME as session 2026-05-29's 6-track 150-ep run (plain LoKr, lr=0.01, val_split=0.1, seed=42, 150 ep). One variable changes vs that baseline: content (power-metal-mixed → Nightwish-Tarja).
+- Decision criteria: clearly better → data scope is the dominant lever; about the same → Plan 1+2 right direction (training process is the issue); worse → Plan 2 (continuous sampling) gets priority.
+
+**Tasks open at end-of-session:**
+- #6 UI: DoRA + LR override + val_split (still pending from session 2026-05-29; would be useful once Plan 3 lands)
+- #10 **Plan 1 — Improved evaluation** (the big infrastructure ship; needed for Plan 2 to be quantitative)
+- #11 **Plan 2 — Continuous timestep sampling A/B** (depends on Plan 1)
+- #12 **Nightwish single-band experiment** (in flight, training pending engine restart)
+- _Implicit Plan 3 — DoRA re-enable A/B_ — to be authored after Plan 2 resolves
+
+**Where to start the next session:**
+1. **Read METAL_LORA_PLAN §11 §12 §13 §13a first** — that's the canonical reference for Plans 1+2 + research catalog. This block is the session summary; §§11-13a are the substance.
+2. **Listen to the Nightwish training output** (assuming it ran while user was AFK). 4 takes in the Library, format "Crucible Nightwish 6-track 150ep — {BEST|FINAL} @ {0.3|0.5}".
+3. **Decision triage on the Nightwish result** per §11.5 / §12.3 / §13a.8 criteria → which plan to ship first.
+4. **Plan 1 ships first** regardless (it's the foundation for Plan 2 being quantitative). Patches A through D from session 2026-05-29 are live + we have the best-history poller — Plan 1 builds on those.
+
+**Operating reminders that bit us this session and are worth keeping front-of-mind:**
+- _val_loss is broken as a primary signal at our scale_ — quantitative comparisons need CLAP fitness via Plan 1 not just MSE
+- _Engine doesn't expose `plot_best_step` / val curve over `/v1/training/status`_ — our Mac-side poller now captures it via `🧪 / 🏆` status string parsing. Without that we can't tune `train_epochs` rationally
+- _More data ≠ better adapter without scope discipline_ — the 14-band 35-track mix produced a worse adapter than 6-track focused. Future runs should default to subgenre or single-band scope until evidence supports broader.
+- _In-training generation is unsafe_ on our 22-24 GB VRAM working set — Plan 1 explicitly post-hoc-evaluates against on-disk checkpoints with fresh engine state
+
 ### SESSION 2026-05-29 — Engine memory-leak diagnosed + DoRA bug + 1st-and-2nd LoKr trained + 3 engine bugs found
 
 Marathon training day. Pipeline VERIFIED end-to-end on the box (uploaded → captioned → preprocessed → trained → exported → loaded → generated), but adapter quality is held back by engine-level bugs. Findings deep enough that next session should patch the engine before another training run.

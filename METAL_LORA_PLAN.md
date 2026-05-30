@@ -437,7 +437,150 @@ User listening feedback to be appended here.
 
 ---
 
+## 13a. Research catalog — training paths, adapter algos, quality metrics (2026-05-30 deep dive)
+
+_Surfaced here so a cold session can read this doc + HANDOFF and pick up where we left off. Numbers cited from upstream / repo source are labelled. Hypotheses are labelled. Measured-on-our-box findings are labelled. Per [[dont-propagate-guesses]]._
+
+### 13a.1 The training paths that exist (verified by reading the repo 2026-05-30)
+
+**Path A — `acestep/training/` HTTP API** (what Crucible uses today)
+- Exposed via `POST /v1/training/start_lokr` and `POST /v1/training/start` on the engine
+- We drive it from `backend/acestep_train.py` → Mac `/api/lora/train` route
+- Config defaults read from `acestep/training/configs.py`: `learning_rate=0.03` for LoKr, `max_epochs=100`, `warmup_steps=100`, `mixed_precision="bf16"`, `val_split=0.0` (we patched to expose it)
+- Timestep sampling: **discrete, 8-element turbo grid** `[1.0, 0.9545, 0.9, 0.8333, 0.75, 0.6429, 0.5, 0.3]` per the configs.py docstring at lines 78-82
+- Loss objective: MSE on flow-matching prediction in latent space (`F.mse_loss(decoder_outputs[0], flow)` in `trainer.py:1410`)
+- Crucible patches active: target_modules narrowing, val_split exposure, val-loop + best-ckpt save for LoKr path
+
+**Path B — `acestep/training_v2/` CLI** (in-tree, not exposed over HTTP)
+- Standalone Python CLI: `python -m acestep.training_v2.cli.train_fixed` or `train_vanilla`
+- 7 preset configs ship in `acestep/training_v2/presets/`: `quick_test.json`, `recommended.json`, `high_quality.json`, `vram_8gb.json`, `vram_12gb.json`, `vram_16gb.json`, `vram_24gb_plus.json`
+- Key v1→v2 deltas (read from `acestep/training_v2/configs.py` 2026-05-30):
+  - **Continuous logit-normal timestep sampling** with `timestep_mu=-0.4, timestep_sigma=1.0, data_proportion=0.5`
+  - **CFG dropout** (`cfg_ratio=0.15`) — classifier-free guidance dropout during training
+  - **Explicit `attention_type`** field (`self`/`cross`/`both`) — vs v1's implicit-via-target_modules
+  - **Optimiser choice**: adamw, adamw8bit, adafactor, prodigy (vs v1's adamw-only)
+  - **Scheduler choice**: cosine, cosine_restarts, linear, constant, constant_with_warmup
+  - **VRAM profile auto-detection**: `vram_profile: auto|comfortable|standard|tight|minimal`
+  - **Sample generation during training**: `sample_every_n_epochs` (we don't use — VRAM risk per §11.1)
+  - **Fisher Information per-module gradient estimation**: `acestep/training_v2/estimate.py` writes a `fisher_map.json` that subsequent training auto-detects and uses to allocate higher rank to high-sensitivity modules
+  - **First-class checkpoint resume** via `resume_from`
+- _recommended.json_ (cited as v2 default starting point):
+  ```
+  rank=64, alpha=128, dropout=0.1, target=q_proj k_proj v_proj o_proj,
+  attention_type=both, learning_rate=1e-4, batch_size=1, gradient_accumulation=4,
+  epochs=100, save_every=10, gradient_checkpointing=true, cfg_ratio=0.15
+  ```
+- _high_quality.json_: rank=128, alpha=256, epochs=1000, save_every=250. So upstream's "high quality" recipe is **10×** our 100-ep runs.
+
+**Path C — Side-Step (community)** — `koda-dernet/Side-Step` on GitHub, one-click via Pinokio
+- Effectively "training_v2 with more adapter types + GUI + CLI + wizard + AI captioning"
+- **Adapter zoo**: LoRA, DoRA, LoKr, **LoHA, OFT** (Crucible currently uses LoRA/LoKr only)
+- Auto-detects model variant (base/sft/turbo), picks "scientifically correct" timestep schedule per variant
+- **Fisher Information adaptive ranks** (same idea as v2's estimate)
+- Local Qwen2.5-Omni / Google Gemini / OpenAI / Music Flamingo captioning options
+- VRAM down to 8 GB via 8-bit optimisers + encoder offload + adaptive batch sizing
+- Multi-provider AI captioning + Genius lyric scraping
+
+**Path D — Raw `diffusers` + PEFT** (bypass everything)
+- Model weights on HF at `ACE-Step/ACE-Step-v1-3.5B` and `ACE-Step/Ace-Step1.5`
+- Full control over training loop, sampler, evaluation; lose all engine integration
+- Estimate: 1-2 weeks of work to reach feature parity with what we have
+- _Only consider after exhausting A/B/C and if there's a specific feature we need that none of them offer_
+
+### 13a.2 Existing HF LoRA adapters (cataloged, not directly usable)
+- [`woctordho/ACE-Step-v1-LoRA-collection`](https://huggingface.co/woctordho/ACE-Step-v1-LoRA-collection) — musician-style LoRAs, **PEFT format targeting the 2B base/turbo**, NOT compatible with our XL 4B without conversion (and ComfyUI #9753 / #12638 indicate the key-format conversion is non-trivial)
+- [`David-A-Amoo/ACE-Step-1.5-Naija-Legacy-Rhythms-LoRA-v1`](https://huggingface.co/David-A-Amoo/ACE-Step-1.5-Naija-Legacy-Rhythms-LoRA-v1) — Nigerian-music LoRA, format details unclear from HF page
+- **No metal-specific community LoRAs found** as of 2026-05-30. Our hand-rolled adapter remains the only metal LoRA targeting our config.
+
+### 13a.3 Timestep sampling — the critical distribution-mismatch hypothesis
+
+**Cited from the ACE-Step paper ([arxiv 2506.00045](https://arxiv.org/pdf/2506.00045))**: the model was trained with **continuous logit-normal timestep sampling**, `μ=0, σ=1, shift=3.0`. Flow-matching objective is continuous-time by design.
+
+**Read from `acestep/training/configs.py:78-82`** (v1 trainer = what Crucible uses): trains by **randomly sampling one of 8 discrete timesteps** per training step — the turbo inference grid.
+
+**Read from `acestep/training_v2/configs.py:155-163`** (v2 trainer = in-tree, CLI-only): uses continuous logit-normal with `μ=-0.4, σ=1.0, data_proportion=0.5`.
+
+**Inference reality**: xl-sft at our documented best-quality settings uses **32-64 continuous timesteps** in the denoising trajectory.
+
+**Hypothesis (mine, NOT measured on our setup)**: training on discrete-8 = adapter learns to fix denoising errors at 8 specific noise levels, while inference traverses 32-64 different noise levels mostly disjoint from those 8. The mismatch could plausibly cause the "smear / lack of coherence" symptom + the val-loss plateau we observe with discrete-8 training. Plan 2 (§12) tests this hypothesis with a single-variable A/B.
+
+Related research: [Curriculum Sampling: A Two-Phase Curriculum for Efficient Training of Flow Matching (arxiv 2603.12517)](https://arxiv.org/pdf/2603.12517) — discusses how "Logit-Normal and other middle-biased sampling distributions accelerate early convergence but yield worse asymptotic fidelity than Uniform sampling, suggesting that corrected or curriculum-based sampling approaches may improve final model quality." Worth re-reading if Plan 2's continuous A/B itself shows pathology (e.g. fast early gains but worse late fidelity).
+
+### 13a.4 Adapter algorithm landscape
+Ordered by parameter efficiency / expressiveness trade-off:
+
+| Algorithm | Mechanism | Engine support | Side-Step | Notes |
+|---|---|---|---|---|
+| **LoRA** | `W + α(BA)` low-rank product | yes (PEFT) | yes | Classic. Universal compatibility. lr=1e-4 typical. |
+| **DoRA** | LoRA + magnitude/direction split | yes (LyCORIS `weight_decompose=true`) | yes | More expressive per param. **Needs `lr~1e-3`** — engine ships `lr=0.03` default which blows it up. Memory note [[engine-lokr-defaults]] confirms this. Worth testing as Plan 3 with `lr=0.001` after Plan 2 resolves. "Better extraction from small data" — relevant given our small-dataset territory. |
+| **LoKr** (our current) | Kronecker product decomposition | yes (LyCORIS) | yes | **~10× faster** training than LoRA per upstream tutorial (cited, not measured by us). Smaller files. Some loader limitations. Compatible with DoRA via `weight_decompose=true`. |
+| **LoHA** | Hadamard product of two low-rank | no (engine doesn't ship) | yes | More expressive than LoRA at same parameter count. **Sometimes better for style transfer** (community claim, not measured). Worth a Side-Step trial if Plan 2 + Plan 3 don't move the needle. |
+| **OFT** | Orthogonal Fine-Tuning — update is constrained to rotations of base weights | no | yes | Tends to produce cleaner adapters because the model's structure is preserved by construction. **Hypothesis**: could be the right fit for "augment metal character without adding noise". |
+| **BOFT** | Block-diagonal OFT | no | yes | More parameter-efficient OFT variant. |
+
+Engine `start_lokr` exposes via `lokr_weight_decompose`, `lokr_decompose_both`, `lokr_use_tucker`, `lokr_use_scalar`, `lokr_factor`, etc. — fine-grained control once we're inside LyCORIS-land.
+
+### 13a.5 Quality measurement landscape (why we picked CLAP for Plan 1)
+
+We evaluated 7 approaches before picking the Plan 1 set:
+
+1. **Val_loss alone** (current default) — MSE in latent space. Necessary but coarse. **Measured 2026-05-29/30**: 35-track best had val 0.6919 vs 6-track best ~higher, yet 35-track sounded WORSE. **Val_loss correlation with perceptual quality is broken at our scale.** This finding alone is sufficient justification for moving beyond val_loss as a primary signal.
+
+2. **Multi-noise val passes** — same val sample, multiple noise rolls per epoch, average loss. Reduces variance ~√N. Cheap improvement (just more forward passes). Implementable in our Patch D val loop as a `val_passes` config. Doesn't change the fundamental "MSE-vs-perception" issue.
+
+3. **Train/val gap as overfit canary** — derived from existing history, no new infra. Alarms when val rises N epochs in a row while train falls. Standard ML hygiene.
+
+4. **Adapter weight introspection** — load saved safetensors on CPU, compute mean abs weight magnitude per module (growth = learning; flat = converged), L2 norm of update vs previous ckpt, dora_scale distribution (alarm at `abs(max) > 3.0` per the Run-1 blowup pattern verified in [[engine-lokr-defaults]] memory), singular value spectrum of `w1 @ w2` (alarm if degenerate = mode collapse). **Zero GPU**, fast, safe to run during training. **In Plan 1 §11.2**.
+
+5. **CLAP zero-shot tag scoring** — generate samples per checkpoint, run through box analyze service (port 5075, `analyze_py.analyze`), get confidence on target tags. **We already have CLAP installed**. Yields a "metal-ness" curve over training. Cost: ~80s per generation, ~12 takes per checkpoint = ~16 min/ckpt. **Plan 1 §11.3 picks this as primary perceptual signal.**
+
+6. **Centroid-distance via CLAP embeddings** — pre-compute mean CLAP embedding of training corpus = "metal centroid." Per generated sample, cosine sim to centroid. More robust than tag matching because it's distribution-based not category-based. **Plan 1 §11.3.4 includes this as secondary signal.**
+
+7. **True FAD (Fréchet Audio Distance)** — gold standard in music-gen literature. Uses VGGish or PANN features → distribution distance between generated and reference sets. Requires installing PANN inference + storing a reference distribution. **Skipped for Plan 1**: marginal benefit over (6) given the extra install + storage cost. Revisit if (5)+(6) prove inadequate.
+
+8. **MERT / MULE / encodec feature similarity** — same family as (6), different audio encoder. **Skipped**: requires installing a separate audio model we don't currently use.
+
+### 13a.6 The val_loss-is-misleading finding (key empirical observation, 2026-05-30)
+
+**Measured on our box**: 6-track 150-epoch run (yesterday) sounded BETTER than 35-track 200-epoch run (overnight), despite the 35-track run having LOWER absolute val_loss (0.692 vs ~higher). User listening tests on 4 takes (best/final × 0.3/0.5) confirmed the regression.
+
+Implications:
+- Val_loss as currently computed (5-sample val × discrete-8-timestep MSE) is **not a reliable proxy for perceptual quality** at this scale.
+- "More tracks → better LoRA" is not validated on our setup — at least not without scope discipline (the 35-track run mixed 14 bands across multiple production eras + vocal styles).
+- Plan 1's perceptual fitness signal is not optional polish; it's the only way to know which direction is up.
+- The Nightwish single-band 6-track experiment (task #12) tests whether scope discipline alone explains the regression, or if the training process itself is part of the problem.
+
+### 13a.7 DoRA discussion (deferred from this session)
+
+Engine ships LoKr with `lokr_weight_decompose=True` (DoRA on) + `learning_rate=0.03` as defaults. Per [[engine-lokr-defaults]] memory + Run-1 verification: this combo **catastrophically blows up `dora_scale`** (max=19.18 after 100 ep). Mac route safeguard defaults to plain LoKr (`weight_decompose=False`) + `lr=0.01`.
+
+DoRA done right = `weight_decompose=True` + `lr~1e-3` + ~150+ ep. Memory note claims "better extraction from small data" — relevant to our small-dataset territory. Worth a Plan 3 A/B *after* Plan 2 (continuous sampling) resolves. Don't change two variables simultaneously.
+
+Plan 3 spec to be authored after Plan 2 lands — its baseline is whichever sampling mode wins Plan 2's §12.5 decision.
+
+### 13a.8 Key takeaways for a cold session
+
+1. **The trainer we use is one of three in-tree options + a community option + a raw-PEFT option.** Path A (HTTP API) is convenient; Paths B and C may produce materially better adapters via continuous sampling + CFG dropout + more adapter types. Plan 2 tests this.
+
+2. **Val_loss is misleading.** Plan 1 ships perceptual scoring via CLAP that's much more correlated with what the user actually hears. **Plan 1 is a hard dependency for any A/B that wants to be quantitative.**
+
+3. **Adapter algorithm choice matters and we've only tried 2 of 6.** LoHA + OFT (via Side-Step) are unmeasured opportunities. Plan 3+ territory.
+
+4. **Dataset scope matters more than dataset size at our scale.** 6-track focused beat 35-track mixed. Future runs should probably default to subgenre or single-band scope until we have evidence broader works.
+
+5. **Engine patch surface is growing.** 5 active patches + Plan 2's Patch 7. Maintain the `patches/engine-YYYY-MM-DD/` convention + the row in §7a + memory entry. Single-file copy-over on engine updates.
+
+---
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
-§§11–13 sources: ACE-Step paper [arxiv 2506.00045](https://arxiv.org/pdf/2506.00045) (training-time timestep sampling spec); engine repo files [`acestep/training/configs.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training/configs.py), [`acestep/training_v2/configs.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/configs.py), [`acestep/training_v2/presets/recommended.json`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/presets/recommended.json) (verified 2026-05-30); [Side-Step trainer](https://github.com/koda-dernet/Side-Step) (LoHA/OFT/Fisher info reference); §13 stats measured live on `192.168.1.201:8001` 2026-05-30.
+§§11–13a sources:
+- **ACE-Step paper** [arxiv 2506.00045](https://arxiv.org/pdf/2506.00045) — training-time timestep sampling spec, flow-matching objective
+- **Curriculum sampling** [arxiv 2603.12517](https://arxiv.org/pdf/2603.12517) — logit-normal vs uniform trade-offs (for §13a.3 follow-up reading)
+- Engine repo files (verified 2026-05-30): [`acestep/training/configs.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training/configs.py), [`acestep/training/trainer.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training/trainer.py), [`acestep/training/lokr_utils.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training/lokr_utils.py), [`acestep/training_v2/configs.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/configs.py), [`acestep/training_v2/presets/recommended.json`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/presets/recommended.json), [`acestep/training_v2/presets/high_quality.json`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/presets/high_quality.json), [`acestep/api/train_api_models.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/api/train_api_models.py), [`acestep/api/train_api_lokr_start_route.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/api/train_api_lokr_start_route.py)
+- **Side-Step community trainer** [github.com/koda-dernet/Side-Step](https://github.com/koda-dernet/Side-Step) — LoHA/OFT/Fisher info reference, Pinokio install path
+- **HF LoRA collections** (cataloged): [woctordho/ACE-Step-v1-LoRA-collection](https://huggingface.co/woctordho/ACE-Step-v1-LoRA-collection), [David-A-Amoo/ACE-Step-1.5-Naija-Legacy-Rhythms-LoRA-v1](https://huggingface.co/David-A-Amoo/ACE-Step-1.5-Naija-Legacy-Rhythms-LoRA-v1) — both PEFT format targeting 2B, incompatible with our XL 4B without conversion
+- **Tutorials** (for cross-reference): [ACE-Step LoRA Training Tutorial (official)](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/LoRA_Training_Tutorial.md), [Training a Custom LoRA — DeepWiki ACE-Step-1.5](https://deepwiki.com/ace-step/ACE-Step-1.5/10.3-training-a-custom-lora)
+- §13 baseline stats **measured live on `192.168.1.201:8001` 2026-05-29/30** (200-ep / 35-track run, 8h 44m wall-clock, best at epoch 105)
+- §13a.6 val-loss-is-misleading finding measured live 2026-05-30 (user A/B listening test)
