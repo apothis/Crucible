@@ -152,6 +152,11 @@ def build_labels(path, *, instrumental=False, want_lyrics=True, caption=None,
             "language": language}
     if caption:
         meta["caption"] = caption
+    # Persist lyrics_source so the UI can surface the LRCLIB/lyrics.ovh/whisper
+    # badge on page reload (engine passes meta fields through /v1/dataset/samples,
+    # see UI's tracks-from-samples rehydration in LoraTraining.tsx).
+    if lyrics_source:
+        meta["lyrics_source"] = lyrics_source
     return {"bpm": bpm, "keyscale": keyscale, "lyrics": lyrics, "lyrics_source": lyrics_source,
             "caption": caption or "", "caption_sources": caption_sources, "meta": meta}
 

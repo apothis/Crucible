@@ -144,7 +144,10 @@ export function LoraTrainingForm(_: { cfg: Config }) {
           bpm: s.bpm ?? 0,
           keyscale: s.keyscale || s.key_scale || s.key || "",
           has_lyrics: !!(s.lyrics && String(s.lyrics).trim()),
-          lyrics_source: "",
+          // Persisted by Mac upload route into the .json meta (lora_dataset.build_labels).
+          // Engine surfaces meta fields through /v1/dataset/samples → s.lyrics_source.
+          // Empty string when the upload predates this field (old datasets show "none").
+          lyrics_source: s.lyrics_source || "",
           lyrics: s.lyrics || "",
           caption: s.caption || "",
         } as LoraTrack)).filter((t: LoraTrack) => t.name));
