@@ -2758,8 +2758,23 @@ def lora_dataset_autolabel_merge(body: dict):
                 results.append({"idx": idx, "error": str(e)})
         else:
             results.append({"idx": idx, "skipped": True, "caption": merged or lm_cap})
+    # CRITICAL: persist the merged captions to dataset.json on the box.  Without
+    # this, the engine's in-memory caption state is correct but a subsequent
+    # engine restart (required before training per [[engine-fresh-boot-for-lora]])
+    # reloads dataset.json — which still has the pre-merge seed-only captions —
+    # so the UI shows stale data and ANY re-preprocess after restart would bake
+    # those stale captions into the tensors. Preprocess that ran BEFORE the
+    # restart is unaffected (tensors already have merged captions baked in).
+    # Bug discovered 2026-05-30 during the 8-track Nightwish discrete retrain.
+    try:
+        p = _lora_paths(dataset)
+        ace_train.dataset_save(ACESTEP_HOST, p["dataset_json"], dataset_name=dataset)
+        persisted = True
+    except Exception as e:
+        persisted = False
+        print(f"[lora] autolabel_merge: dataset save warning: {e}")
     return {"ok": True, "merged_count": sum(1 for r in results if r.get("merged")),
-            "results": results}
+            "persisted_to_disk": persisted, "results": results}
 
 
 @app.get("/api/lora/dataset/autolabel/status")
