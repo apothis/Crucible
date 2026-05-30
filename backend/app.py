@@ -3051,7 +3051,7 @@ def lora_train(body: dict):
                  "lokr_weight_decompose")
     common = {k: body[k] for k in ("train_epochs", "train_batch_size", "gradient_accumulation",
                                    "save_every_n_epochs", "learning_rate", "training_seed",
-                                   "gradient_checkpointing") + lokr_keys if k in body}
+                                   "gradient_checkpointing", "timestep_sampling_mode") + lokr_keys if k in body}
     if method == "lora":
         return ace_train.train_lora(ACESTEP_HOST, p["tensor_dir"], p["train_dir"],
                                     use_fp8=bool(body.get("use_fp8", False)),
