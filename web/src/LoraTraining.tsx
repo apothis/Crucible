@@ -102,8 +102,11 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   const [chainPhase, setChainPhase] = useState<null | "saving" | "preprocessing" | "starting-train">(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const refresh = () => api.loraStatus().then(setStatus).catch(() => {});
-  useEffect(() => { refresh(); }, []);
+  // Pass dataset so the training-status route knows which persisted snapshot
+  // to fall back to when the engine has been restarted (engine state is
+  // in-memory only — see _lora_training_status_with_fallback on the Mac).
+  const refresh = () => api.loraStatus(dataset).then(setStatus).catch(() => {});
+  useEffect(() => { refresh(); }, [dataset]);
   const training = status?.training;
   const preprocess = status?.preprocess;
   const isTraining = !!training?.is_training;

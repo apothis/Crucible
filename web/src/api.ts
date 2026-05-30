@@ -105,7 +105,7 @@ export const api = {
   },
 
   // Metal LoRA training (drives the box engine pipeline)
-  loraStatus: () => jget("/api/lora/status"),
+  loraStatus: (dataset?: string) => jget(`/api/lora/status${dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""}`),
   loraDatasetAdd: (fd: FormData) => jform("/api/lora/dataset/add", fd),
   loraScan: (b: unknown) => jpost("/api/lora/dataset/scan", b),
   loraSamples: () => jget("/api/lora/dataset/samples"),
@@ -117,7 +117,7 @@ export const api = {
   loraPreprocess: (b: unknown) => jpost("/api/lora/dataset/preprocess", b),
   loraPreprocessStatus: () => jget("/api/lora/dataset/preprocess/status"),
   loraTrain: (b: unknown) => jpost("/api/lora/train", b),
-  loraTrainStatus: () => jget("/api/lora/train/status"),
+  loraTrainStatus: (dataset?: string) => jget(`/api/lora/train/status${dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""}`),
   loraTrainStop: () => jpost("/api/lora/train/stop", {}),
   loraExport: (b: unknown) => jpost("/api/lora/export", b),
   loraLoad: (b: unknown) => jpost("/api/lora/load", b),

@@ -2584,14 +2584,21 @@ def _ensure_labeling_ready(host, lm_model_path=None, dit_model=None):
 
 
 @app.get("/api/lora/status")
-def lora_status():
-    """Preflight for the Training tab: which box services are reachable + live state."""
+def lora_status(dataset: str = "crucible_metal"):
+    """Preflight for the Training tab: which box services are reachable + live state.
+
+    `dataset` query param routes the training-status fallback to the right
+    persisted snapshot when the engine state is empty (post-restart). Default
+    preserves existing UI behavior (was crucible_metal before per-dataset
+    snapshots existed)."""
     out = {"train_available": bool(ACESTEP_HOST), "upload_available": bool(LORA_UPLOAD_HOST)}
     if ACESTEP_HOST:
         try: out["engine"] = acestep_py.health(ACESTEP_HOST)
         except Exception as e: out["engine_error"] = str(e)
         try:
-            tr = ace_train.training_status(ACESTEP_HOST)
+            # Use the with-fallback helper so a completed run still shows
+            # progress+loss+config after an engine restart.
+            tr = _lora_training_status_with_fallback(dataset)
             # Engine sets tensorboard_url to http://localhost:6006 — that's loopback
             # on the BOX, useless from any other machine. Rewrite to the box's actual
             # host so the UI link works from the Mac browser. Best-effort: only swap
@@ -2917,6 +2924,15 @@ def _lora_train_history_poller(dataset: str, host: str, started_at: float) -> No
                         h["final_status"] = status
                         h["final_epoch"] = int(d.get("current_epoch", 0) or 0)
                         h["final_step"] = int(d.get("current_step", 0) or 0)
+                        # NEW 2026-05-30: capture the FULL engine training_state at
+                        # completion so the UI can re-render the run's progress
+                        # block after an engine restart (engine state is in-memory
+                        # only — lost on restart, but we want the UI to still
+                        # show the completed run).
+                        h["final_loss_history"] = list(d.get("loss_history", []) or [])
+                        h["final_config"] = dict(d.get("config", {}) or {})
+                        h["final_tensorboard_url"] = d.get("tensorboard_url")
+                        h["final_tensorboard_logdir"] = d.get("tensorboard_logdir")
                     _lora_history_persist(dataset)
                     return
             else:
@@ -3172,10 +3188,58 @@ def lora_adapters_list(dataset: str = "crucible_metal"):
     return {"dataset": dataset, "adapters": out}
 
 
+def _lora_training_status_with_fallback(dataset: str) -> Dict[str, Any]:
+    """Engine training_state proxy + persisted-history fallback.
+
+    Engine's /v1/training/status is in-memory only — on engine restart, the
+    completed-run progress block disappears from the UI. We persist the full
+    final snapshot to disk on completion (see _lora_train_history_poller). When
+    the engine reports idle + empty AND we have a persisted snapshot for this
+    dataset, we synthesize a status response from the saved data so the UI can
+    re-render the run's progress block + sparkline + final config.
+
+    Live training always wins over the cached snapshot — no risk of stale data
+    shadowing an active run."""
+    live = ace_train.training_status(ACESTEP_HOST) or {}
+    # Some engines wrap responses in {"data": ...}, others return raw. Normalize.
+    payload = live.get("data", live) if isinstance(live, dict) and "data" in live else live
+    if not isinstance(payload, dict):
+        payload = {}
+    engine_is_training = bool(payload.get("is_training", False))
+    engine_epoch = int(payload.get("current_epoch", 0) or 0)
+    engine_has_state = engine_is_training or engine_epoch > 0 or bool(payload.get("loss_history"))
+    if engine_has_state:
+        return payload
+    # Engine idle + empty → fall back to persisted history for this dataset
+    snap = _lora_history_load(dataset) if dataset else {}
+    if not snap or "final_epoch" not in snap:
+        return payload  # genuine fresh state, nothing to restore
+    epochs_total = int((snap.get("final_config") or {}).get("epochs") or snap.get("final_epoch") or 0)
+    synthesized = {
+        "is_training": False,
+        "current_epoch": snap.get("final_epoch", 0),
+        "current_step": snap.get("final_step", 0),
+        "current_loss": None,
+        "status": snap.get("final_status") or "(persisted from previous run)",
+        "loss_history": snap.get("final_loss_history", []) or [],
+        "config": snap.get("final_config", {}) or {},
+        "tensorboard_url": snap.get("final_tensorboard_url"),
+        "tensorboard_logdir": snap.get("final_tensorboard_logdir"),
+        "start_time": snap.get("started_at"),
+        "_persisted_snapshot": True,
+        "_persisted_dataset": dataset,
+    }
+    if epochs_total and not synthesized["config"].get("epochs"):
+        synthesized["config"]["epochs"] = epochs_total
+    return synthesized
+
+
 @app.get("/api/lora/train/status")
-def lora_train_status():
+def lora_train_status(dataset: str = "crucible_metal"):
+    """Engine training_state proxy + persisted-history fallback. See
+    _lora_training_status_with_fallback for the architecture."""
     _lora_require_engine()
-    return ace_train.training_status(ACESTEP_HOST)
+    return _lora_training_status_with_fallback(dataset)
 
 
 @app.post("/api/lora/train/stop")
