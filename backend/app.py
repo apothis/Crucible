@@ -41,6 +41,7 @@ from . import melody as melody_mod
 from . import acestep_train as ace_train
 from . import lora_upload_py as lora_up
 from . import lora_dataset as lora_ds
+from . import lora_eval as lora_eval_mod
 from . import voicegen as voicegen_mod
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2923,6 +2924,73 @@ def lora_train_best_history(dataset: str = "crucible_metal"):
     if not h:
         h = _lora_history_load(dataset)
     return h
+
+
+@app.post("/api/lora/evaluate")
+def lora_evaluate(body: dict):
+    """Plan 1 — post-training perceptual fitness scoring (see METAL_LORA_PLAN §11).
+
+    Loops over caller-supplied checkpoints × scales, generates one take per
+    (ckpt, scale) at fixed prompt + seed, scores each via the box analyze
+    service's CLAP zero-shot tags. Persists results to
+    library/lora_train_history/<dataset>_fitness.json.
+
+    Body shape (all fields optional except dataset + ckpts):
+      dataset: str — required, names the persisted curve
+      ckpts:   [{label, lora_path, epoch?}] — required, list of adapter files
+               to score. For now caller supplies these explicitly (e.g. best/,
+               final/). Auto-enumeration of train/checkpoints/epoch_N/ is a v2 add.
+      scales:  [0.3, 0.5] by default
+      prompt + lyrics + seed + duration + bpm + keyscale + model — gen config
+      target_tags + negative_tags — fitness vocabulary (defaults to power-metal)
+      top_k — analyze top-K considered for tag presence (default 10)
+
+    GPU-exclusive — caller is responsible for ensuring the engine is in
+    inference-mode (LM + DiT loaded) before invoking. Engine restart per
+    [[engine-fresh-boot-for-lora]] recommended before a long eval run.
+
+    Synchronous — runs the full grid before returning. Per-iteration progress
+    is persisted as we go so a long run isn't lost on crash.
+    """
+    _lora_require_engine()
+    dataset = body.get("dataset") or "crucible_metal"
+    ckpts = body.get("ckpts") or []
+    if not ckpts:
+        raise HTTPException(400, "ckpts list required: [{label, lora_path, epoch?}, ...]")
+    scales = body.get("scales") or [0.3, 0.5]
+    free_gpu("acestep")
+    return lora_eval_mod.evaluate_dataset(
+        mac_base=f"http://127.0.0.1:{int(CFG.get('server_port', 8000))}",
+        engine_host=ACESTEP_HOST,
+        analyze_host=ANALYZE_HOST,
+        library_dir=LIBRARY,
+        dataset=dataset,
+        ckpts=ckpts,
+        scales=[float(s) for s in scales],
+        prompt=body.get("prompt") or body.get("tags") or "",
+        lyrics=body.get("lyrics") or "",
+        seed=int(body.get("seed", 42)),
+        duration=int(body.get("duration", 40)),
+        bpm=int(body.get("bpm", 132)),
+        keyscale=body.get("keyscale") or "D minor",
+        model=body.get("model") or "acestep-v15-xl-sft",
+        target_tags=body.get("target_tags"),
+        negative_tags=body.get("negative_tags"),
+        top_k=int(body.get("top_k", 10)),
+    )
+
+
+@app.get("/api/lora/evaluate/results")
+def lora_evaluate_results(dataset: str = "crucible_metal"):
+    """Return the persisted fitness curve for a dataset, or {} if none exists."""
+    path = os.path.join(LIBRARY, "lora_train_history", f"{dataset}_fitness.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 @app.post("/api/lora/train")

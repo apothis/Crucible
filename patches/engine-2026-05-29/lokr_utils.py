@@ -26,6 +26,22 @@ except ImportError:
         "Install with: pip install lycoris-lora"
     )
 
+# Crucible patch (2026-05-29): import LyCORIS's PRESET registry so we can
+# register our custom target-narrowing preset and pass it to create_lycoris
+# *by name* (LyCORIS's `if preset not in PRESET` check needs a hashable string,
+# not a dict). Fallback to None gracefully if the LyCORIS layout changes.
+try:
+    from lycoris.wrapper import PRESET as _LYCORIS_PRESET
+except Exception:  # pragma: no cover - defensive
+    try:
+        from lycoris import PRESET as _LYCORIS_PRESET  # type: ignore[attr-defined]
+    except Exception:
+        _LYCORIS_PRESET = None
+        logger.warning(
+            "LyCORIS PRESET registry not importable; falling back to upstream "
+            "wide-wrap behavior (post-hoc requires_grad filter still narrows training)."
+        )
+
 
 def check_lycoris_available() -> bool:
     """Check if LyCORIS is importable."""
@@ -69,23 +85,29 @@ def inject_lokr_into_dit(
     for _, param in model.named_parameters():
         param.requires_grad = False
 
-    # Crucible patch (2026-05-29): pass the user's target_modules directly to
-    # create_lycoris via preset=, so it isn't overwritten by LyCORIS's default
-    # preset="full" (which wraps every Linear in the decoder, including
-    # time_embed/embed_tokens). The pre-call apply_preset below is redundant
-    # once preset= is wired through, but kept as belt-and-braces in case a
-    # different LyCORIS version reads class state instead of the kwarg.
-    lokr_preset = {
+    # Crucible patch (2026-05-29): narrow the wrap set to the user's
+    # target_modules. LyCORIS's `create_lycoris(preset=...)` only accepts a
+    # *string* key into the PRESET registry (it does `if preset not in PRESET`,
+    # which would raise on a dict). So we register our config into PRESET under
+    # a stable name and pass the name. If the PRESET registry isn't importable
+    # we fall back to the upstream behavior (apply_preset + wide wrap + post-hoc
+    # requires_grad filter narrows what trains).
+    _crucible_preset = {
         "target_module": ["Linear"],
         "unet_target_name": lokr_config.target_modules,
         "target_name": lokr_config.target_modules,
     }
-    LycorisNetwork.apply_preset(lokr_preset)
+    LycorisNetwork.apply_preset(_crucible_preset)
+
+    extra_create_kwargs: Dict[str, Any] = {}
+    if _LYCORIS_PRESET is not None:
+        _crucible_preset_name = "crucible_lokr_targets"
+        _LYCORIS_PRESET[_crucible_preset_name] = _crucible_preset
+        extra_create_kwargs["preset"] = _crucible_preset_name
 
     lycoris_net = create_lycoris(
         decoder,
         multiplier,
-        preset=lokr_preset,
         linear_dim=lokr_config.linear_dim,
         linear_alpha=lokr_config.linear_alpha,
         algo="lokr",
@@ -97,6 +119,7 @@ def inject_lokr_into_dit(
         bypass_mode=lokr_config.bypass_mode,
         rs_lora=lokr_config.rs_lora,
         unbalanced_factorization=lokr_config.unbalanced_factorization,
+        **extra_create_kwargs,
     )
 
     if lokr_config.weight_decompose:
@@ -104,7 +127,6 @@ def inject_lokr_into_dit(
             lycoris_net = create_lycoris(
                 decoder,
                 multiplier,
-                preset=lokr_preset,
                 linear_dim=lokr_config.linear_dim,
                 linear_alpha=lokr_config.linear_alpha,
                 algo="lokr",
@@ -117,6 +139,7 @@ def inject_lokr_into_dit(
                 rs_lora=lokr_config.rs_lora,
                 unbalanced_factorization=lokr_config.unbalanced_factorization,
                 dora_wd=True,
+                **extra_create_kwargs,
             )
         except Exception as exc:
             logger.warning(f"DoRA mode not supported in current LyCORIS build: {exc}")
