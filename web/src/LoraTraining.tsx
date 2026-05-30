@@ -451,14 +451,14 @@ export function LoraTrainingForm(_: { cfg: Config }) {
           const epochPct = totalEpochs ? (100 * curEpoch) / totalEpochs : 0;
           const startedAgo = training.start_time ? Math.max(0, (Date.now() / 1000) - training.start_time) : 0;
           // Engine returns steps_per_second / estimated_time_remaining as 0.0 — it doesn't
-          // compute them. Derive client-side from what we DO have: loss_history grows by 1
-          // per optimizer step, start_time anchors elapsed, current_epoch gives progress.
-          const stepsSoFar = training.loss_history?.length ?? 0;
-          const engineSps = training.steps_per_second || 0;
-          const sps = engineSps > 0 ? engineSps : (startedAgo > 0 && stepsSoFar > 0 ? stepsSoFar / startedAgo : 0);
+          // compute them. Derive client-side from start_time + current_epoch.
+          // Show **seconds-per-epoch** (not steps/s) — much more meaningful for tuning
+          // train_epochs on the next run. The user can do "if I want 150 epochs and each
+          // takes 27s, that's ~67 min" in their head.
+          const secsPerEpoch = (curEpoch > 0 && startedAgo > 0) ? startedAgo / curEpoch : 0;
           const engineEta = training.estimated_time_remaining || 0;
-          const derivedEta = (curEpoch > 0 && totalEpochs > curEpoch && startedAgo > 0)
-            ? ((totalEpochs - curEpoch) * startedAgo) / curEpoch
+          const derivedEta = (curEpoch > 0 && totalEpochs > curEpoch && secsPerEpoch > 0)
+            ? (totalEpochs - curEpoch) * secsPerEpoch
             : 0;
           const eta = engineEta > 0 ? engineEta : derivedEta;
           const logLines = String(training.training_log || "").split("\n").filter(Boolean).slice(-4);
@@ -476,7 +476,7 @@ export function LoraTrainingForm(_: { cfg: Config }) {
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
                 <span>step <b className="text-[var(--color-ink)]">{training.current_step ?? 0}</b></span>
                 <span>loss <b className="text-[var(--color-ink)]">{training.current_loss != null ? training.current_loss.toFixed(4) : "—"}</b></span>
-                <span>rate <b className="text-[var(--color-ink)]">{sps ? sps.toFixed(2) : "—"}</b> steps/s</span>
+                <span>rate <b className="text-[var(--color-ink)]">{secsPerEpoch ? `${secsPerEpoch.toFixed(0)}s` : "—"}</b>/epoch</span>
                 <span>ETA <b className="text-[var(--color-ink)]">{fmtEta(eta)}</b></span>
               </div>
               {(training.loss_history?.length ?? 0) > 1 && <LossSparkline history={training.loss_history!} />}
