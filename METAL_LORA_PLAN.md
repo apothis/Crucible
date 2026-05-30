@@ -306,6 +306,10 @@ After all per-checkpoint scores are in:
 
 _Status (2026-05-30): authored, not shipped. Tracked as task #11. Depends on Plan 1 shipping first._
 
+### 12.NO-REGRESSION — additions only, no removals (per [[optional-additions]])
+
+**The current training stack stays available unchanged.** Plain LoKr + lr=0.01 + discrete-8-timestep sampling has produced usable adapters (6-track Nightwish 150-ep is currently our best-sounding baseline). We are NOT removing it to try the new method. The patches add a *toggleable opt-in alternative*; the default remains the current behaviour. This applies through every decision branch in §12.5 — even a "win" outcome makes the new path available, it doesn't take the old one away.
+
 ### 12.0 The hypothesis
 **Cited from arxiv 2506.00045 (ACE-Step paper):** the model was originally trained with continuous logit-normal timestep sampling, `μ=0, σ=1, shift=3.0`.
 
@@ -351,9 +355,9 @@ After 12.2 training completes:
 - **Check #2A — patch sanity**: stand up the patched engine, fire a 3-epoch toy training (save_every=1, val_split=0.15, same 35-track dataset). Confirm: no NaN/Inf loss, training completes, adapter loads cleanly, generation with the toy adapter doesn't garble. If any fail → abort, re-read the paper's training section before continuing.
 - **Check #2B — training health during the 50-ep run**: use Plan 1's `/api/lora/train/health` surface (§11.2). Verify: val curve differs in shape vs last night's, no dora_scale or singular-value pathology, train/val gap stable. If the curve looks identical to last night's, the patch isn't actually changing the training distribution — debug before continuing.
 - **Check #2C — decision after Phase 2.3**:
-  - **Win**: continuous-50ep best ckpt sounds at-least-as-good as discrete-200ep best by ear, AND CLAP fitness curve is comparable or higher. → Update [[engine-patches]] memory, flip continuous to default in the Mac route, run a proper 100-ep production run on the same data.
-  - **Tie**: no audible difference, CLAP curves indistinguishable. → Keep the patch toggleable but don't flip default; flag for revisit on a future dataset (bigger or different subgenre) where divergence might emerge.
-  - **Loss**: continuous is measurably worse. → Document the negative result, revert. Look at v2's `cfg_ratio` (CFG dropout) and Fisher-info adaptive ranks as the next lever; or shift to Side-Step trial.
+  - **Win**: continuous-50ep best ckpt sounds at-least-as-good as discrete-200ep best by ear, AND CLAP fitness curve is comparable or higher. → Add the continuous mode as a **documented opt-in** in the Train LoRA UI and Mac route (NOT the default per §12.NO-REGRESSION). Update [[engine-patches]] memory describing both methods. Run a proper 100-ep production run on the same data using the new mode. _Current discrete-sampling code path stays in place and remains the default for any caller that doesn't explicitly opt in._
+  - **Tie**: no audible difference, CLAP curves indistinguishable. → Keep the patch toggleable as opt-in; default stays discrete; flag for revisit on a future dataset (bigger or different subgenre) where divergence might emerge.
+  - **Loss**: continuous is measurably worse. → Document the negative result. The toggle stays in the codebase (the patch shipped, the field is harmless when defaulted to discrete) but is documented as "tested, regressed at our scale" rather than recommended. Look at v2's `cfg_ratio` (CFG dropout) and Fisher-info adaptive ranks as the next lever; or shift to Side-Step trial. _Old behaviour is unchanged regardless._
 
 ### 12.6 Phase 2.4 — optional follow-ups (only if 2.3 wins)
 Each gets its own one-variable A/B vs the post-2.3 baseline:
