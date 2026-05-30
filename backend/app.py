@@ -2993,6 +2993,36 @@ def lora_evaluate_results(dataset: str = "crucible_metal"):
         return {}
 
 
+@app.get("/api/lora/evaluate/derive_targets")
+def lora_evaluate_derive_targets(dataset: str = "crucible_metal",
+                                  min_occurrences: int = 2,
+                                  max_tags: int = 16):
+    """Auto-build a STARTING target tag vocabulary from a dataset's seed captions.
+
+    Per [[optional-additions]] and the experiment-tunability principle: target
+    tags are experiment-specific. This endpoint inspects what the LoRA was
+    trained against and returns the most common tag-like prefixes from the
+    seed captions. Eyeball the result, drop wrong-genre tags, then pass the
+    curated list to /api/lora/evaluate as target_tags.
+
+    Example: a Nightwish dataset returns "symphonic metal, finnish metal,
+    gothic metal, progressive metal" — but probably also some noise like
+    "black metal" or "groove metal" because CLAP zero-shot mis-tagged a
+    couple training samples. Drop those before evaluating.
+    """
+    _lora_require_engine()
+    p = _lora_paths(dataset)
+    try:
+        tags = lora_eval_mod.derive_target_tags_from_dataset(
+            ACESTEP_HOST, p["dataset_json"],
+            min_occurrences=int(min_occurrences),
+            max_tags=int(max_tags))
+        return {"dataset": dataset, "suggested_target_tags": tags,
+                "dataset_json": p["dataset_json"]}
+    except Exception as e:
+        raise HTTPException(500, f"derive failed: {e}")
+
+
 @app.post("/api/lora/train")
 def lora_train(body: dict):
     """Start LoRA or LoKr training on the box from the preprocessed tensors. GPU-exclusive.

@@ -22,12 +22,19 @@ Architecture:
 - Default target_tags = power-metal/symphonic-metal vocabulary; caller can
   override for any subgenre.
 
-Limitations (v1):
-- Tag *presence* in top-K, not raw confidence scores (the analyze service
-  exposes only sorted top-K). Position-weighted scoring TBD if v1 signal
-  isn't sensitive enough.
+v2 changes (2026-05-30 afternoon, after partial-12-take smoke):
+- **Position-weighted scoring**: rank-1 hit counts much more than rank-10 hit.
+  Linear decay: weight = (K - rank) / K. Binary presence still reported for
+  compatibility, but `fitness_weighted` is the recommended signal — finer
+  granularity (0.0-N continuous) and rewards confident matches.
+- **Retry logic for analyze service**: smoke run had 6/12 takes time out when
+  autolabel hammered the LM on the shared 3090. Now wraps each analyze call
+  with 3 retries + exponential backoff (15s, 30s, 60s) to ride out GPU
+  contention. Per-track timeout dropped to 90s so retries kick in faster.
+
+Limitations (still v2):
 - Caller supplies the list of checkpoint paths; no automatic enumeration of
-  train/checkpoints/epoch_N/ folders yet. v2 adds enumeration via a box-side
+  train/checkpoints/epoch_N/ folders yet. Future patch via a box-side
   directory-listing endpoint.
 - CLAP centroid distance (METAL_LORA_PLAN §11.3.4) not implemented yet —
   analyze service doesn't expose raw embeddings. Future patch.
@@ -43,9 +50,18 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
-# Default target tags for power-metal / symphonic-metal LoRAs.  Caller can
-# override per dataset / per experiment.  Curated against the engine analyze
-# service's existing metal vocabulary so they're scoreable.
+# ─── Target / negative vocabularies ──────────────────────────────────────────
+# IMPORTANT: target_tags are EXPERIMENT-SPECIFIC. What "good output" means for
+# a Nightwish-trained LoRA (symphonic, soprano, orchestral) is different from
+# what it means for a Manowar-trained LoRA (traditional heavy metal, male
+# vocals, gallop riffs) which is different from a DragonForce LoRA (speed
+# metal, virtuosic solos, double bass), etc. The caller of evaluate_adapter()
+# / evaluate_dataset() MUST pass the target_tags appropriate to what THIS run
+# was trained to produce — otherwise the fitness score is meaningless.
+#
+# The constants below are SUGGESTED STARTING POINTS for common subgenres.
+# Use derive_target_tags_from_dataset() to auto-build a starting list from
+# the training data's own seed captions, then hand-tune.
 DEFAULT_TARGET_TAGS_POWER_METAL = [
     "power metal", "symphonic metal", "heavy metal", "anthemic",
     "harmonized lead guitars", "double bass drums", "soaring vocals",
@@ -56,10 +72,59 @@ DEFAULT_TARGET_TAGS_SYMPHONIC_METAL = [
     "orchestral", "choir", "cinematic", "epic", "dramatic",
 ]
 
-# Negative tags — if these score in top-K it's a red flag (model drifted off
-# target genre). Caller can override.
+# Negative tags — if these land high in top-K it's a red flag (model drifted
+# off-genre). These are broad enough to apply across most metal experiments
+# but the caller can override per-experiment too (e.g. for an electronic-
+# metal hybrid LoRA you'd remove "electronic dance music" from the negatives).
 DEFAULT_NEGATIVE_TAGS = ["pop music", "hip hop", "electronic dance music",
                           "country music", "jazz"]
+
+
+def derive_target_tags_from_dataset(engine_host: str,
+                                     dataset_path: str,
+                                     min_occurrences: int = 2,
+                                     max_tags: int = 16) -> List[str]:
+    """Auto-build a starting target vocab from a dataset's seed captions.
+
+    Each training track has a caption that begins with comma-separated style
+    tags (from the MB / Last.fm / CLAP seed layer) before any prose. These
+    tags are literally "what the LoRA was trained to produce." Aggregating
+    them across the dataset gives a sensible default target vocabulary that
+    actually matches THIS experiment.
+
+    Args:
+        engine_host: e.g. "192.168.1.201:8001"
+        dataset_path: absolute path to dataset.json ON THE BOX
+        min_occurrences: tag must appear in ≥N tracks to count (filters noise)
+        max_tags: cap on returned list
+
+    Returns: sorted list of tag strings, most-common first.
+
+    Tip: call this once at experiment-start, eyeball the result, drop tags
+    that look wrong, then pass the curated list to evaluate_dataset(). Don't
+    use the raw output blindly — CLAP seeds can include wrong-genre tags
+    (we saw "black metal, groove metal, thrash metal" on Nightwish tracks).
+    """
+    from collections import Counter
+    base = engine_host if engine_host.startswith("http") else f"http://{engine_host}"
+    # Make sure the right dataset is loaded
+    requests.post(f"{base}/v1/dataset/load",
+                  json={"dataset_path": dataset_path}, timeout=120)
+    r = requests.get(f"{base}/v1/dataset/samples", timeout=120)
+    r.raise_for_status()
+    d = r.json()
+    samples = d.get("data", d).get("samples", []) if isinstance(d, dict) else []
+    counter: Counter[str] = Counter()
+    for s in samples:
+        cap = (s.get("caption") or "").strip()
+        # First sentence / first 200 chars is where the tag list lives
+        head = cap.split(".", 1)[0][:240].lower()
+        for raw in head.split(","):
+            tag = raw.strip()
+            # Filter trivial / single-word noise tags
+            if 3 <= len(tag) <= 40 and not tag.isdigit():
+                counter[tag] += 1
+    return [t for t, n in counter.most_common(max_tags) if n >= min_occurrences]
 
 
 def _post(host: str, path: str, body: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
@@ -80,6 +145,58 @@ def _wait_for_job(mac_base: str, job_id: str, poll_s: float = 5.0,
             return d
         time.sleep(poll_s)
     raise TimeoutError(f"job {job_id} did not finish within {timeout_s}s")
+
+
+def _position_weighted_score(tags_list: List[str], top_k_tags: List[str],
+                              k: int) -> Dict[str, float]:
+    """Linear-decay position weight: rank-1 = 1.0, rank-K = ~0.0, miss = 0.0.
+
+    Why: the v1 smoke (2026-05-30) showed that broad-genre CLAP tags ("pop
+    music", "country music") often land at high ranks for our generations,
+    even when the audio is clearly metal. Treating presence-in-top-K as
+    binary inflates these false-positives. Position weighting preserves the
+    information while letting rank-1 hits dominate the score.
+
+    Returns {tag: weight} where weight in [0.0, 1.0]. Mean weight = aggregate
+    fitness for the tag list.
+    """
+    out: Dict[str, float] = {}
+    top_lower = [t.lower().strip() for t in top_k_tags]
+    for tag in tags_list:
+        try:
+            rank = top_lower.index(tag.lower().strip())
+            out[tag] = max(0.0, (k - rank) / k)
+        except ValueError:
+            out[tag] = 0.0
+    return out
+
+
+def _analyze_with_retry(analyze_host: str, audio_path: str,
+                         labels: List[str], timeout: float = 90.0,
+                         max_attempts: int = 3) -> Dict[str, Any]:
+    """Call the box analyze service with bounded retries + backoff.
+
+    The shared-3090 box can starve the analyze service when the engine is
+    busy (autolabel / training). Without retry we lose the score for any
+    take that hits a transient timeout — and we generated it already, so
+    that's a wasted ~80s of GPU work. Backoff sequence: 15s, 30s, 60s.
+    """
+    from . import analyze_py
+    delays = [15, 30, 60]
+    last_err: Optional[Exception] = None
+    for attempt in range(max_attempts):
+        try:
+            return analyze_py.analyze(analyze_host, audio_path, labels=labels,
+                                       with_tags=True, with_key=False,
+                                       timeout=timeout)
+        except Exception as exc:
+            last_err = exc
+            if attempt < max_attempts - 1:
+                wait = delays[min(attempt, len(delays) - 1)]
+                print(f"[lora_eval] analyze attempt {attempt+1}/{max_attempts} "
+                      f"failed ({exc}); retrying in {wait}s")
+                time.sleep(wait)
+    raise RuntimeError(f"analyze failed after {max_attempts} attempts: {last_err}")
 
 
 def _set_adapter_state(engine_host: str, lora_path: str, adapter_name: str,
@@ -126,8 +243,13 @@ def evaluate_adapter(
     title = f"{label_prefix} — {adapter_name} @ {scale:.2f}"
     result: Dict[str, Any] = {
         "lora_path": lora_path, "adapter_name": adapter_name, "scale": scale,
-        "target_tags": list(target_tags), "top_tags": [], "target_hits": {},
-        "negative_hits": {}, "fitness": 0, "negative_fitness": 0,
+        "target_tags": list(target_tags), "top_tags": [],
+        # binary presence-in-top-K (v1, kept for back-compat)
+        "target_hits": {}, "negative_hits": {},
+        "fitness": 0, "negative_fitness": 0,
+        # position-weighted (v2, recommended)
+        "target_weights": {}, "negative_weights": {},
+        "fitness_weighted": 0.0, "negative_fitness_weighted": 0.0,
         "audio_path": None, "job_id": None, "title": title, "error": None,
     }
     try:
@@ -160,22 +282,27 @@ def evaluate_adapter(
             result["error"] = f"audio not found at library/{job_id}.{{wav,mp3}}"
             return result
         result["audio_path"] = candidate
-        # 5. Send to analyze with merged label vocabulary
+        # 5. Send to analyze with merged label vocabulary (with retry —
+        # see _analyze_with_retry for why)
         labels = list(target_tags) + list(negative_tags)
-        from . import analyze_py
-        an = analyze_py.analyze(analyze_host, candidate, labels=labels,
-                                with_tags=True, with_key=False, timeout=300)
+        an = _analyze_with_retry(analyze_host, candidate, labels=labels,
+                                  timeout=90.0, max_attempts=3)
         top_tags = [t.lower().strip() for t in (an.get("tags") or [])][:top_k]
         result["top_tags"] = top_tags
-        # 6. Score: how many target tags landed in top-K? Same for negatives.
-        target_set = {t.lower().strip() for t in target_tags}
-        neg_set = {t.lower().strip() for t in negative_tags}
+        # 6a. v1 binary scoring (back-compat)
         target_hits = {t: (t.lower() in top_tags) for t in target_tags}
         neg_hits = {t: (t.lower() in top_tags) for t in negative_tags}
         result["target_hits"] = target_hits
         result["negative_hits"] = neg_hits
         result["fitness"] = sum(1 for v in target_hits.values() if v)
         result["negative_fitness"] = sum(1 for v in neg_hits.values() if v)
+        # 6b. v2 position-weighted scoring (recommended signal)
+        target_w = _position_weighted_score(list(target_tags), top_tags, top_k)
+        neg_w = _position_weighted_score(list(negative_tags), top_tags, top_k)
+        result["target_weights"] = target_w
+        result["negative_weights"] = neg_w
+        result["fitness_weighted"] = round(sum(target_w.values()), 4)
+        result["negative_fitness_weighted"] = round(sum(neg_w.values()), 4)
         return result
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
