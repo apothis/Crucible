@@ -232,5 +232,212 @@ Throughout: caption review is the highest-leverage step. Five extra minutes edit
 - [Ambience AI: ACE-Step Prompt Guide](https://www.ambienceai.com/tutorials/ace-step-music-prompting-guide) (caption do's/don'ts)
 - [RIAA vs Suno / Udio (2024) — Wikipedia overview](https://en.wikipedia.org/wiki/Suno_(company)) (the legal context for music-AI training data — for the single-band ethics caveat)
 
-## 11. Sources
+## 11. Plan 1 — Improved evaluation (post-hoc fitness, no VRAM risk)
+
+_Status (2026-05-30): authored, not shipped. Tracked as task #10._
+
+### 11.0 Why we need it
+Val_loss is necessary but coarse — MSE in latent space, only loosely correlated with perceptual quality. The 2026-05-29/30 overnight 200-ep / 35-track run made this concrete: the "best" val checkpoint (epoch 105, val 0.6919) is statistically tied with epoch 27 (val 0.697) — a 0.005 gap inside a 0.20 val noise band. Picking between them on val_loss alone is essentially a coin flip. We need a perceptual fitness signal that actually correlates with "sounds metal" / "sounds coherent."
+
+### 11.1 Architectural constraint — VRAM safety during training
+**In-training generation is unsafe and not part of this plan.** During a training run the engine holds:
+- DiT decoder on GPU with LoKr wrappers (gradient flow active)
+- AdamW optimizer state (~2× param memory)
+- Gradient buffers + activations (reduced by grad ckpt but still present)
+- VAE / text encoder offloaded to CPU
+- LM unloaded
+
+Adding generation mid-training would require swapping VAE/TE/LM back to GPU, running inference, then unloading again — peak VRAM during this window would be far higher than steady-state training. With our 22–24 GB working set, a single sizing miscalculation = CUDA OOM = whole multi-hour training crashes. Not acceptable as routine behavior.
+
+**Plan 1 routes around this**: everything that runs *during* training is CPU-only weight introspection. Everything *perceptual* runs *after* training against the on-disk checkpoints, with the engine in a clean inference-mode state.
+
+### 11.2 During-training surface (CPU only, zero GPU)
+A watcher thread spawned from `/api/lora/train` (parallels the existing best-history poller, commit `9f6b613`). Watches `<output_dir>/checkpoints/` for new `epoch_NN_loss_X.XXXX/` directories.
+
+For each new directory:
+1. Load `lokr_weights.safetensors` via the `safetensors` lib in CPU mode (no torch CUDA init).
+2. Per LoKr module, compute:
+   - **Mean abs weight magnitude** — growth across consecutive checkpoints = still learning; flat = converged.
+   - **L2 norm of update vs previous checkpoint** — low + persistent = converged.
+   - **`dora_scale` distribution** (if present) — alarm threshold at `abs(max) > 3.0`. Prevents the Run-1 DoRA blowup pattern from going unnoticed.
+   - **Singular value spectrum of `w1 @ w2`** — alarm if degenerate (top-1 SV ≫ rest = mode collapse).
+3. Train/val gap from existing `loss_history` + `plot_val_loss` — alarm when val climbs N epochs in a row while train drops = overfitting signal.
+4. Persist per-checkpoint stats to `library/lora_train_history/<dataset>_weights.json`.
+
+Surface via new `GET /api/lora/train/health?dataset=X` returning `{weight_norm_trend, dora_scale_max, sv_collapse_flag, train_val_gap, overfit_alarm}`. Wire into a small "Training health" panel in the Train LoRA tab.
+
+### 11.3 Post-training surface (heavy, GPU, isolated)
+Triggered explicitly by the user after training completes + a clean engine restart per [[engine-fresh-boot-for-lora]].
+
+For each on-disk checkpoint (`epoch_10/`, `epoch_20/`, ..., `checkpoints/best/`, `final/`):
+1. **Adapter swap**: unload current, load this checkpoint at fixed scale (default 0.5).
+2. **Generation**: N samples with fixed prompts × rotating seeds. Default: 4 power-metal prompts × 3 seeds = 12 takes per checkpoint.
+3. **CLAP zero-shot scoring** (box analyze service, port 5075): for each take, get confidence on target tags (`power metal`, `double bass drums`, `harmonized lead guitars`, `soaring clean vocals`, `epic chorus`). Mean + std across the 12 takes.
+4. **Centroid distance**: pre-compute once per dataset — CLAP embeddings of all training mp3s → mean = "metal centroid". Per-generation cosine similarity to that centroid.
+5. Persist to `library/lora_train_history/<dataset>_fitness.json`.
+
+Cost: ~12 takes × ~80s/take ≈ 16 min/checkpoint. A 200-ep run with save_every_n_epochs=10 = 20 ckpts + best + final = 22 ckpts ≈ 6 h post-eval. Feasible overnight #2.
+
+### 11.4 Aggregation + winner pick
+After all per-checkpoint scores are in:
+- Plot 5 overlaid curves on epoch axis: train_loss, val_loss, weight_norm, CLAP tag fitness (mean of target tags), centroid distance.
+- **Winner**: argmax(CLAP fitness), not argmin(val_loss).
+- **Disagreement between curves is itself diagnostic** (e.g. val drops but CLAP fitness flat = adapter is memorising training distribution but not generalising to "metal-ness" as humans recognise it).
+
+### 11.5 Checks along the way (avoid regressions)
+- **Check #1A** — verify weight introspection works on last night's checkpoints (epoch_10/.../epoch_200/, best/, final/) before shipping the watcher. Load, compute all stats, sanity-check numbers. If anything blows up, fix before wiring to live training.
+- **Check #1B** — single-checkpoint dry run of the post-eval pipeline end-to-end. Pick one ckpt from last night, run §11.3 against it, validate scores complete in expected time (~16 min) and look sensible.
+- **Check #1C** — after the first 3 checkpoints of a real eval run, verify fitness scores are monotonic-ish (early ckpts should score lower than mid-training). If they're random noise the CLAP signal isn't sensitive enough — abort the per-ckpt loop, fall back to weight-only, and consider larger N or different prompts.
+
+### 11.6 Deliverables
+- `backend/lora_eval.py` — weight introspection (§11.2) + CLAP fitness pipeline (§11.3)
+- `backend/app.py` — `GET /api/lora/train/health` (during) + `POST /api/lora/evaluate` (post)
+- Watcher thread spawn from `/api/lora/train` (alongside existing history poller)
+- UI: "Training health" strip in Train LoRA tab + post-training evaluation card
+
+### 11.7 Stop conditions
+- After check #1A fails → abort. Investigate safetensors lib + lokr_weights structure.
+- After check #1B takes 3× longer than expected → redesign for fewer takes/ckpt.
+- After check #1C → fitness signal isn't useful → ship weight introspection only, defer perceptual to a later round (maybe try CLAP centroid alone, or move to FAD via PANN).
+
+---
+
+## 12. Plan 2 — Improved training (continuous timestep sampling A/B)
+
+_Status (2026-05-30): authored, not shipped. Tracked as task #11. Depends on Plan 1 shipping first._
+
+### 12.0 The hypothesis
+**Cited from arxiv 2506.00045 (ACE-Step paper):** the model was originally trained with continuous logit-normal timestep sampling, `μ=0, σ=1, shift=3.0`.
+
+**Read directly from `acestep/training/configs.py:78-82` (the v1 trainer the engine HTTP API uses):** *"Discrete timesteps from turbo shift=3.0 schedule (8 steps). Randomly samples one of 8 timesteps per training step: [1.0, 0.9545, 0.9, 0.8333, 0.75, 0.6429, 0.5, 0.3]"*.
+
+**Read directly from `acestep/training_v2/configs.py:155-163` (the in-tree v2 trainer, CLI-only):** continuous logit-normal with `timestep_mu=-0.4, timestep_sigma=1.0, data_proportion=0.5`.
+
+**Hypothesis (mine, not yet measured on our setup, per [[dont-propagate-guesses]]):** training on the discrete 8-step grid means the adapter optimises corrections at noise levels the 32–64-step xl-sft inference path mostly skips. The distribution mismatch could explain (a) val_loss plateauing despite weights still drifting and (b) the "smeary mix" symptom user has reported. If true, switching to continuous sampling is a structural fix, not a hyperparam tweak.
+
+### 12.1 Pre-flight 2.0 — reference takes (no training)
+Before touching the trainer, capture the A side of the planned A/B while the box is in a known-good state:
+- 4 fixed power-metal prompts × 3 seeds = **12 reference takes** off `crucible_metal/checkpoints/best/` (epoch 105) at strength 0.5.
+- Stored as a dedicated Library project named "Plan 2 baseline". Becomes the comparison point for every subsequent A/B in this section.
+- _Why now:_ we have the current best ckpt loaded and known; capturing baseline before patching means there's no risk of accidentally comparing apples-to-oranges later.
+
+### 12.2 Phase 2.1 — author Patch 7
+Single-file engine patch in `acestep/training/trainer.py` (~40 lines):
+- Locate the `sample_discrete_timestep(bsz, self.timesteps_tensor)` call in `PreprocessedLoRAModule.training_step` and `PreprocessedLoKRModule.training_step` (need to read both before patching — same shape changes).
+- Add a `_sample_continuous_timestep(bsz)` helper that draws `ε ~ N(μ, σ²)`, applies `t = sigmoid(ε)`, applies the shift transform — same returned tensor shape/dtype as the discrete path.
+- Defaults: `μ=-0.4, σ=1.0` from v2's `recommended.json` (cited, not measured for our flow).
+- Add `timestep_sampling_mode: "discrete" | "continuous"` field to `StartLoKRTrainingRequest` and `StartTrainingRequest`. **Default = `"discrete"`** — preserves current behavior. Continuous is opt-in.
+- Mac route `/api/lora/train` accepts the new field; `acestep_train.train_lokr` plumbs it through (only sent when caller provides → unpatched engines ignore).
+- Drop the patched files into `patches/engine-2026-05-30/` with a README matching the 2026-05-29 batch's format.
+- Add a row to METAL_LORA_PLAN §7a and a Patch 7 entry to `[[engine-patches]]` memory.
+
+### 12.3 Phase 2.2 — calibrated 50-epoch A/B run
+Same 35 tracks, same lr=0.01 plain LoKr, same gradient_checkpointing=true, same val_split=0.15, same seed=42. **Only** changes vs the overnight 200-ep run:
+- `timestep_sampling_mode="continuous"`
+- `train_epochs=50` — calibrated from last night's measured data: useful learning happened in the first ~30 epochs, so 50 is enough to see whether continuous sampling is doing something different + leaves headroom. ~50 × 157s ≈ 1h 20m, not overnight. Cheap enough to iterate.
+- Engine fresh boot before kicking off (per [[engine-fresh-boot-for-lora]]).
+
+### 12.4 Phase 2.3 — A/B evaluation
+After 12.2 training completes:
+1. Engine fresh boot for clean inference state.
+2. Apply Plan 1's post-training eval pipeline (§11.3) to the new run's checkpoints. **Plan 1 is a hard dependency for Plan 2** — without it we can't quantify "win" vs "tie" beyond listening tests, which are noisy.
+3. Generate the same 4 prompts × 3 seeds = 12 takes off:
+   - `continuous-50ep/checkpoints/best/`
+   - `continuous-50ep/final/`
+4. User by-ear A/B vs Phase 2.0 baseline takes.
+5. Compare CLAP fitness curves: continuous-50ep vs discrete-200ep.
+
+### 12.5 Check #2 — decision criteria (concrete, before we start)
+- **Check #2A — patch sanity**: stand up the patched engine, fire a 3-epoch toy training (save_every=1, val_split=0.15, same 35-track dataset). Confirm: no NaN/Inf loss, training completes, adapter loads cleanly, generation with the toy adapter doesn't garble. If any fail → abort, re-read the paper's training section before continuing.
+- **Check #2B — training health during the 50-ep run**: use Plan 1's `/api/lora/train/health` surface (§11.2). Verify: val curve differs in shape vs last night's, no dora_scale or singular-value pathology, train/val gap stable. If the curve looks identical to last night's, the patch isn't actually changing the training distribution — debug before continuing.
+- **Check #2C — decision after Phase 2.3**:
+  - **Win**: continuous-50ep best ckpt sounds at-least-as-good as discrete-200ep best by ear, AND CLAP fitness curve is comparable or higher. → Update [[engine-patches]] memory, flip continuous to default in the Mac route, run a proper 100-ep production run on the same data.
+  - **Tie**: no audible difference, CLAP curves indistinguishable. → Keep the patch toggleable but don't flip default; flag for revisit on a future dataset (bigger or different subgenre) where divergence might emerge.
+  - **Loss**: continuous is measurably worse. → Document the negative result, revert. Look at v2's `cfg_ratio` (CFG dropout) and Fisher-info adaptive ranks as the next lever; or shift to Side-Step trial.
+
+### 12.6 Phase 2.4 — optional follow-ups (only if 2.3 wins)
+Each gets its own one-variable A/B vs the post-2.3 baseline:
+- **CFG dropout (`cfg_ratio=0.15`)** — classifier-free guidance dropout during training, improves prompt adherence per diffusion literature. ~10-line additional patch.
+- **Fisher information adaptive ranks** — measure per-module gradient sensitivity on a held-out subset, allocate higher LoRA rank to high-sensitivity modules. Material implementation work (`training_v2/estimate.py` is non-trivial) but potentially highest-impact for small datasets.
+- **Per-variant timestep schedule selection** — different μ/σ for base vs sft vs turbo (Side-Step's "variant-aware" approach).
+
+### 12.7 Risks + mitigations
+- **Engine patch surface area growing** — at the time of writing Crucible maintains 5 active patches (DCW, auto-label, lokr_utils, val_split, trainer val-loop). Patch 7 makes 6. Maintenance burden on every engine update. _Mitigated by_ the `patches/` folder convention; single-copy drop-in.
+- **Patched trainer behavior different enough to hide a bug** — the discrete-sampling version is "working" right now (we have a usable, if imperfect, adapter). A bad continuous patch could silently regress. _Mitigated by_ default-off toggle + checks #2A and #2B catching breakage before we waste a full training run.
+- **CLAP signal isn't perceptive enough to discriminate at our quality level** — covered by check #1C in Plan 1. If CLAP gives us noise, the A/B falls back to listening-only and we lose the quantitative win.
+- **Continuous sampling actually requires a different optimizer schedule** — if v2's continuous trainer also tunes warmup_steps / scheduler differently and we don't match, we could be measuring schedule effects, not sampling effects. _Mitigation:_ read v2's full training_step before phase 2.1 to confirm sampling is the ONLY difference we need to port.
+
+### 12.8 Deliverables
+- `patches/engine-2026-05-30/trainer.py` — continuous timestep toggle
+- `patches/engine-2026-05-30/train_api_models.py` — `timestep_sampling_mode` field
+- `patches/engine-2026-05-30/train_api_lokr_start_route.py` — plumb the field into `TrainingConfig` (mirrors the val_split patch from 2026-05-29 batch)
+- `patches/engine-2026-05-30/train_api_lora_start_route.py` — same for the LoRA path
+- `patches/engine-2026-05-30/README.md` — file-to-destination map
+- Mac: `backend/acestep_train.py` accepts `timestep_sampling_mode` kwarg (only sent when provided)
+- Mac: `backend/app.py /api/lora/train` accepts + forwards
+- METAL_LORA_PLAN §7a — Patch 7 row
+- `[[engine-patches]]` memory — Patch 7 entry
+
+---
+
+## 13. 200-epoch / 35-track baseline (measured 2026-05-29 → 2026-05-30 overnight)
+
+_The first run on our setup at this scale. Numbers below are MEASURED on our box, not cited from upstream._
+
+### 13.1 Run summary
+- **Hardware**: Windows + RTX 3090, 24 GB VRAM, engine `acestep-v15-xl-sft` + 4B LM stack
+- **Dataset**: 35 power-metal tracks (Sabaton, DragonForce, Manowar, Helloween, Rhapsody, Nightwish, Stratovarius, Blind Guardian, HammerFall, Sonata Arctica, Gloryhammer, Avantasia, Edguy, Beast in Black mix), all with online lyrics + LM-merged captions, all preprocessed to latents.
+- **Hyperparams**: plain LoKr (no DoRA), lr=0.01, gradient_checkpointing=true, batch_size=1, gradient_accumulation=4, val_split=0.15 (= 5 val samples on 30 train), train_epochs=200, save_every_n_epochs=10, seed=42.
+- **Engine patches active**: 2026-05-29 batch (target_modules narrowing, val_split exposure, LoKr val-loop + best-checkpoint save).
+- **Wall clock**: 23:14:24 → 07:58:46 = **8h 44m**. **~157 s/epoch**, 1600 steps total.
+
+### 13.2 Best-history (captured by Mac-side poller from commit `9f6b613`)
+5 best updates total:
+
+| Epoch | Val loss |
+|---|---|
+| 1 | 0.8083 |
+| 4 | 0.7408 |
+| 16 | 0.6995 |
+| 27 | 0.6970 |
+| **105** | **0.6919** |
+
+### 13.3 Val curve shape (every-10-epoch slice)
+```
+ep   1: 0.808   ep 110: 0.818
+ep  10: 0.757   ep 120: 0.774
+ep  20: 0.704   ep 130: 0.851
+ep  27: 0.697   (best of first half)
+ep  30: 0.798   ep 140: 0.814
+ep  40: 0.866   ep 150: 0.774
+ep  50: 0.789   ep 160: 0.839
+ep  60: 0.793   ep 170: 0.804
+ep  70: 0.716   ep 180: 0.788
+ep  80: 0.712   ep 190: 0.763
+ep  90: 0.896   ep 200: 0.778
+ep 100: 0.786   (final)
+ep 105: 0.692   (overall best)
+```
+
+### 13.4 Calibration takeaways
+- **Useful learning happens in the first ~30 epochs.** Val dropped 0.808→0.697 by epoch 27. After that, val oscillates in [0.69, 0.90] with no clear downward trend.
+- **The "best at epoch 105" is statistically a tie with epoch 27.** Δ = 0.005 inside a noise band of ~0.20.
+- **Future runs at this dataset size: 30–50 epochs is sufficient.** 200 was an overshoot — ~6 of the 8.7 hours was wasted GPU.
+- **5-sample val is much better than 1-sample** but still not enough for reliable best-ckpt picking. Plan 1's perceptual fitness signal is the real fix; multi-noise val reduction (val_passes>1) is a cheaper interim.
+- **5× per-epoch cost vs 6-track runs is expected** — 8 grad-update steps/epoch vs 2 + 5-sample val vs 1. Matches the ~4-5× scaling.
+
+### 13.5 A/B listening artifacts (fired 2026-05-30 morning)
+4 takes captured in the Library under the "Generate" section, same prompt + lyrics + seed=42:
+- "Crucible 35-track 200ep — BEST @ 0.3"
+- "Crucible 35-track 200ep — BEST @ 0.5"
+- "Crucible 35-track 200ep — FINAL @ 0.3"
+- "Crucible 35-track 200ep — FINAL @ 0.5"
+
+User listening feedback to be appended here.
+
+---
+
+## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
+
+§§11–13 sources: ACE-Step paper [arxiv 2506.00045](https://arxiv.org/pdf/2506.00045) (training-time timestep sampling spec); engine repo files [`acestep/training/configs.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training/configs.py), [`acestep/training_v2/configs.py`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/configs.py), [`acestep/training_v2/presets/recommended.json`](https://github.com/ace-step/ACE-Step-1.5/blob/main/acestep/training_v2/presets/recommended.json) (verified 2026-05-30); [Side-Step trainer](https://github.com/koda-dernet/Side-Step) (LoHA/OFT/Fisher info reference); §13 stats measured live on `192.168.1.201:8001` 2026-05-30.
