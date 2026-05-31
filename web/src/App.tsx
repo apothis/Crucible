@@ -409,7 +409,11 @@ function libDesc(it: LibItem): string {
   const apg = genlike && p.apg ? " · APG" : "";
   const neg = genlike && (p.negative_tags || "").trim() ? " · NEG" : "";
   const smp = genlike && p.sampler_name ? ` · ${p.sampler_name}/${p.scheduler || "simple"}` : "";
-  return (p.tags || p.voice || p.source || "—") + variant + smp + cs + apg + neg;
+  const loraList = Array.isArray(p.loras) ? (p.loras as Array<{ label?: string; scale?: number }>) : [];
+  const loras = genlike && loraList.length
+    ? " · LoRA " + loraList.map((l) => `${l.label || "?"}@${l.scale ?? "?"}`).join(" + ")
+    : "";
+  return (p.tags || p.voice || p.source || "—") + variant + smp + cs + apg + neg + loras;
 }
 
 function hhmm(epoch?: number): string {

@@ -389,10 +389,27 @@ def generate(p: dict):
         applied_loras = None
         loras_req = p.get("loras")
         if loras_req is not None:
+            # Name each engine adapter slot after the picker's label (sanitized,
+            # unique within the request) so the engine status AND the library
+            # card show WHICH adapter ran, not a generic slot0.
+            specs, seen = [], {}
+            for i, l in enumerate(loras_req):
+                label = (l.get("label") or "").strip()
+                base = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_")[:48] or f"slot{i}"
+                if base in seen:
+                    seen[base] += 1
+                    name = f"{base}_{seen[base]}"
+                else:
+                    seen[base] = 0
+                    name = base
+                specs.append({"path": l.get("path"), "scale": float(l.get("scale", 1.0)),
+                              "name": name, "label": label or name})
             try:
-                applied_loras = lora_runtime.reconcile(ACESTEP_HOST, loras_req)
+                lora_runtime.reconcile(ACESTEP_HOST, specs)
             except Exception as e:
                 raise HTTPException(500, f"lora reconcile failed: {e}")
+            # Record display-friendly + recoverable info on the job.
+            applied_loras = [{"label": s["label"], "scale": s["scale"], "path": s["path"]} for s in specs]
         try:
             task_id = acestep_py.submit(ACESTEP_HOST, fields)
         except Exception as e:

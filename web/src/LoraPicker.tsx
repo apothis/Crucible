@@ -23,9 +23,9 @@ function runShort(run: string): string {
 // Build the `loras` field for a generate request. Only sent when the LoRA
 // picker is applicable (engine + lora_train), so non-engine callers keep their
 // legacy behavior. An empty array is intentional: it forces a clean base.
-export function loraBody(cfg: Config, sel: LoraSel[]): { loras?: Array<{ path: string; scale: number }> } {
+export function loraBody(cfg: Config, sel: LoraSel[]): { loras?: Array<{ path: string; scale: number; label: string }> } {
   if (!cfg.lora_train || !cfg.acestep) return {};
-  return { loras: sel.map((l) => ({ path: l.path, scale: l.scale })) };
+  return { loras: sel.map((l) => ({ path: l.path, scale: l.scale, label: l.label })) };
 }
 
 export function LoraPicker({ cfg, value, onChange }:
