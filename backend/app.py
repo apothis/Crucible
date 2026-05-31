@@ -1634,6 +1634,25 @@ def master_options():
     }
 
 
+def _source_master_title(job_id, tgt_label):
+    """Readable title for a mastered output: '<source name> (master)'. Source name
+    is the library track's title when mastering a library item, else the uploaded
+    file's stem; falls back to 'track'. Keeps the master named after its song so it
+    isn't an unnamed row in the library."""
+    base = None
+    if job_id:
+        try:
+            with db() as conn:
+                r = conn.execute("SELECT params FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if r and r[0]:
+                base = (json.loads(r[0]).get("title") or "").strip() or None
+        except Exception:
+            base = None
+    if not base and tgt_label and tgt_label != job_id:
+        base = os.path.splitext(os.path.basename(str(tgt_label)))[0].strip() or None
+    return f"{base or 'track'} (master)"
+
+
 @app.post("/api/master/apply")
 async def master_apply(job_id: str = Form(None),
                        ref_job_id: str = Form(None),
@@ -1699,6 +1718,7 @@ async def master_apply(job_id: str = Form(None),
     except Exception as e:
         raise HTTPException(500, f"mastering failed: {e}")
     shutil.rmtree(work, ignore_errors=True)
+    params["title"] = _source_master_title(job_id, tgt_label)   # name it after the song
     save_done_row(jid, "master", params, out)
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
 

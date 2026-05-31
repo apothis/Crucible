@@ -1337,7 +1337,9 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
       else if (mode === "gold") { if (goldRef) fd.append("ref_name", goldRef); }
       else { if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob); }
       const r = await api.master(fd);
-      ctx.setResults([{ id: rid(), title: "mastered", status: "done", pct: 100, url: r.audio_url }]);
+      const srcName = job ? trackLabel(targets.find((t) => t.id === job) || ({} as LibItem), targets) : (file?.name || "track");
+      ctx.setResults([{ id: rid(), title: `${srcName} (master)`, status: "done", pct: 100, url: r.audio_url }]);
+      ctx.onDone();   // master is synchronous (no pollJob) — refresh the library so it shows without a manual reload
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
