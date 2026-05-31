@@ -8,6 +8,18 @@ import { inp } from "./ui";
 export type LoraSel = { path: string; scale: number; label: string };
 type Opt = { label: string; path: string };
 
+// Short, human label for a training-run dir: the legacy `train/` is the
+// continuous run; per-run dirs carry their config (e.g. "...__lokr_150ep_discrete").
+function runShort(run: string): string {
+  if (!run) return "";
+  if (run === "train") return "continuous";
+  const m = run.match(/__(.+)$/);
+  const tail = m ? m[1] : run;
+  if (/discrete/i.test(tail)) return "discrete";
+  if (/continuous/i.test(tail)) return "continuous";
+  return tail.replace(/^lokr_/, "");
+}
+
 // Build the `loras` field for a generate request. Only sent when the LoRA
 // picker is applicable (engine + lora_train), so non-engine callers keep their
 // legacy behavior. An empty array is intentional: it forces a clean base.
@@ -24,11 +36,14 @@ export function LoraPicker({ cfg, value, onChange }:
 
   useEffect(() => {
     if (!cfg.lora_train) return;
-    api.loraAdaptersAll().then((r: { adapters?: Array<{ dataset: string; best_path?: string; final_path?: string }> }) => {
+    api.loraAdaptersAll().then((r: { adapters?: Array<{ dataset: string; run_label?: string; best_path?: string; final_path?: string }> }) => {
       const list: Opt[] = [];
       for (const a of (r?.adapters || [])) {
-        if (a.best_path) list.push({ label: `${a.dataset} · best`, path: a.best_path });
-        if (a.final_path) list.push({ label: `${a.dataset} · final`, path: a.final_path });
+        const run = runShort(a.run_label || "");
+        const ds = a.dataset.replace(/^crucible_/, "");
+        const base = run ? `${ds} · ${run}` : ds;
+        if (a.best_path) list.push({ label: `${base} · best`, path: a.best_path });
+        if (a.final_path) list.push({ label: `${base} · final`, path: a.final_path });
       }
       setOpts(list);
     }).catch(() => {});

@@ -53,6 +53,13 @@ def dataset_list(host, name):
     return r.json()
 
 
+def adapters(host):
+    """Enumerate every trained adapter on the box (all datasets, all runs)."""
+    r = requests.get(_base(host) + "/adapters", timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
 def upload(host, name, files):
     """Upload `files` = list of (filename, bytes) into the box dataset folder.
     Returns {written, count, data_dir}."""

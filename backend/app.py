@@ -3230,12 +3230,21 @@ def lora_adapters_list(dataset: str = "crucible_metal"):
 def lora_adapters_all():
     """Enumerate selectable adapters across ALL datasets, for the LoRA picker.
 
-    Built from each dataset's persisted per-run history (library/
-    lora_train_history/<dataset>.json). Each dataset with a known output_dir
-    contributes its latest run's `best` and `final` checkpoints. Datasets whose
-    history predates per-run dirs (output_dir None) are skipped. The picker also
-    accepts a manual path, so anything not enumerated here is still reachable.
-    Box-side directory enumeration of older runs is a follow-up."""
+    Primary source is BOX-SIDE enumeration via the upload helper's /adapters
+    route, which walks lora_data on disk and lists EVERY run (legacy `train/` +
+    all per-run dirs, e.g. continuous vs discrete) that has a best/final
+    checkpoint. Falls back to the Mac's per-run training history (latest run per
+    dataset) when the helper is unreachable or predates the /adapters route.
+    The picker also accepts a manual path for anything not enumerated."""
+    # Prefer box-side enumeration: it sees every run that actually exists.
+    if LORA_UPLOAD_HOST:
+        try:
+            res = lora_up.adapters(LORA_UPLOAD_HOST)
+            ads = res.get("adapters") if isinstance(res, dict) else None
+            if ads:
+                return {"adapters": ads, "source": "box"}
+        except Exception:
+            pass  # helper down or old build -> history fallback below
     out = []
     histdir = os.path.join(LIBRARY, "lora_train_history")
     if os.path.isdir(histdir):
@@ -3257,7 +3266,7 @@ def lora_adapters_all():
                 "final_path": final,
                 "completed_at": h.get("completed_at"),
             })
-    return {"adapters": out}
+    return {"adapters": out, "source": "history"}
 
 
 def _lora_training_status_with_fallback(dataset: str) -> Dict[str, Any]:

@@ -105,6 +105,45 @@ def dataset_delete(name: str = Form(...)):
     return {"ok": True, "removed": removed}
 
 
+@app.get("/adapters")
+def adapters():
+    """Enumerate every trained LoRA/LoKr adapter that actually exists on disk.
+
+    Walks <BASE>/<dataset>/<run>/ for `checkpoints/best/lokr_weights.safetensors`
+    and `final/lokr_weights.safetensors`. Includes the legacy `train/` run and all
+    per-run `train_<timestamp>__<config>/` dirs. Returns absolute box-side paths
+    (correct Windows separators) the engine can load verbatim. This is what lets
+    the LoRA picker list ALL runs (e.g. continuous vs discrete), not just the
+    latest recorded in the Mac's training history."""
+    out = []
+    try:
+        datasets = [d for d in sorted(os.listdir(BASE)) if os.path.isdir(os.path.join(BASE, d))]
+    except Exception:
+        datasets = []
+    for ds in datasets:
+        droot = os.path.join(BASE, ds)
+        try:
+            runs = [r for r in sorted(os.listdir(droot))
+                    if os.path.isdir(os.path.join(droot, r)) and (r == "train" or r.startswith("train_"))]
+        except Exception:
+            runs = []
+        for run in runs:
+            rroot = os.path.join(droot, run)
+            best = os.path.join(rroot, "checkpoints", "best", "lokr_weights.safetensors")
+            final = os.path.join(rroot, "final", "lokr_weights.safetensors")
+            entry = {"dataset": ds, "run_label": run}
+            ok = False
+            if os.path.isfile(best):
+                entry["best_path"] = best
+                ok = True
+            if os.path.isfile(final):
+                entry["final_path"] = final
+                ok = True
+            if ok:
+                out.append(entry)
+    return {"base_dir": BASE, "adapters": out}
+
+
 @app.get("/dataset/paths")
 def dataset_paths(name: str):
     p = _paths(name)
