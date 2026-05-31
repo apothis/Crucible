@@ -24,6 +24,7 @@ from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
 from . import acestep_py
+from . import lora_runtime
 from . import asr as asr_mod
 from . import voices as voices_mod
 from . import stems as stems_mod
@@ -380,6 +381,18 @@ def generate(p: dict):
         except Exception:
             pass
         _acestep_ensure_model(fields["model"])         # /release_task won't auto-load — swap if the picked model isn't the loaded one
+        # Per-generation LoRA reconcile: when the request carries a `loras` list
+        # (the LoRA picker always sends one, even empty), set the engine to
+        # EXACTLY that adapter set + scales, verified, before submitting — so a
+        # take provably uses only the selected adapters. Absent `loras` keeps the
+        # legacy global behavior (the old toggle/scale control) unchanged.
+        applied_loras = None
+        loras_req = p.get("loras")
+        if loras_req is not None:
+            try:
+                applied_loras = lora_runtime.reconcile(ACESTEP_HOST, loras_req)
+            except Exception as e:
+                raise HTTPException(500, f"lora reconcile failed: {e}")
         try:
             task_id = acestep_py.submit(ACESTEP_HOST, fields)
         except Exception as e:
@@ -388,6 +401,8 @@ def generate(p: dict):
         resolved = _decorate({"engine": "acestep", "tags": p.get("tags", ""), "seed": seed,
                     "model": fields["model"], "guidance_scale": fields["guidance_scale"],
                     "steps": fields["inference_steps"], "duration": fields["duration"]})
+        if applied_loras is not None:
+            resolved["loras"] = applied_loras       # record exactly what ran, for the library card
         with LOCK:
             JOBS[pid] = _new_job(resolved, gmode)
             JOBS[pid]["status"] = "running"
@@ -3209,6 +3224,40 @@ def lora_adapters_list(dataset: str = "crucible_metal"):
     # TODO v2: scan box-side via upload helper for additional run_TIMESTAMP
     # subfolders. Requires adding a directory-listing endpoint to the helper.
     return {"dataset": dataset, "adapters": out}
+
+
+@app.get("/api/lora/adapters/all")
+def lora_adapters_all():
+    """Enumerate selectable adapters across ALL datasets, for the LoRA picker.
+
+    Built from each dataset's persisted per-run history (library/
+    lora_train_history/<dataset>.json). Each dataset with a known output_dir
+    contributes its latest run's `best` and `final` checkpoints. Datasets whose
+    history predates per-run dirs (output_dir None) are skipped. The picker also
+    accepts a manual path, so anything not enumerated here is still reachable.
+    Box-side directory enumeration of older runs is a follow-up."""
+    out = []
+    histdir = os.path.join(LIBRARY, "lora_train_history")
+    if os.path.isdir(histdir):
+        for fn in sorted(os.listdir(histdir)):
+            if not fn.endswith(".json"):
+                continue
+            ds = fn[:-5]
+            h = _lora_history_load(ds) or {}
+            od = h.get("output_dir")
+            if not od:
+                continue
+            sep = "\\" if "\\" in od else "/"
+            best = sep.join([od, "checkpoints", "best", "lokr_weights.safetensors"])
+            final = sep.join([od, "final", "lokr_weights.safetensors"])
+            out.append({
+                "dataset": ds,
+                "run_label": h.get("run_label") or ds,
+                "best_path": best,
+                "final_path": final,
+                "completed_at": h.get("completed_at"),
+            })
+    return {"adapters": out}
 
 
 def _lora_training_status_with_fallback(dataset: str) -> Dict[str, Any]:

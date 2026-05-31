@@ -120,6 +120,7 @@ export const api = {
   loraTrainStatus: (dataset?: string) => jget(`/api/lora/train/status${dataset ? `?dataset=${encodeURIComponent(dataset)}` : ""}`),
   loraTrainStop: () => jpost("/api/lora/train/stop", {}),
   loraExport: (b: unknown) => jpost("/api/lora/export", b),
+  loraAdaptersAll: () => jget("/api/lora/adapters/all"),
   loraLoad: (b: unknown) => jpost("/api/lora/load", b),
   loraScale: (b: unknown) => jpost("/api/lora/scale", b),
   loraToggle: (b: unknown) => jpost("/api/lora/toggle", b),

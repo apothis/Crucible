@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { api, trackLabel, type Config, type Genre, type LibItem, type LoraStatus, type SongDraft } from "./api";
+import { api, trackLabel, type Config, type Genre, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, Slider, pollJob, waitJob, runSync, rid, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
 import { RegionSelector } from "./RegionSelector";
+import { LoraPicker, loraBody, type LoraSel } from "./LoraPicker";
 
 type FormProps = { cfg: Config; busy: boolean } & RunCtx;
 
@@ -258,46 +259,9 @@ function PromptFields({ tags, setTags, instrumental, setInstrumental, lyrics, se
   );
 }
 
-// Engine-global Metal LoRA control (applies to the next generation). Shown when the
-// engine supports LoRAs; live toggle + strength via /api/lora/toggle + /scale.
-function MetalLoraControl({ cfg }: { cfg: Config }) {
-  const [st, setSt] = useState<LoraStatus | null>(null);
-  const [scale, setScale] = useState(0.5);
-  const [on, setOn] = useState(false);
-  const refresh = () => api.loraStatus().then((s: LoraStatus) => {
-    setSt(s);
-    if (s.lora) { setOn(!!s.lora.use_lora); if (s.lora.lora_scale != null) setScale(s.lora.lora_scale); }
-  }).catch(() => {});
-  useEffect(() => { refresh(); }, []);
-  if (!cfg.lora_train) return null;
-  if (!st?.lora?.lora_loaded) {
-    return <p className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-2.5 py-1.5 text-[11px] text-[var(--color-muted)]">
-      <b>Metal LoRA:</b> none loaded — train or load one in <b>Lab → Train LoRA</b> and it appears here.</p>;
-  }
-  const adapters = st.lora.adapters || [];
-  return (
-    <div className="space-y-2 rounded-lg border border-[var(--color-accent)]/40 bg-[#2a1c19] p-2.5">
-      <label className="flex items-center gap-2 text-xs text-[var(--color-ink)]">
-        <input type="checkbox" checked={on} onChange={async (e) => { setOn(e.target.checked); try { await api.loraToggle({ use_lora: e.target.checked }); } catch { /* */ } }} />
-        <b>Metal LoRA</b>{adapters.length ? <span className="text-[10px] text-[var(--color-muted)]"> · {adapters.join(", ")}</span> : null}
-      </label>
-      {on && (
-        <div>
-          <div className="flex justify-between text-[10px] text-[var(--color-muted)]"><span>strength</span><span>{scale.toFixed(2)}</span></div>
-          <input type="range" min={0} max={1.5} step={0.05} value={scale}
-            onChange={(e) => setScale(parseFloat(e.target.value))}
-            onMouseUp={async () => { try { await api.loraScale({ scale }); } catch { /* */ } }}
-            onTouchEnd={async () => { try { await api.loraScale({ scale }); } catch { /* */ } }}
-            className="w-full accent-[var(--color-accent)]" />
-          <p className="text-[10px] text-[var(--color-muted)]">0.2–0.5 nudges the style; higher pushes harder. Affects the engine’s next generation.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormProps & { handoff?: { tags?: string; lyrics?: string } | null; clearHandoff?: () => void }) {
   const d = useDrafts("generate");
+  const [loraSel, setLoraSel] = d.use<LoraSel[]>("loraSel", []);
   const [tags, setTags] = d.use("tags", "symphonic power metal, heavily distorted electric guitars, double-bass drums, orchestral strings, fast tempo, heroic");
   const [instrumental, setInstrumental] = d.use("instrumental", true);
   const [lyrics, setLyrics] = d.use("lyrics", "");
@@ -323,7 +287,7 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
     ctx.setResults(cards);
     for (const c of cards) {
       try {
-        const { job_id, seed } = await api.generate({ ...tuning.params(), tags, instrumental, lyrics, negative_tags: neg, thinking, use_cot_caption: cot, use_cot_language: cot });
+        const { job_id, seed } = await api.generate({ ...tuning.params(), tags, instrumental, lyrics, negative_tags: neg, thinking, use_cot_caption: cot, use_cot_language: cot, ...loraBody(cfg, loraSel) });
         ctx.patch(c.id, { title: `seed ${seed}`, status: "running", pct: 5 });
         pollJob(job_id, c.id, ctx);
       } catch (e) { ctx.patch(c.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -354,7 +318,7 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
         </div>
       )}
       {tuning.node}
-      <MetalLoraControl cfg={cfg} />
+      <LoraPicker cfg={cfg} value={loraSel} onChange={setLoraSel} />
       <Field label="Variations" hint="generate several takes to compare">
         <div className="flex gap-1.5">
           {[1, 2, 3, 4].map((n) => (
@@ -1631,6 +1595,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
   const [lyrBusy, setLyrBusy] = useState(false);
   const [sungEnds, setSungEnds] = d.use("sungEnds", false);
   const [title, setTitle] = d.use("title", "");          // song name → library title (re-import safe)
+  const [loraSel, setLoraSel] = d.use<LoraSel[]>("loraSel", []);  // engine adapters for this song
   const [nameSugg, setNameSugg] = useState<string[]>([]); // ephemeral AI suggestions
   const [naming, setNaming] = useState(false);
   const claude = useClaudeAvail();
@@ -1748,7 +1713,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     const id = rid();
     ctx.setResults([{ id, title: `song · ${total}s · compiling`, status: "pending", pct: 0 }]);
     try {
-      const { job_id, seed } = await api.generate({ ...tuning.params(), duration: total, tags, instrumental, lyrics, title, song_meta: songMeta(), from_builder: true });
+      const { job_id, seed } = await api.generate({ ...tuning.params(), duration: total, tags, instrumental, lyrics, title, song_meta: songMeta(), from_builder: true, ...loraBody(cfg, loraSel) });
       ctx.patch(id, { title: `song · ${total}s · seed ${seed}`, status: "running", pct: 5 });
       pollJob(job_id, id, ctx);
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -1772,7 +1737,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
         continue;
       }
       try {
-        const { job_id } = await api.generate({ ...blockParams, duration: b.seconds, tags, instrumental, lyrics: blockTagged(b) });
+        const { job_id } = await api.generate({ ...blockParams, duration: b.seconds, tags, instrumental, lyrics: blockTagged(b), ...loraBody(cfg, loraSel) });
         ctx.patch(card.id, { status: "running", pct: 5 });
         const url = await waitJob(job_id, card.id, ctx);
         urls.push(url);
@@ -1925,6 +1890,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
         </div>
       )}
       {tuning.node}
+      <LoraPicker cfg={cfg} value={loraSel} onChange={setLoraSel} />
 
       <PrimaryButton onClick={run} disabled={busy}>
         {busy ? "Working…" : drive === "compile" ? `Generate song (${total}s)` : `Generate ${blocks.length} blocks + stitch`}
