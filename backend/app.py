@@ -1332,6 +1332,107 @@ def projects_delete(pid: str):
     return {"ok": True}
 
 
+# ---- Programmatic song read/patch (so lyrics/tags/tempo can be wired into a
+# project's Song-builder arrangement without a bespoke DB script each time).
+# The Song builder restores from data.drafts on Open, so these read/write
+# data.drafts.song (+ song.tuning) and mirror into the lifted data.song. ----
+def _resolve_project(key: str):
+    """Find a project by id OR (case-insensitive) name; newest wins on name."""
+    key = os.path.basename(key or "")
+    with db() as conn:
+        r = conn.execute("SELECT * FROM projects WHERE id=?", (key,)).fetchone()
+        if not r:
+            r = conn.execute("SELECT * FROM projects WHERE lower(name)=lower(?) "
+                             "ORDER BY updated DESC LIMIT 1", (key,)).fetchone()
+    return r
+
+
+def _project_song_view(data: dict) -> dict:
+    """Normalized view of a project's song: tags/bpm/keyscale + numbered sections."""
+    dr = data.get("drafts") or {}
+    ds = dr.get("song") or {}
+    tuning = dr.get("song.tuning") or {}
+    lifted = data.get("song") or {}
+    blocks = ds.get("blocks") or lifted.get("blocks") or []
+    return {
+        "title": ds.get("title") or lifted.get("title"),
+        "tags": ds.get("tags") or lifted.get("tags") or "",
+        "bpm": tuning.get("bpm") or lifted.get("bpm"),
+        "keyscale": tuning.get("keyscale") or lifted.get("key"),
+        "instrumental": bool(ds.get("instrumental")),
+        "drive": ds.get("drive") or "compile",
+        "sections": [{"index": i, "type": b.get("type"), "seconds": b.get("seconds"),
+                      "lyrics": b.get("lyrics") or "", "style": b.get("style") or ""}
+                     for i, b in enumerate(blocks)],
+    }
+
+
+@app.get("/api/projects/{key}/song")
+def project_song_get(key: str):
+    """Read a project's Song-builder arrangement (by id or name) so a caller can
+    see the section structure before writing lyrics into it."""
+    r = _resolve_project(key)
+    if not r:
+        raise HTTPException(404, "project not found")
+    return {"id": r["id"], "name": r["name"], "song": _project_song_view(json.loads(r["data"] or "{}"))}
+
+
+@app.post("/api/projects/{key}/song")
+def project_song_patch(key: str, body: dict):
+    """Patch a project's Song-builder arrangement (by id or name). Body (all
+    optional): tags, bpm, keyscale, instrumental, drive, and `sections` = a list
+    of {index, lyrics?, style?, type?, seconds?} patches (index = section number
+    from the GET). Writes into data.drafts.song so the change loads when the user
+    re-opens the project. Returns the updated normalized view."""
+    r = _resolve_project(key)
+    if not r:
+        raise HTTPException(404, "project not found")
+    data = json.loads(r["data"] or "{}")
+    dr = data.setdefault("drafts", {})
+    ds = dr.setdefault("song", {})
+    lifted = data.setdefault("song", {})
+    # Ensure drafts.song.blocks exists (the UI's source of truth) - seed from the
+    # lifted song or leave as-is - and give every block an id + locked flag.
+    blocks = ds.get("blocks")
+    if not blocks:
+        blocks = [{"type": b.get("type"), "seconds": b.get("seconds"),
+                   "lyrics": b.get("lyrics") or "", "style": b.get("style") or ""}
+                  for b in (lifted.get("blocks") or [])]
+        ds["blocks"] = blocks
+    for i, b in enumerate(blocks):
+        b.setdefault("id", f"blk{i}")
+        b.setdefault("locked", False)
+        b.setdefault("style", "")
+        b.setdefault("lyrics", "")
+    for patch in (body.get("sections") or []):
+        idx = patch.get("index", patch.get("i"))
+        if idx is None or not (0 <= int(idx) < len(blocks)):
+            continue
+        b = blocks[int(idx)]
+        if "lyrics" in patch:  b["lyrics"] = patch["lyrics"] or ""
+        if "style" in patch:   b["style"] = patch["style"] or ""
+        if patch.get("type"):  b["type"] = patch["type"]
+        if patch.get("seconds"): b["seconds"] = patch["seconds"]
+    if "tags" in body:
+        ds["tags"] = body["tags"]; lifted["tags"] = body["tags"]
+    if "instrumental" in body:
+        ds["instrumental"] = bool(body["instrumental"])
+    if "drive" in body:
+        ds["drive"] = body["drive"]
+    tuning = dr.setdefault("song.tuning", {})
+    if body.get("bpm") is not None:
+        tuning["bpm"] = str(body["bpm"]); lifted["bpm"] = body["bpm"]
+    if body.get("keyscale"):
+        tuning["keyscale"] = body["keyscale"]; lifted["key"] = body["keyscale"]
+    lifted["blocks"] = [{"type": b["type"], "seconds": b["seconds"], "lyrics": b.get("lyrics") or ""}
+                        for b in blocks]
+    now = time.time()
+    with db() as conn:
+        conn.execute("UPDATE projects SET data=?, updated=? WHERE id=?",
+                     (json.dumps(data), now, r["id"]))
+    return {"id": r["id"], "name": r["name"], "updated": now, "song": _project_song_view(data)}
+
+
 @app.get("/api/rvc/voices")
 def rvc_voices():
     return R.voices()
