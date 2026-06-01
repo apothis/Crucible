@@ -2095,18 +2095,38 @@ def solo_compose(body: dict):
         bpm = bpm or det["bpm"]
         key = key or det["key"]
     brain = body.get("brain", "algorithmic")
-    heard = ""
-    if brain == "listen":
-        heard = _caption_region_via_lm(src, start, end)  # the ACE LM 'ears'
-        compose_brain = "llm"                            # caption grounds an LLM note-writer
-    else:
-        compose_brain = brain
+    # `context` = a (possibly user-edited) description from /api/solo/listen. When the
+    # Listen brain is used WITH a context, we feed it straight to the note-writer and
+    # skip re-captioning (lets the user review/edit the description first).
+    context = (body.get("context") or "").strip()
+    heard = context
+    if brain == "listen" and not context:
+        heard = _caption_region_via_lm(src, start, end)  # not pre-listened: caption now
+    compose_brain = "llm" if brain == "listen" else brain
     notes, score = solo_mod.compose(
         key=key, bpm=float(bpm), duration_s=end - start,
         genre=body.get("genre", ""), brain=compose_brain,
         provider=body.get("provider", ""), seed=body.get("seed"), context=heard)
     return {"score": score, "bpm": float(bpm), "key": key,
             "duration": round(end - start, 3), "heard": heard}
+
+
+@app.post("/api/solo/listen")
+def solo_listen(body: dict):
+    """ACE LM 'listens' to the region and returns an editable description (no compose).
+    The user can review/edit it, then /api/solo/compose (brain='listen', context=<edited>)
+    feeds it to the note-writer. Audio->text only; ~6s on the resident LM."""
+    pid = body.get("job_id")
+    if not pid:
+        raise HTTPException(400, "job_id required")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "track not found")
+    start = float(body.get("start") or 0.0)
+    end = float(body.get("end") or 0.0)
+    if not (end > start):
+        raise HTTPException(400, "region end must be after start")
+    return {"heard": _caption_region_via_lm(src, start, end)}
 
 
 @app.post("/api/solo/render")

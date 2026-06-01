@@ -84,6 +84,7 @@ export const api = {
   melodyCompose: (p: unknown) => jpost("/api/melody/compose", p),
   vocalBuild: (p: unknown) => jpost("/api/vocal/build", p),
   soloOptions: () => jget("/api/solo/options"),
+  soloListen: (p: unknown) => jpost("/api/solo/listen", p),
   soloCompose: (p: unknown) => jpost("/api/solo/compose", p),
   soloRender: (p: unknown) => jpost("/api/solo/render", p),
   melodyMidi: async (p: unknown) => {

@@ -41,7 +41,8 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
   const [score, setScore] = useState<Score | null>(null);
   const [seed, setSeed] = useState(42);
   const [composing, setComposing] = useState(false);
-  const [heard, setHeard] = useState("");
+  const [desc, setDesc] = useState("");          // ACE description, editable before composing
+  const [listening, setListening] = useState(false);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -63,27 +64,39 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
 
   const brainBody = () =>
     brain === "algorithmic" ? { brain: "algorithmic" }
-      : brain === "listen" ? { brain: "listen" }   // server captions via ACE LM, then LLM writes
+      : brain === "listen" ? { brain: "listen", context: desc }   // the edited ACE description
         : { brain: "llm", provider: brain === "claude" ? "claude" : "ollama" };
+
+  async function listen() {
+    if (!job) return setMsg("Pick a track first.");
+    const s = parseFloat(start) || 0, e = parseFloat(end) || 0;
+    if (!(e > s)) return setMsg("Drag a region on the waveform (end after start).");
+    setListening(true); setMsg("🎧 ACE is listening to the section… (~6s)");
+    try {
+      const r = await api.soloListen({ job_id: job, start: s, end: e });
+      setDesc(r.heard || "");
+      setMsg(r.heard ? "✓ heard it — review/edit the description below, then compose" : "ACE returned no description");
+    } catch (err) { setMsg("✗ " + (err as Error).message); }
+    finally { setListening(false); }
+  }
 
   async function compose(reroll = false) {
     if (!job) return setMsg("Pick a track first.");
     const s = parseFloat(start) || 0, e = parseFloat(end) || 0;
     if (!(e > s)) return setMsg("Drag a region on the waveform (end after start).");
+    if (brain === "listen" && !desc.trim()) return setMsg("Click 🎧 Listen first (or type a description for the note-writer).");
     const useSeed = reroll ? Math.floor(Math.random() * 1e6) : seed;
     setSeed(useSeed);
-    const listening = brain === "listen";
     setComposing(true);
-    setMsg(listening ? "🎧 ACE is listening to the section (~6s), then composing a fitting lead…"
+    setMsg(brain === "listen" ? "composing a lead from the description…"
       : reroll ? "re-rolling solo…" : "composing solo…");
-    if (!reroll) { setScore(null); setHeard(""); }
+    if (!reroll) setScore(null);
     try {
       const body: any = { job_id: job, start: s, end: e, genre, seed: useSeed, ...brainBody() };
       if (bpm) body.bpm = parseFloat(bpm);
       if (key) body.key = key;
       const r = await api.soloCompose(body);
       setScore(r.score);
-      setHeard(r.heard || "");
       if (!bpm) setBpm(String(r.bpm));
       if (!key) setKey(r.key);
       setMsg(`composed ${r.score.notes.length} notes · ${r.bpm} BPM · ${r.key}`);
@@ -159,16 +172,22 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
           <input className={inp} value={key} placeholder="auto e.g. E minor" onChange={(e) => setKey(e.target.value)} />
         </Field>
       </div>
+      {brain === "listen" && (
+        <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-[var(--color-ink)]">🎧 What ACE hears — fed to the note-writer (editable)</span>
+            <GhostButton onClick={listen}>{listening ? "Listening…" : desc ? "Re-listen" : "Listen to section"}</GhostButton>
+          </div>
+          <textarea className={inp} rows={4} value={desc}
+            placeholder="Click 'Listen to section' to have ACE describe it — then edit before composing (or type your own description). The note-writer uses this to fit the lead to the section."
+            onChange={(e) => setDesc(e.target.value)} />
+        </div>
+      )}
+
       <div className="flex gap-2">
         <GhostButton onClick={() => compose(false)} className="flex-1">{composing ? "Composing…" : score ? "Recompose" : "Compose solo"}</GhostButton>
         {score && <GhostButton onClick={() => compose(true)} className="flex-1">🎲 Re-roll</GhostButton>}
       </div>
-
-      {heard && (
-        <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 text-[11px] text-[var(--color-muted)]">
-          <span className="text-[var(--color-accent2)]">🎧 ACE heard:</span> {heard}
-        </div>
-      )}
 
       {score && (
         <>
