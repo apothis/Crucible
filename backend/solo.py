@@ -69,13 +69,29 @@ def analyze_region(path, start, end):
     return {"bpm": round(bpm, 1), "key": key, "duration": round(len(region) / sr, 3)}
 
 
+# ---------------- region slice (for the ACE LM "ears") ----------------
+def slice_region_wav(path, start, end):
+    """Slice [start, end] of a track to in-memory WAV bytes (stereo) for uploading
+    to the engine's audio-understanding endpoint. The engine re-normalizes SR/channels."""
+    import io
+    x, sr = _load_stereo(path)
+    a = max(0, int(float(start) * sr))
+    b = min(len(x), int(float(end) * sr)) if end and float(end) > 0 else len(x)
+    seg = x[a:b] if b > a else x
+    buf = io.BytesIO()
+    sf.write(buf, seg, sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
 # ---------------- compose ----------------
 def compose(key, bpm, duration_s, genre="", brain="algorithmic",
-            provider="", model="", seed=None):
-    """Compose a solo. Returns (notes_tuples, score_dict)."""
+            provider="", model="", seed=None, context=""):
+    """Compose a solo. `context` = an audio-grounded section description (ACE LM ears),
+    only used by the LLM brains. Returns (notes_tuples, score_dict)."""
     notes = guitar_mod.compose_riff(brain, key=key, bpm=float(bpm),
                                     duration_s=float(duration_s), genre=genre,
-                                    part="solo", provider=provider, model=model, seed=seed)
+                                    part="solo", provider=provider, model=model, seed=seed,
+                                    context=context)
     score = notes_to_score(notes, bpm, key, duration_s, brain, provider)
     return notes, score
 

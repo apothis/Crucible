@@ -324,7 +324,8 @@ def _degree_to_pitch(v, base, scale):
 
 
 def llm_riff(key="E minor", bpm=160, duration_s=None, bars=8, style="gallop", genre="",
-             part="riff", provider="", model="", claude_model="claude-3-5-sonnet-latest", seed=None):
+             part="riff", provider="", model="", claude_model="claude-3-5-sonnet-latest", seed=None,
+             context=""):
     """LLM-guided riff OR solo. The model writes integers on a 16th grid
     (0=rest, 1=tonic, higher=up the scale). part='riff' → a repeatable 2-bar
     pattern realized as power chords (or single notes if the genre is a lead);
@@ -383,6 +384,11 @@ def llm_riff(key="E minor", bpm=160, duration_s=None, bars=8, style="gallop", ge
     prompt = (f"Key root: {key.split()[0]}. Style: {feel}. Write a {bars_word} = EXACTLY {pat_len} "
               f"integers on a 16th-note grid that captures that style." +
               ("" if solo else " Make it a memorable, repeatable pattern."))
+    if context:
+        # Audio-grounded description of the actual section (from the ACE LM "ears").
+        # Ground the line in what the part really sounds like — energy, feel, instrumentation.
+        prompt += (f" The section it plays over actually sounds like this — match its energy, "
+                   f"mood and instrumentation: {str(context).strip()[:600]}")
     text = llm_mod.complete(provider, model, system, prompt, claude_model)
     vals = [int(x) for x in re.findall(r"-?\d+", re.sub(r"```[a-z]*", "", text))]
     vals = [v if v >= 0 else 0 for v in vals]      # treat negatives as rests
@@ -442,14 +448,16 @@ def _algorithmic_solo(key, bpm, duration_s, genre="", seed=None):
 
 
 def compose_riff(brain, key="E minor", bpm=160, duration_s=None, bars=8, style="gallop",
-                 genre="", part="riff", provider="", model="", seed=None):
+                 genre="", part="riff", provider="", model="", seed=None, context=""):
     """Pick the riff brain: 'algorithmic' (default, instant) or LLM-guided
     (provider set by the caller). `genre` (LLM only) sets feel + modal scale;
-    `part` = 'riff' or 'solo' (lead line). LLM failures fall back to algorithmic."""
+    `part` = 'riff' or 'solo' (lead line). `context` (LLM only) = an audio-grounded
+    description of the section to ground the line in. LLM failures fall back to algorithmic."""
     if brain and brain != "algorithmic":
         try:
             return llm_riff(key, bpm, duration_s=duration_s, bars=bars, style=style,
-                            genre=genre, part=part, provider=provider, model=model, seed=seed)
+                            genre=genre, part=part, provider=provider, model=model, seed=seed,
+                            context=context)
         except Exception:
             pass
     if part == "solo":

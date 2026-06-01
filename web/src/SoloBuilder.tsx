@@ -41,6 +41,7 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
   const [score, setScore] = useState<Score | null>(null);
   const [seed, setSeed] = useState(42);
   const [composing, setComposing] = useState(false);
+  const [heard, setHeard] = useState("");
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -62,7 +63,8 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
 
   const brainBody = () =>
     brain === "algorithmic" ? { brain: "algorithmic" }
-      : { brain: "llm", provider: brain === "claude" ? "claude" : "ollama" };
+      : brain === "listen" ? { brain: "listen" }   // server captions via ACE LM, then LLM writes
+        : { brain: "llm", provider: brain === "claude" ? "claude" : "ollama" };
 
   async function compose(reroll = false) {
     if (!job) return setMsg("Pick a track first.");
@@ -70,14 +72,18 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
     if (!(e > s)) return setMsg("Drag a region on the waveform (end after start).");
     const useSeed = reroll ? Math.floor(Math.random() * 1e6) : seed;
     setSeed(useSeed);
-    setComposing(true); setMsg(reroll ? "re-rolling solo…" : "composing solo…");
-    if (!reroll) setScore(null);
+    const listening = brain === "listen";
+    setComposing(true);
+    setMsg(listening ? "🎧 ACE is listening to the section (~6s), then composing a fitting lead…"
+      : reroll ? "re-rolling solo…" : "composing solo…");
+    if (!reroll) { setScore(null); setHeard(""); }
     try {
       const body: any = { job_id: job, start: s, end: e, genre, seed: useSeed, ...brainBody() };
       if (bpm) body.bpm = parseFloat(bpm);
       if (key) body.key = key;
       const r = await api.soloCompose(body);
       setScore(r.score);
+      setHeard(r.heard || "");
       if (!bpm) setBpm(String(r.bpm));
       if (!key) setKey(r.key);
       setMsg(`composed ${r.score.notes.length} notes · ${r.bpm} BPM · ${r.key}`);
@@ -138,11 +144,12 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
             {opts?.genres.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
           </select>
         </Field>
-        <Field label="Composer brain">
+        <Field label="Composer brain" hint={brain === "listen" ? "ACE LM hears the section (~6-10s), then an LLM writes a fitting lead" : undefined}>
           <select className={inp} value={brain} onChange={(e) => setBrain(e.target.value)}>
             <option value="algorithmic">Algorithmic (instant)</option>
             <option value="local">Local LLM (Gemma)</option>
             <option value="claude">Claude</option>
+            <option value="listen">🎧 Listen to the section (ACE)</option>
           </select>
         </Field>
         <Field label="BPM" hint="auto-detected; override if wrong">
@@ -156,6 +163,12 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
         <GhostButton onClick={() => compose(false)} className="flex-1">{composing ? "Composing…" : score ? "Recompose" : "Compose solo"}</GhostButton>
         {score && <GhostButton onClick={() => compose(true)} className="flex-1">🎲 Re-roll</GhostButton>}
       </div>
+
+      {heard && (
+        <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 text-[11px] text-[var(--color-muted)]">
+          <span className="text-[var(--color-accent2)]">🎧 ACE heard:</span> {heard}
+        </div>
+      )}
 
       {score && (
         <>

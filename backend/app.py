@@ -2009,11 +2009,75 @@ def solo_options():
     }
 
 
+def _extract_caption(task):
+    """Pull the prose caption out of a /query_result full_analysis_only task."""
+    res = task.get("result")
+    if isinstance(res, str):
+        try:
+            res = json.loads(res)
+        except Exception:
+            return res.strip()[:600]
+    if isinstance(res, list):
+        res = res[0] if res else {}
+    if isinstance(res, dict):
+        for k in ("caption", "prompt", "description"):
+            v = res.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()[:600]
+        meta = res.get("metas") or res.get("meta")
+        if isinstance(meta, dict):
+            c = meta.get("caption") or meta.get("prompt")
+            if c:
+                return str(c).strip()[:600]
+        return json.dumps(res)[:600]
+    return ""
+
+
+def _release_caption(wav):
+    """POST /release_task {full_analysis_only:true} + region audio -> poll /query_result
+    -> caption prose. The LM is effectively always resident (verified 2026-06-01: a region
+    captions in ~6s with NO forced load; the engine's loaded_lm_model/is_loaded fields LIE
+    -- see [[engine-lm-captioning]]), so we do NOT force-load it routinely."""
+    tid = acestep_py.submit(ACESTEP_HOST, {"full_analysis_only": True},
+                            src_audio=(wav, "region.wav"))
+    deadline = time.time() + 240
+    while time.time() < deadline:
+        t = acestep_py.query(ACESTEP_HOST, tid)
+        st = t.get("status")
+        if st == 1 or st == "succeeded":
+            return _extract_caption(t)
+        if st == 2 or (isinstance(st, str) and st.lower() in ("failed", "error")):
+            raise RuntimeError(t.get("message") or t.get("error") or f"caption task failed: {t}")
+        time.sleep(1.5)
+    raise RuntimeError("LM caption timed out")
+
+
+def _caption_region_via_lm(src_path, start, end):
+    """Caption a [start,end] region with the ACE engine's LM (audio->text) -- the 'ears'
+    for the Listen brain. Same understand-audio call the dataset autolabel runs; the LM's
+    caption prompt is fixed/non-steerable, so we use it purely as audio-grounded context
+    for the note-writer. The LM's own bpm/key are unreliable -- ignore them (we use librosa)."""
+    _lora_require_engine()
+    wav = solo_mod.slice_region_wav(src_path, start, end)
+    try:
+        return _release_caption(wav)            # fast path: resident LM, ~6s, no load
+    except Exception:
+        # Cold-engine fallback only: if the very first call fails, ensure the LM
+        # subsystem is up (one /v1/init) and retry once. Avoids a routine leaky init.
+        free_gpu("acestep")
+        _ensure_labeling_ready(ACESTEP_HOST)
+        return _release_caption(wav)
+
+
 @app.post("/api/solo/compose")
 def solo_compose(body: dict):
     """Compose (or re-roll) a solo for a region of a library track. Detects the
     region's bpm/key (unless overridden) and returns a piano-roll score + the
-    used bpm/key. No render/mix yet -- this is the preview/re-roll step."""
+    used bpm/key. No render/mix yet -- this is the preview/re-roll step.
+
+    brain='listen' first has the ACE LM 'listen' to the region (audio->text caption)
+    and feeds that as context to the LLM note-writer -- a theme-grounded solo. Other
+    brains: 'algorithmic' (instant) or 'llm' (provider-driven)."""
     pid = body.get("job_id")
     if not pid:
         raise HTTPException(400, "job_id required")
@@ -2030,11 +2094,19 @@ def solo_compose(body: dict):
         det = solo_mod.analyze_region(src, start, end)
         bpm = bpm or det["bpm"]
         key = key or det["key"]
+    brain = body.get("brain", "algorithmic")
+    heard = ""
+    if brain == "listen":
+        heard = _caption_region_via_lm(src, start, end)  # the ACE LM 'ears'
+        compose_brain = "llm"                            # caption grounds an LLM note-writer
+    else:
+        compose_brain = brain
     notes, score = solo_mod.compose(
         key=key, bpm=float(bpm), duration_s=end - start,
-        genre=body.get("genre", ""), brain=body.get("brain", "algorithmic"),
-        provider=body.get("provider", ""), seed=body.get("seed"))
-    return {"score": score, "bpm": float(bpm), "key": key, "duration": round(end - start, 3)}
+        genre=body.get("genre", ""), brain=compose_brain,
+        provider=body.get("provider", ""), seed=body.get("seed"), context=heard)
+    return {"score": score, "bpm": float(bpm), "key": key,
+            "duration": round(end - start, 3), "heard": heard}
 
 
 @app.post("/api/solo/render")
