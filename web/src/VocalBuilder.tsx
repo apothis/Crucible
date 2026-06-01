@@ -232,7 +232,7 @@ export function VocalBuilderForm({ busy, song, ...ctx }: Props) {
   );
 }
 
-function PianoRoll({ score }: { score: Score }) {
+export function PianoRoll({ score }: { score: Score }) {
   const notes = score.notes;
   if (!notes.length) return null;
   const lo = Math.min(...notes.map((n) => n.midi)) - 1;

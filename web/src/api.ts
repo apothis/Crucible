@@ -83,6 +83,9 @@ export const api = {
   archiveItem: (id: string) => jget(`/api/archive/item?id=${encodeURIComponent(id)}`),
   melodyCompose: (p: unknown) => jpost("/api/melody/compose", p),
   vocalBuild: (p: unknown) => jpost("/api/vocal/build", p),
+  soloOptions: () => jget("/api/solo/options"),
+  soloCompose: (p: unknown) => jpost("/api/solo/compose", p),
+  soloRender: (p: unknown) => jpost("/api/solo/render", p),
   melodyMidi: async (p: unknown) => {
     const r = await fetch("/api/melody/midi", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p),

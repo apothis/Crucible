@@ -39,6 +39,7 @@ from . import genres as genres_mod
 from . import llm as llm_mod
 from . import lyrics as lyrics_mod
 from . import melody as melody_mod
+from . import solo as solo_mod
 from . import acestep_train as ace_train
 from . import lora_upload_py as lora_up
 from . import lora_dataset as lora_ds
@@ -1987,6 +1988,128 @@ async def guitar_render_amp(midi: UploadFile = File(None),
                       os.path.join(LIBRARY, f"{mj}.wav"))
         out["mix_url"] = f"/api/audio/{mj}"
     return out
+
+
+# ==================== Add-a-Solo (compose a lead for a region, overlay it) ====================
+@app.get("/api/solo/options")
+def solo_options():
+    """Genres, DI engines, and amp presets for the Solo tab (no GPU)."""
+    d = postfx_mod.presets(CFG)
+    di = [{"id": "ks", "label": "Karplus-Strong (synth, no setup)"}]
+    if CFG.get("guitar_soundfont") and os.path.exists(CFG.get("guitar_soundfont", "")):
+        di.append({"id": "soundfont", "label": "SoundFont (FreePats clean)"})
+    if _kontakt_ready():
+        di.append({"id": "kontakt", "label": "Kontakt / Shreddage"})
+    return {
+        "amp_presets": d["presets"],
+        "helix_available": d["helix_available"],
+        "pedalboard": d["pedalboard"],
+        "di_engines": di,
+        "genres": [{"id": k, "label": v["label"]} for k, v in guitar_mod.RIFF_GENRES.items()],
+    }
+
+
+@app.post("/api/solo/compose")
+def solo_compose(body: dict):
+    """Compose (or re-roll) a solo for a region of a library track. Detects the
+    region's bpm/key (unless overridden) and returns a piano-roll score + the
+    used bpm/key. No render/mix yet -- this is the preview/re-roll step."""
+    pid = body.get("job_id")
+    if not pid:
+        raise HTTPException(400, "job_id required")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "track not found")
+    start = float(body.get("start") or 0.0)
+    end = float(body.get("end") or 0.0)
+    if not (end > start):
+        raise HTTPException(400, "region end must be after start")
+    bpm = body.get("bpm")
+    key = body.get("key")
+    if not bpm or not key:
+        det = solo_mod.analyze_region(src, start, end)
+        bpm = bpm or det["bpm"]
+        key = key or det["key"]
+    notes, score = solo_mod.compose(
+        key=key, bpm=float(bpm), duration_s=end - start,
+        genre=body.get("genre", ""), brain=body.get("brain", "algorithmic"),
+        provider=body.get("provider", ""), seed=body.get("seed"))
+    return {"score": score, "bpm": float(bpm), "key": key, "duration": round(end - start, 3)}
+
+
+@app.post("/api/solo/render")
+def solo_render(body: dict):
+    """Render a composed solo (DI -> amp), overlay it onto the original track at the
+    region offset (level-matched, edge-faded, optional duck), and save the result.
+    All Mac-side DSP -- no GPU, no source separation."""
+    pid = body.get("job_id")
+    if not pid:
+        raise HTTPException(400, "job_id required")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "track not found")
+    start = float(body.get("start") or 0.0)
+    end = float(body.get("end") or 0.0)
+    if not (end > start):
+        raise HTTPException(400, "region end must be after start")
+    region_len = end - start
+    # Notes: prefer the previewed score (so the render matches the piano-roll); else compose.
+    score = body.get("score")
+    if score and score.get("notes"):
+        notes = solo_mod.score_to_notes(score)
+    else:
+        bpm = body.get("bpm") or solo_mod.analyze_region(src, start, end)["bpm"]
+        key = body.get("key") or solo_mod.analyze_region(src, start, end)["key"]
+        notes, _ = solo_mod.compose(key=key, bpm=float(bpm), duration_s=region_len,
+                                    genre=body.get("genre", ""), brain=body.get("brain", "algorithmic"),
+                                    provider=body.get("provider", ""), seed=body.get("seed"))
+    di_engine = body.get("di_engine", "ks")
+    amp_preset = body.get("amp_preset", "")
+    mix = body.get("mix") or {}
+    fade_ms = float(mix.get("fade_ms", 120))
+
+    solo_jid = uuid.uuid4().hex
+    solo_path = os.path.join(LIBRARY, f"{solo_jid}.wav")
+    try:
+        solo_mod.render_clip(notes, solo_path, region_len, engine=di_engine,
+                             sf2_path=CFG.get("guitar_soundfont"),
+                             kontakt_path=CFG.get("kontakt_vst3_path"),
+                             kontakt_state=KONTAKT_STATE, amp_preset=amp_preset,
+                             cfg=CFG, fade_ms=min(fade_ms, 60))
+    except Exception as e:
+        raise HTTPException(500, f"solo render failed: {e}")
+    try:
+        os.remove(solo_path + ".di.wav")
+    except OSError:
+        pass
+
+    mix_jid = uuid.uuid4().hex
+    mix_path = os.path.join(LIBRARY, f"{mix_jid}.wav")
+    try:
+        solo_mod.overlay(src, solo_path, start, mix_path,
+                         solo_gain_db=float(mix.get("solo_gain_db", 0.0)),
+                         auto_match=bool(mix.get("auto_match", True)),
+                         duck_db=float(mix.get("duck_db", 0.0)),
+                         fade_ms=fade_ms,
+                         highpass_hz=float(mix.get("highpass_hz", 0.0)),
+                         normalize=True)
+    except Exception as e:
+        raise HTTPException(500, f"solo overlay/mix failed: {e}")
+
+    with db() as conn:
+        row = conn.execute("SELECT params FROM jobs WHERE id=?", (pid,)).fetchone()
+    orig_params = json.loads(row["params"]) if row and row["params"] else {}
+    orig_title = orig_params.get("title") or "track"
+    region_str = f"{round(start, 1)}-{round(end, 1)}s"
+    save_done_row(solo_jid, "guitar",
+                  {"preset": amp_preset or di_engine, "part": "solo", "source": orig_title,
+                   "region": region_str}, solo_path)
+    save_done_row(mix_jid, "song",
+                  {"title": f"{orig_title} (with solo)", "source": orig_title, "solo": True,
+                   "region": region_str, "genre": body.get("genre", ""),
+                   "key": body.get("key"), "bpm": body.get("bpm")}, mix_path)
+    return {"audio_url": f"/api/audio/{mix_jid}", "job_id": mix_jid,
+            "solo_url": f"/api/audio/{solo_jid}", "region": region_str}
 
 
 @app.post("/api/import/upload")

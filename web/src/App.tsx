@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
+import { SoloBuilderForm } from "./SoloBuilder";
 import { ImportForm } from "./Import";
 import { LoraTrainingForm } from "./LoraTraining";
 import { SettingsModal } from "./Settings";
@@ -24,6 +25,7 @@ const MODES = [
   { id: "tone", label: "Tone" },
   { id: "backing", label: "Backing" },
   { id: "guitar", label: "Guitar" },
+  { id: "solo", label: "Add Solo" },
   { id: "master", label: "Master" },
   { id: "mix", label: "Mix" },
   { id: "loratrain", label: "Train LoRA" },
@@ -32,7 +34,7 @@ const MODES = [
 // Grouped navigation (replaces the flat tab row) — by workflow stage.
 const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Create", modes: ["generate", "song", "restyle", "repaint", "layer"] },
-  { name: "Guitar", modes: ["backing", "guitar", "tone"] },
+  { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master"] },
   { name: "Lab", modes: ["loratrain"] },
@@ -232,6 +234,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "tone": return <ToneForm {...p} />;
     case "backing": return <BackingForm {...p} />;
     case "guitar": return <GuitarForm {...p} song={song} />;
+    case "solo": return <SoloBuilderForm {...p} />;
     case "master": return <MasterForm {...p} />;
     case "mix": return <MixForm {...p} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
