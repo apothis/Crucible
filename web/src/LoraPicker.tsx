@@ -76,7 +76,7 @@ export function LoraPicker({ cfg, value, onChange }:
           </div>
           <div className="mt-1 flex items-center gap-2">
             <span className="text-[10px] text-[var(--color-muted)]">strength</span>
-            <input type="range" min={0} max={1.5} step={0.05} value={v.scale}
+            <input type="range" min={0} max={1.0} step={0.05} value={v.scale}
               onChange={(e) => setScale(i, parseFloat(e.target.value))}
               className="flex-1 accent-[var(--color-accent)]" />
             <span className="w-9 text-right text-[10px] tabular-nums text-[var(--color-muted)]">{v.scale.toFixed(2)}</span>
