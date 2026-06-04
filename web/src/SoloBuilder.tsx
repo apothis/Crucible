@@ -29,8 +29,8 @@ export function SoloBuilderForm(_props: Props) {
   const [ampPreset, setAmpPreset] = d.use("ampPreset", "");
   // mix controls
   const [autoMatch, setAutoMatch] = d.use("autoMatch", true);
-  const [soloGain, setSoloGain] = d.use("soloGain", "0");
-  const [duck, setDuck] = d.use("duck", "-4");
+  const [soloGain, setSoloGain] = d.use("soloGain", "4");      // lead sits ABOVE the backing by default
+  const [duck, setDuck] = d.use("duck", "-6");
   const [fade, setFade] = d.use("fade", "120");
   const [hpf, setHpf] = d.use("hpf", "0");
   // detected/override key+bpm
@@ -325,7 +325,7 @@ export function SoloBuilderForm(_props: Props) {
                   <input type="checkbox" checked={autoMatch} onChange={(e) => { setAutoMatch(e.target.checked); setMixUrl(""); }} /> Auto level-match to the section
                 </label>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Solo gain (dB)" hint="offset on top of auto-match">
+                  <Field label="Solo gain (dB)" hint="lead boost above the section (auto-matched)">
                     <input className={inp} type="number" step="0.5" value={soloGain} onChange={(e) => { setSoloGain(e.target.value); setMixUrl(""); }} />
                   </Field>
                   <Field label="Duck backing (dB)" hint="dip the track under the solo · 0 = off">

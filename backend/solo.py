@@ -21,8 +21,10 @@ from . import analyze as analyze_mod
 
 # ---------------- audio helpers ----------------
 def _load_stereo(path, sr_target=44100):
+    """Load as float32 stereo. sr_target=None keeps the file's native sample rate
+    (used when overlaying onto the original so we don't resample the user's track)."""
     x, sr = sf.read(path, always_2d=True, dtype="float32")
-    if sr != sr_target:
+    if sr_target and sr != sr_target:
         import librosa
         x = np.stack([librosa.resample(x[:, c], orig_sr=sr, target_sr=sr_target)
                       for c in range(x.shape[1])], axis=1)
@@ -198,10 +200,12 @@ def overlay(original_path, solo_path, region_start, out_path,
             solo_gain_db=0.0, auto_match=True, duck_db=0.0, fade_ms=120,
             highpass_hz=0.0, normalize=True):
     """Place the (region-length, edge-faded) solo clip onto the original at
-    region_start seconds. auto_match scales the solo to the region's RMS; duck_db
-    dips the backing under the solo within the region; highpass_hz cleans solo mud."""
-    orig, sr = _load_stereo(original_path)
-    solo, _ = _load_stereo(solo_path, sr_target=sr)
+    region_start seconds. auto_match scales the solo to the region's RMS (a lead
+    should sit ABOVE the backing, so solo_gain_db is a boost on top of the match);
+    duck_db dips the backing under the solo within the region; highpass_hz cleans
+    solo mud. The original's native sample rate is preserved (no downsample)."""
+    orig, sr = _load_stereo(original_path, sr_target=None)   # keep the track's native SR
+    solo, _ = _load_stereo(solo_path, sr_target=sr)          # bring the solo clip to it
     a = max(0, int(float(region_start) * sr))
     b = min(len(orig), a + len(solo))
     if b <= a:
