@@ -2005,6 +2005,8 @@ def solo_options():
         "helix_available": d["helix_available"],
         "pedalboard": d["pedalboard"],
         "di_engines": di,
+        "kontakt_available": bool(CFG.get("kontakt_vst3_path") and os.path.exists(CFG["kontakt_vst3_path"])),
+        "kontakt_ready": _kontakt_ready(),
         "genres": [{"id": k, "label": v["label"]} for k, v in guitar_mod.RIFF_GENRES.items()],
     }
 

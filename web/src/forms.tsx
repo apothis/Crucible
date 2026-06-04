@@ -1100,7 +1100,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
   useEffect(() => { loadEngines(); }, []);
 
   async function setupKontakt() {
-    setKStatus("Kontakt opening (~25s) — load Shreddage 3 Stratus FREE + pick a patch, then CLOSE the window…");
+    setKStatus(`Kontakt opening (~25s) — ${kontaktReady ? "pick a different Shreddage patch" : "load Shreddage 3 Stratus FREE + pick a patch"}, then CLOSE the window…`);
     try { await api.kontaktCapture(); await loadEngines(); setDiEngine("kontakt"); setKStatus("Shreddage/Kontakt ready — selected as the DI engine."); }
     catch (e) { setKStatus("setup failed: " + (e as Error).message); }
   }
@@ -1216,11 +1216,13 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
           {kontaktReady && <option value="kontakt">Shreddage / Kontakt (best, sampled)</option>}
         </select>
       </Field>
-      {kontaktAvail && !kontaktReady && (
+      {kontaktAvail && (
         <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
-          <div className="text-xs font-medium text-[var(--color-muted)]">Set up Shreddage (one-time)</div>
-          <p className="text-[11px] text-[var(--color-muted)]">Kontakt is installed. Click below — it opens Kontakt (~25s); load <em>Shreddage 3 Stratus FREE</em> + pick a patch, then close the window. Saved for reuse.</p>
-          <button onClick={setupKontakt} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-1 text-sm text-[var(--color-ink)] hover:border-[var(--color-accent)]">Open Kontakt + capture Shreddage</button>
+          <div className="text-xs font-medium text-[var(--color-muted)]">{kontaktReady ? "Shreddage patch" : "Set up Shreddage (one-time)"}</div>
+          <p className="text-[11px] text-[var(--color-muted)]">{kontaktReady
+            ? <>Shreddage is set up. Re-pick to open Kontakt (~25s) and choose a different <em>Shreddage 3 Stratus</em> patch or articulation, then close the window.</>
+            : <>Kontakt is installed. Click below — it opens Kontakt (~25s); load <em>Shreddage 3 Stratus FREE</em> + pick a patch, then close the window. Saved for reuse.</>}</p>
+          <button onClick={setupKontakt} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-1 text-sm text-[var(--color-ink)] hover:border-[var(--color-accent)]">{kontaktReady ? "Re-pick Shreddage patch" : "Open Kontakt + capture Shreddage"}</button>
         </div>
       )}
       {kStatus && <p className="text-[11px] text-[var(--color-accent2)]">{kStatus}</p>}

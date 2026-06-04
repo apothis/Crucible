@@ -14,6 +14,8 @@ type SoloOptions = {
   genres: { id: string; label: string }[];
   helix_available: boolean;
   pedalboard: boolean;
+  kontakt_available: boolean;
+  kontakt_ready: boolean;
 };
 
 export function SoloBuilderForm(_props: Props) {
@@ -53,9 +55,32 @@ export function SoloBuilderForm(_props: Props) {
   const [clipUrl, setClipUrl] = useState("");
   const [mixUrl, setMixUrl] = useState("");
   const [stage, setStage] = useState("");        // "di" | "clip" | "mix" while running
+  const [helixName, setHelixName] = useState("");
+  const [setupMsg, setSetupMsg] = useState("");
 
   const clearStages = () => { setDiJobId(""); setDiUrl(""); setClipJobId(""); setClipUrl(""); setMixUrl(""); };
   const clearAmpDown = () => { setClipJobId(""); setClipUrl(""); setMixUrl(""); };   // DI still valid
+  const refreshOpts = () => api.soloOptions().then(setOpts).catch(() => {});
+
+  // Plugin setup, mirrored from the Guitar/Tone tabs so sounds can be picked without
+  // leaving the solo flow. Both open the real plugin editor; close it to snapshot state.
+  async function setupShreddage() {
+    setSetupMsg(`Kontakt opening (~25s) — ${opts?.kontakt_ready ? "pick a different Shreddage patch" : "load Shreddage 3 Stratus FREE + pick a patch"}, then CLOSE the window…`);
+    try {
+      await api.kontaktCapture(); await refreshOpts();
+      setDiEngine("kontakt"); clearStages();
+      setSetupMsg("✓ Shreddage ready — selected as the DI engine.");
+    } catch (e) { setSetupMsg("✗ setup failed: " + (e as Error).message); }
+  }
+  async function captureHelix() {
+    if (!helixName.trim()) return setSetupMsg("Name the tone first.");
+    setSetupMsg("Helix window opening — dial your tone, then CLOSE the window to save…");
+    try {
+      const d = await api.helixCapture(helixName.trim()); await refreshOpts();
+      setAmpPreset(`helix:${d.saved}`); clearAmpDown(); setHelixName("");
+      setSetupMsg(`✓ saved "${d.saved}" — now in the amp list`);
+    } catch (e) { setSetupMsg("✗ capture failed: " + (e as Error).message); }
+  }
 
   useEffect(() => {
     api.library().then((l: LibItem[]) =>
@@ -250,11 +275,19 @@ export function SoloBuilderForm(_props: Props) {
 
           <SectionTitle>3a · Render DI — hear the raw composed solo</SectionTitle>
           <p className="text-[11px] text-[var(--color-muted)]">The clean composed notes, no amp. Re-roll above until the line is right, then move on.</p>
-          <Field label="DI engine">
+          <Field label="DI engine" hint="the guitar itself (Shreddage = real sampled tone)">
             <select className={inp} value={diEngine} onChange={(e) => { setDiEngine(e.target.value); clearStages(); }}>
               {opts?.di_engines.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
             </select>
           </Field>
+          {opts?.kontakt_available && (
+            <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5 space-y-1.5">
+              <div className="text-[11px] text-[var(--color-muted)]">{opts.kontakt_ready
+                ? "Shreddage is set up. Re-pick to open Kontakt (~25s) and choose a different Stratus patch/articulation, then close the window."
+                : "Kontakt is installed. Open it (~25s), load Shreddage 3 Stratus FREE + pick a patch, then close the window — saved for reuse."}</div>
+              <GhostButton onClick={setupShreddage}>{opts.kontakt_ready ? "Re-pick Shreddage patch" : "Open Kontakt + capture Shreddage"}</GhostButton>
+            </div>
+          )}
           <GhostButton onClick={runDi} disabled={!!stage}>{stage === "di" ? "Rendering DI…" : diUrl ? "Re-render DI" : "Render DI"}</GhostButton>
           {diUrl && <WavePlayer url={diUrl} />}
 
@@ -262,12 +295,21 @@ export function SoloBuilderForm(_props: Props) {
             <>
               <SectionTitle>3b · Amp — hear the solo clip dry</SectionTitle>
               <p className="text-[11px] text-[var(--color-muted)]">The amped solo on its own, gated to the region. Change the amp and re-amp without re-rendering the DI.</p>
-              <Field label="Amp / tone">
+              <Field label="Amp / tone" hint="the amplifier stacked on the DI">
                 <select className={inp} value={ampPreset} onChange={(e) => { setAmpPreset(e.target.value); clearAmpDown(); }}>
                   <option value="">Clean DI (no amp)</option>
                   {opts?.amp_presets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
               </Field>
+              {opts?.helix_available && (
+                <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5 space-y-1.5">
+                  <div className="text-[11px] text-[var(--color-muted)]">Capture a Helix tone: dial amp/cab/FX in Helix once and save it under a name — it joins the amp list here and everywhere.</div>
+                  <div className="flex gap-1.5">
+                    <input className={inp} placeholder="tone name (e.g. Modern Lead)" value={helixName} onChange={(e) => setHelixName(e.target.value)} />
+                    <GhostButton onClick={captureHelix}>Open + capture</GhostButton>
+                  </div>
+                </div>
+              )}
               <GhostButton onClick={runClip} disabled={!!stage}>{stage === "clip" ? "Amping…" : clipUrl ? "Re-amp clip" : "Apply amp"}</GhostButton>
               {clipUrl && <WavePlayer url={clipUrl} />}
             </>
@@ -304,6 +346,7 @@ export function SoloBuilderForm(_props: Props) {
         </>
       )}
 
+      {setupMsg && <p className="text-[11px] text-[var(--color-accent2)]">{setupMsg}</p>}
       {msg && <p className="text-xs text-[var(--color-muted)]">{msg}</p>}
     </div>
   );
