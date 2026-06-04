@@ -16,6 +16,14 @@ def _midi_to_freq(m):
     return 440.0 * (2.0 ** ((m - 69) / 12.0))
 
 
+# Notes are (pitch, start_s, dur_s, velocity) tuples with an OPTIONAL 5th element:
+# an articulation code ('b' bend, 's' slide, 'v' vibrato, 'h' hammer/legato,
+# '~' let-ring, '.' staccato, '' none). Most consumers only need the first four;
+# only the Karplus-Strong DI render realizes the articulation.
+def _artic(n):
+    return n[4] if len(n) > 4 else ""
+
+
 def karplus_strong(freq, dur_s, sr=44100, decay=0.996, brightness=0.5, pick=0.5, seed=None):
     """One plucked-string note (Extended Karplus-Strong). `brightness` (0..1)
     weights the loop lowpass (bright→darker), `pick` adds attack transient."""
@@ -72,7 +80,8 @@ def notes_to_midi(notes, path, program=0, tpqn=480):
     tr.append(mido.MetaMessage("set_tempo", tempo=500000))      # 120 bpm
     tr.append(mido.Message("program_change", program=int(program), time=0))
     ev = []
-    for pitch, st, dur, vel in notes:
+    for n in notes:
+        pitch, st, dur, vel = n[0], n[1], n[2], n[3]
         p = int(max(0, min(127, pitch)))
         ev.append((st, 1, p, int(max(1, min(127, vel)))))       # note_on
         ev.append((st + max(0.03, dur), 0, p, 0))               # note_off
@@ -164,29 +173,85 @@ def render_di_file(notes, path, sr=44100, decay=0.996, engine="ks",
     return path
 
 
+def _pitch_mod(sig, sr, semitone_env):
+    """Re-pitch a note by a per-sample semitone envelope (phase-accumulation
+    resample). Realizes bends/slides/vibrato on the synthesized Karplus note.
+    Positive = up. Output length follows the warped read position."""
+    import numpy as np
+    n = len(sig)
+    if n < 8:
+        return sig
+    ratio = 2.0 ** (np.asarray(semitone_env, dtype="float64") / 12.0)
+    read = np.cumsum(ratio) - ratio[0]                  # read position into sig per output sample
+    read = read[read < (n - 1)]
+    return np.interp(read, np.arange(n), sig).astype("float32")
+
+
+def _artic_env(artic, length, sr, prev_semitones=0.0):
+    """Per-sample semitone offset for an articulation, or None for a plain pick.
+    bend = whole-step rise into the target; slide = glide from the previous pitch;
+    vibrato = delayed pitch shake; others = no pitch motion."""
+    import numpy as np
+    if length < 8:
+        return None
+    t = np.arange(length) / sr
+    if artic == "b":                                    # bend up a whole step into pitch
+        gl = max(1, int(length * 0.35))
+        env = np.zeros(length); env[:gl] = np.linspace(-2.0, 0.0, gl)
+        return env
+    if artic == "s" and abs(prev_semitones) > 0.1:      # slide from the previous note's pitch
+        gl = max(1, int(length * 0.30))
+        env = np.zeros(length); env[:gl] = np.linspace(prev_semitones, 0.0, gl)
+        return env
+    if artic == "v":                                    # vibrato: shake after a short onset delay
+        onset = min(int(0.08 * sr), length // 3)
+        depth = 0.28                                    # ~28 cents
+        env = depth * np.sin(2 * np.pi * 5.6 * t)
+        env[:onset] *= np.linspace(0, 1, onset) if onset else 1.0
+        return env
+    return None
+
+
 def render_di(notes, sr=44100, decay=0.996, seed=0, humanize=True):
-    """Render a list of (pitch, start_s, dur_s, velocity) notes to a stereo DI.
+    """Render (pitch, start_s, dur_s, velocity[, articulation]) notes to a stereo DI.
     Velocity drives brightness/pick; slight per-note detune + timing jitter keep
-    stacked chords/repeats from phase-locking (more natural)."""
+    stacked chords/repeats from phase-locking. Articulations (5th field) are
+    realized: bends/slides/vibrato via pitch modulation, hammer/legato softens the
+    pick attack, let-ring extends sustain, staccato is already shortened upstream."""
     import numpy as np
     if not notes:
         raise ValueError("no notes to render")
     rng = np.random.default_rng(seed)
-    end = max(st + d for _, st, d, _ in notes) + 0.4
+    end = max(n[1] + n[2] for n in notes) + 0.4
     out = np.zeros(int(end * sr) + 1, dtype="float32")
-    for pitch, st, dur, vel in notes:
+    prev_pitch = None
+    for n in notes:
+        pitch, st, dur, vel = n[0], n[1], n[2], n[3]
+        art = _artic(n)
         v = vel / 127.0
         cents = rng.uniform(-6, 6) if humanize else 0.0          # slight detune
         freq = _midi_to_freq(pitch) * (2.0 ** (cents / 1200.0))
         bright = float(np.clip(0.35 + 0.5 * v, 0.1, 0.95))       # louder = brighter
-        note = karplus_strong(freq, dur + 0.3, sr=sr, decay=decay,
-                              brightness=bright, pick=0.4 + 0.4 * v,
+        pick = 0.4 + 0.4 * v
+        ndecay = decay
+        if art == "h":                                           # hammer-on/legato: soft, no hard pick
+            pick *= 0.25; bright = float(np.clip(bright - 0.1, 0.1, 0.95))
+        elif art == "~":                                         # let ring: longer sustain
+            ndecay = min(0.9992, decay + 0.003)
+        tail = 0.6 if art == "~" else 0.3
+        note = karplus_strong(freq, dur + tail, sr=sr, decay=ndecay,
+                              brightness=bright, pick=pick,
                               seed=int(rng.integers(1, 2**31)))
+        prev_semi = (prev_pitch - pitch) if (prev_pitch is not None) else 0.0
+        env = _artic_env(art, len(note), sr, prev_semitones=prev_semi)
+        if env is not None:
+            note = _pitch_mod(note, sr, env)
         note = note * v
         jit = rng.uniform(-0.003, 0.003) if humanize else 0.0    # ±3ms timing
         s = max(0, int((st + jit) * sr))
         e = min(len(out), s + len(note))
         out[s:e] += note[:e - s]
+        prev_pitch = pitch
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if peak > 0.99:
         out = out * (0.99 / peak)
@@ -318,15 +383,65 @@ def _degree_to_pitch(v, base, scale):
     return base + 12 * octave + scale[idx % n]
 
 
+def _parse_note_dsl(text, max_deg=15):
+    """Parse the LLM's note-token DSL into events [(degree, dur16, artic)]. A token is
+    DEGREE[:DURATION][artic] where the articulation may be appended to the duration
+    ('8:4v') or colon-separated ('8:4:v'); bare integers (legacy) are accepted as 16ths.
+    DEGREE 0 = rest. DURATION in sixteenth-notes (default 1). ARTIC in b/s/v/h/~/."""
+    import re
+    text = re.sub(r"```[a-z]*", "", text or "")
+    events = []
+    for tok in re.split(r"[\s,]+", text.strip()):
+        m = re.match(r"^(-?\d+)(?::(\d+))?:?([bsvhBSVH~.]?)", tok)
+        if not m:
+            continue
+        deg = min(max(int(m.group(1)), 0), max_deg)
+        dur = max(1, min(16, int(m.group(2)))) if m.group(2) else 1
+        artic = (m.group(3) or "").lower()
+        if artic not in ("b", "s", "v", "h", "~", "."):
+            artic = ""
+        events.append((deg, dur, artic))
+    return events
+
+
+def _lay_events(events, base, scale, sixt, total, lead):
+    """Lay parsed (degree, dur16, artic) events onto the timeline, repeating the
+    phrase until `total` seconds are filled (motif return for solos / loop for
+    riffs). lead=True → single articulated notes; else power chords. Returns note
+    tuples ((pitch,start,dur,vel) or (pitch,start,dur,vel,artic) for lead notes)."""
+    notes = []
+    if not events:
+        return notes
+    t = 0.0
+    guard = 0
+    while t < total - 1e-3 and guard < 20000:
+        for deg, dur16, artic in events:
+            if t >= total - 1e-3:
+                break
+            seg = dur16 * sixt
+            if deg > 0:
+                pitch = _degree_to_pitch(deg, base, scale)
+                if lead:
+                    accent = artic in ("b", "v", "~") or dur16 >= 4
+                    vel = 118 if accent else 104
+                    gate = 1.2 if artic == "~" else (0.5 if artic == "." else 0.95)
+                    notes.append((pitch, t, max(0.05, seg * gate), vel, artic))
+                else:
+                    vel = 116 if deg != 1 else 100
+                    notes += _powerchord(pitch, vel, t, max(0.05, seg * 0.9), drop=False)
+            t += seg
+            guard += 1
+    return notes
+
+
 def llm_riff(key="E minor", bpm=160, duration_s=None, bars=8, style="gallop", genre="",
              part="riff", provider="", model="", claude_model="claude-3-5-sonnet-latest", seed=None,
              context=""):
-    """LLM-guided riff OR solo. The model writes integers on a 16th grid
-    (0=rest, 1=tonic, higher=up the scale). part='riff' → a repeatable 2-bar
-    pattern realized as power chords (or single notes if the genre is a lead);
-    part='solo' → a longer through-composed SINGLE-NOTE lead line in a high
-    register, using the genre's solo style. Raises on failure → caller falls back."""
-    import re
+    """LLM-guided riff OR solo via a compact note-token DSL: each token is
+    DEGREE:DURATION:ARTICULATION (0=rest, 1=tonic ascending the scale; duration in
+    16th units; articulation b/s/v/h/~/.). part='riff' → a repeatable pattern (power
+    chords, or single notes for a lead genre); part='solo' → an expressive,
+    motif-driven single-note lead in a high register. Raises on failure → fallback."""
     from . import llm as llm_mod
     parts = key.split()
     root_pc = _ROOTS.get(parts[0], 4)
@@ -343,78 +458,81 @@ def llm_riff(key="E minor", bpm=160, duration_s=None, bars=8, style="gallop", ge
     spb = 60.0 / float(bpm)
     sixt = spb / 4.0
     total = float(duration_s) if duration_s else bars * spb * 4
-    nsteps = max(8, int(round(total / sixt)))
-    pat_len = 64 if solo else 32                    # solos = longer phrase, less repetition
+    pat_len = 64 if solo else 32                    # target phrase length in 16th units
     provider = provider or llm_mod.best_provider()
+    dsl = (
+        "Output a sequence of NOTE TOKENS separated by spaces. Each token is "
+        "DEGREE:DURATION:ARTICULATION.\n"
+        f"- DEGREE: 0 = rest. 1 = the tonic; 2..{top} ascend the scale ({top} = one octave up). "
+        "Numbers up to 15 reach higher octaves for climaxes.\n"
+        "- DURATION in sixteenth-notes: 1=16th, 2=8th, 3=dotted-8th, 4=quarter, 6=dotted-quarter, "
+        "8=half. Omit to mean a 16th.\n"
+        "- ARTICULATION (optional): b=bend up into the note, s=slide from the previous note, "
+        "v=vibrato (held, shaking), h=hammer-on/legato, ~=let it ring (sustain), .=staccato (short). "
+        "Omit for a normal picked note.\n"
+        "Write ONLY the tokens, nothing else."
+    )
     if solo:
         system = (
-            "You compose expressive virtuoso lead GUITAR SOLOS on a sixteenth-note grid as integers. "
-            f"0 = rest (phrasing space). 1 = the tonic; higher integers ascend the scale ({top} = an "
-            "octave up; go to 12-15 for high climaxes). Write flowing SINGLE-NOTE phrases — runs, "
-            "leaps, pedal points and held peaks — that build and breathe (use some rests between "
-            "phrases). Output ONLY space-separated integers — no words, no commentary."
+            "You are a virtuoso lead guitarist composing an expressive SOLO. " + dsl +
+            "\nPHRASING: think in short MOTIFS of 2-4 notes, then answer and vary them (call and "
+            "response). Leave RESTS to breathe between phrases. Land longer notes on chord tones "
+            "(degrees 1, 3, 5) on strong beats. Put bends and vibrato on held peak notes. Build the "
+            "contour upward to a high climax, then resolve back down."
         )
+        example = "1:2 3:1 5:1 8:4v 0:2 8:1 7:1b 5:2~ 3:1 1:1 3:1 5:1h 7:4v"
     elif lead:
         system = (
-            "You compose virtuosic SHRED lead lines on a sixteenth-note grid as integers. "
-            f"0 = rest. 1 = the tonic; higher integers ascend the scale ({top} = one octave up, "
-            "and you may go to 12-15 for high runs). Write FAST, mostly-continuous SINGLE-NOTE "
-            "scalar runs and pedal-point lines with very few rests. "
-            "Output ONLY space-separated integers — no words, no commentary."
+            "You compose virtuosic SHRED lead lines. " + dsl +
+            "\nWrite fast, mostly-continuous scalar runs and pedal-point lines with few rests, "
+            "occasional bends/vibrato on accents, resolving onto chord tones."
         )
+        example = "1:1 2:1 3:1 5:1 7:1 8:1 7:1 5:1 8:2b 7:1 5:1 3:2v"
     else:
         system = (
-            "You compose heavy guitar riffs on a sixteenth-note grid as integers. "
-            f"0 = rest (silence/gap). 1 = low root chug (palm-muted power chord on the tonic). "
-            f"2-{len(scale)} = scale degrees above the root, {top} = octave. Real riffs are TIGHT and "
-            "REPETITIVE: a root-anchored pattern with rests for groove and a few melodic moves. "
-            "Output ONLY space-separated integers — no words, no commentary."
+            "You compose heavy, TIGHT guitar RIFFS. " + dsl +
+            "\nReal riffs are repetitive and root-anchored: low chugs on the tonic (degree 1) with "
+            "rests for groove and a few melodic moves. Favour short durations and a palm-muted feel."
         )
+        example = "1:1 1:1 0:1 1:1 3:1 1:1 0:1 1:2 1:1 0:1 1:1 6:2"
     feel = f"{g['label']} — {g['solo' if solo else 'riff']}" if g else (
         style + ": " + ("galloping root chugs with accents" if style == "gallop"
         else "driving palm-muted chugs" if style == "chug"
         else "sustained power chords that change every bar or two" if style == "powerchords"
         else "a low root pedal alternating with scale tones"))
-    bars_word = f"{pat_len // 16}-BAR" + (" solo phrase" if solo else " riff")
-    prompt = (f"Key root: {key.split()[0]}. Style: {feel}. Write a {bars_word} = EXACTLY {pat_len} "
-              f"integers on a 16th-note grid that captures that style." +
+    bars_word = f"{pat_len // 16}-bar " + ("solo phrase" if solo else "riff")
+    prompt = (f"Key root: {key.split()[0]}. Style: {feel}. Write a {bars_word} (roughly "
+              f"{pat_len // 2} to {pat_len} tokens) that captures that style. "
+              f"Example of the FORMAT only (do not copy these notes): {example}." +
               ("" if solo else " Make it a memorable, repeatable pattern."))
     if context:
         # Audio-grounded description of the actual section (from the ACE LM "ears").
-        # Ground the line in what the part really sounds like — energy, feel, instrumentation.
         prompt += (f" The section it plays over actually sounds like this — match its energy, "
                    f"mood and instrumentation: {str(context).strip()[:600]}")
     text = llm_mod.complete(provider, model, system, prompt, claude_model)
-    vals = [int(x) for x in re.findall(r"-?\d+", re.sub(r"```[a-z]*", "", text))]
-    vals = [v if v >= 0 else 0 for v in vals]      # treat negatives as rests
-    if not any(v > 0 for v in vals):
+    events = _parse_note_dsl(text, max_deg=15)
+    if solo:
+        phrase = events                              # through-composed; repeats only if short
+    else:
+        phrase, acc = [], 0                          # tight loop: cap the pattern length
+        for ev in events:
+            phrase.append(ev); acc += ev[1]
+            if acc >= pat_len:
+                break
+    if not any(d > 0 for d, _, _ in phrase):
         raise ValueError("no playable steps from LLM")
-    pattern = vals[:pat_len] if len(vals) >= pat_len else vals
-    tiled = (pattern * ((nsteps // len(pattern)) + 1))[:nsteps]
-    notes = []
-    for i, v in enumerate(tiled):
-        if v <= 0:
-            continue
-        t = i * sixt
-        if t >= total:
-            break
-        pitch = _degree_to_pitch(v, base, scale)
-        vel = 116 if v != 1 else 100
-        if lead:
-            notes.append((pitch, t, sixt * 0.95, vel))          # single-note shred line
-        else:
-            notes += _powerchord(pitch, vel, t, sixt * 0.9, drop=False)
+    notes = _lay_events(phrase, base, scale, sixt, total, lead)
     if not notes:
         raise ValueError("LLM riff produced no notes")
     return notes
 
 
 def _algorithmic_solo(key, bpm, duration_s, genre="", seed=None):
-    """Deterministic fallback lead (used if the LLM is unavailable for a solo):
-    a single-note scalar line in a high register, with density/phrasing/contour
-    shaped by tempo — fast genres get busy scalar runs with few rests, slow ones
-    get sparse, sustained, more-repetitive phrasing. Uses the genre's scale +
-    register."""
+    """Deterministic fallback lead (used when the LLM is unavailable): a MOTIF-based
+    single-note line. States a short melodic cell built from chord tones + passing
+    notes, then repeats it with transposition/variation and rests (call and response),
+    landing held notes with vibrato/bend/let-ring. Density shaped by tempo. Uses the
+    genre's scale + register, and is realized through the same articulation path."""
     import numpy as np
     parts = key.split()
     root_pc = _ROOTS.get(parts[0], 4)
@@ -423,23 +541,35 @@ def _algorithmic_solo(key, bpm, duration_s, genre="", seed=None):
     reg = max((g.get("reg", 0) if g else 0), 24)         # solos sit in a high register
     base = 28 + root_pc + reg
     spb = 60.0 / float(bpm); sixt = spb / 4.0
-    n = max(8, int(round(float(duration_s or 8) / sixt)))
+    total = float(duration_s or 8)
     rng = np.random.default_rng(seed)
-    rest_prob = float(np.clip(0.55 - bpm * 0.0026, 0.08, 0.45))   # fast → busier, slow → spacious
-    top = len(scale) * 2
-    steps = np.array([-5, -2, -1, 0, 1, 2, 5])
-    w_fast = np.array([1, 2, 5, 1, 6, 3, 1], dtype=float)        # scalar runs, few repeats
-    w_slow = np.array([1, 2, 3, 4, 3, 2, 1], dtype=float)        # more repeats/space
-    mix = float(np.clip((bpm - 80) / 100.0, 0.0, 1.0))           # 0=slow .. 1=fast
-    w = w_slow * (1 - mix) + w_fast * mix; w /= w.sum()
-    held = 1.5 if bpm < 100 else 1.0                            # slow solos sustain longer
-    notes, deg = [], 1
-    for i in range(n):
-        if rng.random() >= rest_prob:
-            dur = sixt * (held if rng.random() < 0.25 else 0.95)
-            notes.append((_degree_to_pitch(deg, base, scale), i * sixt, dur, 108))
-        deg = int(np.clip(deg + int(rng.choice(steps, p=w)), 1, top))
-    return notes or [(_degree_to_pitch(1, base, scale), 0, sixt, 100)]
+    busy = float(np.clip((bpm - 80) / 100.0, 0.0, 1.0))          # 0 slow/spacious .. 1 fast/busy
+    span = len(scale) * 2
+    chord_tones = [1, 3, 5]
+
+    def make_motif():
+        cell, deg = [], int(rng.choice(chord_tones))
+        steps = 3 + int(rng.integers(0, 4))
+        for k in range(steps):
+            if k == steps - 1:                                   # land + hold the phrase end
+                dur = int(rng.choice([4, 6])) if busy < 0.6 else 2
+                artic = str(rng.choice(["v", "~", "b"]))
+            else:
+                dur = 1 if busy > 0.5 else int(rng.choice([1, 2, 2]))
+                artic = "h" if (busy > 0.6 and rng.random() < 0.4) else ""
+            cell.append((max(1, deg), dur, artic))
+            deg = int(np.clip(deg + int(rng.choice([-2, -1, 1, 1, 2, 3])), 1, span))
+        return cell
+
+    motif, events = make_motif(), []
+    while sum(d for _, d, _ in events) * sixt < total - 1e-3 and len(events) < 4000:
+        shift = int(rng.choice([0, 0, 2, -2, 3]))                # answer phrase, transposed
+        events += [(int(np.clip(d + shift, 1, span)), du, a) for (d, du, a) in motif]
+        events.append((0, 2, ""))                                # breathe between phrases
+        if rng.random() < 0.4:
+            motif = make_motif()                                 # occasionally restate a new idea
+    notes = _lay_events(events, base, scale, sixt, total, lead=True)
+    return notes or [(_degree_to_pitch(1, base, scale), 0.0, sixt, 100, "")]
 
 
 def compose_riff(brain, key="E minor", bpm=160, duration_s=None, bars=8, style="gallop",
@@ -484,8 +614,10 @@ def generate_riff_arrangement(blocks, key="E minor", bpm=160, seed=None,
             seg = compose_riff(brain, key, bpm, duration_s=secs, style=style, genre=genre,
                                provider=provider, model=model,
                                seed=(None if seed is None else seed + i))
-        for (p, st, d, v) in seg:
-            notes.append((p + octv, t0 + st, d, max(1, min(127, int(v * vscale)))))
+        for n in seg:                                # tolerate optional 5th (articulation) field
+            p, st, d, v = n[0], n[1], n[2], n[3]
+            shifted = (p + octv, t0 + st, d, max(1, min(127, int(v * vscale))))
+            notes.append(shifted + (n[4],) if len(n) > 4 else shifted)
         t0 += secs
     if not notes:
         raise ValueError("no sections to generate from")

@@ -33,7 +33,8 @@ def _render(plugin, notes, sr, out_path):
     import numpy as np
     import soundfile as sf
     msgs = []
-    for pitch, st, dur, vel in notes:
+    for n in notes:                                    # tolerate optional 5th (articulation) field
+        pitch, st, dur, vel = n[0], n[1], n[2], n[3]
         p = int(max(0, min(127, pitch)))
         v = int(max(1, min(127, vel)))
         msgs.append(mido.Message("note_on", note=p, velocity=v, time=float(st)))

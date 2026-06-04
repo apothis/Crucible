@@ -101,9 +101,11 @@ def notes_to_score(notes, bpm, key, duration_s, brain="", provider=""):
     shape so the existing SVG piano-roll renders it unchanged (one 'Solo' section,
     empty syllables)."""
     out = []
-    for (pitch, start, dur, vel) in notes:
+    for n in notes:
+        pitch, start, dur, vel = n[0], n[1], n[2], n[3]
         out.append({"midi": int(pitch), "start": round(float(start), 4),
                     "dur": round(float(dur), 4), "vel": int(vel),
+                    "artic": (n[4] if len(n) > 4 else ""),
                     "section": 0, "syllable": ""})
     dur = float(duration_s) or max((n["start"] + n["dur"] for n in out), default=0.0)
     dur = round(dur, 3)
@@ -117,7 +119,9 @@ def notes_to_score(notes, bpm, key, duration_s, brain="", provider=""):
 def score_to_notes(score):
     out = []
     for n in (score or {}).get("notes", []):
-        out.append((int(n["midi"]), float(n["start"]), float(n["dur"]), int(n.get("vel", 100))))
+        tup = (int(n["midi"]), float(n["start"]), float(n["dur"]), int(n.get("vel", 100)))
+        artic = n.get("artic", "")
+        out.append(tup + (artic,) if artic else tup)
     return out
 
 
