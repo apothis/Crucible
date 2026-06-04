@@ -116,41 +116,36 @@ def render_di_soundfont(notes, sf2_path, sr=44100, program=0):
     return data
 
 
-_KONTAKT = {}  # cache the (slow ~25s to load) Kontakt plugin instance by path
-
-
 def render_di_kontakt(notes, kontakt_path, state_path, sr=44100):
     """Render notes through Kontakt (e.g. Shreddage) → sampled DI. Requires a
     captured Kontakt `raw_state` that already has the instrument loaded (set up
-    once via its editor). Instance is cached (Kontakt is slow to load)."""
+    once via its editor).
+
+    Kontakt's VST3 can only be loaded/rendered on a process's MAIN thread, but
+    FastAPI serves us on a worker threadpool -- so we delegate to a persistent
+    daemon subprocess (backend/kontakt_daemon.py) that owns the plugin on its own
+    main thread. The daemon writes the WAV; we read it back. See that module's
+    docstring for the why. Returns (frames, 2) float32."""
     import os
-    import mido
+    import tempfile
     import numpy as np
-    import pedalboard as pb
-    k = _KONTAKT.get(kontakt_path)
-    if k is None:
-        k = pb.load_plugin(kontakt_path)
-        _KONTAKT[kontakt_path] = k
-    if state_path and os.path.exists(state_path):
-        with open(state_path, "rb") as f:
-            k.raw_state = f.read()
-    msgs = []
-    for pitch, st, dur, vel in notes:
-        p = int(max(0, min(127, pitch)))
-        msgs.append(mido.Message("note_on", note=p, velocity=int(max(1, min(127, vel))), time=float(st)))
-        msgs.append(mido.Message("note_off", note=p, velocity=0, time=float(st + max(0.05, dur))))
-    msgs.sort(key=lambda m: m.time)
-    total = (max(m.time for m in msgs) + 0.5) if msgs else 1.0
-    audio = np.asarray(k(msgs, duration=total, sample_rate=sr))   # (channels, samples)
-    if audio.ndim == 2 and audio.shape[0] <= 2:
-        audio = audio.T                                            # → (samples, channels)
-    elif audio.ndim == 1:
-        audio = np.stack([audio, audio], axis=1)
+    import soundfile as sf
+    from . import kontakt_daemon
+    d = tempfile.mkdtemp()
+    wp = os.path.join(d, "kontakt_di.wav")
+    try:
+        kontakt_daemon.render(notes, wp, kontakt_path, state_path, sr=sr)
+        audio, _ = sf.read(wp, dtype="float32", always_2d=True)
+    finally:
+        try:
+            os.remove(wp)
+            os.rmdir(d)
+        except OSError:
+            pass
     if audio.shape[1] == 1:
         audio = np.repeat(audio, 2, axis=1)
-    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-    if peak > 0.99:
-        audio = audio * (0.99 / peak)
+    elif audio.shape[1] > 2:
+        audio = audio[:, :2]
     return audio.astype("float32")
 
 

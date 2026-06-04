@@ -1,0 +1,192 @@
+"""Persistent Kontakt (Shreddage) DI render daemon + its in-backend client.
+
+WHY THIS EXISTS: pedalboard's `load_plugin` for the Kontakt VST3 (an instrument)
+throws "Caught an unknown exception!" on any NON-main thread, and even when loaded
+on the main thread it refuses to render from a worker unless reset=False. FastAPI
+runs sync endpoints on a worker threadpool, so loading Kontakt inline always failed
+-> the Kontakt/Shreddage DI engine 500'd every time (Helix, an effect, is unaffected).
+
+Fix: run Kontakt in its OWN process where the render happens on THAT process's main
+thread (clean reset per render, no threading restriction), and a Kontakt crash can't
+take the backend down. Same subprocess precedent as `plugin_capture.py`.
+
+Protocol (newline-delimited, sentinel-prefixed so stray plugin stdout can't corrupt it):
+  daemon -> client:  "@@KREADY@@"                         once the plugin+state are loaded
+  daemon -> client:  "@@KERR@@{json}"                     fatal load error (then exits)
+  client -> daemon:  {"notes": [[p,start,dur,vel],...], "sr": 44100, "out": "/abs.wav"}\n
+  daemon -> client:  "@@KRESP@@{\"ok\":true,\"out\":...}" per request (or ok:false+error)
+The daemon writes the rendered WAV to `out` itself (no large audio over the pipe).
+Closing the daemon's stdin (EOF) -> it exits cleanly, so a backend restart never
+leaves an orphaned Kontakt process.
+"""
+import json
+import sys
+
+READY = "@@KREADY@@"
+RESP = "@@KRESP@@"
+LOADERR = "@@KERR@@"
+
+
+# ----------------------------- daemon side -----------------------------
+def _render(plugin, notes, sr, out_path):
+    import mido
+    import numpy as np
+    import soundfile as sf
+    msgs = []
+    for pitch, st, dur, vel in notes:
+        p = int(max(0, min(127, pitch)))
+        v = int(max(1, min(127, vel)))
+        msgs.append(mido.Message("note_on", note=p, velocity=v, time=float(st)))
+        msgs.append(mido.Message("note_off", note=p, velocity=0, time=float(st + max(0.05, dur))))
+    msgs.sort(key=lambda m: m.time)
+    total = (max(m.time for m in msgs) + 0.5) if msgs else 1.0
+    # render on THIS process's main thread (default reset=True is fine + clean here)
+    audio = np.asarray(plugin(msgs, duration=total, sample_rate=sr))   # (channels, samples)
+    if audio.ndim == 2 and audio.shape[0] <= 2:
+        audio = audio.T                                                 # -> (samples, channels)
+    elif audio.ndim == 1:
+        audio = np.stack([audio, audio], axis=1)
+    if audio.shape[1] == 1:
+        audio = np.repeat(audio, 2, axis=1)
+    elif audio.shape[1] > 2:
+        audio = audio[:, :2]
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak > 0.99:
+        audio = audio * (0.99 / peak)
+    sf.write(out_path, audio.astype("float32"), sr, subtype="PCM_16")
+    return float(peak)
+
+
+def main():
+    plugin_path, state_path = sys.argv[1], sys.argv[2]
+    try:
+        import os
+        import pedalboard as pb
+        plugin = pb.load_plugin(plugin_path)            # ~25s; on this process's main thread
+        if state_path and os.path.exists(state_path):
+            with open(state_path, "rb") as f:
+                plugin.raw_state = f.read()             # restore the captured Shreddage patch
+    except Exception as e:                              # fatal: report + exit so client can fall back
+        sys.stdout.write(LOADERR + json.dumps({"error": repr(e)}) + "\n")
+        sys.stdout.flush()
+        return
+    sys.stdout.write(READY + "\n")
+    sys.stdout.flush()
+    for line in sys.stdin:                              # EOF (parent died) -> loop ends -> exit
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+            peak = _render(plugin, req["notes"], int(req.get("sr", 44100)), req["out"])
+            out = json.dumps({"ok": True, "out": req["out"], "peak": peak})
+        except Exception as e:
+            out = json.dumps({"ok": False, "error": repr(e)})
+        sys.stdout.write(RESP + out + "\n")
+        sys.stdout.flush()
+
+
+# ----------------------------- client side -----------------------------
+class _KontaktClient:
+    """Manages one long-lived daemon process, keyed by (plugin_path, state_path).
+    Thread-safe: a lock serializes requests (the daemon renders one at a time)."""
+
+    def __init__(self):
+        import threading
+        self._lock = threading.Lock()
+        self._proc = None
+        self._key = None
+
+    def _alive(self):
+        return self._proc is not None and self._proc.poll() is None
+
+    def _spawn(self, plugin_path, state_path, load_timeout=90):
+        import os
+        import subprocess
+        self._kill()
+        env = dict(os.environ)
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "backend.kontakt_daemon", plugin_path, state_path or ""],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1, env=env)
+        # wait for READY (or a load error) within the timeout
+        import time
+        deadline = time.time() + load_timeout
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if line == "" and proc.poll() is not None:
+                raise RuntimeError("Kontakt daemon exited during load")
+            line = line.strip()
+            if line.startswith(READY):
+                self._proc, self._key = proc, (plugin_path, state_path)
+                return
+            if line.startswith(LOADERR):
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                err = json.loads(line[len(LOADERR):]).get("error", "unknown")
+                raise RuntimeError(f"Kontakt daemon load failed: {err}")
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise RuntimeError("Kontakt daemon load timed out")
+
+    def _kill(self):
+        if self._proc is not None:
+            try:
+                if self._proc.stdin:
+                    self._proc.stdin.close()           # EOF -> daemon exits on its own
+            except Exception:
+                pass
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+            self._proc = None
+            self._key = None
+
+    def render(self, notes, out_path, plugin_path, state_path, sr=44100):
+        with self._lock:
+            if not self._alive() or self._key != (plugin_path, state_path):
+                self._spawn(plugin_path, state_path)
+            req = json.dumps({"notes": [list(n) for n in notes], "sr": int(sr), "out": out_path})
+            try:
+                self._proc.stdin.write(req + "\n")
+                self._proc.stdin.flush()
+            except Exception:
+                self._spawn(plugin_path, state_path)   # respawn once on a dead pipe
+                self._proc.stdin.write(req + "\n")
+                self._proc.stdin.flush()
+            while True:
+                line = self._proc.stdout.readline()
+                if line == "" and self._proc.poll() is not None:
+                    raise RuntimeError("Kontakt daemon died during render")
+                line = line.strip()
+                if line.startswith(RESP):
+                    resp = json.loads(line[len(RESP):])
+                    if not resp.get("ok"):
+                        raise RuntimeError(f"Kontakt render failed: {resp.get('error')}")
+                    return out_path
+
+
+_CLIENT = _KontaktClient()
+
+
+def render(notes, out_path, plugin_path, state_path, sr=44100):
+    """Render notes -> Kontakt/Shreddage DI WAV at out_path via the daemon."""
+    return _CLIENT.render(notes, out_path, plugin_path, state_path, sr=sr)
+
+
+def shutdown():
+    _CLIENT._kill()
+
+
+import atexit
+atexit.register(shutdown)
+
+
+if __name__ == "__main__":
+    main()
