@@ -40,6 +40,7 @@ from . import llm as llm_mod
 from . import lyrics as lyrics_mod
 from . import melody as melody_mod
 from . import solo as solo_mod
+from . import kontakt_daemon as kontakt_daemon_mod
 from . import acestep_train as ace_train
 from . import lora_upload_py as lora_up
 from . import lora_dataset as lora_ds
@@ -2009,6 +2010,48 @@ def solo_options():
         "kontakt_ready": _kontakt_ready(),
         "genres": [{"id": k, "label": v["label"]} for k, v in guitar_mod.RIFF_GENRES.items()],
     }
+
+
+def _proc_rss_mb(pid):
+    """Resident memory of a pid in MB (mac/linux `ps`), or None."""
+    if not pid:
+        return None
+    try:
+        import subprocess
+        r = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=3)
+        s = r.stdout.strip()
+        return round(int(s) / 1024) if s else None
+    except Exception:
+        return None
+
+
+@app.get("/api/plugins/status")
+def plugins_status():
+    """Whether the Kontakt/Shreddage daemon is resident (holding samples in RAM) + its
+    footprint, and the current idle auto-unload setting. Helix is loaded per-render so
+    it isn't held between renders."""
+    pid = kontakt_daemon_mod.daemon_pid()
+    return {"kontakt_loaded": bool(pid), "kontakt_rss_mb": _proc_rss_mb(pid),
+            "idle_sec": kontakt_daemon_mod.IDLE_SEC}
+
+
+@app.post("/api/plugins/unload")
+def plugins_unload(body: dict = None):
+    """Free plugin RAM on demand: kill the Kontakt daemon (releases Shreddage) and drop
+    the in-process Helix/VST thread + GC. Both reload lazily on the next render."""
+    kontakt_daemon_mod.shutdown()
+    postfx_mod.unload()
+    import gc
+    gc.collect()
+    return {"ok": True, "kontakt_loaded": kontakt_daemon_mod.is_loaded()}
+
+
+@app.post("/api/plugins/idle")
+def plugins_idle(body: dict):
+    """Set the Kontakt idle auto-unload timeout in seconds (0 = off). The daemon frees
+    itself after that long with no renders; the next render respawns it."""
+    sec = kontakt_daemon_mod.set_idle(int(body.get("seconds") or 0))
+    return {"ok": True, "idle_sec": sec}
 
 
 def _extract_caption(task):

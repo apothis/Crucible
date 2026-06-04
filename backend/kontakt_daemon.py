@@ -106,8 +106,10 @@ def _render(plugin, notes, sr, out_path, pb_range=2.0):
 
 def main():
     plugin_path, state_path = sys.argv[1], sys.argv[2]
+    import os
+    import threading
+    import time
     try:
-        import os
         import pedalboard as pb
         plugin = pb.load_plugin(plugin_path)            # ~25s; on this process's main thread
         if state_path and os.path.exists(state_path):
@@ -117,12 +119,29 @@ def main():
         sys.stdout.write(LOADERR + json.dumps({"error": repr(e)}) + "\n")
         sys.stdout.flush()
         return
+    # Optional idle auto-unload: free the (big) Shreddage samples after N idle seconds.
+    # Default off; the client sets MG_KONTAKT_IDLE_SEC when the user opts in. The client
+    # respawns the daemon (~25-40s) on the next render.
+    idle = 0.0
+    try:
+        idle = float(os.environ.get("MG_KONTAKT_IDLE_SEC", "0") or 0)
+    except ValueError:
+        idle = 0.0
+    last = [time.time()]
+    if idle > 0:
+        def _watch():
+            while True:
+                time.sleep(min(idle, 15.0))
+                if time.time() - last[0] > idle:
+                    os._exit(0)                         # exit -> OS frees all the RAM
+        threading.Thread(target=_watch, daemon=True).start()
     sys.stdout.write(READY + "\n")
     sys.stdout.flush()
     for line in sys.stdin:                              # EOF (parent died) -> loop ends -> exit
         line = line.strip()
         if not line:
             continue
+        last[0] = time.time()                           # mark activity for the idle watcher
         try:
             req = json.loads(line)
             peak = _render(plugin, req["notes"], int(req.get("sr", 44100)), req["out"],
@@ -153,6 +172,7 @@ class _KontaktClient:
         import subprocess
         self._kill()
         env = dict(os.environ)
+        env["MG_KONTAKT_IDLE_SEC"] = str(IDLE_SEC)     # opt-in idle auto-unload (0 = off)
         proc = subprocess.Popen(
             [sys.executable, "-m", "backend.kontakt_daemon", plugin_path, state_path or ""],
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -222,6 +242,27 @@ class _KontaktClient:
 
 
 _CLIENT = _KontaktClient()
+IDLE_SEC = 0          # idle auto-unload seconds (0 = off); set via set_idle(), applied on next spawn
+
+
+def is_loaded():
+    """Is the Kontakt daemon currently resident (holding Shreddage in RAM)?"""
+    return _CLIENT._alive()
+
+
+def daemon_pid():
+    p = _CLIENT._proc
+    return p.pid if (p is not None and p.poll() is None) else None
+
+
+def set_idle(seconds):
+    """Set the idle auto-unload timeout (0 = off). Applies to the next daemon spawn;
+    if one is running it is restarted so the new timeout takes effect."""
+    global IDLE_SEC
+    IDLE_SEC = max(0, int(seconds or 0))
+    if _CLIENT._alive():
+        _CLIENT._kill()              # next render respawns with the new idle setting
+    return IDLE_SEC
 
 
 def render(notes, out_path, plugin_path, state_path, sr=44100, pb_range=None):

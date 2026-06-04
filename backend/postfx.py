@@ -295,6 +295,21 @@ _VST_EXEC = None
 _VST_EXEC_LOCK = _threading.Lock()
 
 
+def unload():
+    """Release in-process VST resources (Helix) + the dedicated VST thread, then GC.
+    Helix is loaded per-render so most of its RAM is already freed when a render
+    returns; this drops the lingering thread/refs. The next render lazily recreates
+    the executor (the first VST load on the new thread becomes its message thread)."""
+    global _VST_EXEC
+    import gc
+    with _VST_EXEC_LOCK:
+        ex = _VST_EXEC
+        _VST_EXEC = None
+    if ex is not None:
+        ex.shutdown(wait=True)
+    gc.collect()
+
+
 def _run_on_vst_thread(fn, *a, **k):
     """Run a pedalboard VST load+process on ONE dedicated, persistent thread.
 
