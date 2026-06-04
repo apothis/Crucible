@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, trackLabel, type Config, type LibItem, type Score } from "./api";
-import { Field, inp, PrimaryButton, GhostButton, SectionTitle, runSync, type RunCtx } from "./ui";
+import { Field, inp, PrimaryButton, GhostButton, SectionTitle, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { RegionSelector } from "./RegionSelector";
 import { PianoRoll } from "./VocalBuilder";
+import { WavePlayer } from "./WavePlayer";
 
 type Props = { cfg: Config; busy: boolean } & RunCtx;
 
@@ -15,7 +16,7 @@ type SoloOptions = {
   pedalboard: boolean;
 };
 
-export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
+export function SoloBuilderForm(_props: Props) {
   const d = useDrafts("solo");
   const [job, setJob] = d.use("job", "");
   const [start, setStart] = d.use("start", "0");
@@ -44,6 +45,17 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
   const [desc, setDesc] = useState("");          // ACE description, editable before composing
   const [listening, setListening] = useState(false);
   const [msg, setMsg] = useState("");
+  // staged, individually-auditionable outputs (each cached so a later stage can be
+  // re-run without redoing the earlier ones): a) clean DI  b) amped clip  c) final mix
+  const [diJobId, setDiJobId] = useState("");
+  const [diUrl, setDiUrl] = useState("");
+  const [clipJobId, setClipJobId] = useState("");
+  const [clipUrl, setClipUrl] = useState("");
+  const [mixUrl, setMixUrl] = useState("");
+  const [stage, setStage] = useState("");        // "di" | "clip" | "mix" while running
+
+  const clearStages = () => { setDiJobId(""); setDiUrl(""); setClipJobId(""); setClipUrl(""); setMixUrl(""); };
+  const clearAmpDown = () => { setClipJobId(""); setClipUrl(""); setMixUrl(""); };   // DI still valid
 
   useEffect(() => {
     api.library().then((l: LibItem[]) =>
@@ -97,6 +109,7 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
       if (key) body.key = key;
       const r = await api.soloCompose(body);
       setScore(r.score);
+      clearStages();                       // new notes invalidate every downstream render
       if (!bpm) setBpm(String(r.bpm));
       if (!key) setKey(r.key);
       setMsg(`composed ${r.score.notes.length} notes · ${r.bpm} BPM · ${r.key}`);
@@ -104,20 +117,58 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
     finally { setComposing(false); }
   }
 
-  async function render() {
+  const region = () => ({ s: parseFloat(start) || 0, e: parseFloat(end) || 0 });
+
+  // STAGE A — render the composed notes to a clean DI clip (no amp) and audition it.
+  async function runDi() {
     if (!score) return setMsg("Compose a solo first.");
-    const s = parseFloat(start) || 0, e = parseFloat(end) || 0;
-    const r = await runSync(`solo · ${genre || "lead"}${ampPreset ? " · " + ampPreset : ""}`,
-      () => api.soloRender({
-        job_id: job, start: s, end: e, score, di_engine: diEngine, amp_preset: ampPreset,
+    const { s, e } = region();
+    setStage("di");
+    setMsg(diEngine === "kontakt"
+      ? "rendering DI — first Kontakt render loads the plugin (~40s), then it's instant…"
+      : "rendering the clean composed solo (DI, no amp)…");
+    try {
+      const r = await api.soloDi({ job_id: job, start: s, end: e, score, di_engine: diEngine, genre });
+      setDiJobId(r.di_job_id); setDiUrl(r.di_url); clearAmpDown();
+      setMsg("✓ DI rendered — hear the raw composed solo below, then amp it");
+    } catch (err) { setMsg("✗ " + (err as Error).message); }
+    finally { setStage(""); }
+  }
+
+  // STAGE B — amp the cached DI into a dry, region-length solo clip and audition it.
+  async function runClip() {
+    if (!diJobId) return setMsg("Render the DI first.");
+    const { s, e } = region();
+    setStage("clip");
+    setMsg(ampPreset ? "amping the solo clip…" : "preparing the dry clip…");
+    try {
+      const r = await api.soloClip({ job_id: job, start: s, end: e, di_job_id: diJobId, amp_preset: ampPreset });
+      setClipJobId(r.clip_job_id); setClipUrl(r.clip_url); setMixUrl("");
+      setMsg("✓ amped clip ready — audition it dry below, then mix it in");
+    } catch (err) { setMsg("✗ " + (err as Error).message); }
+    finally { setStage(""); }
+  }
+
+  // STAGE C — overlay the cached amped clip onto the track and audition the result.
+  async function runMix() {
+    if (!clipJobId) return setMsg("Render the amped clip first.");
+    const { s, e } = region();
+    setStage("mix");
+    setMsg("mixing the solo into the track…");
+    try {
+      const r = await api.soloMix({
+        job_id: job, start: s, end: e, clip_job_id: clipJobId,
         genre, bpm: bpm ? parseFloat(bpm) : undefined, key: key || undefined,
         mix: {
           auto_match: autoMatch, solo_gain_db: parseFloat(soloGain) || 0,
           duck_db: parseFloat(duck) || 0, fade_ms: parseFloat(fade) || 120,
           highpass_hz: parseFloat(hpf) || 0,
         },
-      }), ctx);
-    if (r) setMsg("✓ solo added — saved to the library as a new version");
+      });
+      setMixUrl(r.audio_url);
+      setMsg("✓ solo mixed in — saved to the library as a new version");
+    } catch (err) { setMsg("✗ " + (err as Error).message); }
+    finally { setStage(""); }
   }
 
   async function exportMidi() {
@@ -197,43 +248,59 @@ export function SoloBuilderForm({ cfg, busy, ...ctx }: Props) {
             <button onClick={exportMidi} className="text-[var(--color-accent2)] hover:underline">⤓ export MIDI</button>
           </div>
 
-          <SectionTitle>3 · Render &amp; mix</SectionTitle>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="DI engine">
-              <select className={inp} value={diEngine} onChange={(e) => setDiEngine(e.target.value)}>
-                {opts?.di_engines.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Amp / tone">
-              <select className={inp} value={ampPreset} onChange={(e) => setAmpPreset(e.target.value)}>
-                <option value="">Clean DI (no amp)</option>
-                {opts?.amp_presets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
-            </Field>
-          </div>
+          <SectionTitle>3a · Render DI — hear the raw composed solo</SectionTitle>
+          <p className="text-[11px] text-[var(--color-muted)]">The clean composed notes, no amp. Re-roll above until the line is right, then move on.</p>
+          <Field label="DI engine">
+            <select className={inp} value={diEngine} onChange={(e) => { setDiEngine(e.target.value); clearStages(); }}>
+              {opts?.di_engines.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+            </select>
+          </Field>
+          <GhostButton onClick={runDi} disabled={!!stage}>{stage === "di" ? "Rendering DI…" : diUrl ? "Re-render DI" : "Render DI"}</GhostButton>
+          {diUrl && <WavePlayer url={diUrl} />}
 
-          <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-3">
-            <div className="text-xs font-medium text-[var(--color-ink)]">Mix controls</div>
-            <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
-              <input type="checkbox" checked={autoMatch} onChange={(e) => setAutoMatch(e.target.checked)} /> Auto level-match to the section
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Solo gain (dB)" hint="offset on top of auto-match">
-                <input className={inp} type="number" step="0.5" value={soloGain} onChange={(e) => setSoloGain(e.target.value)} />
+          {diUrl && (
+            <>
+              <SectionTitle>3b · Amp — hear the solo clip dry</SectionTitle>
+              <p className="text-[11px] text-[var(--color-muted)]">The amped solo on its own, gated to the region. Change the amp and re-amp without re-rendering the DI.</p>
+              <Field label="Amp / tone">
+                <select className={inp} value={ampPreset} onChange={(e) => { setAmpPreset(e.target.value); clearAmpDown(); }}>
+                  <option value="">Clean DI (no amp)</option>
+                  {opts?.amp_presets.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
               </Field>
-              <Field label="Duck backing (dB)" hint="dip the track under the solo · 0 = off">
-                <input className={inp} type="number" step="1" value={duck} onChange={(e) => setDuck(e.target.value)} />
-              </Field>
-              <Field label="Edge fade (ms)" hint="solo + duck boundary fades">
-                <input className={inp} type="number" step="10" value={fade} onChange={(e) => setFade(e.target.value)} />
-              </Field>
-              <Field label="High-pass (Hz)" hint="clean solo mud · 0 = off">
-                <input className={inp} type="number" step="10" value={hpf} onChange={(e) => setHpf(e.target.value)} />
-              </Field>
-            </div>
-          </div>
+              <GhostButton onClick={runClip} disabled={!!stage}>{stage === "clip" ? "Amping…" : clipUrl ? "Re-amp clip" : "Apply amp"}</GhostButton>
+              {clipUrl && <WavePlayer url={clipUrl} />}
+            </>
+          )}
 
-          <PrimaryButton onClick={render} disabled={busy}>{busy ? "Rendering…" : "Render & add solo"}</PrimaryButton>
+          {clipUrl && (
+            <>
+              <SectionTitle>3c · Mix — hear it on the track</SectionTitle>
+              <p className="text-[11px] text-[var(--color-muted)]">Overlay the clip onto the original. Tweak the mix and re-mix without redoing the DI or amp.</p>
+              <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-3">
+                <div className="text-xs font-medium text-[var(--color-ink)]">Mix controls</div>
+                <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
+                  <input type="checkbox" checked={autoMatch} onChange={(e) => { setAutoMatch(e.target.checked); setMixUrl(""); }} /> Auto level-match to the section
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Solo gain (dB)" hint="offset on top of auto-match">
+                    <input className={inp} type="number" step="0.5" value={soloGain} onChange={(e) => { setSoloGain(e.target.value); setMixUrl(""); }} />
+                  </Field>
+                  <Field label="Duck backing (dB)" hint="dip the track under the solo · 0 = off">
+                    <input className={inp} type="number" step="1" value={duck} onChange={(e) => { setDuck(e.target.value); setMixUrl(""); }} />
+                  </Field>
+                  <Field label="Edge fade (ms)" hint="solo + duck boundary fades">
+                    <input className={inp} type="number" step="10" value={fade} onChange={(e) => { setFade(e.target.value); setMixUrl(""); }} />
+                  </Field>
+                  <Field label="High-pass (Hz)" hint="clean solo mud · 0 = off">
+                    <input className={inp} type="number" step="10" value={hpf} onChange={(e) => { setHpf(e.target.value); setMixUrl(""); }} />
+                  </Field>
+                </div>
+              </div>
+              <PrimaryButton onClick={runMix} disabled={!!stage}>{stage === "mix" ? "Mixing…" : mixUrl ? "Re-mix into track" : "Mix into track"}</PrimaryButton>
+              {mixUrl && <WavePlayer url={mixUrl} />}
+            </>
+          )}
         </>
       )}
 

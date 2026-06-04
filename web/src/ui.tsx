@@ -24,10 +24,10 @@ export function PrimaryButton({ onClick, disabled, children }: { onClick: () => 
   );
 }
 
-export function GhostButton({ onClick, children, className = "" }: { onClick: () => void; children: React.ReactNode; className?: string }) {
+export function GhostButton({ onClick, children, className = "", disabled }: { onClick: () => void; children: React.ReactNode; className?: string; disabled?: boolean }) {
   return (
-    <button onClick={onClick}
-      className={`rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-2 text-xs text-[var(--color-muted)] transition hover:text-[var(--color-ink)] ${className}`}>
+    <button onClick={onClick} disabled={disabled}
+      className={`rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-2 text-xs text-[var(--color-muted)] transition hover:text-[var(--color-ink)] disabled:opacity-50 ${className}`}>
       {children}
     </button>
   );

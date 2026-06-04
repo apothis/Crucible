@@ -87,6 +87,9 @@ export const api = {
   soloListen: (p: unknown) => jpost("/api/solo/listen", p),
   soloCompose: (p: unknown) => jpost("/api/solo/compose", p),
   soloRender: (p: unknown) => jpost("/api/solo/render", p),
+  soloDi: (p: unknown) => jpost("/api/solo/di", p),
+  soloClip: (p: unknown) => jpost("/api/solo/clip", p),
+  soloMix: (p: unknown) => jpost("/api/solo/mix", p),
   melodyMidi: async (p: unknown) => {
     const r = await fetch("/api/melody/midi", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p),

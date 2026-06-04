@@ -122,22 +122,9 @@ def score_to_notes(score):
 
 
 # ---------------- render ----------------
-def render_clip(notes, out_path, region_len, engine="ks", sf2_path=None,
-                kontakt_path=None, kontakt_state=None, amp_preset="", cfg=None,
-                fade_ms=40):
-    """Render notes -> DI -> (optional amp) -> trim/pad to region_len -> edge-fade.
-    Writes a stereo 44.1k WAV to out_path. Returns (out_path, di_path)."""
-    di_path = out_path + ".di.wav"
-    guitar_mod.render_di_file(notes, di_path, engine=engine, sf2_path=sf2_path,
-                              kontakt_path=kontakt_path, kontakt_state=kontakt_state)
-    src = di_path
-    if amp_preset and amp_preset not in ("none", "") and postfx_mod.available():
-        try:
-            postfx_mod.process_stem(di_path, out_path, amp_preset, cfg=cfg)
-            src = out_path
-        except Exception:
-            src = di_path     # amp failed -> fall back to clean DI
-    x, sr = _load_stereo(src)
+def _fit_region(src_path, out_path, region_len, fade_ms):
+    """Load `src_path`, trim/pad to region_len seconds, edge-fade, write to out_path."""
+    x, sr = _load_stereo(src_path)
     target = int(float(region_len) * sr)
     if target <= 0:
         target = len(x)
@@ -147,6 +134,58 @@ def render_clip(notes, out_path, region_len, engine="ks", sf2_path=None,
         x = x[:target]
     x = _edge_fade(x, sr, fade_ms)
     sf.write(out_path, x, sr, subtype="PCM_16")
+    return out_path
+
+
+def render_di_clip(notes, out_path, region_len, engine="ks", sf2_path=None,
+                   kontakt_path=None, kontakt_state=None, fade_ms=40):
+    """STAGE A: notes -> clean DI (NO amp) -> trim/pad to region_len -> edge-fade.
+    Writes a standalone, region-length stereo 44.1k WAV (the raw composed solo)."""
+    di_raw = out_path + ".diraw.wav"
+    guitar_mod.render_di_file(notes, di_raw, engine=engine, sf2_path=sf2_path,
+                              kontakt_path=kontakt_path, kontakt_state=kontakt_state)
+    try:
+        _fit_region(di_raw, out_path, region_len, fade_ms)
+    finally:
+        try:
+            os.remove(di_raw)
+        except OSError:
+            pass
+    return out_path
+
+
+def amp_clip(di_path, out_path, region_len, amp_preset="", cfg=None, fade_ms=40):
+    """STAGE B: take a (region-length) DI clip -> apply amp/tone -> re-fit to
+    region_len -> edge-fade. With no amp this is a faded passthrough of the DI so
+    the stage still yields a consistent, auditionable clip."""
+    src = di_path
+    if amp_preset and amp_preset not in ("none", "") and postfx_mod.available():
+        amped = out_path + ".amp.wav"
+        try:
+            postfx_mod.process_stem(di_path, amped, amp_preset, cfg=cfg)
+            src = amped
+        except Exception:
+            src = di_path     # amp failed -> fall back to clean DI
+    try:
+        _fit_region(src, out_path, region_len, fade_ms)
+    finally:
+        if src != di_path:
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+    return out_path
+
+
+def render_clip(notes, out_path, region_len, engine="ks", sf2_path=None,
+                kontakt_path=None, kontakt_state=None, amp_preset="", cfg=None,
+                fade_ms=40):
+    """Do-all convenience: notes -> DI -> (optional amp) -> region-length clip.
+    Composes the two staged helpers. Returns (out_path, di_path)."""
+    di_path = out_path + ".di.wav"
+    render_di_clip(notes, di_path, region_len, engine=engine, sf2_path=sf2_path,
+                   kontakt_path=kontakt_path, kontakt_state=kontakt_state, fade_ms=fade_ms)
+    amp_clip(di_path, out_path, region_len, amp_preset=amp_preset, cfg=cfg, fade_ms=fade_ms)
     return out_path, di_path
 
 

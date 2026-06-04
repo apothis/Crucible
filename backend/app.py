@@ -2204,6 +2204,118 @@ def solo_render(body: dict):
             "solo_url": f"/api/audio/{solo_jid}", "region": region_str}
 
 
+def _solo_orig_title(pid):
+    with db() as conn:
+        row = conn.execute("SELECT params FROM jobs WHERE id=?", (pid,)).fetchone()
+    p = json.loads(row["params"]) if row and row["params"] else {}
+    return p.get("title") or "track"
+
+
+def _solo_region(body):
+    """(src_path, start, end, region_len, region_str) from a request, or raise."""
+    pid = body.get("job_id")
+    if not pid:
+        raise HTTPException(400, "job_id required")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "track not found")
+    start = float(body.get("start") or 0.0)
+    end = float(body.get("end") or 0.0)
+    if not (end > start):
+        raise HTTPException(400, "region end must be after start")
+    return src, start, end, end - start, f"{round(start, 1)}-{round(end, 1)}s"
+
+
+@app.post("/api/solo/di")
+def solo_di(body: dict):
+    """STAGE A of the staged Add-Solo flow: render the composed score to a CLEAN DI
+    clip (no amp), gated to the region length, and save it as a playable library
+    intermediate so the raw composed solo can be auditioned + re-rolled on its own."""
+    src, start, end, region_len, region_str = _solo_region(body)
+    score = body.get("score")
+    if score and score.get("notes"):
+        notes = solo_mod.score_to_notes(score)
+    else:
+        bpm = body.get("bpm") or solo_mod.analyze_region(src, start, end)["bpm"]
+        key = body.get("key") or solo_mod.analyze_region(src, start, end)["key"]
+        notes, _ = solo_mod.compose(key=key, bpm=float(bpm), duration_s=region_len,
+                                    genre=body.get("genre", ""), brain=body.get("brain", "algorithmic"),
+                                    provider=body.get("provider", ""), seed=body.get("seed"))
+    di_engine = body.get("di_engine", "ks")
+    di_jid = uuid.uuid4().hex
+    di_path = os.path.join(LIBRARY, f"{di_jid}.wav")
+    try:
+        solo_mod.render_di_clip(notes, di_path, region_len, engine=di_engine,
+                                sf2_path=CFG.get("guitar_soundfont"),
+                                kontakt_path=CFG.get("kontakt_vst3_path"),
+                                kontakt_state=KONTAKT_STATE, fade_ms=40)
+    except Exception as e:
+        raise HTTPException(500, f"DI render failed: {e}")
+    save_done_row(di_jid, "guitar",
+                  {"preset": di_engine, "part": "solo-di", "source": _solo_orig_title(body["job_id"]),
+                   "region": region_str}, di_path)
+    return {"di_job_id": di_jid, "di_url": f"/api/audio/{di_jid}", "region": region_str}
+
+
+@app.post("/api/solo/clip")
+def solo_clip(body: dict):
+    """STAGE B: take the cached DI clip (di_job_id) -> apply the amp/tone -> a dry,
+    region-length amped solo CLIP, saved to the library. Re-runs without recomposing
+    or re-rendering the DI when only the amp choice changed."""
+    src, start, end, region_len, region_str = _solo_region(body)
+    di_job_id = body.get("di_job_id")
+    if not di_job_id:
+        raise HTTPException(400, "di_job_id required (run /api/solo/di first)")
+    di_src = _lib_source_path(di_job_id)
+    if not di_src:
+        raise HTTPException(404, "DI clip not found")
+    amp_preset = body.get("amp_preset", "")
+    clip_jid = uuid.uuid4().hex
+    clip_path = os.path.join(LIBRARY, f"{clip_jid}.wav")
+    try:
+        solo_mod.amp_clip(di_src, clip_path, region_len, amp_preset=amp_preset,
+                          cfg=CFG, fade_ms=40)
+    except Exception as e:
+        raise HTTPException(500, f"amp render failed: {e}")
+    save_done_row(clip_jid, "guitar",
+                  {"preset": amp_preset or "clean DI", "part": "solo-amp",
+                   "source": _solo_orig_title(body["job_id"]), "region": region_str}, clip_path)
+    return {"clip_job_id": clip_jid, "clip_url": f"/api/audio/{clip_jid}", "region": region_str}
+
+
+@app.post("/api/solo/mix")
+def solo_mix(body: dict):
+    """STAGE C: overlay the cached amped clip (clip_job_id) onto the original track at
+    the region offset (level-matched, edge-faded, optional duck/HPF) and save the final
+    combined result. Re-runs without redoing compose/DI/amp when only mix knobs changed."""
+    src, start, end, region_len, region_str = _solo_region(body)
+    clip_job_id = body.get("clip_job_id")
+    if not clip_job_id:
+        raise HTTPException(400, "clip_job_id required (run /api/solo/clip first)")
+    clip_src = _lib_source_path(clip_job_id)
+    if not clip_src:
+        raise HTTPException(404, "solo clip not found")
+    mix = body.get("mix") or {}
+    mix_jid = uuid.uuid4().hex
+    mix_path = os.path.join(LIBRARY, f"{mix_jid}.wav")
+    try:
+        solo_mod.overlay(src, clip_src, start, mix_path,
+                         solo_gain_db=float(mix.get("solo_gain_db", 0.0)),
+                         auto_match=bool(mix.get("auto_match", True)),
+                         duck_db=float(mix.get("duck_db", 0.0)),
+                         fade_ms=float(mix.get("fade_ms", 120)),
+                         highpass_hz=float(mix.get("highpass_hz", 0.0)),
+                         normalize=True)
+    except Exception as e:
+        raise HTTPException(500, f"solo overlay/mix failed: {e}")
+    orig_title = _solo_orig_title(body["job_id"])
+    save_done_row(mix_jid, "song",
+                  {"title": f"{orig_title} (with solo)", "source": orig_title, "solo": True,
+                   "region": region_str, "genre": body.get("genre", ""),
+                   "key": body.get("key"), "bpm": body.get("bpm")}, mix_path)
+    return {"audio_url": f"/api/audio/{mix_jid}", "job_id": mix_jid, "region": region_str}
+
+
 @app.post("/api/import/upload")
 async def import_upload(file: UploadFile = File(...), title: str = Form(None)):
     """Import a local audio file INTO the library as a reusable `source` track
