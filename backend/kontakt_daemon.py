@@ -28,18 +28,64 @@ LOADERR = "@@KERR@@"
 
 
 # ----------------------------- daemon side -----------------------------
-def _render(plugin, notes, sr, out_path):
+def _build_messages(notes, pb_range=2.0):
+    """Build the mido message list, realizing the optional articulation (5th field)
+    using Shreddage 3's NATIVE expression (verified against the S3 Stratus FREE manual,
+    no patch-specific keyswitches needed):
+      b bend   -> pitch-bend scoop a whole step up into the note (clamped to pb_range)
+      s slide  -> pitch-bend glide from the previous pitch (or legato overlap if too far)
+      v vibrato-> mod wheel (CC1) raised after the onset, released at note-off
+      h hammer -> start a touch early so the note overlaps the previous (S3 auto-legato)
+      ~ let-ring / . staccato -> handled by note duration upstream
+    Pitch-bend/CC are global, which is fine for a monophonic lead line."""
     import mido
+
+    def wheel(semi):
+        return int(max(-8191, min(8191, round(8191 * semi / max(0.1, pb_range)))))
+
+    msgs = [mido.Message("pitchwheel", pitch=0, time=0.0),
+            mido.Message("control_change", control=1, value=0, time=0.0)]
+    prev_pitch = None
+    for n in notes:
+        pitch = int(max(0, min(127, n[0])))
+        st = float(n[1]); dur = float(max(0.05, n[2])); vel = int(max(1, min(127, n[3])))
+        art = (n[4] if len(n) > 4 else "")
+        on, off = st, st + dur
+        glide = None                                       # (start_semitones, fraction_of_note)
+        if art == "b":
+            glide = (-2.0, 0.35)                            # scoop a whole step up into the note
+        elif art == "s" and prev_pitch is not None:
+            interval = prev_pitch - pitch
+            if abs(interval) <= pb_range:
+                glide = (float(interval), 0.30)            # slide in from the previous pitch
+            else:
+                on = max(0.0, st - 0.006)                  # too far for pitch-bend -> legato overlap
+        elif art == "h":
+            on = max(0.0, st - 0.006)                      # overlap previous -> S3 hammer-on/pull-off
+        if glide is not None:
+            semi0, frac = glide
+            gl_end = on + dur * frac
+            steps = 8
+            for k in range(steps + 1):
+                tt = on + (gl_end - on) * (k / steps)
+                msgs.append(mido.Message("pitchwheel", pitch=wheel(semi0 * (1 - k / steps)), time=tt))
+        else:
+            msgs.append(mido.Message("pitchwheel", pitch=0, time=on))   # center (clears a prior bend)
+        if art == "v":
+            msgs.append(mido.Message("control_change", control=1, value=95,
+                                     time=on + min(0.08, dur * 0.3)))
+            msgs.append(mido.Message("control_change", control=1, value=0, time=off))
+        msgs.append(mido.Message("note_on", note=pitch, velocity=vel, time=on))
+        msgs.append(mido.Message("note_off", note=pitch, velocity=0, time=off))
+        prev_pitch = pitch
+    msgs.sort(key=lambda m: m.time)
+    return msgs
+
+
+def _render(plugin, notes, sr, out_path, pb_range=2.0):
     import numpy as np
     import soundfile as sf
-    msgs = []
-    for n in notes:                                    # tolerate optional 5th (articulation) field
-        pitch, st, dur, vel = n[0], n[1], n[2], n[3]
-        p = int(max(0, min(127, pitch)))
-        v = int(max(1, min(127, vel)))
-        msgs.append(mido.Message("note_on", note=p, velocity=v, time=float(st)))
-        msgs.append(mido.Message("note_off", note=p, velocity=0, time=float(st + max(0.05, dur))))
-    msgs.sort(key=lambda m: m.time)
+    msgs = _build_messages(notes, pb_range=pb_range)
     total = (max(m.time for m in msgs) + 0.5) if msgs else 1.0
     # render on THIS process's main thread (default reset=True is fine + clean here)
     audio = np.asarray(plugin(msgs, duration=total, sample_rate=sr))   # (channels, samples)
@@ -79,7 +125,8 @@ def main():
             continue
         try:
             req = json.loads(line)
-            peak = _render(plugin, req["notes"], int(req.get("sr", 44100)), req["out"])
+            peak = _render(plugin, req["notes"], int(req.get("sr", 44100)), req["out"],
+                           pb_range=float(req.get("pb_range", 2.0)))
             out = json.dumps({"ok": True, "out": req["out"], "peak": peak})
         except Exception as e:
             out = json.dumps({"ok": False, "error": repr(e)})
@@ -149,11 +196,12 @@ class _KontaktClient:
             self._proc = None
             self._key = None
 
-    def render(self, notes, out_path, plugin_path, state_path, sr=44100):
+    def render(self, notes, out_path, plugin_path, state_path, sr=44100, pb_range=2.0):
         with self._lock:
             if not self._alive() or self._key != (plugin_path, state_path):
                 self._spawn(plugin_path, state_path)
-            req = json.dumps({"notes": [list(n) for n in notes], "sr": int(sr), "out": out_path})
+            req = json.dumps({"notes": [list(n) for n in notes], "sr": int(sr),
+                              "out": out_path, "pb_range": float(pb_range)})
             try:
                 self._proc.stdin.write(req + "\n")
                 self._proc.stdin.flush()
@@ -176,9 +224,17 @@ class _KontaktClient:
 _CLIENT = _KontaktClient()
 
 
-def render(notes, out_path, plugin_path, state_path, sr=44100):
-    """Render notes -> Kontakt/Shreddage DI WAV at out_path via the daemon."""
-    return _CLIENT.render(notes, out_path, plugin_path, state_path, sr=sr)
+def render(notes, out_path, plugin_path, state_path, sr=44100, pb_range=None):
+    """Render notes -> Kontakt/Shreddage DI WAV at out_path via the daemon. pb_range
+    = the patch's pitch-bend range in semitones (for bend/slide articulations);
+    defaults to 2 (S3 default) or $MG_SHREDDAGE_PB_RANGE."""
+    import os
+    if pb_range is None:
+        try:
+            pb_range = float(os.environ.get("MG_SHREDDAGE_PB_RANGE", "2"))
+        except ValueError:
+            pb_range = 2.0
+    return _CLIENT.render(notes, out_path, plugin_path, state_path, sr=sr, pb_range=pb_range)
 
 
 def shutdown():
