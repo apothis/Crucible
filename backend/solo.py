@@ -170,8 +170,10 @@ def amp_clip(di_path, out_path, region_len, amp_preset="", cfg=None, fade_ms=40)
         try:
             postfx_mod.process_stem(di_path, amped, amp_preset, cfg=cfg)
             src = amped
-        except Exception:
-            src = di_path     # amp failed -> fall back to clean DI
+        except Exception as e:
+            # Don't silently masquerade clean DI as an amped clip (that hid a real
+            # Helix-on-worker-thread failure); surface it so the stage shows the error.
+            raise RuntimeError(f"amp '{amp_preset}' failed: {e}") from e
     try:
         _fit_region(src, out_path, region_len, fade_ms)
     finally:

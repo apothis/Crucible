@@ -288,8 +288,33 @@ def _build_board(preset, cfg, opts):
     return pb.Pedalboard(plugins)
 
 
+import threading as _threading
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+
+_VST_EXEC = None
+_VST_EXEC_LOCK = _threading.Lock()
+
+
+def _run_on_vst_thread(fn, *a, **k):
+    """Run a pedalboard VST load+process on ONE dedicated, persistent thread.
+
+    JUCE/VST3 ties plugin instances to the thread that first loaded one (its
+    'message thread'). FastAPI serves sync endpoints on a threadpool, so loading a
+    plugin on a different worker each call raises 'must be reloaded on the main
+    thread' after the first one succeeds -- which made Helix amp work the first time
+    and then silently fall back to the clean DI. Pinning every VST load+process to a
+    single thread keeps it consistent. (Kontakt avoids this via its own subprocess.)"""
+    global _VST_EXEC
+    if _VST_EXEC is None:
+        with _VST_EXEC_LOCK:
+            if _VST_EXEC is None:
+                _VST_EXEC = _ThreadPoolExecutor(max_workers=1, thread_name_prefix="vst")
+    return _VST_EXEC.submit(fn, *a, **k).result()
+
+
 def process_stem(in_path: str, out_path: str, preset: str, cfg=None, opts=None):
-    """Apply the tone chain to one guitar stem, writing a 44.1k WAV."""
+    """Apply the tone chain to one guitar stem, writing a 44.1k WAV. The VST work runs
+    on a dedicated thread (see _run_on_vst_thread) so repeated renders don't fail."""
     import numpy as np
     import soundfile as sf
     data, sr = sf.read(in_path, dtype="float32", always_2d=True)  # (frames, ch)
@@ -298,8 +323,10 @@ def process_stem(in_path: str, out_path: str, preset: str, cfg=None, opts=None):
         x = np.repeat(x, 2, axis=0)
     elif x.shape[0] > 2:
         x = x[:2]
-    board = _build_board(preset, cfg, opts)
-    y = board(x, sr)
+
+    def _build_and_process():
+        return _build_board(preset, cfg, opts)(x, sr)
+    y = _run_on_vst_thread(_build_and_process)
     # guard against rare overs introduced by EQ/comp make-up gain
     peak = float(np.max(np.abs(y))) if y.size else 0.0
     if peak > 0.999:
