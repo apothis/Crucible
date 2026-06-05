@@ -5,6 +5,7 @@ import { useDrafts } from "./drafts";
 import { RegionSelector } from "./RegionSelector";
 import { PianoRoll } from "./VocalBuilder";
 import { WavePlayer } from "./WavePlayer";
+import { PluginRam } from "./PluginRam";
 
 type Props = { cfg: Config; busy: boolean } & RunCtx;
 
@@ -57,24 +58,11 @@ export function SoloBuilderForm(_props: Props) {
   const [stage, setStage] = useState("");        // "di" | "clip" | "mix" while running
   const [helixName, setHelixName] = useState("");
   const [setupMsg, setSetupMsg] = useState("");
-  const [plug, setPlug] = useState<{ kontakt_loaded: boolean; kontakt_rss_mb: number | null; idle_sec: number } | null>(null);
-  const [unloading, setUnloading] = useState(false);
+  const [plugKey, setPlugKey] = useState(0);     // bump to refresh the Plugin RAM row
 
   const clearStages = () => { setDiJobId(""); setDiUrl(""); setClipJobId(""); setClipUrl(""); setMixUrl(""); };
   const clearAmpDown = () => { setClipJobId(""); setClipUrl(""); setMixUrl(""); };   // DI still valid
   const refreshOpts = () => api.soloOptions().then(setOpts).catch(() => {});
-  const refreshPlug = () => api.pluginsStatus().then(setPlug).catch(() => {});
-
-  async function unloadPlugins() {
-    setUnloading(true);
-    try { await api.pluginsUnload(); } catch { /* ignore */ }
-    await refreshPlug(); setUnloading(false);
-  }
-  async function toggleIdle() {
-    const on = (plug?.idle_sec || 0) > 0;
-    try { await api.pluginsIdle(on ? 0 : 300); } catch { /* ignore */ }
-    await refreshPlug();
-  }
 
   // Plugin setup, mirrored from the Guitar/Tone tabs so sounds can be picked without
   // leaving the solo flow. Both open the real plugin editor; close it to snapshot state.
@@ -101,7 +89,6 @@ export function SoloBuilderForm(_props: Props) {
       setTracks(l.filter((it) => ["generate", "song", "restyle", "cover", "mix", "source"].includes(it.mode)))
     ).catch(() => {});
     api.soloOptions().then(setOpts).catch(() => {});
-    refreshPlug();
   }, []);
 
   // load waveform + beats when the track changes
@@ -171,7 +158,7 @@ export function SoloBuilderForm(_props: Props) {
       const r = await api.soloDi({ job_id: job, start: s, end: e, score, di_engine: diEngine, genre });
       setDiJobId(r.di_job_id); setDiUrl(r.di_url); clearAmpDown();
       setMsg("✓ DI rendered — hear the raw composed solo below, then amp it");
-      if (diEngine === "kontakt") refreshPlug();      // Shreddage is now resident
+      if (diEngine === "kontakt") setPlugKey((k) => k + 1);   // Shreddage is now resident
     } catch (err) { setMsg("✗ " + (err as Error).message); }
     finally { setStage(""); }
   }
@@ -228,22 +215,7 @@ export function SoloBuilderForm(_props: Props) {
         Pick a track, drag the region, and it picks up the section's BPM &amp; key, composes a lead, renders it through the DI + amp, and overlays it.
       </p>
 
-      {plug && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-2 text-[11px] text-[var(--color-muted)]">
-          <span>
-            Plugin RAM: {plug.kontakt_loaded
-              ? <span className="text-[var(--color-accent2)]">Shreddage loaded{plug.kontakt_rss_mb ? ` · ~${plug.kontakt_rss_mb} MB` : ""}</span>
-              : "Shreddage not loaded"}
-          </span>
-          <span className="flex-1" />
-          <label className="flex items-center gap-1.5" title="Free Shreddage after 5 min idle; reloads on next render">
-            <input type="checkbox" checked={(plug.idle_sec || 0) > 0} onChange={toggleIdle} /> auto-unload when idle
-          </label>
-          <GhostButton onClick={unloadPlugins} disabled={unloading || !plug.kontakt_loaded}>
-            {unloading ? "Freeing…" : "Unload plugins (free RAM)"}
-          </GhostButton>
-        </div>
-      )}
+      <PluginRam refreshKey={plugKey} />
 
       <SectionTitle>1 · Track &amp; region</SectionTitle>
       <Field label="Track">

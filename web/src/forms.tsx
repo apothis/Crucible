@@ -8,6 +8,7 @@ import { useDrafts } from "./drafts";
 import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
 import { RegionSelector } from "./RegionSelector";
 import { LoraPicker, loraBody, type LoraSel } from "./LoraPicker";
+import { PluginRam } from "./PluginRam";
 
 type FormProps = { cfg: Config; busy: boolean } & RunCtx;
 
@@ -998,6 +999,7 @@ export function ToneForm({ busy, ...ctx }: FormProps) {
   const [helixOn, setHelixOn] = useState(false);
   const [capName, setCapName] = useState("");
   const [capStatus, setCapStatus] = useState("");
+  const [plugKey, setPlugKey] = useState(0);
   const loadPresets = (selectFirst = false) => api.tonePresets().then((d) => {
     setPresets(d.presets); setHelixOn(d.helix_available);
     if (selectFirst && d.presets[0]) setPreset(d.presets[0].id);
@@ -1030,6 +1032,7 @@ export function ToneForm({ busy, ...ctx }: FormProps) {
         { id: rid(), title: `re-toned (${preset})`, status: "done", pct: 100, url: d.audio_url },
         { id: rid(), title: "guitar stem (processed)", status: "done", pct: 100, url: d.guitar_url },
       ]);
+      setPlugKey((k) => k + 1);
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
@@ -1039,6 +1042,7 @@ export function ToneForm({ busy, ...ctx }: FormProps) {
         Reshape the distorted guitar: split off the guitar stem (Mac/Demucs 6-stem), run it through a tone chain, and recombine.
         This <em>reshapes</em> the existing tone (EQ / cab / saturation) — it doesn't re-amp from a clean DI.
       </p>
+      <PluginRam refreshKey={plugKey} />
       <Field label="From a library track">
         <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
           <option value="">— choose —</option>
@@ -1090,6 +1094,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
   const [kontaktReady, setKontaktReady] = useState(false);
   const [kontaktAvail, setKontaktAvail] = useState(false);
   const [kStatus, setKStatus] = useState("");
+  const [plugKey, setPlugKey] = useState(0);                 // refresh the Plugin RAM row after a render
   const genres = cfg.genres;                                 // unified registry from /api/config
   const sug = genres.find((g) => g.id === genre);            // selected genre → suggested bpm/scale
   const loadEngines = () => api.tonePresets().then((d) => {
@@ -1130,6 +1135,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
       ];
       if (d.mix_url) cards.push({ id: rid(), title: "guitar + backing", status: "done" as const, pct: 100, url: d.mix_url });
       ctx.setResults(cards);
+      setPlugKey((k) => k + 1);             // DI/amp may have loaded Shreddage/Helix
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
@@ -1143,6 +1149,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
       <p className="text-xs text-[var(--color-muted)]">
         Symbolic-guitar route: a generated/MIDI guitar part → <em>clean DI</em> (plucked-string synth) → your Helix/tone amp (valid on a clean DI!) → optionally mixed onto a guitar-less backing. Render quality is a prototype; a sampled/Shreddage DI can slot in later.
       </p>
+      <PluginRam refreshKey={plugKey} />
       <div className="flex gap-1.5 text-sm">
         {tabBtn("riff", "Test riff")}
         {tabBtn("song", "Song arrangement", !(song && song.blocks.length))}
