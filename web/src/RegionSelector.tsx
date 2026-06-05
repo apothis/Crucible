@@ -88,6 +88,7 @@ export function RegionSelector({ url, beats, start, end, onChange, height = 128 
     reg.on("region-created", (r: any) => {
       if (region.current && r !== region.current) region.current.remove();
       region.current = r;
+      apply(r);                 // commit a freshly drag-selected region (else start/end stay default)
     });
     reg.on("region-updated", apply);
     return () => { w.destroy(); ws.current = null; region.current = null; };
