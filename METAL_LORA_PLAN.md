@@ -728,6 +728,31 @@ CONCLUSIONS:
   path to a believable automated metric.
 - Until a metric passes the bar, judge LoRA runs by blind A/B EAR [[wait-for-feedback]].
 
+## 13e. Metric retry RESULT - MERT works as a pre-filter (measured 2026-06-06)
+
+Same harness (§13c), MERT-v1-95M run Mac-local (MPS, deterministic full-track windowed mean),
+vs the CLAP failure in §13d. Report: library/lora_train_history/metric_validation_mert_centroid_cosine.json.
+
+| check | CLAP | MERT |
+|---|---|---|
+| determinism (retest self-cosine) | 0.88/0.58/0.84 FAIL | 1.0/1.0/1.0 PASS |
+| artist vs same-genre (Battle Beast) | AUC 0.538 (chance), d 0.11 | AUC 0.728, d 0.505 |
+| artist vs other-genre (Metallica) | AUC 0.65 | AUC 0.928, d 1.83 |
+| trustworthy_as_prefilter | False | True |
+
+- MERT HAS the artist-level resolution CLAP lacked: Avantasia vs other power metal AUC 0.728 (CLAP
+  was a coin flip). Deterministic windowing fixed stability (retest 1.0). Music-trained embedding
+  beats text-audio CLAP for this task, as hypothesized.
+- CAVEAT: MERT cosines sit in a narrow high cone (artist 0.979 vs same-genre 0.975, mean gap 0.004).
+  Discrimination is real via tiny within-bucket std (AUC/Cohen-d are the signal, not the mean gap).
+  AUC 0.728 = useful PRE-FILTER / triage, NOT a fine-grained judge of two good takes. Ears remain
+  final, esp. on close calls [[wait-for-feedback]].
+- REMAINING: criterion (3) not yet run - validate vs the user's EAR verdicts on real GENERATED pairs
+  (ear_pairs hook is built). Validated on real artist tracks; generated LoRA output may differ.
+- BOTTOM LINE: we now have a believable, validated automated artist-fidelity metric (MERT-centroid,
+  Mac-local, no box GPU). Use it to triage LoRA checkpoints/strengths and flag off-target takes;
+  confirm close calls by ear. This is the metric to wire into the LoRA eval loop (replacing CLAP tags).
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
