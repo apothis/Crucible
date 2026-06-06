@@ -1319,6 +1319,8 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
   const [file, setFile] = useState<File | null>(null);
   const [refJob, setRefJob] = d.use("refJob", "");
   const [refFile, setRefFile] = useState<File | null>(null);
+  const [toneOnly, setToneOnly] = d.use("toneOnly", false);     // reference: match tone, keep dynamics
+  const [matchAmt, setMatchAmt] = d.use("matchAmt", "1");
   const [tone, setTone] = d.use("tone", "metal");
   const [lufs, setLufs] = d.use("lufs", -12);
   const [enhance, setEnhance] = d.use("enhance", false);   // optional stereo/warmth stages (off = default chain)
@@ -1344,7 +1346,10 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
         if (enhance) { fd.append("width", String(width)); fd.append("bass_mono_hz", String(bassMono)); fd.append("warmth", String(warmth)); }
       }
       else if (mode === "gold") { if (goldRef) fd.append("ref_name", goldRef); }
-      else { if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob); }
+      else {
+        if (refFile) fd.append("ref_file", refFile); else fd.append("ref_job_id", refJob);
+        if (toneOnly) { fd.append("tone_only", "true"); fd.append("match_amount", String(parseFloat(matchAmt) || 1)); }
+      }
       const r = await api.master(fd);
       const srcName = job ? trackLabel(targets.find((t) => t.id === job) || ({} as LibItem), targets) : (file?.name || "track");
       ctx.setResults([{ id: rid(), title: `${srcName} (master)`, status: "done", pct: 100, url: r.audio_url }]);
@@ -1441,10 +1446,17 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
             </select>
           </Field>
           <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setRefFile(e.target.files?.[0] ?? null)} /></Field>
+          <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
+            <label className="flex items-center gap-2 text-xs font-medium text-[var(--color-ink)]">
+              <input type="checkbox" checked={toneOnly} onChange={(e) => setToneOnly(e.target.checked)} /> Keep dynamics — match tone only
+            </label>
+            <p className="text-[11px] text-[var(--color-muted)]">Matchering matches the reference's loudness <em>and</em> its squash, so a slammed reference drives your track hard. This applies only the reference's <em>tonal balance</em> (no loudness/limiting) — keeps your dynamics. Master loudness separately (Auto) after if needed.</p>
+            {toneOnly && <Field label="Match amount" hint="0–1; 1 = full tonal match"><input className={inp} type="number" step="0.05" min="0" max="1" value={matchAmt} onChange={(e) => setMatchAmt(e.target.value)} /></Field>}
+          </div>
         </>
       )}
 
-      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Mastering…" : mode === "auto" ? "Master (auto)" : mode === "gold" ? "Master (gold standard)" : "Master to reference"}</PrimaryButton>
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Mastering…" : mode === "auto" ? "Master (auto)" : mode === "gold" ? "Master (gold standard)" : toneOnly ? "Match reference tone" : "Master to reference"}</PrimaryButton>
     </div>
   );
 }

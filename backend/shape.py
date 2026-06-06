@@ -185,12 +185,15 @@ def tonal_match(x, ref, sr, amount=0.5, n=8192):
     fx, px = welch(x, fs=sr, nperseg=n)
     fr, pr = welch(ref, fs=sr, nperseg=n)
     px = px + 1e-12; pr = pr + 1e-12
-    corr = np.sqrt(pr / px)                                       # magnitude correction
-    # smooth in log-frequency (octave-ish) to avoid combing
+    corr = np.sqrt(pr / px)                                       # raw magnitude ratio
+    # TONE-ONLY: anchor to the target's energy-weighted mean so the OVERALL level (and thus
+    # the dynamics) are unchanged - only the relative spectral balance shifts to the reference.
+    w = px / px.sum()
+    corr = corr / np.exp(np.sum(w * np.log(corr)))
     from scipy.ndimage import uniform_filter1d
-    corr = np.exp(uniform_filter1d(np.log(corr), size=9))
+    corr = np.exp(uniform_filter1d(np.log(corr), size=9))        # smooth to avoid combing
     corr = corr ** float(np.clip(amount, 0, 1))                   # partial match
-    corr = np.clip(corr, 0.25, 4.0)
+    corr = np.clip(corr, 10 ** (-15 / 20), 10 ** (15 / 20))       # +-15 dB tonal correction
     # apply via FFT bin interpolation (zero-phase)
     X = np.fft.rfft(x)
     fb = np.fft.rfftfreq(len(x), 1.0 / sr)
