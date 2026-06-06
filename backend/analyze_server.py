@@ -95,21 +95,42 @@ def _merge_labels(extra):
     return merged
 
 
-def _clap_tags(path, labels, top=10):
+def _ensure_clap():
+    """Lazy-load the CLAP module once (shared by tagging + embedding)."""
     global _clap
+    if _clap is None:
+        import laion_clap
+        _clap = laion_clap.CLAP_Module(enable_fusion=False)
+        _clap.load_ckpt()                           # downloads into HF_HOME (pinned in-dir)
+    return _clap
+
+
+def _audio_embed(path):
+    """L2-normalized CLAP audio embedding for one file (1D float list). This is the raw
+    signal /analyze's tag-ranking throws away — exposed so the Mac can measure artist
+    closeness via centroid cosine distance instead of lossy top-K tag presence."""
+    import numpy as np
+    clap = _ensure_clap()
+    ae = clap.get_audio_embedding_from_filelist([path], use_tensor=False)
+    ae = ae / (np.linalg.norm(ae, axis=1, keepdims=True) + 1e-9)
+    return [float(x) for x in ae[0]]
+
+
+def _clap_tags(path, labels, top=10, with_scores=False):
     try:
         import numpy as np
-        if _clap is None:
-            import laion_clap
-            _clap = laion_clap.CLAP_Module(enable_fusion=False)
-            _clap.load_ckpt()                       # downloads into HF_HOME (pinned in-dir)
-        ae = _clap.get_audio_embedding_from_filelist([path], use_tensor=False)
-        te = _clap.get_text_embedding(labels, use_tensor=False)
+        clap = _ensure_clap()
+        ae = clap.get_audio_embedding_from_filelist([path], use_tensor=False)
+        te = clap.get_text_embedding(labels, use_tensor=False)
         ae = ae / (np.linalg.norm(ae, axis=1, keepdims=True) + 1e-9)
         te = te / (np.linalg.norm(te, axis=1, keepdims=True) + 1e-9)
         scores = (ae @ te.T)[0]
         order = list(np.argsort(scores)[::-1][:top])
-        return [labels[i] for i in order]
+        tags = [labels[i] for i in order]
+        if with_scores:
+            # keep the magnitude too — rank-only discards the only continuous signal
+            return tags, {labels[i]: float(scores[i]) for i in order}
+        return tags
     except Exception as e:
         return {"error": str(e)}
 
@@ -129,9 +150,30 @@ def health():
     return info
 
 
+@app.post("/embed")
+async def embed(file: UploadFile = File(...)):
+    """Return the L2-normalized CLAP audio embedding for one file. Enables the Mac's
+    centroid-distance metric (cosine to the artist corpus mean) without re-uploading the
+    whole corpus each time. Deterministic forward pass -> safe for test-retest validation."""
+    tmp = tempfile.mkdtemp(dir=WORK)
+    src = os.path.join(tmp, file.filename or "ref.wav")
+    with open(src, "wb") as f:
+        f.write(await file.read())
+    try:
+        vec = _audio_embed(src)
+        return {"embedding": vec, "dim": len(vec)}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"embed failed: {e}"})
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        _release_vram()
+
+
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...), labels: str = Form(""),
-                  with_tags: str = Form("true"), with_key: str = Form("true")):
+                  with_tags: str = Form("true"), with_key: str = Form("true"),
+                  with_scores: str = Form("false")):
     tmp = tempfile.mkdtemp(dir=WORK)
     src = os.path.join(tmp, file.filename or "ref.wav")
     with open(src, "wb") as f:
@@ -168,7 +210,14 @@ async def analyze(file: UploadFile = File(...), labels: str = Form(""),
                         extra = parsed
                 except Exception:
                     pass
-            out["tags"] = _clap_tags(src, _merge_labels(extra))   # curated defaults ∪ caller's genres
+            if str(with_scores).lower() == "true":
+                res = _clap_tags(src, _merge_labels(extra), with_scores=True)
+                if isinstance(res, tuple):
+                    out["tags"], out["tag_scores"] = res
+                else:
+                    out["tags"] = res            # {"error": ...}
+            else:
+                out["tags"] = _clap_tags(src, _merge_labels(extra))   # curated defaults ∪ caller's genres
         return out
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"analyze failed: {e}"})
