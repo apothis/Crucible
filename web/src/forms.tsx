@@ -1311,7 +1311,7 @@ type MasterOpts = { reference: boolean; gold: boolean; auto: boolean; gold_refs:
 
 export function MasterForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("master");
-  const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source"].includes(it.mode));
+  const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source", "master"].includes(it.mode));
   const refs = useLibrary(() => true);  // any track can be a reference, esp. imported "source" songs
   const [opts, setOpts] = useState<MasterOpts | null>(null);
   const [mode, setMode] = d.use<"auto" | "gold" | "reference">("mode", "auto");
