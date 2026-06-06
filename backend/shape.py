@@ -17,13 +17,40 @@ import numpy as np
 
 
 # ----------------------------- de-harsh -----------------------------
+def hf_denoise(x, sr, freq=5000.0, strength=0.8, smooth_hz=600.0, smooth_ms=60.0,
+               n_std=1.6):
+    """Band-limited spectral-gate de-noise: split at `freq`, run stationary spectral
+    gating (noisereduce) on ONLY the high band to scrub steady broadband HF hash/fizz,
+    then recombine - mids/lows are untouched. `strength` (0..1) = prop_decrease;
+    `smooth_hz`/`smooth_ms` trade depth against 'musical noise' (higher = smoother)."""
+    import noisereduce as nr
+    lo, hi = _lr_split(x.astype("float64"), sr, [float(freq)])     # 2-way crossover
+    try:
+        hi_dn = nr.reduce_noise(y=hi.astype("float32"), sr=sr, stationary=True,
+                                prop_decrease=float(np.clip(strength, 0, 1)),
+                                freq_mask_smooth_hz=float(smooth_hz),
+                                time_mask_smooth_ms=float(smooth_ms),
+                                n_std_thresh_stationary=float(n_std), n_fft=1024)
+    except Exception:
+        return x.astype("float32")
+    n = min(len(lo), len(hi_dn))
+    return (lo[:n] + hi_dn[:n]).astype("float32")
+
+
 def deharsh(x, sr, smooth=0.5, freq=6000.0, resonance=0.3, sharpness=0.5, air_db=0.0,
-            nfft=2048, hop=512):
+            denoise=0.0, denoise_smooth=0.6, nfft=2048, hop=512):
     """De-fizz / de-harsh a mono channel in the STFT domain.
     `smooth` (0..1) tames broadband HF fizz = per-bin spectral subtraction of the steady
     noise floor PLUS dynamic ducking of HF spikes; `resonance` (0..1) ducks harsh spectral
     peaks that flare up (temporally gated so steady musical harmonics are spared);
-    `freq` = where HF taming starts; `air_db` = gentle top-end restore shelf."""
+    `freq` = where HF taming starts; `air_db` = gentle top-end restore shelf.
+    `denoise` (0..1) = STRONG mode: a band-limited stationary spectral-gate de-noise of
+    the HF band (best for constant 'digital' fizz/hash); runs first, then smooth/resonance
+    refine. `denoise_smooth` raises gate smoothing to trade depth vs musical-noise."""
+    if denoise > 0:                                              # strong spectral-gate de-fizz first
+        x = hf_denoise(x, sr, freq=freq, strength=denoise,
+                       smooth_hz=400.0 + 800.0 * float(denoise_smooth),
+                       smooth_ms=40.0 + 80.0 * float(denoise_smooth))
     from scipy.signal import stft, istft
     from scipy.ndimage import median_filter, uniform_filter1d
     f, t, Z = stft(x, fs=sr, nperseg=nfft, noverlap=nfft - hop, window="hann", boundary="zeros")

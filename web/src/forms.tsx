@@ -1526,8 +1526,10 @@ export function ShapeForm({ busy, ...ctx }: FormProps) {
   const [job, setJob] = d.use("job", "");
   // De-harsh
   const [dhOn, setDhOn] = d.use("dhOn", true);
-  const [smooth, setSmooth] = d.use("smooth", "0.5");
-  const [freq, setFreq] = d.use("freq", "6000");
+  const [denoise, setDenoise] = d.use("denoise", "0.8");        // strong HF spectral-gate de-fizz
+  const [denoiseSm, setDenoiseSm] = d.use("denoiseSm", "0.6");
+  const [smooth, setSmooth] = d.use("smooth", "0");
+  const [freq, setFreq] = d.use("freq", "5000");
   const [reson, setReson] = d.use("reson", "0.2");
   const [air, setAir] = d.use("air", "0");
   // Dynamics
@@ -1547,7 +1549,7 @@ export function ShapeForm({ busy, ...ctx }: FormProps) {
   async function run() {
     if (!job) return fail(ctx, "Pick a track to shape.");
     const body: Record<string, unknown> = { job_id: job };
-    if (dhOn) body.deharsh = { smooth: parseFloat(smooth) || 0, freq: parseFloat(freq) || 6000, resonance: parseFloat(reson) || 0, air_db: parseFloat(air) || 0 };
+    if (dhOn) body.deharsh = { denoise: parseFloat(denoise) || 0, denoise_smooth: parseFloat(denoiseSm) || 0.6, smooth: parseFloat(smooth) || 0, freq: parseFloat(freq) || 5000, resonance: parseFloat(reson) || 0, air_db: parseFloat(air) || 0 };
     if (dynOn) body.dynamics = { amount: parseFloat(dynAmt) || 0 };
     if (trOn) body.transient = { attack: parseFloat(attack) || 0, sustain: parseFloat(sustain) || 0 };
     if (mtOn) {
@@ -1589,13 +1591,15 @@ export function ShapeForm({ busy, ...ctx }: FormProps) {
       </Field>
 
       <div className={sec}>
-        {toggle(dhOn, setDhOn, "De-harsh / smooth (fizz + harshness)")}
+        {toggle(dhOn, setDhOn, "De-harsh / de-fizz (digital top-end hash)")}
         {dhOn && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Smooth (HF fizz)" hint="0–1; higher = more steady-fizz removal"><input className={inp} type="number" step="0.05" min="0" max="1" value={smooth} onChange={(e) => setSmooth(e.target.value)} /></Field>
-            <Field label="Focus (Hz)" hint="HF taming starts here (~6k fizz, ~3k harsh)"><input className={inp} type="number" step="500" value={freq} onChange={(e) => setFreq(e.target.value)} /></Field>
+            <Field label="HF de-noise" hint="0–1; spectral-gate the broadband fizz (strong)"><input className={inp} type="number" step="0.05" min="0" max="1" value={denoise} onChange={(e) => setDenoise(e.target.value)} /></Field>
+            <Field label="De-noise smoothing" hint="0–1; higher = less 'watery' musical-noise, less depth"><input className={inp} type="number" step="0.05" min="0" max="1" value={denoiseSm} onChange={(e) => setDenoiseSm(e.target.value)} /></Field>
+            <Field label="Focus (Hz)" hint="HF processing starts here (~5k fizz, ~3k harsh)"><input className={inp} type="number" step="500" value={freq} onChange={(e) => setFreq(e.target.value)} /></Field>
+            <Field label="Air (dB)" hint="restore smooth top after de-noise · 0 = off"><input className={inp} type="number" step="0.5" value={air} onChange={(e) => setAir(e.target.value)} /></Field>
+            <Field label="Smooth (gentle)" hint="0–1; lighter subtraction, layer on de-noise"><input className={inp} type="number" step="0.05" min="0" max="1" value={smooth} onChange={(e) => setSmooth(e.target.value)} /></Field>
             <Field label="Resonance" hint="0–1; duck harsh peaks that flare up"><input className={inp} type="number" step="0.05" min="0" max="1" value={reson} onChange={(e) => setReson(e.target.value)} /></Field>
-            <Field label="Air (dB)" hint="restore the very top end · 0 = off"><input className={inp} type="number" step="0.5" value={air} onChange={(e) => setAir(e.target.value)} /></Field>
           </div>
         )}
       </div>
