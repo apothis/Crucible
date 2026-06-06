@@ -150,11 +150,12 @@ def train_lokr(host, tensor_dir, output_dir, *, lokr_linear_dim=64, lokr_linear_
                train_epochs=500, train_batch_size=1, gradient_accumulation=4,
                save_every_n_epochs=5, training_shift=3.0, training_seed=42,
                gradient_checkpointing=False, val_split=None,
-               timestep_sampling_mode=None):
-    # val_split + timestep_sampling_mode are Crucible-patched server-side
-    # (2026-05-29 + 2026-05-30 engine patches respectively). Only sent when
-    # caller provides explicitly so we stay compatible with unpatched engines
-    # (Pydantic ignores unknown fields by default; older engines silently drop).
+               timestep_sampling_mode=None, target_modules=None):
+    # val_split + timestep_sampling_mode + target_modules are Crucible-patched
+    # server-side (2026-05-29 / 2026-05-30 / 2026-06-06 engine patches). Only sent
+    # when the caller provides explicitly so we stay compatible with unpatched
+    # engines (Pydantic ignores unknown fields by default; older engines silently
+    # drop -> falls back to the default attention-only target_modules).
     body = {
         "tensor_dir": tensor_dir, "output_dir": output_dir,
         "lokr_linear_dim": lokr_linear_dim, "lokr_linear_alpha": lokr_linear_alpha,
@@ -169,6 +170,8 @@ def train_lokr(host, tensor_dir, output_dir, *, lokr_linear_dim=64, lokr_linear_
         body["val_split"] = float(val_split)
     if timestep_sampling_mode is not None:
         body["timestep_sampling_mode"] = str(timestep_sampling_mode)
+    if target_modules is not None:
+        body["target_modules"] = list(target_modules)
     return _post(host, "/v1/training/start_lokr", body)
 
 

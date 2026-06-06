@@ -96,6 +96,16 @@ export function LoraTrainingForm(_: { cfg: Config }) {
   const [rank, setRank] = useState(64);
   const [alpha, setAlpha] = useState(128);
   const [gradckpt, setGradckpt] = useState(true);
+  // LoKr capacity/optimization knobs (server already accepts these; see METAL_LORA_PLAN
+  // §13b). Defaults below = the engine's historical defaults so behavior is unchanged
+  // until the user opts in. The "Style" preset sets the research-backed config.
+  const [factor, setFactor] = useState(-1);        // -1 = min-capacity Kronecker; 4-8 = more capacity
+  const [linDim, setLinDim] = useState(64);
+  const [linAlpha, setLinAlpha] = useState(128);   // effective scale = alpha/dim
+  const [dora, setDora] = useState(false);         // weight_decompose; needs lr ~1e-3 if on
+  const [lr, setLr] = useState(0.01);
+  const [valSplit, setValSplit] = useState(0.1);
+  const [targets, setTargets] = useState<"attn" | "attn_mlp">("attn");  // attn_mlp needs the 2026-06-06 engine patch
   const [msg, setMsg] = useState("");
   // Chain phase tracker — drives the prominent "running" banner + faster polling
   // from the moment the user clicks (don't wait for /api/lora/status to catch up).
@@ -358,6 +368,28 @@ export function LoraTrainingForm(_: { cfg: Config }) {
               <Field label="Rank" hint="capacity (def 64)"><input className={inp} type="number" value={rank} onChange={(e) => setRank(parseInt(e.target.value) || 64)} /></Field>
               <Field label="Alpha" hint="scaling (def 128)"><input className={inp} type="number" value={alpha} onChange={(e) => setAlpha(parseInt(e.target.value) || 128)} /></Field>
             </div>}
+            {method === "lokr" && <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-[var(--color-muted)]">LoKr capacity / optimization (METAL_LORA_PLAN §13b)</span>
+                <button disabled={isTraining} onClick={() => { setFactor(8); setLinDim(64); setLinAlpha(64); setDora(false); setLr(0.01); setTargets("attn_mlp"); }}
+                  className="text-[10px] rounded border border-[var(--color-line)] px-1.5 py-0.5 hover:text-[var(--color-ink)]">Style preset</button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Field label="Factor" hint="-1=min · 8=more"><input className={inp} type="number" value={factor} disabled={isTraining} onChange={(e) => setFactor(parseInt(e.target.value) || -1)} /></Field>
+                <Field label="Dim" hint="rank (def 64)"><input className={inp} type="number" value={linDim} disabled={isTraining} onChange={(e) => setLinDim(parseInt(e.target.value) || 64)} /></Field>
+                <Field label="Alpha" hint="= dim → scale 1"><input className={inp} type="number" value={linAlpha} disabled={isTraining} onChange={(e) => setLinAlpha(parseInt(e.target.value) || 64)} /></Field>
+                <Field label="Learn rate" hint="0.01 · DoRA 1e-3"><input className={inp} type="number" step="0.001" value={lr} disabled={isTraining} onChange={(e) => setLr(parseFloat(e.target.value) || 0.01)} /></Field>
+                <Field label="Val split" hint="held out (0.1)"><input className={inp} type="number" step="0.05" value={valSplit} disabled={isTraining} onChange={(e) => setValSplit(parseFloat(e.target.value) || 0)} /></Field>
+                <Field label="Targets" hint="attn vs +MLP">
+                  <select className={inp} value={targets} disabled={isTraining} onChange={(e) => setTargets(e.target.value as "attn" | "attn_mlp")}>
+                    <option value="attn">Attention only</option>
+                    <option value="attn_mlp">Attention + MLP (style)</option>
+                  </select>
+                </Field>
+              </div>
+              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]"><input type="checkbox" checked={dora} disabled={isTraining} onChange={(e) => setDora(e.target.checked)} /> DoRA (weight_decompose) — higher quality, but set Learn rate ~0.001</label>
+              {targets === "attn_mlp" && <div className="text-[10px] text-[var(--color-muted)]">Attention+MLP needs the 2026-06-06 engine patch on the box; confirm via the engine log line "LoKr target filter: enabled N".</div>}
+            </div>}
             <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]"><input type="checkbox" checked={gradckpt} onChange={(e) => setGradckpt(e.target.checked)} /> Gradient checkpointing (slower, lower VRAM — enable if it runs out of memory)</label>
           </div>
         )}
@@ -402,7 +434,13 @@ export function LoraTrainingForm(_: { cfg: Config }) {
             }
             setChainPhase("starting-train");
             await api.loraTrain({ dataset, method, train_epochs: epochs, gradient_checkpointing: gradckpt,
-              ...(method === "lora" ? { lora_rank: rank, lora_alpha: alpha } : {}) });
+              ...(method === "lora" ? { lora_rank: rank, lora_alpha: alpha } : {
+                lokr_factor: factor, lokr_linear_dim: linDim, lokr_linear_alpha: linAlpha,
+                lokr_weight_decompose: dora, learning_rate: lr, val_split: valSplit,
+                target_modules: targets === "attn_mlp"
+                  ? ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+                  : ["q_proj", "k_proj", "v_proj", "o_proj"],
+              }) });
             // Refresh status so the engine training state is visible immediately;
             // leave chainPhase=null so the rich TrainingBlock takes over from here.
             await refresh();

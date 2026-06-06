@@ -3818,6 +3818,13 @@ def lora_train(body: dict):
     # train mostly on the corpus, large enough to give the best-checkpoint
     # tracking a signal on small (6-track) datasets.
     common["val_split"] = float(body["val_split"]) if "val_split" in body else 0.1
+    # target_modules: which DiT module suffixes LyCORIS wraps. Opt-in; requires the
+    # 2026-06-06 engine patch (StartLoKRTrainingRequest.target_modules + plumb into
+    # LoKRConfig). Engine default is attention-only (q/k/v/o); adding the Qwen3MLP
+    # names (gate/up/down_proj) = "attn+mlp" for richer style (METAL_LORA_PLAN §13b).
+    # Unpatched engines silently ignore it (Pydantic drops unknown fields).
+    if body.get("target_modules"):
+        common["target_modules"] = list(body["target_modules"])
     # Per-run output dir: never overwrite a prior adapter. Format encodes the
     # config so we can identify the run later by name alone.
     # Pattern: <dataset>/train_<YYYYMMDD-HHMMSS>__<adapter>_<epochs>ep_<sampling>
