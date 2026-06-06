@@ -749,9 +749,28 @@ vs the CLAP failure in §13d. Report: library/lora_train_history/metric_validati
   final, esp. on close calls [[wait-for-feedback]].
 - REMAINING: criterion (3) not yet run - validate vs the user's EAR verdicts on real GENERATED pairs
   (ear_pairs hook is built). Validated on real artist tracks; generated LoRA output may differ.
-- BOTTOM LINE: we now have a believable, validated automated artist-fidelity metric (MERT-centroid,
-  Mac-local, no box GPU). Use it to triage LoRA checkpoints/strengths and flag off-target takes;
-  confirm close calls by ear. This is the metric to wire into the LoRA eval loop (replacing CLAP tags).
+- BOTTOM LINE (initial, TEMPERED below): MERT-centroid looked like a believable pre-filter on REAL
+  tracks. But the applied test (§13f) shows it does NOT judge artist fidelity on GENERATED takes.
+
+## 13f. Applied test on generated takes - MERT does NOT judge artist fidelity (2026-06-06)
+
+Scored 9 generated takes vs a fresh Avantasia MERT centroid + anchors (held-out Avantasia / Battle
+Beast / noise). Report: library/lora_train_history/mert_take_scores.json. Result is NEGATIVE - it
+vindicates the user's distrust:
+1. ANCHORS COLLAPSED: real Avantasia 0.9774 vs Battle Beast 0.9774 = IDENTICAL on this sample. The
+   §13e AUC 0.728 (artist vs same-genre) was sample-fragile, not stable. With a different
+   centroid-split + BB sample the artist/same-genre separation vanished.
+2. CROSS-LORA CONTROL INVERTED: a nightwish-LoRA take scored the MOST "Avantasia" (0.9719), above
+   EVERY avantasia-LoRA take (0.959-0.965). Metric is not tracking artist identity in generated output.
+3. GENERATED TAKES CLUSTER 0.93-0.97, all BELOW both real-audio anchors (0.977). MERT mostly
+   separates real-vs-generated audio, not artist-vs-artist. Cannot rank takes by Avantasia-ness.
+CONCLUSION: MERT-centroid = a reliable music-vs-noise / on-genre GUARD only (0.62 vs 0.95+ solid).
+It is NOT a usable artist-fidelity judge for our generated takes. Do NOT wire it in as the LoRA
+artist A/B judge. EARS remain the judge ([[wait-for-feedback]]) for "did this carry the artist".
+Confound we cannot resolve from this: the inverted control could also mean the LoRAs impart little
+distinct artist character (consistent with the weak/perturbation-like adapter finding) - either way
+the metric can't arbitrate it. Net: no automated artist-fidelity metric has earned trust; proceed
+with the §13b capacity/target-module experiments judged BY EAR.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
