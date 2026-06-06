@@ -41,6 +41,7 @@ from . import lyrics as lyrics_mod
 from . import melody as melody_mod
 from . import solo as solo_mod
 from . import kontakt_daemon as kontakt_daemon_mod
+from . import deglitch as deglitch_mod
 from . import acestep_train as ace_train
 from . import lora_upload_py as lora_up
 from . import lora_dataset as lora_ds
@@ -2359,6 +2360,52 @@ def solo_mix(body: dict):
                    "region": region_str, "genre": body.get("genre", ""),
                    "key": body.get("key"), "bpm": body.get("bpm")}, mix_path)
     return {"audio_url": f"/api/audio/{mix_jid}", "job_id": mix_jid, "region": region_str}
+
+
+@app.post("/api/deglitch")
+def deglitch_track(body: dict):
+    """Detect + repair short impulsive glitches (clicks/pops/zipper bursts) baked into a
+    generated track, by LPC-residual detection + AR interpolation (Mac DSP, no GPU). Saves
+    a cleaned version and returns a report of exactly what was repaired. `analyze_only`
+    skips the write and just reports detections so you can preview before committing.
+    `threshold` (higher = more conservative), `max_click_ms`, `repair` (ar|spline)."""
+    pid = body.get("job_id")
+    if not pid:
+        raise HTTPException(400, "job_id required")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "track not found")
+    threshold = float(body.get("threshold", 14.0))
+    max_click_ms = float(body.get("max_click_ms", 2.0))
+    repair = body.get("repair", "ar")
+    if body.get("analyze_only"):
+        import soundfile as sf
+        import numpy as _np
+        data, sr = sf.read(src, dtype="float32", always_2d=True)
+        clicks_total, bursts_total, regs = 0, 0, []
+        for c in range(data.shape[1]):
+            cl, br = deglitch_mod.detect(data[:, c], sr, threshold=threshold, max_click_ms=max_click_ms)
+            clicks_total += len(cl); bursts_total += len(br)
+            for s, e in cl:
+                regs.append({"channel": c, "start_s": round(s / sr, 3),
+                             "dur_ms": round((e - s) * 1000.0 / sr, 2)})
+        return {"analyze_only": True, "clicks_found": clicks_total,
+                "bursts_flagged": bursts_total, "regions": regs[:200],
+                "duration_s": round(len(data) / sr, 2)}
+    out_jid = uuid.uuid4().hex
+    out_path = os.path.join(LIBRARY, f"{out_jid}.wav")
+    try:
+        report = deglitch_mod.deglitch_file(src, out_path, threshold=threshold,
+                                            max_click_ms=max_click_ms, repair=repair)
+    except Exception as e:
+        raise HTTPException(500, f"de-glitch failed: {e}")
+    orig_title = _solo_orig_title(pid)
+    save_done_row(out_jid, "master",
+                  {"title": f"{orig_title} (de-glitched)", "source": orig_title,
+                   "deglitch": True, "clicks_repaired": report["clicks_repaired"],
+                   "repaired_ms": report["repaired_ms"], "bursts_flagged": report["bursts_flagged"]},
+                  out_path)
+    return {"audio_url": f"/api/audio/{out_jid}", "job_id": out_jid, "report": report}
 
 
 @app.post("/api/import/upload")

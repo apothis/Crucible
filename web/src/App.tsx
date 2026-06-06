@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type LibItem, type Project, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm } from "./forms";
+import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { SoloBuilderForm } from "./SoloBuilder";
 import { ImportForm } from "./Import";
@@ -27,6 +27,7 @@ const MODES = [
   { id: "guitar", label: "Guitar" },
   { id: "solo", label: "Add Solo" },
   { id: "master", label: "Master" },
+  { id: "deglitch", label: "De-glitch" },
   { id: "mix", label: "Mix" },
   { id: "loratrain", label: "Train LoRA" },
 ] as const;
@@ -36,7 +37,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Create", modes: ["generate", "song", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
-  { name: "Finish", modes: ["stems", "mix", "master"] },
+  { name: "Finish", modes: ["stems", "mix", "master", "deglitch"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
@@ -236,6 +237,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "guitar": return <GuitarForm {...p} song={song} />;
     case "solo": return <SoloBuilderForm {...p} />;
     case "master": return <MasterForm {...p} />;
+    case "deglitch": return <DeglitchForm {...p} />;
     case "mix": return <MixForm {...p} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;

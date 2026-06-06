@@ -1449,6 +1449,77 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
   );
 }
 
+export function DeglitchForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("deglitch");
+  const tracks = useLibrary((it) => ["generate", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));
+  const [job, setJob] = d.use("job", "");
+  const [threshold, setThreshold] = d.use("threshold", "14");
+  const [repair, setRepair] = d.use<"ar" | "spline">("repair", "ar");
+  const [scan, setScan] = useState<{ clicks_found: number; bursts_flagged: number; duration_s: number } | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  async function preview() {
+    if (!job) return fail(ctx, "Pick a track to scan.");
+    setScanning(true); setScan(null);
+    try {
+      const r = await api.deglitch({ job_id: job, threshold: parseFloat(threshold) || 14, analyze_only: true });
+      setScan(r as { clicks_found: number; bursts_flagged: number; duration_s: number });
+    } catch (e) { fail(ctx, (e as Error).message); }
+    finally { setScanning(false); }
+  }
+
+  async function run() {
+    if (!job) return fail(ctx, "Pick a track to clean.");
+    const id = rid();
+    ctx.setResults([{ id, title: "scanning + repairing glitches… (Mac)", status: "running", pct: 45 }]);
+    try {
+      const r = await api.deglitch({ job_id: job, threshold: parseFloat(threshold) || 14, repair });
+      const rep = r.report as { clicks_repaired: number; repaired_ms: number; bursts_flagged: number };
+      const src = trackLabel(tracks.find((t) => t.id === job) || ({} as LibItem), tracks);
+      ctx.setResults([{
+        id: rid(),
+        title: `${src} (de-glitched) · ${rep.clicks_repaired} click${rep.clicks_repaired === 1 ? "" : "s"} fixed` + (rep.bursts_flagged ? ` · ${rep.bursts_flagged} burst(s) flagged` : ""),
+        status: "done", pct: 100, url: r.audio_url,
+      }]);
+      ctx.onDone();
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        Detect and repair short digital <span className="text-[var(--color-accent2)]">glitches</span> (clicks, pops, zipper bursts) baked into a take, by LPC-residual detection + AR interpolation. Pure Mac DSP, no GPU. It protects real transients (drum hits, attacks); longer garbled bursts are flagged but not auto-repaired.
+      </p>
+      <Field label="Track">
+        <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); setScan(null); }}>
+          <option value="">— choose —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
+        </select>
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Sensitivity" hint="threshold x sigma; higher = more conservative (default 14)">
+          <input className={inp} type="number" step="1" min="6" max="28" value={threshold} onChange={(e) => { setThreshold(e.target.value); setScan(null); }} />
+        </Field>
+        <Field label="Repair">
+          <select className={inp} value={repair} onChange={(e) => setRepair(e.target.value as "ar" | "spline")}>
+            <option value="ar">AR interpolation (best)</option>
+            <option value="spline">Cubic spline (simpler)</option>
+          </select>
+        </Field>
+      </div>
+      <GhostButton onClick={preview}>{scanning ? "Scanning…" : "Scan (preview, no changes)"}</GhostButton>
+      {scan && (
+        <p className="text-xs text-[var(--color-muted)]">
+          Found <b className="text-[var(--color-ink)]">{scan.clicks_found}</b> repairable click{scan.clicks_found === 1 ? "" : "s"}
+          {scan.bursts_flagged ? <>, <b className="text-[var(--color-ink)]">{scan.bursts_flagged}</b> longer burst(s) flagged (not auto-repaired)</> : null} in {scan.duration_s}s.
+          {scan.clicks_found === 0 && scan.bursts_flagged === 0 ? " Track looks clean at this sensitivity." : ""}
+        </p>
+      )}
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Working…" : "Repair & save"}</PrimaryButton>
+    </div>
+  );
+}
+
 export function MixForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("mix");
   const [sources, setSources] = useState<{ label: string; url: string }[]>([]);
