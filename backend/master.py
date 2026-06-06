@@ -159,3 +159,37 @@ def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
 
     sf.write(out_path, y.T, sr, format="WAV", subtype=("PCM_24" if bit_depth == 24 else "PCM_16"))
     return out_path, (float(after) if after is not None else None)
+
+
+def _lufs(path):
+    """Integrated LUFS of an audio file (stereo-aware)."""
+    import soundfile as sf
+    import pyloudnorm as pyln
+    y, sr = sf.read(path, always_2d=True)
+    return float(pyln.Meter(sr).integrated_loudness(y))
+
+
+def reference_match(target_path, ref_path, out_path, match_amount=1.0, drive=0.7,
+                    ceiling_db=-1.0, bit_depth=16):
+    """Reference master that keeps dynamics: match the reference's TONE (shape.tonal_match,
+    no loudness/limiting), then push loudness TOWARD the reference's by `drive` (0..1) through
+    the transparent auto chain (glue + soft-saturation + true-peak limit) instead of Matchering's
+    brute RMS-match. drive=0 = tone only (most dynamic); drive=1 = the reference's full loudness
+    but via clip+limit (punchier than Matchering). Returns (out_path, achieved_lufs|None)."""
+    import os
+    import shutil
+    import tempfile
+    from . import shape
+    work = tempfile.mkdtemp()
+    toned = os.path.join(work, "toned.wav")
+    try:
+        shape.process_file(target_path, toned, {"match": {"amount": float(match_amount)}}, ref_path=ref_path)
+        if float(drive) <= 0 or not auto_available():
+            shutil.copy(toned, out_path)               # tone only, dynamics fully intact
+            return out_path, None
+        toned_l, ref_l = _lufs(toned), _lufs(ref_path)
+        target_lufs = toned_l + float(drive) * (ref_l - toned_l)   # partial loudness toward the reference
+        return master_auto(toned, out_path, target_lufs=target_lufs, tone="flat",
+                           warmth=0.12, ceiling_db=float(ceiling_db), bit_depth=int(bit_depth))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)

@@ -1771,8 +1771,9 @@ async def master_apply(job_id: str = Form(None),
                        bass_mono_hz: float = Form(0.0),     # auto: keep Side mono below this Hz (0 = off)
                        warmth: float = Form(0.0),           # auto: harmonic saturation amount 0..1
                        ref_name: str = Form(None),          # gold: which curated reference
-                       tone_only: bool = Form(False),       # reference: match TONE only, keep dynamics
-                       match_amount: float = Form(1.0)):    # reference tone-only: 0..1 match strength
+                       tone_only: bool = Form(False),       # reference: match TONE + keep dynamics
+                       match_amount: float = Form(1.0),     # reference tone-only: 0..1 tonal match strength
+                       drive: float = Form(0.0)):           # reference tone-only: 0..1 loudness push toward the ref
     """Master a target track. Three modes:
     • reference — match to a user-supplied reference master (Matchering).
     • gold — match to a curated built-in 'gold standard' reference (Matchering, no per-track ref).
@@ -1817,12 +1818,17 @@ async def master_apply(job_id: str = Form(None),
                                   await ref_file.read() if ref_file else None,
                                   ref_file.filename if ref_file else None, ref_job_id)
             if tone_only:
-                # Match the reference's TONE only (no RMS/loudness match, no limiting) so the
-                # source keeps its dynamics - Matchering matches the reference's loudness AND
-                # its squash, which drives slammed references too hard. See shape.tonal_match.
-                shape_mod.process_file(tgt, out, {"match": {"amount": float(match_amount)}}, ref_path=ref)
+                # Match the reference's TONE, then push loudness toward it by `drive` through the
+                # transparent glue+saturation+true-peak-limit chain (NOT Matchering's brute RMS-match,
+                # which slams a loud reference). drive=0 = tone only; drive up = louder but punchier.
+                _, achieved = master_mod.reference_match(tgt, ref, out, match_amount=float(match_amount),
+                                                         drive=float(drive), bit_depth=int(bit_depth))
+                note = "reference tone-match (dynamics preserved)" if float(drive) <= 0 else \
+                       f"reference tone + loudness drive {round(float(drive), 2)}" + \
+                       (f" -> {round(achieved, 1)} LUFS" if achieved is not None else "")
                 params = {"source": tgt_label, "mode": "reference-tone", "reference": ref_job_id or "upload",
-                          "match_amount": float(match_amount), "note": "reference tone-match (dynamics preserved)"}
+                          "match_amount": float(match_amount), "drive": float(drive),
+                          "lufs": achieved, "note": note}
             else:
                 if not master_mod.available():
                     raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")
