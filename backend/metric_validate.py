@@ -35,7 +35,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from . import analyze_py
+# Embedder is injected (embed_fn(path)->vector) so the harness is model-agnostic: CLAP via the
+# box (analyze_py.embed) OR MERT locally (embed_mert.embed). The harness only cares that the
+# embedding is meaningful + deterministic -- which is exactly what it tests.
 
 AUDIO_EXTS = (".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac")
 DEFAULT_EXPECTED_ORDER = ["artist", "same_genre", "other_genre", "noise"]
@@ -50,14 +52,13 @@ def list_audio(folder: str, limit: Optional[int] = None) -> List[str]:
     return out[:limit] if limit else out
 
 
-def _embed_many(host: str, paths: List[str], timeout: float = 600.0
-                ) -> Tuple[np.ndarray, List[str]]:
-    """Embed each file; return (matrix [n,d], paths_that_worked). Skips failures so one
-    bad file can't abort a long validation run."""
+def _embed_many(embed_fn, paths: List[str]) -> Tuple[np.ndarray, List[str]]:
+    """Embed each file via embed_fn(path)->vector; return (matrix [n,d], paths_that_worked).
+    Skips failures so one bad file can't abort a long validation run."""
     vecs, ok = [], []
     for p in paths:
         try:
-            vecs.append(np.asarray(analyze_py.embed(host, p, timeout=timeout), dtype=np.float64))
+            vecs.append(np.asarray(embed_fn(p), dtype=np.float64))
             ok.append(p)
         except Exception as e:
             print(f"[metric_validate] embed failed for {os.path.basename(p)}: {e}")
@@ -70,10 +71,9 @@ def _unit(v: np.ndarray) -> np.ndarray:
     return v / (np.linalg.norm(v) + 1e-9)
 
 
-def build_centroid(host: str, audio_paths: List[str], timeout: float = 600.0
-                   ) -> Dict[str, Any]:
-    """Mean (L2-normalized) CLAP embedding of an audio set = the artist's 'sound centroid'."""
-    mat, ok = _embed_many(host, audio_paths, timeout)
+def build_centroid(embed_fn, audio_paths: List[str]) -> Dict[str, Any]:
+    """Mean (L2-normalized) embedding of an audio set = the artist's 'sound centroid'."""
+    mat, ok = _embed_many(embed_fn, audio_paths)
     if mat.shape[0] == 0:
         raise RuntimeError("no embeddings produced for centroid")
     centroid = _unit(mat.mean(axis=0))
@@ -108,7 +108,8 @@ def _pair_auc(hi: np.ndarray, lo: np.ndarray) -> float:
 
 def run_validation(
     *,
-    analyze_host: str,
+    embed_fn,
+    metric_name: str,
     artist_dir: str,
     bucket_dirs: Dict[str, str],
     library_dir: str,
@@ -116,7 +117,6 @@ def run_validation(
     expected_order: Optional[List[str]] = None,
     ear_pairs: Optional[List[Dict[str, str]]] = None,
     per_bucket_limit: Optional[int] = None,
-    timeout: float = 600.0,
 ) -> Dict[str, Any]:
     """Full validity test of the CLAP-centroid metric.
 
@@ -145,7 +145,7 @@ def run_validation(
     if len(centroid_set) < 2 or len(holdout) < 2:   # tiny corpus fallback: still split something
         holdout, centroid_set = artist_paths[:1], artist_paths[1:]
 
-    cen = build_centroid(analyze_host, centroid_set, timeout)
+    cen = build_centroid(embed_fn, centroid_set)
     centroid = np.asarray(cen["centroid"], dtype=np.float64)
 
     # Score every bucket (artist holdout + the supplied reference buckets).
@@ -156,7 +156,7 @@ def run_validation(
     scores: Dict[str, List[float]] = {}
     files: Dict[str, List[str]] = {}
     for label, paths in buckets.items():
-        mat, ok = _embed_many(analyze_host, paths, timeout)
+        mat, ok = _embed_many(embed_fn, paths)
         s = _cos_to_centroid(mat, centroid)
         scores[label] = [float(x) for x in s]
         files[label] = [os.path.basename(p) for p in ok]
@@ -189,8 +189,8 @@ def run_validation(
     retest = []
     for p in holdout[:3]:
         try:
-            v1 = _unit(np.asarray(analyze_py.embed(analyze_host, p, timeout=timeout)))
-            v2 = _unit(np.asarray(analyze_py.embed(analyze_host, p, timeout=timeout)))
+            v1 = _unit(np.asarray(embed_fn(p)))
+            v2 = _unit(np.asarray(embed_fn(p)))
             retest.append({"file": os.path.basename(p),
                            "self_cosine": round(float(v1 @ v2), 6)})
         except Exception as e:
@@ -201,8 +201,8 @@ def run_validation(
     ear = {"pairs": [], "n": 0, "agree": 0, "agreement_rate": None}
     for pr in (ear_pairs or []):
         try:
-            sa = float(_unit(np.asarray(analyze_py.embed(analyze_host, pr["a"], timeout=timeout))) @ _unit(centroid))
-            sb = float(_unit(np.asarray(analyze_py.embed(analyze_host, pr["b"], timeout=timeout))) @ _unit(centroid))
+            sa = float(_unit(np.asarray(embed_fn(pr["a"]))) @ _unit(centroid))
+            sb = float(_unit(np.asarray(embed_fn(pr["b"]))) @ _unit(centroid))
             metric_winner = "a" if sa > sb else "b"
             agree = (metric_winner == pr.get("winner"))
             ear["pairs"].append({"a": os.path.basename(pr["a"]), "b": os.path.basename(pr["b"]),
@@ -228,9 +228,8 @@ def run_validation(
                        and (ear["agreement_rate"] is None or ear["agreement_rate"] >= 0.7))
 
     report = {
-        "metric": "clap_centroid_cosine",
+        "metric": metric_name,
         "created_at": time.time(),
-        "analyze_host": analyze_host,
         "artist_dir": artist_dir,
         "centroid": {"n": cen["n"], "files": cen["files"]},
         "holdout_files": [os.path.basename(p) for p in holdout],
@@ -252,7 +251,8 @@ def run_validation(
 
     out_dir = os.path.join(library_dir, "lora_train_history")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "metric_validation.json")
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in metric_name) or "metric"
+    out_path = os.path.join(out_dir, f"metric_validation_{safe}.json")
     try:
         with open(out_path, "w") as f:
             json.dump(report, f, indent=2)

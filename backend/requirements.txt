@@ -19,3 +19,4 @@ librosa>=0.10,<0.11   ; structural segmentation — align a symbolic guitar arra
 faster-whisper
 mutagen
 noisereduce
+transformers  # MERT music embedding (artist-fidelity metric); pulls a compatible huggingface-hub

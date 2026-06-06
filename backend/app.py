@@ -48,6 +48,7 @@ from . import lora_upload_py as lora_up
 from . import lora_dataset as lora_ds
 from . import lora_eval as lora_eval_mod
 from . import metric_validate as metric_val
+from . import embed_mert as embed_mert_mod
 from . import voicegen as voicegen_mod
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -3711,27 +3712,39 @@ def lora_evaluate_derive_targets(dataset: str = "crucible_metal",
         raise HTTPException(500, f"derive failed: {e}")
 
 
+def _metric_embedder(body: dict):
+    """Resolve the embedder from body['embedder'] -> (embed_fn, metric_name). 'mert' = local
+    MERT on the Mac (default, deterministic, no box); 'clap' = box CLAP via analyze /embed."""
+    which = (body.get("embedder") or "mert").lower()
+    if which == "clap":
+        if not ANALYZE_HOST:
+            raise HTTPException(400, "analyze_host not configured (box CLAP service)")
+        return (lambda p: analyze_py.embed(ANALYZE_HOST, p, timeout=600)), "clap_centroid_cosine"
+    if which == "mert":
+        mw = body.get("max_windows")
+        return (lambda p: embed_mert_mod.embed(p, max_windows=mw)), "mert_centroid_cosine"
+    raise HTTPException(400, f"unknown embedder '{which}' (use 'mert' or 'clap')")
+
+
 @app.post("/api/metric/validate")
 def metric_validate_run(body: dict):
-    """Validate the CLAP-centroid fitness metric against ground truth BEFORE trusting it
-    (user does not trust CLAP tag-presence; METAL_LORA_PLAN §13c). GPU on the box -- USER
-    initiated, serialize vs the engine [[no-concurrent-clap-engine]].
+    """Validate a fitness metric against ground truth BEFORE trusting it (CLAP-centroid failed,
+    METAL_LORA_PLAN §13d; MERT is the music-trained retry). embedder='mert' (default, Mac-local)
+    or 'clap' (box). MERT = no box GPU; CLAP = serialize vs the engine.
 
-    Body: {artist_dir, bucket_dirs:{label:dir}, holdout_frac?, expected_order?,
-           ear_pairs?:[{a,b,winner}], per_bucket_limit?}. artist_dir = the artist's own
-           tracks (split into a centroid set + a held-out 'artist' scoring bucket so
-           similarity isn't trivially 1.0). bucket_dirs e.g.
-           {"same_genre": dir, "other_genre": dir, "noise": dir}.
+    Body: {embedder?, artist_dir, bucket_dirs:{label:dir}, holdout_frac?, expected_order?,
+           ear_pairs?:[{a,b,winner}], per_bucket_limit?, max_windows?}. artist_dir = the
+           artist's own tracks (split into a centroid set + a held-out 'artist' bucket so
+           similarity isn't trivially 1.0).
     Returns the validity report (ordering / test-retest / AUC / ear-agreement / verdict),
-    also saved to library/lora_train_history/metric_validation.json."""
-    if not ANALYZE_HOST:
-        raise HTTPException(400, "analyze_host not configured (box CLAP service)")
+    saved to library/lora_train_history/metric_validation_<metric>.json."""
     artist_dir = (body.get("artist_dir") or "").strip()
     if not artist_dir:
         raise HTTPException(400, "artist_dir required")
+    embed_fn, metric_name = _metric_embedder(body)
     try:
         return metric_val.run_validation(
-            analyze_host=ANALYZE_HOST, artist_dir=artist_dir,
+            embed_fn=embed_fn, metric_name=metric_name, artist_dir=artist_dir,
             bucket_dirs=body.get("bucket_dirs") or {}, library_dir=LIBRARY,
             holdout_frac=float(body.get("holdout_frac", 0.4)),
             expected_order=body.get("expected_order"),
@@ -3743,23 +3756,21 @@ def metric_validate_run(body: dict):
 
 @app.post("/api/metric/centroid")
 def metric_centroid_build(body: dict):
-    """Build + save an artist 'sound centroid' (mean CLAP embedding) from a folder of the
-    artist's tracks, for later centroid-distance scoring. GPU on the box."""
-    if not ANALYZE_HOST:
-        raise HTTPException(400, "analyze_host not configured")
+    """Build + save an artist 'sound centroid' (mean embedding) from a folder of the artist's
+    tracks, for later centroid-distance scoring. embedder='mert' (default) or 'clap'."""
     artist_dir = (body.get("artist_dir") or "").strip()
     name = (body.get("name") or os.path.basename(artist_dir.rstrip("/")) or "centroid").strip()
     if not artist_dir:
         raise HTTPException(400, "artist_dir required")
+    embed_fn, metric_name = _metric_embedder(body)
     try:
-        cen = metric_val.build_centroid(ANALYZE_HOST, metric_val.list_audio(artist_dir),
-                                        timeout=float(body.get("timeout", 600)))
+        cen = metric_val.build_centroid(embed_fn, metric_val.list_audio(artist_dir))
         out_dir = os.path.join(LIBRARY, "lora_train_history")
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, f"centroid_{name}.json")
         with open(out_path, "w") as f:
-            json.dump({"name": name, "artist_dir": artist_dir, **cen}, f)
-        return {"name": name, "n": cen["n"], "dim": cen["dim"], "saved_to": out_path}
+            json.dump({"name": name, "metric": metric_name, "artist_dir": artist_dir, **cen}, f)
+        return {"name": name, "metric": metric_name, "n": cen["n"], "dim": cen["dim"], "saved_to": out_path}
     except Exception as e:
         raise HTTPException(500, f"centroid build failed: {e}")
 
