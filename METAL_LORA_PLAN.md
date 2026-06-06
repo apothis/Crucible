@@ -577,6 +577,98 @@ Plan 3 spec to be authored after Plan 2 lands — its baseline is whichever samp
 
 ---
 
+## 13b. Style-fidelity research: carry more of the artist (2026-06-06)
+
+Goal: make a trained LoKr carry MORE of the artist's sonic character (timbre, production,
+vocal style) into generations. Driven by the user's recall of three levers: "use more parts
+of the model", "use something other than AdamW", "and other things". Four parallel research
+agents (3 web + 1 doc-harvest) converged; full agent transcripts not stored, conclusions below.
+Constraint accepted: dataset is MP3 only (no WAV available).
+
+### 13b.1 Root cause of weak / "perturbation-like" capture (high confidence)
+Three compounding causes, each independently capable of thinning style:
+1. **lokr_factor = -1 is the SMALLEST, lowest-capacity LoKr.** This is the key new finding.
+   LyCORIS docs: factor=-1 = full Kronecker = the deliberately-tiny variant ("Small LoKr").
+   For strong style you want the "Large LoKr": a LOW positive factor (4-8) + larger dim.
+   We have been training at factor=-1 the whole time. This is a FREE fix (API already passes it).
+2. **alpha/dim = 128/64 = scale 2.0 stacked on a hot LR = double-driving.** Keep alpha = dim
+   (scale 1.0) and let one knob drive.
+3. **DoRA + lr 0.03** (engine default) blows up dora_scale (already known, [[engine-lokr-defaults]]).
+
+### 13b.2 Lever 1 - "use more parts of the model" = TARGET MODULES (corrects prior note)
+PRIOR internal note (HANDOFF / §7a Patch 3 rationale) said tighten to "just q/k/v/o, skip MLP".
+**That is WRONG for a STYLE LoRA.** LyCORIS Guidelines + DoRA/style-LoRA consensus:
+- INCLUDE: self-attn q/k/v/o AND **feed-forward / MLP (fc1/fc2 or gate/up/down)**. The FFN is
+  where the model stores "what this timbre sounds like" - it is the single highest-value addition
+  for richer timbre transfer. Optionally cross-attn k/v (binds style to prompt/tags).
+- EXCLUDE: time/timestep-embed (learns nothing - matches our measured 29% all-zero w2 finding),
+  and AdaLN/modulation (shared adaLN-single -> high-risk global garble; add only as a last,
+  risk-accepted expansion).
+- LyCORIS preset that gives exactly attn+FFN = **"attn-mlp"**. So Patch 3 should force preset
+  "attn-mlp", NOT attn-only. Expansion order for more reach: attn -> +FFN -> +cross-attn-kv ->
+  (last, risky) +adaLN.
+
+### 13b.3 Lever 2 - "something other than AdamW" = OPTIMIZER + LR
+- Our v1 HTTP path = AdamW only; the engine's training_v2 exposes prodigy / adafactor / adamw8bit.
+- **Prodigy** (auto-LR, de-facto SDXL/diffusion-LoRA default) directly targets the "messy/
+  perturbation" symptom. Community recipe: lr=1.0 (it is a multiplier; Prodigy estimates the real
+  LR), d_coef=1 (->2 if d won't climb on our low steps/epoch), weight_decay=0.01,
+  betas=(0.9,0.99), use_bias_correction=True, safeguard_warmup=True, scheduler=CONSTANT, warmup 0.
+  Control overfit via epochs, not LR. ~2x optimizer memory (trivial for a LoKr adapter).
+- Cheap diagnostic FIRST (no patch): one run at AdamW lr ~1e-4 (vs our 0.01). Flow-matching
+  (SD3/Flux) trains at much lower absolute LR than DDPM; if "messy" largely resolves, the LR was
+  the bug. CAVEAT: LoKr's Kronecker factors are tiny so its effective LR differs from full LoRA;
+  the engine ships LoKr lr=0.03. So treat lr as a SWEEP (1e-4 / 1e-3 / 1e-2), not a settled fact.
+- LR schedule: with Prodigy = constant. With manual AdamW = cosine (single cycle) + ~3-5% warmup.
+
+### 13b.4 Lever 3 - "other things"
+- **Continuous logit-normal timestep sampling + CFG dropout** (flow-matching match). Patch 7
+  (authored, §12) toggles continuous (mu approx -0.4, sigma 1.0, matching ACE-Step sample_t_r).
+  Pair with ~10-15% caption/CFG dropout so style survives classifier-free guidance, not only the
+  exact caption. Side-Step recommends both for all variants. HIGH leverage, low effort (toggle built).
+- **Captions for STYLE** (high leverage, data-side): DROP the artist/band name and any trigger
+  token (ACE-Step's trigger tag has "limited effect" per the official tutorial; names cause
+  memorization). Describe only what VARIES across the set (structure, instrumentation present,
+  tempo/feel, generic vocal type, lyric theme) and DELIBERATELY OMIT the constant production/timbre
+  fingerprint you want the adapter to absorb. Keep the LM prose (the high-value audio-grounded part);
+  replace the noisy Last.fm crowd-tag prefix with a small CONSISTENT curated tag set. <=256 tokens.
+- **DoRA done right** (second pass, after LoKr capacity is correct): weight_decompose=True,
+  lr ~1e-3, and if a param-group LR is exposed set the magnitude/dora_scale group to ~0.1x base.
+  DoRA often matches LoRA at half the rank.
+- **MP3 (accepted constraint): second-order vs the above.** Use highest-bitrate source (>=256,
+  ideally 320), keep bitrate CONSISTENT across the set, never transcode/re-encode, drop silent
+  tails (codec noise floor). Only if you HEAR HF fizz/birdies: a gentle ~18-19 kHz low-pass on
+  training audio caps the model's HF expectation. Do NOT MP3->WAV "restore" for training (adds no
+  real detail). The engine band-limits through its own latent anyway, so high-bitrate MP3 is OK.
+- **Side-Step Fisher-information adaptive per-module ranks** (bigger lift): assigns rank to the
+  layers that most carry THIS artist - a direct "absorb more character" lever; needs adopting the
+  Side-Step trainer. Parked as a later experiment.
+- **OFT/BOFT** report higher subject fidelity than LoRA (orthogonal finetuning preserves
+  pretrained structure); only available via Side-Step. Aspirational upgrade.
+
+### 13b.5 Recommended experiment plan (one variable discipline; train is USER-fired GPU)
+Baseline target = crucible_avantasia (50 tracks, already preprocessed). Must measure with CLAP
+fitness (Plan 1, §11) not val_loss - val_loss is misleading at our scale (§13a.6). Serialize
+CLAP(:5075) and engine(:8001) [[no-concurrent-clap-engine]]; fresh engine boot before training
+[[engine-fresh-boot-for-lora]].
+
+Tier A - FREE (API only, no patch), do first, biggest leverage-per-effort:
+  - lokr_factor 8 (was -1), lokr_linear_dim 64-128, lokr_linear_alpha = dim (scale 1.0),
+    weight_decompose False, lr SWEEP {1e-2, 1e-3, 1e-4}, val_split 0.1, save_every 5, ~80-120 ep.
+Tier B - PATCH (confirm Patch 3 + Patch 7 applied on the box):
+  - Patch 3 preset = "attn-mlp" (add FFN, drop time_embed/adaLN).
+  - Patch 7 timestep_sampling_mode = "continuous" + CFG/caption dropout ~10-15%.
+Tier C - OPTIMIZER:
+  - Prodigy (lr=1.0, constant) via a v1 trainer patch or by routing through training_v2.
+Tier D - DATA:
+  - Caption rewrite (drop band name, omit production fingerprint, curated consistent tags + LM prose).
+Tier E - DoRA-done-right pass (lr 1e-3 + 0.1x magnitude group) once A-D settle.
+
+Recommendation: bundle Tier A + B into ONE new baseline (high-confidence, mostly free), A/B it by
+ear + CLAP vs the current crucible_avantasia adapter, THEN single-variable Prodigy (C) and captions
+(D). Confirm Patch 3/7 are live on the box before relying on B; without them the engine still forces
+preset "full" + discrete-8 sampling.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
