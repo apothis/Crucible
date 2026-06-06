@@ -1520,6 +1520,112 @@ export function DeglitchForm({ busy, ...ctx }: FormProps) {
   );
 }
 
+export function ShapeForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("shape");
+  const tracks = useLibrary((it) => ["generate", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));
+  const [job, setJob] = d.use("job", "");
+  // De-harsh
+  const [dhOn, setDhOn] = d.use("dhOn", true);
+  const [smooth, setSmooth] = d.use("smooth", "0.5");
+  const [freq, setFreq] = d.use("freq", "6000");
+  const [reson, setReson] = d.use("reson", "0.2");
+  const [air, setAir] = d.use("air", "0");
+  // Dynamics
+  const [dynOn, setDynOn] = d.use("dynOn", false);
+  const [dynAmt, setDynAmt] = d.use("dynAmt", "0.4");
+  // Transient
+  const [trOn, setTrOn] = d.use("trOn", false);
+  const [attack, setAttack] = d.use("attack", "0.3");
+  const [sustain, setSustain] = d.use("sustain", "0");
+  // Tonal match
+  const [mtOn, setMtOn] = d.use("mtOn", false);
+  const [refJob, setRefJob] = d.use("refJob", "");
+  const [matchAmt, setMatchAmt] = d.use("matchAmt", "0.5");
+
+  async function run() {
+    if (!job) return fail(ctx, "Pick a track to shape.");
+    const body: Record<string, unknown> = { job_id: job };
+    if (dhOn) body.deharsh = { smooth: parseFloat(smooth) || 0, freq: parseFloat(freq) || 6000, resonance: parseFloat(reson) || 0, air_db: parseFloat(air) || 0 };
+    if (dynOn) body.dynamics = { amount: parseFloat(dynAmt) || 0 };
+    if (trOn) body.transient = { attack: parseFloat(attack) || 0, sustain: parseFloat(sustain) || 0 };
+    if (mtOn) { if (!refJob) return fail(ctx, "Tonal match needs a reference track."); body.match = { amount: parseFloat(matchAmt) || 0 }; body.ref_job_id = refJob; }
+    if (!dhOn && !dynOn && !trOn && !mtOn) return fail(ctx, "Enable at least one module.");
+    const id = rid();
+    ctx.setResults([{ id, title: "shaping… (Mac DSP)", status: "running", pct: 45 }]);
+    try {
+      const r = await api.shape(body);
+      const rep = r.report as { applied: string[] };
+      const src = trackLabel(tracks.find((tk) => tk.id === job) || ({} as LibItem), tracks);
+      ctx.setResults([{ id: rid(), title: `${src} (shaped: ${rep.applied.join(" + ")})`, status: "done", pct: 100, url: r.audio_url }]);
+      ctx.onDone();
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  const sec = "rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2";
+  const toggle = (on: boolean, set: (v: boolean) => void, label: string) => (
+    <label className="flex items-center gap-2 text-xs font-medium text-[var(--color-ink)]">
+      <input type="checkbox" checked={on} onChange={(e) => set(e.target.checked)} /> {label}
+    </label>
+  );
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        Dynamic tone &amp; dynamics <span className="text-[var(--color-accent2)]">shaping</span> — de-harsh / de-fizz, multiband dynamics, transient shaping, and a gentle tonal feel-match to a reference. Unlike Master (static EQ + loudness), this acts dynamically; chain it <em>before and/or after</em> a master. Pure Mac DSP, no GPU. Modules are opt-in.
+      </p>
+      <Field label="Track">
+        <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
+          <option value="">— choose —</option>
+          {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
+        </select>
+      </Field>
+
+      <div className={sec}>
+        {toggle(dhOn, setDhOn, "De-harsh / smooth (fizz + harshness)")}
+        {dhOn && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Smooth (HF fizz)" hint="0–1; higher = more steady-fizz removal"><input className={inp} type="number" step="0.05" min="0" max="1" value={smooth} onChange={(e) => setSmooth(e.target.value)} /></Field>
+            <Field label="Focus (Hz)" hint="HF taming starts here (~6k fizz, ~3k harsh)"><input className={inp} type="number" step="500" value={freq} onChange={(e) => setFreq(e.target.value)} /></Field>
+            <Field label="Resonance" hint="0–1; duck harsh peaks that flare up"><input className={inp} type="number" step="0.05" min="0" max="1" value={reson} onChange={(e) => setReson(e.target.value)} /></Field>
+            <Field label="Air (dB)" hint="restore the very top end · 0 = off"><input className={inp} type="number" step="0.5" value={air} onChange={(e) => setAir(e.target.value)} /></Field>
+          </div>
+        )}
+      </div>
+
+      <div className={sec}>
+        {toggle(dynOn, setDynOn, "Dynamics (multiband glue/control)")}
+        {dynOn && <Field label="Amount" hint="0–1; per-band compression strength"><input className={inp} type="number" step="0.05" min="0" max="1" value={dynAmt} onChange={(e) => setDynAmt(e.target.value)} /></Field>}
+      </div>
+
+      <div className={sec}>
+        {toggle(trOn, setTrOn, "Transient shaper (punch)")}
+        {trOn && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Attack" hint="-1…1; + = punchier, - = softer"><input className={inp} type="number" step="0.1" min="-1" max="1" value={attack} onChange={(e) => setAttack(e.target.value)} /></Field>
+            <Field label="Sustain" hint="-1…1; shape the tail"><input className={inp} type="number" step="0.1" min="-1" max="1" value={sustain} onChange={(e) => setSustain(e.target.value)} /></Field>
+          </div>
+        )}
+      </div>
+
+      <div className={sec}>
+        {toggle(mtOn, setMtOn, "Tonal feel-match (to a reference)")}
+        {mtOn && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Reference track">
+              <select className={inp} value={refJob} onChange={(e) => setRefJob(e.target.value)}>
+                <option value="">— choose —</option>
+                {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
+              </select>
+            </Field>
+            <Field label="Amount" hint="0–1; partial tonal match (gentler than Master)"><input className={inp} type="number" step="0.05" min="0" max="1" value={matchAmt} onChange={(e) => setMatchAmt(e.target.value)} /></Field>
+          </div>
+        )}
+      </div>
+
+      <PrimaryButton onClick={run} disabled={busy}>{busy ? "Shaping…" : "Shape & save"}</PrimaryButton>
+    </div>
+  );
+}
+
 export function MixForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("mix");
   const [sources, setSources] = useState<{ label: string; url: string }[]>([]);

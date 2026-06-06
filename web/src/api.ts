@@ -94,6 +94,7 @@ export const api = {
   pluginsUnload: () => jpost("/api/plugins/unload", {}),
   pluginsIdle: (seconds: number) => jpost("/api/plugins/idle", { seconds }),
   deglitch: (p: unknown) => jpost("/api/deglitch", p),
+  shape: (p: unknown) => jpost("/api/shape", p),
   melodyMidi: async (p: unknown) => {
     const r = await fetch("/api/melody/midi", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p),

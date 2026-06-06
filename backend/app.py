@@ -42,6 +42,7 @@ from . import melody as melody_mod
 from . import solo as solo_mod
 from . import kontakt_daemon as kontakt_daemon_mod
 from . import deglitch as deglitch_mod
+from . import shape as shape_mod
 from . import acestep_train as ace_train
 from . import lora_upload_py as lora_up
 from . import lora_dataset as lora_ds
@@ -2360,6 +2361,42 @@ def solo_mix(body: dict):
                    "region": region_str, "genre": body.get("genre", ""),
                    "key": body.get("key"), "bpm": body.get("bpm")}, mix_path)
     return {"audio_url": f"/api/audio/{mix_jid}", "job_id": mix_jid, "region": region_str}
+
+
+@app.post("/api/shape")
+def shape_track(body: dict):
+    """Tone + dynamics shaping (de-harsh / multiband dynamics / transient / tonal feel-match)
+    over a library track. Each module runs only if its key is present in the body (a dict of
+    params, may be empty for defaults). `match` uses `ref_job_id` as the reference. Pure Mac
+    DSP, no GPU. Saves a shaped version; chain it before or after Master."""
+    pid = body.get("job_id")
+    if not pid:
+        raise HTTPException(400, "job_id required")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "track not found")
+    config = {}
+    for mod in ("deharsh", "dynamics", "transient", "match"):
+        if mod in body and body[mod] is not None:
+            config[mod] = body[mod] or {}
+    if not config:
+        raise HTTPException(400, "enable at least one shaping module")
+    ref_path = None
+    if "match" in config:
+        ref_path = _lib_source_path(body.get("ref_job_id") or "") if body.get("ref_job_id") else None
+        if not ref_path:
+            raise HTTPException(400, "tonal feel-match needs a reference track (ref_job_id)")
+    out_jid = uuid.uuid4().hex
+    out_path = os.path.join(LIBRARY, f"{out_jid}.wav")
+    try:
+        report = shape_mod.process_file(src, out_path, config, ref_path=ref_path)
+    except Exception as e:
+        raise HTTPException(500, f"shape failed: {e}")
+    orig_title = _solo_orig_title(pid)
+    save_done_row(out_jid, "master",
+                  {"title": f"{orig_title} (shaped)", "source": orig_title,
+                   "shape": report.get("applied", [])}, out_path)
+    return {"audio_url": f"/api/audio/{out_jid}", "job_id": out_jid, "report": report}
 
 
 @app.post("/api/deglitch")
