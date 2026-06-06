@@ -703,6 +703,31 @@ Better metric candidates than zero-shot tags (validate the same way): CLAP centr
 artist corpus (needs an analyze_server patch to expose the embedding) or FAD to the artist set. Until
 a metric passes (1)-(3), it is an advisory pre-filter (catch obvious garble), never the judge.
 
+## 13d. Metric validation RESULT - CLAP-centroid fails (measured 2026-06-06)
+
+Ran the §13c harness on Avantasia (centroid 25 tracks, holdout 25) vs Battle Beast (same-genre),
+Metallica (other-genre), generated noise. Report: library/lora_train_history/metric_validation.json.
+
+Means (cosine to artist centroid): artist 0.835 / same-genre 0.824 / other-genre 0.787 / noise 0.079.
+- (1) ORDERING: passes (right order) BUT artist-vs-same-genre is a TIE: AUC 0.538, Cohen d 0.11
+  = chance. CANNOT distinguish Avantasia from other power metal. vs noise AUC 1.0 (d 8.5), vs
+  other-genre AUC 0.65. => CLAP-centroid is a genre/garble guard, NOT an artist-fidelity meter.
+- (2) TEST-RETEST: FAILS. Same file embedded twice -> self-cosine 0.88 / 0.58 / 0.84 (should ~1.0).
+  Cause: laion_clap rand-truncates a ~10s window per call (enable_fusion=False) -> non-deterministic
+  embedding. Every CLAP number we have ever computed sits on this unstable base.
+- trustworthy_as_prefilter = False.
+
+CONCLUSIONS:
+- User's distrust of CLAP is vindicated with data. Do not use CLAP (tags or centroid) as an
+  artist-fidelity judge. At most it flags "stopped being metal / garbled" (the AUC-1.0-vs-noise job).
+- The harness itself WORKS and is model-agnostic - it caught both failures. Reuse it to vet any
+  future metric: pass when ordering ok AND retest ~1.0 AND AUC(artist>same-genre) is high.
+- Two fixes to consider: (a) make /embed deterministic (full-track windowed averaging or fusion) -
+  needed for ANY CLAP use; (b) swap CLAP for a MUSIC embedding (MERT / MusicFM) which should have
+  the artist/timbre resolution CLAP lacks, then re-run this harness. (a) is cheap; (b) is the real
+  path to a believable automated metric.
+- Until a metric passes the bar, judge LoRA runs by blind A/B EAR [[wait-for-feedback]].
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
