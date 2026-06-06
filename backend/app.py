@@ -2364,11 +2364,12 @@ def solo_mix(body: dict):
 
 
 @app.post("/api/shape")
-def shape_track(body: dict):
+async def shape_track(params: str = Form(...), ref_file: UploadFile = File(None)):
     """Tone + dynamics shaping (de-harsh / multiband dynamics / transient / tonal feel-match)
-    over a library track. Each module runs only if its key is present in the body (a dict of
-    params, may be empty for defaults). `match` uses `ref_job_id` as the reference. Pure Mac
-    DSP, no GPU. Saves a shaped version; chain it before or after Master."""
+    over a library track. Multipart: `params` (JSON) + optional `ref_file` for the tonal
+    match reference (else `ref_job_id` in params = a library track). Each module runs only if
+    its key is present in params. Pure Mac DSP; chain before or after Master."""
+    body = json.loads(params)
     pid = body.get("job_id")
     if not pid:
         raise HTTPException(400, "job_id required")
@@ -2381,17 +2382,24 @@ def shape_track(body: dict):
             config[mod] = body[mod] or {}
     if not config:
         raise HTTPException(400, "enable at least one shaping module")
+    work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
     ref_path = None
     if "match" in config:
-        ref_path = _lib_source_path(body.get("ref_job_id") or "") if body.get("ref_job_id") else None
+        if ref_file is not None:
+            os.makedirs(work, exist_ok=True)
+            ref_path, _ = _stash_input(work, "ref", await ref_file.read(), ref_file.filename)
+        elif body.get("ref_job_id"):
+            ref_path = _lib_source_path(body["ref_job_id"])
         if not ref_path:
-            raise HTTPException(400, "tonal feel-match needs a reference track (ref_job_id)")
+            raise HTTPException(400, "tonal feel-match needs a reference track or uploaded file")
     out_jid = uuid.uuid4().hex
     out_path = os.path.join(LIBRARY, f"{out_jid}.wav")
     try:
         report = shape_mod.process_file(src, out_path, config, ref_path=ref_path)
     except Exception as e:
         raise HTTPException(500, f"shape failed: {e}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     orig_title = _solo_orig_title(pid)
     save_done_row(out_jid, "master",
                   {"title": f"{orig_title} (shaped)", "source": orig_title,

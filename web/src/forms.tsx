@@ -1539,7 +1539,9 @@ export function ShapeForm({ busy, ...ctx }: FormProps) {
   const [sustain, setSustain] = d.use("sustain", "0");
   // Tonal match
   const [mtOn, setMtOn] = d.use("mtOn", false);
+  const [refSrc, setRefSrc] = d.use<"library" | "upload">("refSrc", "library");
   const [refJob, setRefJob] = d.use("refJob", "");
+  const [refFile, setRefFile] = useState<File | null>(null);
   const [matchAmt, setMatchAmt] = d.use("matchAmt", "0.5");
 
   async function run() {
@@ -1548,12 +1550,19 @@ export function ShapeForm({ busy, ...ctx }: FormProps) {
     if (dhOn) body.deharsh = { smooth: parseFloat(smooth) || 0, freq: parseFloat(freq) || 6000, resonance: parseFloat(reson) || 0, air_db: parseFloat(air) || 0 };
     if (dynOn) body.dynamics = { amount: parseFloat(dynAmt) || 0 };
     if (trOn) body.transient = { attack: parseFloat(attack) || 0, sustain: parseFloat(sustain) || 0 };
-    if (mtOn) { if (!refJob) return fail(ctx, "Tonal match needs a reference track."); body.match = { amount: parseFloat(matchAmt) || 0 }; body.ref_job_id = refJob; }
+    if (mtOn) {
+      if (refSrc === "upload" ? !refFile : !refJob) return fail(ctx, "Tonal match needs a reference track or uploaded file.");
+      body.match = { amount: parseFloat(matchAmt) || 0 };
+      if (refSrc === "library") body.ref_job_id = refJob;
+    }
     if (!dhOn && !dynOn && !trOn && !mtOn) return fail(ctx, "Enable at least one module.");
     const id = rid();
     ctx.setResults([{ id, title: "shaping… (Mac DSP)", status: "running", pct: 45 }]);
     try {
-      const r = await api.shape(body);
+      const fd = new FormData();
+      fd.append("params", JSON.stringify(body));
+      if (mtOn && refSrc === "upload" && refFile) fd.append("ref_file", refFile);
+      const r = await api.shape(fd);
       const rep = r.report as { applied: string[] };
       const src = trackLabel(tracks.find((tk) => tk.id === job) || ({} as LibItem), tracks);
       ctx.setResults([{ id: rid(), title: `${src} (shaped: ${rep.applied.join(" + ")})`, status: "done", pct: 100, url: r.audio_url }]);
@@ -1609,14 +1618,28 @@ export function ShapeForm({ busy, ...ctx }: FormProps) {
       <div className={sec}>
         {toggle(mtOn, setMtOn, "Tonal feel-match (to a reference)")}
         {mtOn && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Reference track">
-              <select className={inp} value={refJob} onChange={(e) => setRefJob(e.target.value)}>
-                <option value="">— choose —</option>
-                {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
-              </select>
-            </Field>
-            <Field label="Amount" hint="0–1; partial tonal match (gentler than Master)"><input className={inp} type="number" step="0.05" min="0" max="1" value={matchAmt} onChange={(e) => setMatchAmt(e.target.value)} /></Field>
+          <div className="space-y-2">
+            <div className="flex gap-1.5 text-xs">
+              {([["library", "Library track"], ["upload", "Upload file"]] as const).map(([v, l]) => (
+                <button key={v} onClick={() => setRefSrc(v)}
+                  className={`flex-1 rounded-lg border py-1.5 ${refSrc === v ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{l}</button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {refSrc === "library" ? (
+                <Field label="Reference track">
+                  <select className={inp} value={refJob} onChange={(e) => setRefJob(e.target.value)}>
+                    <option value="">— choose —</option>
+                    {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
+                  </select>
+                </Field>
+              ) : (
+                <Field label="Reference file" hint="any track to match the tone of">
+                  <input className={inp} type="file" accept="audio/*" onChange={(e) => setRefFile(e.target.files?.[0] ?? null)} />
+                </Field>
+              )}
+              <Field label="Amount" hint="0–1; partial tonal match (gentler than Master)"><input className={inp} type="number" step="0.05" min="0" max="1" value={matchAmt} onChange={(e) => setMatchAmt(e.target.value)} /></Field>
+            </div>
           </div>
         )}
       </div>

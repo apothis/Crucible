@@ -189,8 +189,12 @@ def process_file(in_path, out_path, config, ref_path=None):
         out_subtype = "FLOAT"
     ref = None
     if ref_path:
-        r, rsr = sf.read(ref_path, dtype="float32", always_2d=True)
-        ref = r.mean(axis=1)
+        try:
+            r, rsr = sf.read(ref_path, dtype="float32", always_2d=True)
+            ref = r.mean(axis=1)
+        except Exception:                               # uploaded MP3/M4A/etc. -> robust decode
+            import librosa
+            ref, rsr = librosa.load(ref_path, sr=None, mono=True)
         if rsr != sr:
             import librosa
             ref = librosa.resample(ref, orig_sr=rsr, target_sr=sr)
