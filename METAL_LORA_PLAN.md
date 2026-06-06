@@ -622,10 +622,16 @@ PRIOR internal note (HANDOFF / §7a Patch 3 rationale) said tighten to "just q/k
 - LR schedule: with Prodigy = constant. With manual AdamW = cosine (single cycle) + ~3-5% warmup.
 
 ### 13b.4 Lever 3 - "other things"
-- **Continuous logit-normal timestep sampling + CFG dropout** (flow-matching match). Patch 7
-  (authored, §12) toggles continuous (mu approx -0.4, sigma 1.0, matching ACE-Step sample_t_r).
-  Pair with ~10-15% caption/CFG dropout so style survives classifier-free guidance, not only the
-  exact caption. Side-Step recommends both for all variants. HIGH leverage, low effort (toggle built).
+- **Continuous logit-normal timestep sampling - ALREADY TRIED, inconclusive (do not re-list as a
+  fresh lever).** Patch 7 shipped (commit 1ea6465) and we ran a CLAP A/B on Nightwish ~2026-05-30
+  (`library/lora_train_history/crucible_nightwish_continuous_vs_discrete.json`). At the usable
+  strength 0.3 the two were ~tied (discrete BEST net 1.9 vs continuous FINAL net 2.1; continuous
+  BEST 1.6); at 0.5 both garbled to pop/country. CONFOUNDED: the continuous run was 8 tracks vs the
+  discrete 6, so not a clean single-variable test. CLAP signal was weak (barely tagged the
+  symphonic/operatic/female character at all). Net: no clear win -> default stayed discrete and ALL
+  later real LoRAs (battlebeast, beastinblack, avantasia) trained discrete. By-ear verdict not
+  recorded - ask the user. Only worth re-touching as a CLEAN single-variable re-test, ideally paired
+  with the genuinely-untried **CFG/caption dropout ~10-15%** (v2 cfg_ratio) which was NOT in that A/B.
 - **Captions for STYLE** (high leverage, data-side): DROP the artist/band name and any trigger
   token (ACE-Step's trigger tag has "limited effect" per the official tutorial; names cause
   memorization). Describe only what VARIES across the set (structure, instrumentation present,
@@ -655,19 +661,23 @@ CLAP(:5075) and engine(:8001) [[no-concurrent-clap-engine]]; fresh engine boot b
 Tier A - FREE (API only, no patch), do first, biggest leverage-per-effort:
   - lokr_factor 8 (was -1), lokr_linear_dim 64-128, lokr_linear_alpha = dim (scale 1.0),
     weight_decompose False, lr SWEEP {1e-2, 1e-3, 1e-4}, val_split 0.1, save_every 5, ~80-120 ep.
-Tier B - PATCH (confirm Patch 3 + Patch 7 applied on the box):
-  - Patch 3 preset = "attn-mlp" (add FFN, drop time_embed/adaLN).
-  - Patch 7 timestep_sampling_mode = "continuous" + CFG/caption dropout ~10-15%.
-Tier C - OPTIMIZER:
+Tier B - PATCH/CLIENT (genuinely untried; Patch 3 = the high-value one):
+  - Patch 3 (lokr_utils.py honors a preset) IS applied, but the train_lokr client never SENDS a
+    preset, so targeting is still effectively default/full. Add a preset/target param to the client
+    + Mac route and send "attn-mlp" (add FFN, drop time_embed/adaLN). This is the fresh lever.
+  - Continuous timestep already tested (above) - re-test only as a clean single-variable run paired
+    with CFG/caption dropout ~10-15% (the untried part), not as a default change.
+Tier C - OPTIMIZER (untried):
   - Prodigy (lr=1.0, constant) via a v1 trainer patch or by routing through training_v2.
 Tier D - DATA:
   - Caption rewrite (drop band name, omit production fingerprint, curated consistent tags + LM prose).
 Tier E - DoRA-done-right pass (lr 1e-3 + 0.1x magnitude group) once A-D settle.
 
-Recommendation: bundle Tier A + B into ONE new baseline (high-confidence, mostly free), A/B it by
-ear + CLAP vs the current crucible_avantasia adapter, THEN single-variable Prodigy (C) and captions
-(D). Confirm Patch 3/7 are live on the box before relying on B; without them the engine still forces
-preset "full" + discrete-8 sampling.
+Recommendation: bundle Tier A (free: factor 8 + alpha=dim) + the Tier B attn-mlp send into ONE new
+baseline, A/B it by ear + CLAP vs the current crucible_avantasia adapter (factor -1, dim64/alpha128,
+discrete, lr0.01, 150ep), THEN single-variable Prodigy (C) and captions (D). Continuous timestep is
+NOT in this list - already tested, inconclusive. The capacity levers (factor + attn-mlp targets) are
+the real untapped ones and were never changed across any run to date.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
