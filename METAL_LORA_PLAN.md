@@ -679,6 +679,30 @@ discrete, lr0.01, 150ep), THEN single-variable Prodigy (C) and captions (D). Con
 NOT in this list - already tested, inconclusive. The capacity levers (factor + attn-mlp targets) are
 the real untapped ones and were never changed across any run to date.
 
+## 13c. Metric validity - CLAP is NOT trusted yet (2026-06-06)
+
+User challenged CLAP fitness as a winner-picker; the challenge holds. Evidence from our own code +
+the single stored run (`library/lora_train_history/crucible_nightwish_continuous_vs_discrete.json`):
+- `analyze_server._clap_tags` returns only ranked TAG NAMES, discarding `scores = ae @ te.T`
+  (analyze_server.py ~L110). Scoring is rank-only; the continuous magnitude is lost at the boundary.
+- `_merge_labels` scores against a crowded ~40+ metal-subgenre vocab -> no fine artist discrimination.
+- lora_eval = n=1 per (ckpt,scale) -> seed noise dominates.
+- In that run, artist-defining tags (operatic/female/soprano/orchestral/choir) appeared in ONE take
+  only = the GARBLED 0.5 take; generic progressive/gothic metal topped ALL 8 takes. So the score
+  tracks "stayed metal vs drifted to pop" (over-strength garble guard), NOT artist fidelity.
+
+CONSEQUENCE: continuous-timestep's "inconclusive" verdict was reached with this weak metric on a tiny
+set -> not a settled negative (see §13b continuous bullet). Re-test fairly.
+
+BEFORE any metric picks winners it must pass VALIDATION:
+1. Monotonic ranking of known refs: real-artist > same-genre-other-artist > other-genre > noise.
+2. Test-retest stability (same file twice ~= same score).
+3. Agreement with the user's existing blind-A/B EAR verdicts on known pairs (e.g. the measured
+   35-track-worse-than-6-track call). Ears are ground truth [[wait-for-feedback]].
+Better metric candidates than zero-shot tags (validate the same way): CLAP centroid-distance to the
+artist corpus (needs an analyze_server patch to expose the embedding) or FAD to the artist set. Until
+a metric passes (1)-(3), it is an advisory pre-filter (catch obvious garble), never the judge.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
