@@ -919,6 +919,32 @@ the lr cooldown REDUCE the frying at usable strength while keeping Tarja charact
   Prodigy; needs engine patch) and/or alpha 32.
 - If best+final are both overfit-noisy, making an early (~ep40) checkpoint loadable becomes worth it.
 
+## 13j. v2 trainer over HTTP - wrapper STAGED (2026-06-08)
+
+Decision (user): adopt training_v2 rather than keep hand-porting its features onto v1 one
+patch at a time. v2 is more advanced (§13a Path B): optimizer choice incl. **Prodigy**,
+scheduler choice, **CFG dropout (cfg_ratio)**, native continuous timestep, Fisher-info ranks.
+Blocker was "v2 is CLI-only, no HTTP" - solved by an in-process wrapper.
+
+Design (reverse-engineered from GitHub main; see patch README for the source reads):
+- v2 `FixedLoRATrainer(model, adapter_cfg, train_cfg)` takes an ALREADY-LOADED model and
+  `train()` is a generator yielding `TrainingUpdate(step, loss, msg, kind, epoch=)`. So the
+  wrapper runs v2 IN-PROCESS reusing the engine's loaded decoder (same VRAM mgmt as v1
+  start_lokr) - NO subprocess, NO double-VRAM (avoids the never-frees bug, §task18).
+- v2 reads via the same `acestep.training.data_module` as v1 -> our v1 `tensors/` SHOULD
+  feed it directly (the showstopper to verify = [V5] tensor-key compat).
+- v2 LoKr saves the same `lokr_weights.safetensors` -> loads in our picker unchanged.
+
+STAGED, NOT DEPLOYED: `patches/engine-2026-06-08/` (new route `/v1/training/start_lokr_v2`
++ a 2-line wiring edit to train_api_service.py) + Mac side (`acestep_train.train_lokr_v2`,
+`POST /api/lora/train_v2`). Built vs GitHub main -> deploy is GATED on a cheap 2-epoch smoke
+test that verifies [V1-V5] (import paths, config field names, trainer signature, tensor
+compat) before any multi-hour run. Mac send-side needs a backend restart to activate (after
+the current 250ep run). First Prodigy run: `optimizer_type:"prodigy"`, `scheduler_type:
+"constant"`, `learning_rate:1.0` (Prodigy auto-estimates the real lr; §13g optimizer notes).
+Judge by ear ([[clap-scoring-unproven]]); v2 may not emit v1-style val/best so the poller's
+val curve may gap.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
