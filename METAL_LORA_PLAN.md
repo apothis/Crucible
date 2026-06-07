@@ -772,6 +772,90 @@ distinct artist character (consistent with the weak/perturbation-like adapter fi
 the metric can't arbitrate it. Net: no automated artist-fidelity metric has earned trust; proceed
 with the §13b capacity/target-module experiments judged BY EAR.
 
+## 13g. Noisiness diagnosis + LoKr lever research (2026-06-07)
+
+CONTEXT. First clean run on the new stack: crucible_nightwish_tarja (21 Tarja tracks, clean
+lyrics/captions), LoKr factor 8 / dim 64 / alpha 64 (scale 1.0) / attn+mlp (q,k,v,o,gate,up,down_proj)
+/ ~19.9M params / lr 0.01 AdamW / discrete timestep / 150 epochs / grad-ckpt. User by-ear: carries
+MORE Nightwish character than the old tiny attention-only adapter, BUT noisier at strength 1.0, and
+at strength 0.3 it loses most of the Nightwish character. => the USABLE STRENGTH WINDOW IS SQUEEZED
+(1.0 noisy, 0.3 weak). That squeeze is itself the key signal: a well-trained adapter should either
+stay clean at higher strength or hold character at lower strength. A squeezed window = over-geared /
+fried weights => points at TRAINING-SIDE fixes, not just lowering inference strength.
+
+WHAT CHANGED vs the old (cleaner-but-weaker) adapter, and which way each pushes NOISE@1.0:
+| change                                   | style | noise@1.0 |
+| factor -1 (min) -> 8 (high capacity)     | ++    | ++ bigger/finer deltas |
+| attn-only -> attn+MLP (gate/up/down)     | ++    | ++ FFN writes hard into residual stream |
+| alpha/dim 128/64 (scale 2.0) -> 64/64 (1.0) | -  | -  (the one change that REDUCED gain) |
+| lr 0.01 held while params ~10x'd         | .     | ++ too hot for 20M params |
+Net: we raised delta magnitude (capacity + FFN) and only partially compensated (alpha halved), kept
+lr hot, and auditioned at max strength. More style AND more frying — exactly the symptom.
+
+RANKED CAUSES (confidence; provenance = upstream unless tagged measured):
+1. **lr 0.01 ~100x too hot for a 20M flow-matching LoRA** (HIGH). Flux/flow-matching LoRA consensus
+   lr ~1e-4 (down to 1e-5 if noisy); 0.01 is the classic "fried adapter" recipe at this param count.
+   Our 0.01 "safe default" [[engine-lokr-defaults]] was calibrated on the TINY factor=-1 attn-only
+   adapter; it never scaled down when capacity ~10x'd. Sane range here 5e-5..2e-4, start 1e-4.
+2. **Bigger adapter -> lower inference-strength sweet spot** (HIGH). strength linearly scales every
+   delta; a high-capacity adapter's total perturbation at 1.0 is far larger than the old tiny one's,
+   pushing activations off the base manifold = grain/noise. BUT user measured 0.3 = too weak, so the
+   fix is not strength alone (see squeeze above). Test 0.5/0.6/0.7 for the current best.
+3. **Overcooked: 21 tracks x 150 epochs** (HIGH; matches our MEASURED §13/§13.4: useful learning by
+   ~ep30, ep104 ~tie with ep27, 200 was overshoot). Overfit on a tiny set = brittle spiky deltas =
+   noise. Drop to 30-50 epochs (also makes every experiment ~3x cheaper). best(ep104) vs final(ep150)
+   by-ear is a free check.
+4. **No CFG/caption dropout + guidance 8 at inference** (MED). No trained null branch -> classifier-
+   free guidance extrapolates into artifacts, worst at high strength. Add ~10% caption/CFG dropout.
+5. **alpha/dim scale still high** (MED). 1.0 now; LyCORIS/kohya LoKr default is 0.5 (alpha 32/dim 64).
+   Lower scale = more headroom before frying + lets a higher inference strength stay stable.
+6. **MLP/FFN is the biggest single artifact contributor** (MED) AND the main reason we gained style.
+   Keep it; tame it: lower alpha, dropout, OR asymmetric capacity (LyCORIS Flux preset uses attn
+   factor 12 / FFN factor 6). If pruning, drop down_proj first (writes FFN output into residual).
+7. **Discrete-8 timestep grid under-trains the continuous inference trajectory** (MED) -> smear/noise.
+   Continuous logit-normal (mu=-0.4, sigma=1.0) matches the model's native sample_t_r. **The
+   continuous run train_20260607-114629 tests exactly this** (discrete-vs-continuous A/B, task #1).
+8. **Lossy MP3 codec artifacts** (LOW/2nd-order [[dataset-caption-sources]]). A higher-capacity
+   adapter can memorize HF birdies/pre-echo the old small one couldn't. Mitigate only if 1-7 don't
+   resolve: highest-bitrate sources, optional ~16-18 kHz low-pass on training audio.
+9. **Inference shift** (LOW, FLAGGED CONFLICT). Side-Step doc says Base/SFT should generate at
+   shift=1.0/50 steps and shift=3.0 is a Turbo setting; but OUR measured ACE recipe used shift 3 for
+   xl-base and liked it (RESEARCH §8a). Treat as an inference-side thing to A/B, do NOT assume.
+
+OPTIMIZER (user asked "better than AdamW now?"): AdamW is fine; lr=0.01 is the fault. Modern picks:
+- **Prodigy** (auto-lr) or **Prodigy-Plus-Schedule-Free** (diffusion-LoRA-native, Adafactor-level
+  memory; needs optimizer.train()/eval() + constant sched; set lr=1.0, d0~1e-7, d_coef~2 so d climbs
+  on flow-matching) = removes lr guessing, the de-facto modern default. **CAME** = fixed-lr low-memory
+  alt (lr ~0.5-0.9x AdamW). **ADOPT** = built for diffusion's noisy gradients, near drop-in.
+- SKIP Muon/SOAP/Sophia/Adam-mini = LLM-pretraining tools, not for a 20M LoRA.
+- Our v1 HTTP path = AdamW-only; engine training_v2 has prodigy/adafactor/adamw8bit -> optimizer swap
+  needs an engine patch or routing through v2. lr/alpha/factor/dim/epochs/targets/timestep already
+  free via the /api/lora/train body.
+
+WHAT IS FREE-VIA-API vs NEEDS-PATCH:
+- Free (existing /api/lora/train body): learning_rate, lokr_factor, lokr_linear_dim, lokr_linear_alpha,
+  train_epochs, val_split, timestep_sampling_mode, target_modules, gradient_checkpointing.
+- Needs an engine patch: lora_dropout for LoKr (NOT exposed on StartLoKRTrainingRequest today),
+  CFG/caption dropout (v2 cfg_ratio), optimizer swap, asymmetric per-module-group alpha/factor,
+  loss weighting (min-SNR).
+
+EXPERIMENT PLAN (cheap -> expensive; epochs 50 makes a run ~1.5h not ~4.5h):
+- TIER 0 (FREE, no training; needs engine free): strength sweep 0.5/0.6/0.7 (0.3 already = too weak,
+  1.0 = noisy) + best(ep104) vs final(ep150) by ear, on BOTH discrete and continuous adapters.
+- TIER 1 (one cheap retrain, NO new patch, ~1.5h): lr 1e-4 + alpha 32 (scale 0.5) + epochs 50, keep
+  factor 8 / dim 64 / attn+mlp / discrete. Bundles the 3 highest-confidence training fixes; A/B by ear
+  vs the current adapter. Exact body:
+  {dataset:"crucible_nightwish_tarja", method:"lokr", lokr_factor:8, lokr_linear_dim:64,
+   lokr_linear_alpha:32, lokr_weight_decompose:false, learning_rate:0.0001, val_split:0.1,
+   train_epochs:50, training_seed:42, gradient_checkpointing:true, timestep_sampling_mode:"discrete",
+   target_modules:["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"]}
+  (reuses existing clean tensors; fresh-boot engine first; verify the data gate before GPU.)
+- TIER 2 (needs engine patch, only if Tier 1 still noisy): add lora_dropout 0.1 (patch
+  StartLoKRTrainingRequest + plumb to LoKRConfig, like target_modules) and/or CFG/caption dropout 0.1,
+  and/or swap optimizer to Prodigy. Optionally asymmetric FFN capacity or drop down_proj.
+ALWAYS judge by ear (no automated metric trusted, §13f); verify the data gate (lyrics/bpm/key) before
+any GPU [[lora-training-routine]]; serialize engine vs CLAP [[no-concurrent-clap-engine]].
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
