@@ -886,6 +886,39 @@ themselves across multiple Tarja songs/takes. Findings:
 DECISION: proceed to TIER 1 (§13g) - retrain discrete with lr 0.01 -> 1e-3, all else held
 (alpha 64, 150ep, save_every 10). One variable = lr. Reuses the existing clean tensors.
 
+## 13i. Tier 1 result - lr 0.01 -> 1e-3 (measured 2026-06-07)
+
+Run: train_20260607-182943__lokr_150ep_discrete_lr1e-3_a64. SINGLE variable vs the discrete
+baseline: learning_rate 0.01 -> 0.001. Trained on xl-base (gated at /v1/init, confirmed loaded
+before train [[lora-train-on-xl-base]]), 21 Tarja tracks, factor 8 / dim 64 / alpha 64 / attn+mlp
+(q,k,v,o,gate,up,down_proj) / discrete / 150ep / ~19.9M params / grad-ckpt. Engine echoed the full
+config back (lr 0.001 confirmed, not the route's 0.01 default). Wall clock 4.39h.
+
+VAL CURVE (untrusted as a judge [[clap-scoring-unproven]]; read ONLY for overfit dynamics):
+- Drops ~0.98 -> ~0.75 by ep30-40 (per-epoch min 0.7502 @ ep40; engine running-best 0.7277 @ ep104),
+  then RISES and oscillates noisily for the rest (mean val ep55-75 = 0.847, ep130+ = 0.823) to ep150.
+- Shape = CONVERGED EARLY (~ep40) THEN OVERFIT / noisy. This is NOT the "still falling at ep150 =
+  undertrained" case from §13g; it is the opposite. At lr 1e-3, 150ep is TOO MANY - useful learning
+  is early. best val 0.7277 ~= the old lr-0.01 run's 0.733: cooling lr 10x barely moved val (expected,
+  val is not the noise/fry metric).
+- TEMPERS the §13g coupling claim ("lower lr needs MORE epochs"): a 10x-lower lr did NOT need
+  proportionally more epochs to bottom val - it still bottomed ~ep40 (like lr 0.01's ~ep30). The
+  slower-convergence assumption was not observed on val here. (Caveat: val untrusted; perceptual
+  sweet spot may differ.)
+
+CHECKPOINTS: box /adapters (helper :5080) exposes only best/ (ep104) + final/ (ep150) - BOTH sit in
+the overfit/noisy region by val. save_every_n_epochs:10 WAS sent but per-epoch checkpoints are not
+enumerated by the upload helper; whether they were saved to disk + are loadable is UNCONFIRMED.
+
+NEXT (by EAR, user-driven [[wait-for-feedback]]): A/B the new lr-1e-3 adapter (best AND final) vs the
+old lr-0.01 discrete at matched seed + strength 0.5/0.6/0.7. The real question val cannot answer: did
+the lr cooldown REDUCE the frying at usable strength while keeping Tarja character?
+- If it fries less + keeps character -> lr was a real lever; next cut epochs to ~50-60 (the overfit-
+  after-ep40 shape) for a cheaper, less-overfit run.
+- If it still fries -> lr alone is not enough -> Tier 2 (lora_dropout 0.1 + CFG/caption dropout, or
+  Prodigy; needs engine patch) and/or alpha 32.
+- If best+final are both overfit-noisy, making an early (~ep40) checkpoint loadable becomes worth it.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
