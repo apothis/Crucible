@@ -866,6 +866,26 @@ EXPERIMENT PLAN (cheap -> expensive; epochs 50 makes a run ~1.5h not ~4.5h):
 ALWAYS judge by ear (no automated metric trusted, §13f); verify the data gate (lyrics/bpm/key) before
 any GPU [[lora-training-routine]]; serialize engine vs CLAP [[no-concurrent-clap-engine]].
 
+## 13h. Task #1 ear verdict - discrete vs continuous (2026-06-07, user by ear)
+
+Adapters compared (both factor 8 / dim 64 / alpha 64 / attn+mlp / lr 0.01 / 150ep, one variable =
+timestep mode): nightwish_tarja_150ep_discrete vs nightwish_tarja_150ep_continuous. User ran the A/B
+themselves across multiple Tarja songs/takes. Findings:
+1. NO CLEAN WINNER discrete vs continuous - song-dependent (one wins on one song, the other on
+   another take). Difference is slight. => continuous timestep remains NOT a clear win, consistent
+   with §13b.4. Discrete stays the working default.
+2. Continuous "BEST" checkpoint (val-best @ ep20, val 0.812) is a FALSE pick: little Nightwish
+   character beyond what the prompt already supplies. The continuous FINAL (ep150) is better by ear.
+   => the ep20 "plateau" was UNDERFIT, not converged. Re-confirms val-loss "best" is misleading at
+   our scale [[clap-scoring-unproven]] - do NOT trust the engine's best/ checkpoint as the pick;
+   audition finals + intermediates by ear (this is why Tier 1 sets save_every_n_epochs 10).
+3. Discrete captures SLIGHTLY more of Tarja's vocal timbre (slight edge).
+4. BOTH adapters break up a lot above strength 0.7. Usable ceiling ~0.7. The break-up is present on
+   BOTH => it is a TRAINING-SIDE fault (over-geared / fried weights, §13g), not an inference-strength
+   knob. Lowering strength alone cannot fix it (0.3 was already too weak in the original handoff).
+DECISION: proceed to TIER 1 (§13g) - retrain discrete with lr 0.01 -> 1e-3, all else held
+(alpha 64, 150ep, save_every 10). One variable = lr. Reuses the existing clean tensors.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
