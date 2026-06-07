@@ -842,14 +842,24 @@ WHAT IS FREE-VIA-API vs NEEDS-PATCH:
 EXPERIMENT PLAN (cheap -> expensive; epochs 50 makes a run ~1.5h not ~4.5h):
 - TIER 0 (FREE, no training; needs engine free): strength sweep 0.5/0.6/0.7 (0.3 already = too weak,
   1.0 = noisy) + best(ep104) vs final(ep150) by ear, on BOTH discrete and continuous adapters.
-- TIER 1 (one cheap retrain, NO new patch, ~1.5h): lr 1e-4 + alpha 32 (scale 0.5) + epochs 50, keep
-  factor 8 / dim 64 / attn+mlp / discrete. Bundles the 3 highest-confidence training fixes; A/B by ear
-  vs the current adapter. Exact body:
+- TIER 1 (CORRECTED 2026-06-07 after user Q: "does 50ep undertrain?"). YES it would, paired with a
+  lower lr. lr and epochs are COUPLED (AdamW total movement ~ lr x epochs); the "learning done by
+  ~ep30 / 200 was overshoot" finding was MEASURED AT lr 0.01 and does NOT transfer to a lower lr
+  (lower lr converges slower -> needs MORE epochs, not fewer). The first-draft "lr 1e-4 + 50ep" cut
+  BOTH coupled knobs -> ~1/300th the training = undertrained. FIX: change lr ONLY, keep the epoch
+  budget. lr 0.01 -> 1e-3 (10x cooler, the prime fry fix; NOT the full 100x to 1e-4 which at 150ep
+  risks undertraining), KEEP alpha 64, KEEP epochs 150, save_every_n_epochs 10 so intermediate
+  checkpoints can be auditioned by ear (val is weak [[clap-scoring-unproven]] -> perceptual sweet spot
+  may differ from val-best). One variable = lr. Body:
   {dataset:"crucible_nightwish_tarja", method:"lokr", lokr_factor:8, lokr_linear_dim:64,
-   lokr_linear_alpha:32, lokr_weight_decompose:false, learning_rate:0.0001, val_split:0.1,
-   train_epochs:50, training_seed:42, gradient_checkpointing:true, timestep_sampling_mode:"discrete",
+   lokr_linear_alpha:64, lokr_weight_decompose:false, learning_rate:0.001, val_split:0.1,
+   train_epochs:150, training_seed:42, gradient_checkpointing:true, save_every_n_epochs:10,
+   timestep_sampling_mode:"discrete",
    target_modules:["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"]}
-  (reuses existing clean tensors; fresh-boot engine first; verify the data gate before GPU.)
+  READ THE VAL CURVE: still falling steeply at ep150 -> undertrained, extend; flat by ~ep60 ->
+  converged (noise was the hot lr). If 1e-3/150 still fries -> lr 1e-4 (accept more epochs needed, or
+  use Prodigy which auto-tunes effective lr and decouples this). alpha 32 + epoch tuning = later
+  single-variable follow-ons. (reuses clean tensors; fresh-boot engine + verify data gate before GPU.)
 - TIER 2 (needs engine patch, only if Tier 1 still noisy): add lora_dropout 0.1 (patch
   StartLoKRTrainingRequest + plumb to LoKRConfig, like target_modules) and/or CFG/caption dropout 0.1,
   and/or swap optimizer to Prodigy. Optionally asymmetric FFN capacity or drop down_proj.
