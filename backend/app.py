@@ -3831,9 +3831,17 @@ def lora_train(body: dict):
     # Example: crucible_nightwish/train_20260530-150524__lokr_150ep_continuous
     import datetime as _dt
     ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    # Encode the key varying knobs (lr + alpha) into the run-dir name so adapters are
+    # self-describing + distinguishable in the picker (e.g. two discrete runs at
+    # different lr no longer collide). Compact, folder-safe lr token: 0.001 -> "1e-3".
+    try:
+        _lrtok = format(float(common.get("learning_rate", 0.01)), ".0e").replace("e-0", "e-").replace("e+0", "e").replace("e+", "e")
+    except Exception:
+        _lrtok = str(common.get("learning_rate", "?"))
     suffix = (
         f"train_{ts}__{method}_{common.get('train_epochs','?')}ep_"
         f"{common.get('timestep_sampling_mode','discrete')}"
+        f"_lr{_lrtok}_a{common.get('lokr_linear_alpha','?')}"
     )
     # train_dir is `<dataset_dir>/train` per the upload helper; replace last
     # path segment with our timestamped subdir. Uses forward slashes — the

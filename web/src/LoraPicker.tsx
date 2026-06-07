@@ -12,12 +12,15 @@ type Opt = { label: string; path: string };
 // continuous run; per-run dirs carry their config (e.g. "...__lokr_150ep_discrete").
 function runShort(run: string): string {
   if (!run) return "";
-  if (run === "train") return "continuous";
+  // run_label: train_YYYYMMDD-HHMMSS__lokr_<epochs>ep_<sampling>[_lr<x>_a<n>]
+  // Show config (epochs/sampling/lr/alpha) AND the run time so every run is
+  // distinguishable in the picker — two discrete runs no longer look identical.
+  const ts = run.match(/(\d{8})-(\d{6})/);
+  const when = ts ? `${ts[1].slice(4, 6)}-${ts[1].slice(6, 8)} ${ts[2].slice(0, 2)}:${ts[2].slice(2, 4)}` : "";
   const m = run.match(/__(.+)$/);
-  const tail = m ? m[1] : run;
-  if (/discrete/i.test(tail)) return "discrete";
-  if (/continuous/i.test(tail)) return "continuous";
-  return tail.replace(/^lokr_/, "");
+  let cfg = run === "train" ? "legacy" : (m ? m[1] : run);
+  cfg = cfg.replace(/^lokr_/, "").replace(/^lora_/, "").replace(/_/g, " ");
+  return [cfg, when].filter(Boolean).join(" · ");
 }
 
 // Build the `loras` field for a generate request. Only sent when the LoRA
