@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Config, type LibItem, type Project, type SongDraft } from "./api";
+import { api, versionInfo, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { SoloBuilderForm } from "./SoloBuilder";
@@ -170,7 +170,7 @@ function AppInner() {
 
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          <div className="max-w-2xl">
+          <div className={mode === "compare" ? "w-full" : "max-w-2xl"}>
             {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
@@ -543,7 +543,7 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
   };
   return (
     <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
-      className="min-h-[320px] rounded-xl border-2 border-dashed border-[var(--color-line)] p-3">
+      className="w-full min-h-[72vh] rounded-xl border-2 border-dashed border-[var(--color-line)] p-3">
       <div className="mb-3 flex items-center gap-2">
         <h2 className="text-sm font-semibold text-[var(--color-ink)]">Compare {picked.length > 0 && <span className="text-[var(--color-muted)]">· {picked.length}</span>}</h2>
         <span className="text-[11px] text-[var(--color-muted)]">drag tracks from the Library, or use ⊕ on a card</span>
@@ -554,12 +554,14 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
           Drop tracks here to compare them.<br />Each shows its waveform and the exact params + LoRA/settings it was generated with,<br />so you can A/B versions side by side.
         </div>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
-          {picked.map((it) => (
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
+          {picked.map((it) => {
+            const vi = versionInfo(it, items);
+            return (
             <div key={it.id} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="rounded bg-[#2a1c19] px-1.5 py-0.5 text-[10px] text-[var(--color-accent2)]">{it.mode}</span>
-                <span className="truncate text-[11px] font-medium text-[var(--color-ink)]" title={libTitle(it)}>{libTitle(it)}</span>
+                <span className="truncate text-[11px] font-medium text-[var(--color-ink)]" title={libTitle(it)}>{libTitle(it)}{vi ? ` · v${vi.v}/${vi.total}` : ""}</span>
                 <span className="flex-none text-[10px] text-[var(--color-muted)]">{hhmm(it.created)}</span>
                 <button onClick={() => setCompare((c) => c.filter((x) => x !== it.id))} className="text-[var(--color-muted)] hover:text-red-400" title="Remove from compare">✕</button>
               </div>
@@ -575,7 +577,8 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
                 </tbody>
               </table>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
