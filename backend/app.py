@@ -3825,6 +3825,13 @@ def lora_train(body: dict):
     # Unpatched engines silently ignore it (Pydantic drops unknown fields).
     if body.get("target_modules"):
         common["target_modules"] = list(body["target_modules"])
+    # Crucible patch (2026-06-07): forward LoKr LyCORIS dropouts when provided
+    # (engine patch StartLoKRTrainingRequest.lora_dropout/rank_dropout/module_dropout,
+    # METAL_LORA_PLAN §13g Tier 2). Opt-in only; absent -> 0.0 server-side, so
+    # behavior is unchanged for existing callers and unpatched engines.
+    for _dk in ("lora_dropout", "rank_dropout", "module_dropout"):
+        if body.get(_dk) is not None:
+            common[_dk] = float(body[_dk])
     # Per-run output dir: never overwrite a prior adapter. Format encodes the
     # config so we can identify the run later by name alone.
     # Pattern: <dataset>/train_<YYYYMMDD-HHMMSS>__<adapter>_<epochs>ep_<sampling>
