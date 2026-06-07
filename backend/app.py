@@ -3882,6 +3882,69 @@ def lora_train(body: dict):
     return res
 
 
+@app.post("/api/lora/train_v2")
+def lora_train_v2(body: dict):
+    """Start LoKr training via the engine's training_v2 trainer (Crucible engine patch
+    2026-06-08, route /v1/training/start_lokr_v2). Mirrors /api/lora/train (per-run output
+    dir + history poller + xl-base reuse via /v1/reinitialize) but unlocks optimizer_type
+    (incl. prodigy), scheduler_type, cfg_ratio, attention_type. Requires the 2026-06-08
+    engine patch deployed; an unpatched engine returns 404 from start_lokr_v2.
+
+    The DiT must be inited to xl-base BEFORE calling this (same as /api/lora/train):
+    _ensure_training_ready only /v1/reinitialize's from last_init_params; it does not
+    load a DiT [[lora-train-on-xl-base]]."""
+    _lora_require_engine()
+    dataset = body.get("dataset", "crucible_metal")
+    p = _lora_paths(dataset)
+    free_gpu("acestep")
+    _ensure_training_ready(ACESTEP_HOST, dit_model=body.get("dit_model"))
+    # Keys plumbed to train_lokr_v2 (only those present in body are forwarded).
+    v2_keys = ("train_epochs", "train_batch_size", "gradient_accumulation",
+               "save_every_n_epochs", "learning_rate", "training_seed",
+               "gradient_checkpointing", "lokr_linear_dim", "lokr_linear_alpha",
+               "lokr_factor", "lokr_decompose_both", "lokr_use_tucker", "lokr_use_scalar",
+               "lokr_weight_decompose", "optimizer_type", "scheduler_type", "cfg_ratio",
+               "attention_type", "dropout")
+    common = {k: body[k] for k in v2_keys if k in body}
+    if body.get("target_modules"):
+        common["target_modules"] = list(body["target_modules"])
+    # Per-run output dir (never overwrite a prior adapter); encode the v2-distinguishing
+    # knobs (optimizer + lr) into the run name so it is self-describing in the picker.
+    import datetime as _dt
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    try:
+        _lrtok = format(float(common.get("learning_rate", 1e-4)), ".0e").replace("e-0", "e-").replace("e+0", "e").replace("e+", "e")
+    except Exception:
+        _lrtok = str(common.get("learning_rate", "?"))
+    _opt = common.get("optimizer_type", "adamw")
+    suffix = (
+        f"train_{ts}__lokrv2_{common.get('train_epochs','?')}ep_"
+        f"{_opt}_lr{_lrtok}_a{common.get('lokr_linear_alpha','?')}"
+    )
+    base_train = p["train_dir"]
+    sep = "\\" if "\\" in base_train else "/"
+    parts = base_train.rstrip(sep).split(sep)
+    parts[-1] = suffix
+    per_run_train_dir = sep.join(parts)
+    with _LORA_TRAIN_HISTORY_LOCK:
+        _LORA_TRAIN_HISTORY[dataset] = {
+            "started_at": time.time(), "best": [], "val": [],
+            "output_dir": per_run_train_dir,
+            "run_label": suffix,
+            "config_at_start": dict(common),
+        }
+    res = ace_train.train_lokr_v2(ACESTEP_HOST, p["tensor_dir"], per_run_train_dir, **common)
+    threading.Thread(
+        target=_lora_train_history_poller,
+        args=(dataset, ACESTEP_HOST, time.time()),
+        daemon=True,
+    ).start()
+    if isinstance(res, dict):
+        res["output_dir"] = per_run_train_dir
+        res["run_label"] = suffix
+    return res
+
+
 @app.get("/api/lora/adapters")
 def lora_adapters_list(dataset: str = "crucible_metal"):
     """Enumerate archived adapters for a dataset.

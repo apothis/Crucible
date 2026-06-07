@@ -183,6 +183,43 @@ def train_lokr(host, tensor_dir, output_dir, *, lokr_linear_dim=64, lokr_linear_
     return _post(host, "/v1/training/start_lokr", body)
 
 
+def train_lokr_v2(host, tensor_dir, output_dir, *, lokr_linear_dim=64, lokr_linear_alpha=128,
+                  lokr_factor=-1, lokr_weight_decompose=False, lokr_decompose_both=False,
+                  lokr_use_tucker=False, lokr_use_scalar=False, learning_rate=1e-4,
+                  train_epochs=100, train_batch_size=1, gradient_accumulation=4,
+                  save_every_n_epochs=10, training_shift=3.0, training_seed=42,
+                  gradient_checkpointing=True, target_modules=None,
+                  optimizer_type=None, scheduler_type=None, cfg_ratio=None,
+                  attention_type=None, dropout=None):
+    """Start LoKr training via the engine's training_v2 trainer (Crucible patch
+    2026-06-08, route /v1/training/start_lokr_v2). Unlocks optimizer_type (incl. prodigy),
+    scheduler_type, cfg_ratio, attention_type. Requires the 2026-06-08 engine patch; an
+    unpatched engine returns 404 (route absent). v2 extras are only sent when provided."""
+    body = {
+        "tensor_dir": tensor_dir, "output_dir": output_dir,
+        "lokr_linear_dim": lokr_linear_dim, "lokr_linear_alpha": lokr_linear_alpha,
+        "lokr_factor": lokr_factor, "lokr_weight_decompose": lokr_weight_decompose,
+        "lokr_decompose_both": lokr_decompose_both, "lokr_use_tucker": lokr_use_tucker,
+        "lokr_use_scalar": lokr_use_scalar, "learning_rate": learning_rate,
+        "train_epochs": train_epochs, "train_batch_size": train_batch_size,
+        "gradient_accumulation": gradient_accumulation, "save_every_n_epochs": save_every_n_epochs,
+        "training_shift": training_shift, "training_seed": training_seed,
+        "gradient_checkpointing": gradient_checkpointing}
+    if target_modules is not None:
+        body["target_modules"] = list(target_modules)
+    if optimizer_type is not None:
+        body["optimizer_type"] = str(optimizer_type)
+    if scheduler_type is not None:
+        body["scheduler_type"] = str(scheduler_type)
+    if cfg_ratio is not None:
+        body["cfg_ratio"] = float(cfg_ratio)
+    if attention_type is not None:
+        body["attention_type"] = str(attention_type)
+    if dropout is not None:
+        body["dropout"] = float(dropout)
+    return _post(host, "/v1/training/start_lokr_v2", body)
+
+
 def training_status(host):
     return _get(host, "/v1/training/status")
 
