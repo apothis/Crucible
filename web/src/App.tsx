@@ -29,6 +29,7 @@ const MODES = [
   { id: "master", label: "Master" },
   { id: "shape", label: "Shape" },
   { id: "deglitch", label: "De-glitch" },
+  { id: "compare", label: "Compare" },
   { id: "mix", label: "Mix" },
   { id: "loratrain", label: "Train LoRA" },
 ] as const;
@@ -38,7 +39,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Create", modes: ["generate", "song", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
-  { name: "Finish", modes: ["stems", "mix", "master", "shape", "deglitch"] },
+  { name: "Finish", modes: ["stems", "mix", "master", "shape", "deglitch", "compare"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
@@ -60,6 +61,7 @@ function AppInner() {
   const [song, setSong] = useState<SongDraft | null>(null);
   const [handoff, setHandoff] = useState<{ tags?: string; lyrics?: string } | null>(null);
   const [libOpen, setLibOpen] = useState(true);
+  const [compare, setCompare] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<string[]>(GROUPS.map((g) => g.name));
   // Projects — a saved bundle of every page's drafts + the song arrangement + tab.
@@ -169,7 +171,7 @@ function AppInner() {
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
           <div className="max-w-2xl">
-            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} {...ctx} />
+            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
           {results.length > 0 && (
@@ -185,6 +187,7 @@ function AppInner() {
               onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100, url: it.audio_url + "?t=" + Date.now() }])}
               onDelete={(id) => api.deleteLib(id).then(refreshLib).catch(() => {})}
               onBucket={(id, b) => api.setBucket(id, b).then(refreshLib).catch(() => {})}
+              onCompare={(id) => { setCompare((c) => c.includes(id) ? c : [...c, id]); setMode("compare"); }}
               onOpenInBuilder={loadSongIntoBuilder} />
           </aside>
         )}
@@ -220,7 +223,7 @@ function Sidebar({ mode, setMode, openGroups, setOpenGroups }: {
   );
 }
 
-function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, ...ctx }: { mode: string; cfg: Config; busy: boolean; song: SongDraft | null; setSong: (s: SongDraft) => void; goTo: (m: string) => void; handoff: { tags?: string; lyrics?: string } | null; setHandoff: (h: { tags?: string; lyrics?: string } | null) => void } & RunCtx) {
+function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, library, compare, setCompare, ...ctx }: { mode: string; cfg: Config; busy: boolean; song: SongDraft | null; setSong: (s: SongDraft) => void; goTo: (m: string) => void; handoff: { tags?: string; lyrics?: string } | null; setHandoff: (h: { tags?: string; lyrics?: string } | null) => void; library: LibItem[]; compare: string[]; setCompare: (f: (ids: string[]) => string[]) => void } & RunCtx) {
   const p = { cfg, busy, ...ctx };
   switch (mode) {
     case "generate": return <GenerateForm {...p} handoff={handoff} clearHandoff={() => setHandoff(null)} />;
@@ -241,6 +244,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, .
     case "shape": return <ShapeForm {...p} />;
     case "deglitch": return <DeglitchForm {...p} />;
     case "mix": return <MixForm {...p} />;
+    case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;
   }
@@ -449,7 +453,7 @@ const LIB_SECTIONS = [
   { key: "source", label: "Source audio" },
 ];
 
-type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void; onOpenInBuilder?: (it: LibItem) => void };
+type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void; onOpenInBuilder?: (it: LibItem) => void; onCompare?: (id: string) => void };
 
 function libTitle(it: LibItem): string {
   const t = it.params?.title;
@@ -470,13 +474,14 @@ function LibArtwork({ it }: { it: LibItem }) {
 
 // One card per "group" (a song + its versions, or a single track). Versions share a base
 // title; chips switch which take the card shows/acts on (newest selected by default).
-function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder }: { group: LibItem[]; inTests: boolean } & LibActions) {
+function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, onCompare }: { group: LibItem[]; inTests: boolean } & LibActions) {
   const [vi, setVi] = useState(group.length - 1);
   const it = group[Math.min(vi, group.length - 1)] || group[0];
   const multi = group.length > 1;
   const canBuild = !!(it.params?.from_builder && it.params?.song_meta && onOpenInBuilder);
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)]">
+    <div draggable onDragStart={(e) => { e.dataTransfer.setData("text/lib-id", it.id); e.dataTransfer.effectAllowed = "copy"; }}
+      className="overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)]">
       <LibArtwork it={it} />
       <div className="space-y-1.5 p-2.5">
         <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
@@ -484,6 +489,7 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder }
           <span className="text-[var(--color-muted)]">{hhmm(it.created)}</span>
           {canBuild && <button onClick={() => onOpenInBuilder!(it)} className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Open in Song Builder (load arrangement, lyrics & tags)">↻</button>}
           <button onClick={() => onOpen(it)} className={`${canBuild ? "" : "ml-auto"} text-[var(--color-muted)] hover:text-[var(--color-accent2)]`} title="Open in workspace">↗</button>
+          {onCompare && <button onClick={() => onCompare(it.id)} className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Add to Compare (or drag the card)">⊕</button>}
           <a href={`/api/export/${it.id}?fmt=mp3`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Export as MP3 (320k)">⬇</a>
           <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
           <button onClick={() => { if (confirm("Delete this track permanently?")) onDelete(it.id); }} className="text-[var(--color-muted)] hover:text-red-400" title="Delete">✕</button>
@@ -499,6 +505,79 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder }
         )}
         <audio className="h-8 w-full" controls src={it.audio_url} />
       </div>
+    </div>
+  );
+}
+
+// Eval-relevant params for the Compare view, in a stable order so two cards line up.
+function compareRows(it: LibItem): { k: string; v: string }[] {
+  const p = it.params || {};
+  const rows: { k: string; v: string }[] = [];
+  const add = (k: string, v: unknown) => { if (v !== undefined && v !== null && v !== "") rows.push({ k, v: String(v) }); };
+  add("model", shortModel(p.model));
+  add("sampling", p.timestep_sampling_mode);
+  add("guidance", p.guidance_scale ?? p.cfg);
+  add("steps", p.steps ?? p.inference_steps);
+  add("seed", p.seed);
+  add("bpm", p.bpm);
+  add("key", p.keyscale ?? p.key);
+  add("duration", p.duration ? Math.round(Number(p.duration)) + "s" : "");
+  if (Array.isArray(p.loras) && p.loras.length) {
+    rows.push({ k: "LoRA", v: p.loras.map((l: { label?: string; scale?: number }) => `${l.label || "?"} @${l.scale ?? "?"}`).join(", ") });
+  } else if (p.lora) {
+    add("LoRA", p.lora);
+  }
+  add("note", p.note);
+  add("tags", p.tags ? String(p.tags).slice(0, 140) : "");
+  return rows;
+}
+
+// Side-by-side A/B evaluation: drop tracks from the Library (or use the ⊕ button) to
+// see each take's waveform + the exact params/LoRA settings it was made with.
+function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string[]; setCompare: (f: (ids: string[]) => string[]) => void }) {
+  const picked = ids.map((id) => items.find((x) => x.id === id)).filter(Boolean) as LibItem[];
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/lib-id");
+    if (id) setCompare((c) => c.includes(id) ? c : [...c, id]);
+  };
+  return (
+    <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
+      className="min-h-[320px] rounded-xl border-2 border-dashed border-[var(--color-line)] p-3">
+      <div className="mb-3 flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-[var(--color-ink)]">Compare {picked.length > 0 && <span className="text-[var(--color-muted)]">· {picked.length}</span>}</h2>
+        <span className="text-[11px] text-[var(--color-muted)]">drag tracks from the Library, or use ⊕ on a card</span>
+        {picked.length > 0 && <button onClick={() => setCompare(() => [])} className="ml-auto rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">Clear all</button>}
+      </div>
+      {picked.length === 0 ? (
+        <div className="flex h-56 items-center justify-center text-center text-[12px] leading-relaxed text-[var(--color-muted)]">
+          Drop tracks here to compare them.<br />Each shows its waveform and the exact params + LoRA/settings it was generated with,<br />so you can A/B versions side by side.
+        </div>
+      ) : (
+        <div className="grid gap-3 xl:grid-cols-2">
+          {picked.map((it) => (
+            <div key={it.id} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="rounded bg-[#2a1c19] px-1.5 py-0.5 text-[10px] text-[var(--color-accent2)]">{it.mode}</span>
+                <span className="truncate text-[11px] font-medium text-[var(--color-ink)]" title={libTitle(it)}>{libTitle(it)}</span>
+                <span className="flex-none text-[10px] text-[var(--color-muted)]">{hhmm(it.created)}</span>
+                <button onClick={() => setCompare((c) => c.filter((x) => x !== it.id))} className="text-[var(--color-muted)] hover:text-red-400" title="Remove from compare">✕</button>
+              </div>
+              <WavePlayer url={it.audio_url} height={72} />
+              <table className="mt-2 w-full table-fixed text-[10.5px]">
+                <tbody>
+                  {compareRows(it).map((r) => (
+                    <tr key={r.k} className="align-top">
+                      <td className="w-16 py-0.5 pr-2 text-[var(--color-muted)]">{r.k}</td>
+                      <td className="py-0.5 text-[var(--color-ink)] [overflow-wrap:anywhere]">{r.v}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
