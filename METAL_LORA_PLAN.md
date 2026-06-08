@@ -1028,6 +1028,49 @@ most targeted "put capacity where THIS artist lives" lever. (3) cross-attn (atte
 cfg_ratio tuning - cheap finer tuning, may sharpen vocal-identity binding. (4) more data / caption
 rework (§13b.4) - bigger lift, strengthens specific identity. All judged by ear.
 
+## 13m. Research: in-training overfit monitors (val-free), 2026-06-08 deep-research pass
+
+Deep-research harness (105 agents, 2.5M tok, 23 sources, 25 claims adversarially verified -> 20
+confirmed / 5 killed). Goal: detect overfit/overtrain DURING training without a trusted val signal,
+cheap from adapter weights/grads (no generation). Full report:
+tasks/wba2lymkv.output (this session's /private/tmp). RANKED shortlist:
+
+IMPLEMENT FIRST (cheap, val-free, CPU-side from grads/weights):
+1. **GSNR (gradient signal-to-noise ratio) - track its DECLINE.** Per-coordinate gradient mean^2 /
+   variance over micro-batches; falling GSNR = overfit onset. (Liu ICLR2020 2001.07384; Wang
+   2309.13681.) No val, no generation. Caveat: proven on classification, not flow-matching.
+2. **Gradient disparity - L2 distance between gradients of two disjoint training micro-batches.**
+   Rising = overfit. Built FOR limited-data early-stop (no val split). (Forouzesh ECML-PKDD2021
+   2107.06665, public code.) Single-source but unanimous.
+3. **Stable rank / spectral of the LoKr update.** stable_rank = ||W||_F^2 / ||W||_2^2; watch
+   collapse + condition-number blowup. Trivially cheap (SVD of the tiny adapter factors). Complement
+   with weight-norm growth + effective rank. (Sanyal ICLR2020 1906.04659.)
+
+DIFFUSION WHERE-TO-LOOK (not standalone triggers):
+4. Two timescales: generation-quality onset ~n-independent vs memorization onset grows with n -> the
+   train/val BIFURCATION (not absolute val) is the signal, and the safe window WIDENS as n grows (so
+   50+ tracks safer than 20). NOTE: the strong "memorization-onset LINEAR in n" form was REFUTED
+   (0-3 / 1-2 votes) - keep the qualitative picture, NOT the constants. (Bonnaire NeurIPS2025
+   2505.17638; Favero 2505.16959.)
+5. Memorization concentrates at INTERMEDIATE timesteps/noise -> log per-timestep-bin train MSE, watch
+   the medium band for earliest divergence. (2602.17846.) A refinement, caveat: mid-noise data has
+   little overlap with inference trajectory.
+
+AVOID / DEPRIORITIZE:
+6. **Sharpness/flatness (SAM, Hessian trace/eigs, adaptive sharpness) - DO NOT use as primary.**
+   Strong evidence it does NOT correlate with generalization in FINE-TUNING (closest analog to LoRA);
+   tracks LR instead, sometimes negative corr. (Andriushchenko ICML2023 2302.07011.)
+7. IGS / Fisher-trace - optional, expensive, secondary (ties our Fisher-rank interest).
+8. Inference-time cond-vs-uncond memorization detector (AUC .96, 0.2s) - violates no-generation;
+   cheapest spot-check IF generation ever acceptable.
+
+CRITICAL CAVEAT (honest headline): EVERY method was validated in a DIFFERENT setting (classification
+/ from-scratch full diffusion / large n) - NONE on MSE flow-matching LoRA at n=20-50. All evidence is
+BY ANALOGY, no calibrated threshold for us. SAME discipline as CLAP/MERT (§13c-f): instrument cheaply
+-> log across a KNOWN-overfit run (e.g. the 250ep AdamW the user ear-judged muffled) -> align curves
+to the ear-judged overfit point. Trust only if they correlate with EAR verdicts; else discard. Don't
+auto-early-stop on an uncalibrated monitor.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
