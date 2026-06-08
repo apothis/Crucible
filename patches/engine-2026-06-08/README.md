@@ -20,33 +20,32 @@ continuous timestep, target_modules, dropout), this exposes v2 itself over HTTP.
 - v2 LoKr saves the **same `lokr_weights.safetensors`** (lycoris) -> loads in our picker
   unchanged.
 
-## Files
+## Files (both are full files - copy over, no hand-editing)
 - `train_api_lokr_v2_start_route.py` (NEW) -> `<engine>/acestep/api/train_api_lokr_v2_start_route.py`
   Registers `POST /v1/training/start_lokr_v2`. Self-contained request model.
+- `train_api_service.py` (FULLY PATCHED) -> `<engine>/acestep/api/train_api_service.py`
+  Adds the v2 import + `register_lokr_v2_training_start_route(...)` call. Built from GitHub
+  `main`; verified to differ from upstream by ONLY those two additions (import line + the
+  registration block right after the v1 `register_lokr_training_start_route(...)` call).
 
-## Wiring edit (2 lines in `<engine>/acestep/api/train_api_service.py`)
-This file is large and box-specific - do NOT full-file copy it; make these two additions:
-
-1. Next to the existing import:
-   ```python
-   from acestep.api.train_api_lokr_start_route import register_lokr_training_start_route
-   from acestep.api.train_api_lokr_v2_start_route import register_lokr_v2_training_start_route  # ADD
-   ```
-2. Inside `register_training_api_routes(...)`, right AFTER the existing
-   `register_lokr_training_start_route(...)` call, add the identical-shape call:
-   ```python
-   register_lokr_v2_training_start_route(
-       app=app,
-       verify_api_key=verify_api_key,
-       wrap_response=wrap_response,
-       start_tensorboard=start_tensorboard,
-   )
-   ```
+### IMPORTANT - verify train_api_service.py before swapping (high blast radius)
+This file registers ALL training routes and we have NEVER captured the box's own copy (it
+is the one file in this patch built purely from GitHub main). If the box engine is a
+different commit, a blind full-file replace could drop/alter routes. So before swapping:
+```
+# on the box, back up + diff our version against the live one
+copy acestep\api\train_api_service.py acestep\api\train_api_service.py.bak
+fc acestep\api\train_api_service.py <our train_api_service.py>     # Windows diff
+```
+PASS = the only differences are the 2 Crucible additions above -> safe to copy ours over.
+If there are OTHER differences, the box is a different version: do NOT use our full file -
+instead hand-add just the import + the registration call to the box's own file (the 2
+additions are small and self-contained).
 
 ## Deploy (box) - HELD until user finishes testing + the smoke test passes
-Copy the new file, apply the 2-line edit, then USER OS-restarts `run_acestep_api.bat`
-([[engine-restart-is-user-only]]). Reverted by any engine `git pull` - re-apply
-([[engine-patches]]).
+Copy both files over (after the train_api_service.py diff check above), then USER OS-restarts
+`run_acestep_api.bat` ([[engine-restart-is-user-only]]). Reverted by any engine `git pull` -
+re-apply ([[engine-patches]]).
 
 ## DEPLOY-TIME VERIFICATION (do BEFORE any real multi-hour run)
 The route file is GitHub-main-derived; these are isolated so a mismatch returns HTTP 500
