@@ -1004,6 +1004,17 @@ cfg_ratio carry more bel canto / stay cleaner at usable strength?). Fired direct
 Mac history poller is NOT capturing this run - read the curve via /v1/training/status loss_history
 or check best/final on box when done.
 
+RESULT (done ~5h, 2026-06-08): TRAIN-loss curve (no val - v2 emits none) was SMOOTH + MONOTONIC:
+mean first-25% 0.890 -> mid 0.707 -> last-25% 0.552 (min 0.432, final ~0.45-0.54). Markedly lower
+final train loss than the AdamW runs (150ep 0.70 / 250ep 0.61) = Prodigy found a higher effective
+LR and fit harder. NOT a quality verdict (lower train loss could = richer capture OR more overfit;
+no val to arbitrate, ears decide). Saved FINAL only (best_path=None - v2 has no val/best tracking;
+save_every_10 intermediates not enumerated by the :5080 helper). Confound: bundle (Prodigy +
+constant sched + cfg_ratio 0.1 + continuous timestep), so a win is not creditable to Prodigy alone.
+EAR TEST PENDING: load final, judge on the FULL-ARTIST bar [[lora-goal-full-artist-sound]] (voice +
+whole band/era, not just bel canto), strengths ~0.5-1.0, vs 150ep lr-1e-3 AdamW final
+(train_20260607-182943).
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
