@@ -945,6 +945,31 @@ the current 250ep run). First Prodigy run: `optimizer_type:"prodigy"`, `schedule
 Judge by ear ([[clap-scoring-unproven]]); v2 may not emit v1-style val/best so the poller's
 val curve may gap.
 
+## 13k. 250ep result - more epochs at lr 1e-3 (measured 2026-06-08)
+
+Run train_20260608-000153__lokr_250ep_discrete_lr1e-3_a64. SINGLE variable vs §13i: epochs
+150 -> 250. All else held (lr 0.001, factor 8, dim/alpha 64, attn+mlp, discrete, xl-base).
+Wall 7.31h. Final TRAIN loss 0.6096 (vs 150ep's 0.6964 - lower, as expected with more steps).
+Motivation: user ear-judged 150ep final@1.0 = good Nightwish music but not enough bel canto;
+wanted more training to deepen the style.
+
+VAL CURVE (untrusted as judge [[clap-scoring-unproven]]; overfit dynamics only):
+- Bottoms ~ep40 (0.751), engine running-best 0.7290 @ ep104 (~= 150ep's 0.7277 @ ep104 -
+  basically identical best), then oscillates and TRENDS WORSE late: mean val ep30-50 0.822 ->
+  ep150-170 0.864 -> ep230-250 0.856. min per-epoch 0.7374 @ ep160.
+- Read: by val the extra 100 epochs did NOT deepen useful learning - best still ~ep104, late
+  epochs noisier/worse = MORE overfitting. Lower TRAIN loss + higher VAL = textbook overfit.
+- BUT val != style strength, and the user wanted MORE style. final@ep250 has the most weight
+  movement (lowest train loss) -> potentially the strongest style imposition even as val
+  "overfits". So the val verdict ("no gain, more overfit") cannot settle it.
+
+DECISION = EARS. Audition 250ep FINAL at strength 0.8-1.0 for bel canto vs 150ep final
+(train_20260607-182943, persists on box). If more bel canto -> more epochs helped (val lied
+again); if garbled / no gain -> we've hit the ceiling of "more epochs at lr 1e-3" on this
+21-track set -> pivot levers: the v2 path (Prodigy auto-lr + cfg_ratio, patch staged §13j) or
+data (more Tarja tracks / caption rework §13b.4). All 4 nightwish_tarja runs (150 discrete,
+150 continuous, 150 lr1e-3, 250 lr1e-3) persist on box with best+final for A/B.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
