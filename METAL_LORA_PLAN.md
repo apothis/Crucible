@@ -1071,6 +1071,33 @@ BY ANALOGY, no calibrated threshold for us. SAME discipline as CLAP/MERT (§13c-
 to the ear-judged overfit point. Trust only if they correlate with EAR verdicts; else discard. Don't
 auto-early-stop on an uncalibrated monitor.
 
+## 13n. Weight-space overfit metrics FAIL ear calibration (measured 2026-06-08)
+
+Computed the §13m weight-only monitors (stable rank, effective rank, spectral & Frobenius norm,
+condition number) on ALL saved LoKr checkpoints of 5 nightwish_tarja runs (148 ckpts, tool:
+tools/lora_overfit_metrics.py, results library/lora_train_history/overfit_metrics.json). Lined up
+vs EAR verdicts. NEGATIVE result:
+| run | ear | stable_rk | eff_rk | spectral | fro |
+| 150ep discrete lr0.01 | fried>0.7 | 8.71 | 39.1 | 27.3 | 1359 |
+| 150ep continuous lr0.01 | wash | 14.16 | 46.4 | 27.1 | 1417 |
+| 150ep lr1e-3 | clean-but-weak | 4.64 | 41.97 | 2.75 | 1240 |
+| 250ep lr1e-3 | overfit/muffled | 6.06 | 43.28 | 3.75 | 1246 |
+| v2 prodigy | BEST (usable 0.8) | 14.84 | 48.78 | 13.0 | 1316 |
+- The BEST adapter (v2) has the HIGHEST stable+effective rank -> "high rank = overfit" is false here.
+- spectral norm tracks LEARNING RATE (lr0.01~27, lr1e-3~3, Prodigy~13), not quality - matches the
+  §13m research caveat that these track hyperparams not generalization.
+- condition number numerically degenerate (~1e17, w2=w2_a@w2_b near-singular) - useless.
+- No clean within-run knee at the ear-judged overfit onset; train-loss (from ckpt folder names)
+  bounces 0.16-0.20 with no signal either.
+CONCLUSION: cheap WEIGHT-ONLY metrics do NOT give a usable overfit detector for our setting (same
+fate as CLAP §13d / MERT §13f). Caught in ~15 min + a file copy, not a long run. NOT YET TESTED: the
+research-TOP-RANKED GRADIENT-based signals (GSNR-decline, gradient disparity) - these need GRADIENTS
+during training, uncomputable from saved weights. Testing them = instrument the v2 wrapper to log
+them + 1 run on a known-overfit config + check vs ears. That is the last cheap shot before concluding
+no automated overfit signal exists for us and ears stay the only judge. Note (tooling): v2 saves
+bf16 -> load via safetensors.torch not .numpy. Note (incidental): v2 adapter wraps cross-attn +
+condition_embedder too (attention_type=both), more modules than the v1 attn+mlp filter.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 

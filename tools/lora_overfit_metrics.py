@@ -19,10 +19,12 @@ first file so the metric extraction can be confirmed against the real LoKr layou
 import argparse, glob, json, math, os, re, sys
 import numpy as np
 
-try:
-    from safetensors.numpy import load_file as _load_st
-except Exception:
-    _load_st = None
+def _load_st(path):
+    """Load a safetensors adapter as {key: float32 numpy array}. Uses torch so it
+    handles bfloat16 (v2 trainer saves bf16; numpy has no native bf16)."""
+    from safetensors.torch import load_file
+    t = load_file(path)
+    return {k: v.detach().to("cpu").float().numpy() for k, v in t.items()}
 
 
 def _svals(mat):
@@ -109,21 +111,28 @@ def analyze_file(path):
     return agg
 
 
-def parse_name(fn):
-    base = os.path.basename(fn)
-    run = base.split("__")[0]
-    stage, epoch = "?", None
-    if "__final__" in base:
-        stage = "final"
-    elif "__best__" in base or "checkpoints__best" in base:
-        stage = "best"
-    m = re.search(r'epoch[_-](\d+)', base)
-    if m:
-        stage, epoch = "epoch", int(m.group(1))
-    # carry the config tag (after run timestamp) for readability
-    tag = base.split("__")
-    cfg = tag[1] if len(tag) > 1 else ""
-    return run, cfg, stage, epoch
+def parse_name(path, root):
+    """Parse (run, cfg, stage, epoch, train_loss) from the path relative to root.
+    Handles both nested layout (<run>/final/..., <run>/checkpoints/epoch_N_loss_L/...)
+    and flattened double-underscore names."""
+    rel = os.path.relpath(path, root)
+    parts = re.split(r'[/\\]', rel)
+    if len(parts) == 1:           # flattened name
+        parts = parts[0].split("__")
+    run = parts[0]
+    stage, epoch, loss = "?", None, None
+    for p in parts:
+        if p == "final":
+            stage = "final"
+        elif p == "best":
+            stage = "best"
+        m = re.match(r'epoch[_-](\d+)(?:_loss_([\d.]+))?', p)
+        if m:
+            stage, epoch = "epoch", int(m.group(1))
+            if m.group(2):
+                loss = float(m.group(2))
+    cfg = run.split("__", 1)[1] if "__" in run else run
+    return run, cfg, stage, epoch, loss
 
 
 def main():
@@ -132,9 +141,9 @@ def main():
     ap.add_argument("--json", default="library/lora_train_history/overfit_metrics.json")
     ap.add_argument("--inspect", action="store_true")
     a = ap.parse_args()
-    files = sorted(glob.glob(os.path.join(a.dir, "**", "*.safetensors"), recursive=True))
+    files = sorted(glob.glob(os.path.join(a.dir, "**", "lokr_weights.safetensors"), recursive=True))
     if not files:
-        print("no .safetensors found under", a.dir); sys.exit(1)
+        print("no lokr_weights.safetensors found under", a.dir); sys.exit(1)
     if a.inspect:
         if _load_st is None:
             print("safetensors not installed"); sys.exit(1)
@@ -145,21 +154,24 @@ def main():
         return
     rows = []
     for f in files:
-        run, cfg, stage, epoch = parse_name(f)
+        run, cfg, stage, epoch, tloss = parse_name(f, a.dir)
         try:
             agg = analyze_file(f)
         except Exception as e:
-            print("ERR", os.path.basename(f), e); continue
-        rows.append({"run": run, "cfg": cfg, "stage": stage, "epoch": epoch, **agg})
+            print("ERR", os.path.relpath(f, a.dir), e); continue
+        rows.append({"run": run, "cfg": cfg, "stage": stage, "epoch": epoch, "train_loss": tloss, **agg})
     rows.sort(key=lambda r: (r["run"], r["epoch"] if r["epoch"] is not None else (10**6 if r["stage"]=="final" else 10**5)))
     os.makedirs(os.path.dirname(a.json), exist_ok=True)
     json.dump(rows, open(a.json, "w"), indent=1)
     # table
-    cols = ["run","cfg","stage","epoch","global_fro","stable_rank_mean","effective_rank_mean","condition_mean","spectral_mean"]
-    print(f"{'run/cfg':42} {'stage':6} {'ep':>4} {'fro':>9} {'stbl_rk':>8} {'eff_rk':>7} {'cond':>9} {'spec':>8}")
+    print(f"{'cfg':40} {'stage':6} {'ep':>4} {'tloss':>7} {'fro':>9} {'stbl_rk':>8} {'eff_rk':>7} {'cond':>9} {'spec':>8}")
+    last_run = None
     for r in rows:
-        name = (r["cfg"] or r["run"])[:42]
-        print(f"{name:42} {r['stage']:6} {str(r['epoch'] or ''):>4} "
+        if r["run"] != last_run:
+            print("-" * 100); last_run = r["run"]
+        name = (r["cfg"] or r["run"])[:40]
+        tl = f"{r['train_loss']:.4f}" if r.get("train_loss") is not None else ""
+        print(f"{name:40} {r['stage']:6} {str(r['epoch'] or ''):>4} {tl:>7} "
               f"{r.get('global_fro',0):9.3f} {r.get('stable_rank_mean',float('nan')):8.3f} "
               f"{r.get('effective_rank_mean',float('nan')):7.3f} {r.get('condition_mean',float('nan')):9.1f} "
               f"{r.get('spectral_mean',float('nan')):8.4f}")
