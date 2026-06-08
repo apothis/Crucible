@@ -970,6 +970,20 @@ again); if garbled / no gain -> we've hit the ceiling of "more epochs at lr 1e-3
 data (more Tarja tracks / caption rework §13b.4). All 4 nightwish_tarja runs (150 discrete,
 150 continuous, 150 lr1e-3, 250 lr1e-3) persist on box with best+final for A/B.
 
+EAR VERDICT (2026-06-08, user): 250ep final is MUFFLED - loss of clarity on the voice,
+instrumentation less clear - but NO obvious frying. So more epochs at lr 1e-3 added OVERFIT
+SMEAR/MUD, not bel canto (matches the val "overfit more / late epochs worse" reading). =>
+"more epochs at lr 1e-3" is the WRONG direction; the 150ep lr-1e-3 final stays the better
+CLEAN adapter. CONCLUSION: the bel-canto gap is NOT a training-duration problem. We have now
+bracketed lr 1e-3: 150ep = clear but bel canto too weak; 250ep = muffled. And lr 0.01
+(original) = more character but fried >0.7. So the sweet spot is a TRAINING-STRENGTH/cleanliness
+problem, pointing to (a) FREE first: operatic vocal tag cluster at inference
+[[operatic-vocal-tags]] (bel canto + classically trained + coloratura + rich operatic vibrato)
+on the 150ep adapter - might close the gap with zero GPU; (b) a WARMER fixed lr ~3e-3 (between
+the frying 0.01 and the weak 1e-3) at ~100-150ep; or (c) the v2/Prodigy path (auto-lr finds the
+exact sweet spot + cfg_ratio for cleaner guidance, wrapper staged §13j). NOT more epochs, NOT
+cooler lr.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
