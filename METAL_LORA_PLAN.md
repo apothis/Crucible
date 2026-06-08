@@ -984,6 +984,26 @@ the frying 0.01 and the weak 1e-3) at ~100-150ep; or (c) the v2/Prodigy path (au
 exact sweet spot + cfg_ratio for cleaner guidance, wrapper staged §13j). NOT more epochs, NOT
 cooler lr.
 
+## 13l. v2/Prodigy run IN FLIGHT (2026-06-08)
+
+The v2 HTTP wrapper (§13j) is DEPLOYED + VERIFIED on the box. Bring-up caught two real issues
+(both fixed): (1) `device="auto"` not resolved in-process -> torch.device threw; fixed by
+passing `str(handler.device)`. (2) `prodigyopt` not installed -> v2 optim.py SILENTLY fell back
+to AdamW (only a WARNING line; the smoke "succeeded" on AdamW@lr1.0 = garbage). Fixed via
+`uv add prodigyopt>=1.1.2` from the engine dir. Prodigy engagement then CONFIRMED airtight:
+`import prodigyopt` succeeds in the engine venv (run from the ENGINE dir, not parent) -> the
+ImportError fallback is impossible -> Prodigy is used; corroborated by the `Using decoupled
+weight decay` print (prodigyopt-only) + absence of the fallback warning.
+
+Run: train_20260608-130123__lokrv2_150ep_prodigy_cfg0.1 (direct to engine, fresh xl-base).
+Params: optimizer=prodigy, scheduler=constant, lr=1.0 (Prodigy auto-estimates effective lr),
+cfg_ratio=0.1, factor8/dim64/alpha64, attn+mlp (q,k,v,o,gate,up,down_proj), 150ep, save_every10,
+~19.9M params, ep1 ~115s -> ~5h ETA, ep1 loss 1.086. First real change of the OPTIMIZER lever
+(prior runs all AdamW). Judge by EAR vs the 150ep lr-1e-3 AdamW adapter (does Prodigy auto-lr +
+cfg_ratio carry more bel canto / stay cleaner at usable strength?). Fired direct to engine so the
+Mac history poller is NOT capturing this run - read the curve via /v1/training/status loss_history
+or check best/final on box when done.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 

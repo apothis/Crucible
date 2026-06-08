@@ -42,10 +42,27 @@ If there are OTHER differences, the box is a different version: do NOT use our f
 instead hand-add just the import + the registration call to the box's own file (the 2
 additions are small and self-contained).
 
+## PREREQ - install Prodigy in the engine venv (else it silently uses AdamW)
+v2 `optim.py` does `from prodigyopt import Prodigy` and SILENTLY falls back to AdamW on
+ImportError (only a WARNING line `[Side-Step] prodigyopt not installed -- falling back to
+AdamW`; the success path is a suppressed INFO). The engine is a uv project, so install from
+the ENGINE dir (verified 2026-06-08 via ACESTEP-ENGINE_AUTO_INSTALL.bat = uv-managed):
+```
+cd E:\AI\MusicGen\AceStep\ACE-Step-1.5
+uv add "prodigyopt>=1.1.2"      # or:  & "<DEST>\.uvbin\uv.exe" add "prodigyopt>=1.1.2"
+```
+Verify (from the ENGINE dir, not the parent): `uv run python -c "import prodigyopt"` returns
+no ImportError. adamw8bit needs `bitsandbytes`, adafactor needs `transformers` - same pattern.
+
 ## Deploy (box) - HELD until user finishes testing + the smoke test passes
 Copy both files over (after the train_api_service.py diff check above), then USER OS-restarts
 `run_acestep_api.bat` ([[engine-restart-is-user-only]]). Reverted by any engine `git pull` -
 re-apply ([[engine-patches]]).
+
+## Known fix applied during bring-up (2026-06-08)
+The in-process path skips the CLI's `auto` device/precision resolution, so `TrainingConfigV2`
+defaulted `device="auto"` -> `torch.device("auto")` threw at `trainer_fixed.py:126`. Fixed in
+`train_api_lokr_v2_start_route.py`: pass concrete `device=str(handler.device)` + precision.
 
 ## DEPLOY-TIME VERIFICATION (do BEFORE any real multi-hour run)
 The route file is GitHub-main-derived; these are isolated so a mismatch returns HTTP 500
