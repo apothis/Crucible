@@ -1015,6 +1015,19 @@ EAR TEST PENDING: load final, judge on the FULL-ARTIST bar [[lora-goal-full-arti
 whole band/era, not just bel canto), strengths ~0.5-1.0, vs 150ep lr-1e-3 AdamW final
 (train_20260607-182943).
 
+EAR VERDICT (2026-06-08, user): BEST SO FAR. Usable window widened - 0.8 is about the max before it
+gets messy (vs AdamW frying >0.7). Captures Nightwish STYLE elements well. Vocal identity is
+inconsistent: sometimes loses the bel canto, a faster track at 0.6 read more Lizzy Hale than Tarja
+(but not always). Overall = "you'd think INSPIRED BY Nightwish, not that it IS Nightwish." => the v2
+recipe (Prodigy+constant+cfg0.1+continuous) is the new baseline; the gap now is STRENGTH/CONSISTENCY
+of artist-specific capture (esp. the specific vocal timbre + whole-band cohesion), not cleanliness.
+NEXT LEVERS (toward [[lora-goal-full-artist-sound]]): (1) MORE CAPACITY - dim 64->128 on the v2
+recipe, cheap (reuse tensors), now affordable (~14GB used, ~10GB headroom); "inspired-by-not-is"
+suggests undersized. (2) FISHER-INFO adaptive ranks (v2 estimate.py; needs wrapper plumbing) - the
+most targeted "put capacity where THIS artist lives" lever. (3) cross-attn (attention_type) +
+cfg_ratio tuning - cheap finer tuning, may sharpen vocal-identity binding. (4) more data / caption
+rework (§13b.4) - bigger lift, strengthens specific identity. All judged by ear.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
