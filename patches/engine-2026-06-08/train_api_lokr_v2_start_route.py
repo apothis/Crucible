@@ -74,10 +74,14 @@ class StartLoKRV2TrainingRequest(BaseModel):
     gradient_checkpointing: bool = Field(default=True)
 
 
-def _build_v2_configs(request: "StartLoKRV2TrainingRequest"):
+def _build_v2_configs(request: "StartLoKRV2TrainingRequest", device: str = "cuda", precision: str = "bf16"):
     """Construct v2 adapter_cfg + train_cfg directly (no CLI parser, no checkpoint_dir
     path validation - the trainer receives the already-loaded model so it never needs
     to load one). Field names are [V3] - verify against the box's training_v2/configs.py.
+
+    device/precision are passed CONCRETE (resolved by the caller from the engine handler),
+    NOT "auto": the CLI resolves "auto" -> cuda/bf16 before building the trainer, but this
+    in-process path skips that, so torch.device("auto") would throw (smoke test 2026-06-08).
     """
     from acestep.training_v2.configs import LoKRConfigV2, TrainingConfigV2  # [V1]
 
@@ -110,6 +114,8 @@ def _build_v2_configs(request: "StartLoKRV2TrainingRequest"):
         optimizer_type=request.optimizer_type,
         scheduler_type=request.scheduler_type,
         cfg_ratio=request.cfg_ratio,
+        device=device,
+        precision=precision,
     )
     return adapter_cfg, train_cfg
 
@@ -153,7 +159,11 @@ def register_lokr_v2_training_start_route(
 
         try:
             from acestep.training_v2.trainer_fixed import FixedLoRATrainer  # [V2]
-            adapter_cfg, train_cfg = _build_v2_configs(request)
+            # Resolve device/precision concretely from the engine handler - the in-process
+            # path skips the CLI's "auto" resolution (see _build_v2_configs).
+            _dev = str(handler.device)
+            _prec = "bf16" if _dev.startswith("cuda") else "fp32"
+            adapter_cfg, train_cfg = _build_v2_configs(request, device=_dev, precision=_prec)
             # [V4] trainer receives the ALREADY-LOADED full model (it accesses
             # self.model.decoder internally); it does NOT load its own.
             trainer = FixedLoRATrainer(handler.model, adapter_cfg, train_cfg)
