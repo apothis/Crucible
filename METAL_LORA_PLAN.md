@@ -1098,6 +1098,19 @@ no automated overfit signal exists for us and ears stay the only judge. Note (to
 bf16 -> load via safetensors.torch not .numpy. Note (incidental): v2 adapter wraps cross-attn +
 condition_embedder too (attention_type=both), more modules than the v1 attn+mlp filter.
 
+## 13o. Capacity bump run IN FLIGHT (2026-06-08)
+
+Run: train_20260608-220714__lokrv2_150ep_prodigy_dim128_cfg0.1 (direct to engine, fresh xl-base).
+SINGLE variable vs the winning v2/Prodigy run (§13l): lokr_linear_dim 64->128, lokr_linear_alpha
+64->128 (scale held at 1.0). All else identical: prodigy / constant / lr1.0 / cfg_ratio0.1 / factor8
+/ attention_type both / target attn+mlp / 150ep / save_every10. Reuses existing tensors. ~109s/epoch
+-> ~4.5h, ep1 loss 1.093. Tests the "inspired-by-not-is = undersized adapter" hypothesis - does
+doubling capacity carry MORE of the specific artist (voice+band) per [[lora-goal-full-artist-sound]]?
+EAR TEST (sparse-ladder, per the option-B decision in §13n - no automated overfit metric trusted):
+audition ~ep40/80/120/final at strength 0.6-0.8 on the full-artist bar, vs the dim-64 v2/Prodigy
+final. If more artist + still clean to ~0.8 -> capacity was the lever, push to 256 next; if it
+overfits faster / muffles -> capacity isn't the gap, pivot to Fisher ranks / cross-attn / data.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
