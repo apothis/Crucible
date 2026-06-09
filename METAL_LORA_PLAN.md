@@ -1120,6 +1120,15 @@ via /v1/lora/load). EAR TEST PENDING: final-first - A/B dim-128 final vs dim-64 
 checkpoint folder names via a box `dir`, load each via /v1/lora/load). If final is more-artist +
 clean -> capacity helped, push dim 256 next.
 
+EAR VERDICT (2026-06-08, user): NOT better. Usable window moved DOWN - 0.7+ breaks up/artifacts (vs
+dim-64 clean to 0.8), though 0.5 is fine. No clear artist gain. => uniform capacity (dim 64->128)
+just made the deltas HOTTER (matches the harder fit / lower train loss) = more artifacts at lower
+strength, NOT more artist. dim-64 v2/Prodigy REMAINS the champion; do NOT push dim 256 (would be even
+hotter). KEY INFERENCE across all runs: scaling DELTA MAGNITUDE (capacity OR lr) does NOT add artist
+fidelity - bigger just = artifacts. The "inspired-by-not-is" gap is about WHERE capacity goes
+(targeting / Fisher-info ranks) or the DATA (more tracks / caption rework), not how much. Next lever
+should be TARGETED capacity (Fisher) or DATA, picked research-led - NOT another magnitude knob.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
