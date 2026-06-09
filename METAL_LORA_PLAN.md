@@ -1160,6 +1160,21 @@ rework (controllable, unresearched-but-plausible, needs re-upload/preprocess); (
 as diagnostic+lever (needs wrapper plumbing); (c) OFT/BOFT (bigger build, modest/biased evidence);
 (d) a 2nd capped research pass on the data+recipe gap. All judged by ear [[lora-goal-full-artist-sound]].
 
+## 13q. Battle Beast dim-128 / 100ep run IN FLIGHT (2026-06-09)
+
+First DATA-lever test (§13p) + the user's overtraining hypothesis, combined. Run:
+crucible_battlebeast/train_20260609-112643__lokrv2_100ep_prodigy_dim128_cfg0.1 (direct to engine,
+fresh xl-base). Dataset: crucible_battlebeast = 40 tracks (vs nightwish_tarja's 21), data gate PASSED
+(40/40 lyrics+bpm+key, clean LM-prose captions incl. "powerful high belting female vocals"=Noora,
+tensors preprocessed/reused). Config = champion v2/Prodigy recipe at dim 128: prodigy / constant /
+lr1.0 / cfg_ratio0.1 / factor8 / dim128 / alpha128 (scale 1.0) / attention_type both / attn+mlp /
+100ep / save_every10. ~201s/epoch (40 tracks ~2x the 21-track ~110s) -> ~5.5h, ep3 loss 1.02.
+HYPOTHESIS: dim-128 underperformed on 21 nightwish tracks (artifacts >0.7, no extra artist, §13o);
+2x data + fewer epochs (100 vs 150) may give the higher capacity enough to fill WITHOUT the breakup.
+Confounded (new artist + more data + dim128 + 100ep all at once) so not a clean ablation - judge by
+EAR on the full-artist bar [[lora-goal-full-artist-sound]] vs prior battlebeast adapters; sparse-ladder
+the ep checkpoints if final is hot.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
