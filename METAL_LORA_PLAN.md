@@ -1175,6 +1175,15 @@ Confounded (new artist + more data + dim128 + 100ep all at once) so not a clean 
 EAR on the full-artist bar [[lora-goal-full-artist-sound]] vs prior battlebeast adapters; sparse-ladder
 the ep checkpoints if final is hot.
 
+RESULT (done 2026-06-09): final train loss 0.512 (min 0.465); curve first25% 0.87 -> mid 0.72 ->
+last25% 0.59. Fit LESS HARD than the nightwish dim-128/150ep run (last-quarter 0.40) - expected from
+2x data (40 vs 21) + fewer epochs (100 vs 150). PREDICTION: cooler deltas -> should break up LESS at
+high strength than the nightwish dim-128 (artifacted >0.7, §13o). Saved FINAL (loadable) + per-epoch
+ckpts on box. EAR TEST PENDING (full-artist bar [[lora-goal-full-artist-sound]]): load final, judge at
+0.6-0.8 - (1) does it stay clean at 0.7-0.8 (the data+epochs hypothesis), (2) does it carry MORE of the
+specific Battle Beast sound (Noora's vocals + band) than the 21-track nightwish adapters carried
+Nightwish (the DATA lever)? Compare vs any prior battlebeast adapter on box.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
