@@ -3152,11 +3152,13 @@ def _lora_paths(dataset):
 # Canonical LoRA training/labeling models. Pinned, NOT read from engine live state —
 # if the engine was restarted (or another flow swapped models), we must put it back
 # into the known-good config rather than preserve whatever happens to be loaded.
-# - xl-sft is the project default per [[base-sft-default]]; we train against it so
-#   the LoRA matches what Generate uses.
+# - xl-BASE is the labeling DiT now (changed 2026-06-09): we train on xl-base
+#   [[lora-train-on-xl-base]], so label on it too for consistency (the DiT barely
+#   matters for captioning - the 4B LM does the work - but keep one model across the run).
+#   Only used by _ensure_labeling_ready (labeling path); training inits xl-base explicitly.
 # - 4B LM produces the rich prose captions the merge layer is designed around;
 #   0.6B (the engine's default when lm_model_path is omitted) gives weaker tags.
-LORA_DIT_MODEL = "acestep-v15-xl-sft"
+LORA_DIT_MODEL = "acestep-v15-xl-base"
 LORA_LM_MODEL  = "acestep-5Hz-lm-4B"
 
 
