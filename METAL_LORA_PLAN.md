@@ -1184,6 +1184,22 @@ ckpts on box. EAR TEST PENDING (full-artist bar [[lora-goal-full-artist-sound]])
 specific Battle Beast sound (Noora's vocals + band) than the 21-track nightwish adapters carried
 Nightwish (the DATA lever)? Compare vs any prior battlebeast adapter on box.
 
+## 13r. Beast in Black dim-64/100ep run IN FLIGHT (2026-06-09)
+
+Biggest CLEAN dataset yet + the DATA lever on a male-fronted artist. Run:
+crucible_beastinblack/train_20260609-212313__lokrv2_100ep_prodigy_dim64_cfg0.1. Champion recipe:
+prodigy / constant / lr1.0 / cfg_ratio0.1 / factor8 / dim64 / alpha64 / attn+mlp / 100ep / save_every10.
+~200s/epoch (39 tracks) -> ~5.5h, ep1 loss 1.14.
+DATASET BUILD (full re-pipeline this session): 2 local Downloads folders (old 20 + new "All-songs" 40)
+-> deduped to 40 (new is a superset) -> cleared+rebuilt crucible_beastinblack -> uploaded 40 (LRCLIB
+lyrics) -> RESTART#1 -> scan -> autolabel xl-base+4B LM (merge SKIPPED = clean LM prose, no Last.fm
+genre-soup; LORA_DIT_MODEL changed sft->base) -> CAPTION FIX: 8 LM "female lead" mislabels (Yannis's
+high tenor) -> male + male reinforced, all 40 verified safe via full-field PUT (lyrics/bpm/key intact)
+-> save -> preprocess -> 39 tensors (1 failed = "Battle Hymn" 6.9min > preprocess length cap; dropped
+as an outlier) -> RESTART#2 -> train. EAR TEST PENDING: full-artist bar [[lora-goal-full-artist-sound]]
+(Yannis's voice + the band), judge over MULTIPLE gens per setting (single-gen A/B unreliable
+[[lora-scale-clean-seed-nondeterministic]]). If dim64 not enough, retry dim128.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
