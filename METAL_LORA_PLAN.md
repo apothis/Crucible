@@ -1129,6 +1129,37 @@ fidelity - bigger just = artifacts. The "inspired-by-not-is" gap is about WHERE 
 (targeting / Fisher-info ranks) or the DATA (more tracks / caption rework), not how much. Next lever
 should be TARGETED capacity (Fisher) or DATA, picked research-led - NOT another magnitude knob.
 
+## 13p. Research: capture-more-artist levers (cost-capped, 2026-06-08)
+
+Cost-capped deep-research (54 agents, 1.24M tok - cap worked vs §13m's 2.5M). Full report:
+tasks/w5ous7dxl.output. RANKED shortlist:
+1. **FIM-LoRA-style gradient-variance calibration (TARGETED rank)** - ~8 calibration backward passes,
+   compute gradient variance of each adapter matrix per module (cheap diagonal empirical Fisher),
+   redistribute the SAME fixed rank budget per-module importance WITH a rank floor. MEASURES where THIS
+   artist lives on OUR model vs guessing. (AdaLoRA 2303.10512, LoRA2 2603.21884, FIM-LoRA 2605.16800.)
+   HONEST: evidence shows adaptive rank MATCHES uniform at equal budget (FIM-LoRA 88.6 vs 88.7) - wins
+   on efficiency/low-budget robustness, NOT a big fidelity jump. So partly a DIAGNOSTIC (where to
+   target), not a guaranteed "more artist."
+2. **OFT/BOFT (orthogonal finetuning)** - multiplicative angle-preserving updates preserve hyperspherical
+   energy -> retain base ability, reduce forgetting. Mechanistically DIFFERENT from magnitude; our
+   artifact-when-pushed failure is consistent with base-corruption that OFT prevents. (OFT 2306.07280,
+   BOFT 2311.06243.) CAVEATS: author-biased comparatives, ~3x slower, more params, anti-forgetting !=
+   more identity, image-diffusion only, needs engine plumbing.
+3. AdaLoRA SVD importance pruning - fallback.
+
+REFUTED (0-2): "cross-attention carries identity capacity" - NO evidence. => layer targeting must be
+MEASURED empirically on ACE-Step (-> Fisher calibration), NOT assumed from image-model priors.
+
+DOMINANT CAVEAT: ALL evidence is image-diffusion / NLP - NONE on flow-matching, audio/music, LoKr, or
+voice timbre. Pure extrapolation; ear-validate everything. Effect sizes MODEST (match-uniform), so no
+silver bullet here. GAP: research found NO verified claims on lever #4 DATA (sample count 20->50->100,
+augmentation, captions) or #5 loss-weighting (min-SNR/EMA) - those are UNRESEARCHED and, given our
+magnitude failures + only 21 tracks, DATA is plausibly the bigger un-pulled lever (Tarja-era Nightwish
+= ~40+ songs available, we used 21). NEXT-LEVER OPTIONS: (a) expand data to ~40 Tarja tracks + caption
+rework (controllable, unresearched-but-plausible, needs re-upload/preprocess); (b) Fisher calibration
+as diagnostic+lever (needs wrapper plumbing); (c) OFT/BOFT (bigger build, modest/biased evidence);
+(d) a 2nd capped research pass on the data+recipe gap. All judged by ear [[lora-goal-full-artist-sound]].
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
