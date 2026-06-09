@@ -1111,6 +1111,15 @@ audition ~ep40/80/120/final at strength 0.6-0.8 on the full-artist bar, vs the d
 final. If more artist + still clean to ~0.8 -> capacity was the lever, push to 256 next; if it
 overfits faster / muffles -> capacity isn't the gap, pivot to Fisher ranks / cross-attn / data.
 
+RESULT (done ~4.5h, 2026-06-08): fit HARDER than dim-64 - train-loss last-quarter mean 0.40 vs 0.55
+(min 0.256, final 0.431). More capacity -> lower train loss (expected); NOT a quality verdict (could
+be richer capture OR more overfit - the lower loss raises overfit risk). Saved FINAL (loadable in
+picker) + per-epoch checkpoints on box (helper enumerates final only; earlier ckpts loadable by path
+via /v1/lora/load). EAR TEST PENDING: final-first - A/B dim-128 final vs dim-64 v2/Prodigy final at
+0.6-0.8 on the full-artist bar. If final is muffled/overfit -> ladder back to ep40/80/120 (get
+checkpoint folder names via a box `dir`, load each via /v1/lora/load). If final is more-artist +
+clean -> capacity helped, push dim 256 next.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
