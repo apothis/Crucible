@@ -1229,8 +1229,24 @@ all 40 (more genuine artist data; run already multi-lever so +1 track is noise).
 RUN (in flight, ~5.5h): train_20260610-094008__lokrv2_100ep_prodigy_dim128_cfg0.1. Champion v2 recipe
 at dim128: prodigy / constant / lr1.0 / cfg_ratio0.1 / factor8 / dim128 / alpha128 / attn+mlp
 (q,k,v,o,gate,up,down) / 100ep / save_every10. Gated on xl-base loaded (/health, not /v1/health).
-10 steps/epoch, ep1 loss 1.177 (stable at lr1.0 = Prodigy engaged, AdamW would NaN). EAR TEST PENDING:
-does dim128 + the shared band-name trigger finally surface Yannis + the band? Judge over 2-3 gens.
+10 steps/epoch, ep1 loss 1.177 (stable at lr1.0 = Prodigy engaged, AdamW would NaN).
+RESULT (done, 2026-06-10): loss 0.855 -> 0.724 -> 0.564, min 0.404 (deeper fit than dim64's
+0.86/0.75/0.67/0.560 = used the extra capacity). EAR VERDICT (user, on XL Base - user ALWAYS auditions
+on base [[audition-lora-on-training-base]], so dim64 "no Yannis" was real not a base artifact):
+"definitely captured more of Yannis' voice", still finding where it breaks up on the strength scale.
+WIN = dim128 + band-name trigger both helped.
+
+### §13t: alpha bump (more-capture lever) (2026-06-10)
+Next lever toward [[lora-goal-full-artist-sound]]: alpha 128 -> 256 (effective SCALE 1.0 -> 2.0), single
+variable off the §13s champion, reuses the same 40 tensors (no re-preprocess). Rationale: our earlier
+AdamW-era A/B found scale 2.0 captured MORE than 1.0, and upstream high_quality.json uses alpha=2xdim;
+caveat = Prodigy sets its own effective LR (D-adaptation) so the old gain may not transfer 1:1 - hence
+test by ear. Tradeoff: stronger adapter likely breaks up at a LOWER slider (audition ~0.4-0.5).
+RUN (in flight, ~6h @ ~220s/epoch): train_20260610-162556__lokrv2_100ep_prodigy_dim128_alpha256_cfg0.1.
+All else identical (prodigy/constant/lr1.0/cfg0.1/factor8/dim128/100ep/save_every10/attn+mlp). Gated
+xl-base. ep1 loss 1.177 (same as alpha128 ep1; divergence shows later). EAR TEST PENDING: more Yannis
+than alpha128 at a usable scale? If yes, next swings = more epochs (200-300, audition mid ckpts) /
+voice-specific captions / dim256 / DoRA. If it just breaks up sooner with no gain, revert to alpha128.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
