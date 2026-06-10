@@ -1257,6 +1257,24 @@ magnitude-knob dead-end again). EAR TEST PENDING: audition alpha256 FINAL on XL 
 next PAID run = LoKr dropout 0.1 (regularizes the SHAPE of the deltas to widen the usable window, never
 once tried; v2 route has native `dropout` field, default 0.0) per §13g Tier-2. Also free: ladder
 alpha256 mid-checkpoints (ep40/60/80) by ear before any new run.
+EAR VERDICT (2026-06-10, user): "seems very similar" to alpha128, and at higher strength "it feels
+like it's trying to cram too much in at the same time and it gets messy". = CONFIRMS the prediction:
+alpha (a magnitude knob) added nothing (Prodigy absorbed it); the high-strength break-up is over-geared
+brittle co-adapted deltas. MAGNITUDE LEVERS NOW FULLY EXHAUSTED by ear (lr, dim, alpha all = heat not
+artist, across nightwish + beastinblack). DECISION: champion stays dim128/alpha128 (094008); next paid
+run = REGULARIZATION = LoKr dropout 0.1.
+
+### §13u: LoKr dropout (regularization lever) (2026-06-10)
+First-ever non-zero dropout run. SINGLE variable off the §13s champion (094008 dim128/alpha128):
+add `dropout:0.1` (v2 route native field, was 0.0 every run to date). Rationale: the "crams too much in
+-> messy at high strength" symptom = over-geared brittle deltas; dropout forces the adapter to learn a
+redundant/distributed (not co-adapted-spiky) representation -> should WIDEN the usable strength window
+WITHOUT cutting capacity (unlike lowering dim/alpha). Built for exactly this in the 2026-06-07 patch but
+never used (pivoted to v2, then chased capacity/data/caption/alpha levers). Config: prodigy / constant /
+lr1.0 / cfg_ratio0.1 / factor8 / dim128 / alpha128 / dropout0.1 / 100ep / save_every10 / attn+mlp,
+reuse same 40 tensors. CAVEAT: dropout reduces overfit, so if the gap were UNDERfit it'd hurt - but our
+symptom is over-gearing, the opposite. EAR TEST PENDING: does Yannis hold at HIGHER strength (window
+widens) vs the champion? Judge same full-artist bar.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
