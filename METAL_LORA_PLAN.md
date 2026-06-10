@@ -1275,6 +1275,16 @@ lr1.0 / cfg_ratio0.1 / factor8 / dim128 / alpha128 / dropout0.1 / 100ep / save_e
 reuse same 40 tensors. CAVEAT: dropout reduces overfit, so if the gap were UNDERfit it'd hurt - but our
 symptom is over-gearing, the opposite. EAR TEST PENDING: does Yannis hold at HIGHER strength (window
 widens) vs the champion? Judge same full-artist bar.
+ATTEMPT 1 ABORTED (2026-06-10): fired dim128/alpha128/dropout0.1/200ep but caught via
+[[verify-feature-engaged-not-just-ran]] that DROPOUT WAS A SILENT NO-OP - the v2 route
+(`train_api_lokr_v2_start_route.py`) DECLARED the `dropout` field but `_build_v2_configs` never
+passed it into `LoKRConfigV2(...)` (only cfg_ratio was plumbed). Proof: `/v1/training/status` config
+block had NO dropout key + no "LoKr dropout config:" log line. STOPPED at ep1 (minimal waste). FIX
+shipped (commit c9f23bc, patches/engine-2026-06-08 + README): pass `dropout=request.dropout` into
+LoKRConfigV2 (field inherited from the 06-07-patched LoKRConfig; `inject_lokr_into_dit` already reads
+it -> LyCORIS) + surface dropout in the status echo. REQUIRES box redeploy of the route file +
+engine restart. ATTEMPT 2 PENDING after redeploy: re-fire + VERIFY dropout:0.1 shows in status config
+AND the engine log prints "LoKr dropout config: dropout=0.1" BEFORE trusting the run.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
