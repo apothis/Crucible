@@ -1297,6 +1297,21 @@ getattr). ATTEMPT 3 = send **rank_dropout:0.1** (NOT dropout) - the real LoKr re
 "[WARN] normal dropout" spam + "LoKr dropout config: ... rank_dropout=0.1" before trusting.
 LESSON: "the feature ran" needed THREE layers of verification - route set it (status echo) -> reached
 LyCORIS (log line) -> LyCORIS actually IMPLEMENTS it (no warning). [[verify-feature-engaged-not-just-ran]]
+ATTEMPT 3 ABORTED (2026-06-11): rank_dropout:0.1 CRASHED at step 0 - `Expected all tensors on same
+device, cuda:0 and cpu`. VERIFIED in lycoris/modules/lokr.py:376 - rank_dropout builds `drop =
+torch.rand(weight.size(0)).to(dtype)` = CPU tensor (only dtype cast, NOT device), then `weight *= drop`
+(line 380) vs a cuda weight = device-mismatch BUG in this LyCORIS version's rank_dropout (fires even on
+the disabled time_embed module since get_weight runs every forward). module_dropout is device-safe (its
+check is a CPU-scalar compare; with rank_dropout=0 the buggy block is skipped). DECISION (user): run
+module_dropout NOW, do the proper rank_dropout LyCORIS fix (1-line: `torch.rand(..., device=
+weight.device)`) TOMORROW.
+ATTEMPT 4 RUNNING (2026-06-11 ~00:07, ~12h @ 200ep): train_20260611-000703__lokrv2_200ep_prodigy_
+dim128_a128_moduledrop0.1_cfg0.1. SINGLE variable off champion = module_dropout:0.1 (dropout/rank_drop
+both 0). VERIFIED ENGAGED: config echo module_dropout=0.1 + cleared step 0 (where rank_dropout crashed)
++ ep1 step10 loss 1.177 no error. module_dropout drops whole adapter modules ~10%/step = coarser than
+rank_dropout but trains the adapter to work when partly absent (~ graceful degradation across inference
+strength). EAR TEST PENDING (full-artist bar): does the usable strength window WIDEN vs champion? TODO
+TOMORROW: patch LyCORIS rank_dropout device bug -> A/B rank_dropout 0.1 vs this module_dropout run.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
