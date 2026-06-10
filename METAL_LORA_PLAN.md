@@ -1247,6 +1247,16 @@ All else identical (prodigy/constant/lr1.0/cfg0.1/factor8/dim128/100ep/save_ever
 xl-base. ep1 loss 1.177 (same as alpha128 ep1; divergence shows later). EAR TEST PENDING: more Yannis
 than alpha128 at a usable scale? If yes, next swings = more epochs (200-300, audition mid ckpts) /
 voice-specific captions / dim256 / DoRA. If it just breaks up sooner with no gain, revert to alpha128.
+RESULT (done, 2026-06-10): loss curve NEARLY IDENTICAL to alpha128 - 0.857/0.739/0.567, min 0.405,
+final 0.444 (vs alpha128 0.855/0.724/0.564/0.404). Doubling alpha barely moved training = PRODIGY
+ABSORBED IT: its D-adaptation re-estimates effective LR, so a higher alpha (effective scale) gets
+compensated -> near-identical dynamics. Confirms the earlier caveat (scale-2.0 AdamW-era gain does NOT
+transfer under Prodigy). STRONG PRIOR that by ear alpha256 ~= alpha128 or just hotter/no-gain (= §13o
+magnitude-knob dead-end again). EAR TEST PENDING: audition alpha256 FINAL on XL Base at LOWER strength
+(~0.4-0.5, scale 2.0) vs the alpha128 sweet spot. If ~same/no gain -> magnitude levers are EXHAUSTED;
+next PAID run = LoKr dropout 0.1 (regularizes the SHAPE of the deltas to widen the usable window, never
+once tried; v2 route has native `dropout` field, default 0.0) per §13g Tier-2. Also free: ladder
+alpha256 mid-checkpoints (ep40/60/80) by ear before any new run.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
