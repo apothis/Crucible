@@ -62,7 +62,9 @@ class StartLoKRV2TrainingRequest(BaseModel):
     scheduler_type: str = Field(default="cosine", description="cosine | cosine_restarts | linear | constant | constant_with_warmup")
     cfg_ratio: float = Field(default=0.15, ge=0.0, le=1.0, description="CFG/caption dropout during training")
     attention_type: str = Field(default="both", description="self | cross | both")
-    dropout: float = Field(default=0.0, ge=0.0, le=1.0, description="adapter dropout")
+    dropout: float = Field(default=0.0, ge=0.0, le=1.0, description="adapter 'normal' dropout - NO-OP for LoKr/LoHa (LyCORIS prints '[WARN] haven't implemented normal dropout yet' + ignores it). Use rank_dropout/module_dropout instead.")
+    rank_dropout: float = Field(default=0.0, ge=0.0, le=1.0, description="LyCORIS rank dropout - IMPLEMENTED for LoKr (lokr.py:375 drops rank components each training step). The real regularizer for LoKr.")
+    module_dropout: float = Field(default=0.0, ge=0.0, le=1.0, description="LyCORIS module dropout - IMPLEMENTED for LoKr (lokr.py:544 skips whole adapter modules per step).")
     # Training schedule
     learning_rate: float = Field(default=1e-4, gt=0.0)
     train_epochs: int = Field(default=100, ge=1)
@@ -99,11 +101,14 @@ def _build_v2_configs(request: "StartLoKRV2TrainingRequest", device: str = "cuda
         target_modules=target_modules,
         attention_type=request.attention_type,
     )
-    # Crucible 2026-06-10: plumb adapter dropout. Set via setattr (NOT a constructor
-    # kwarg) so this route works whether or not LoKRConfig declares a `dropout` field -
-    # inject_lokr_into_dit reads it via getattr() and forwards to LyCORIS create_lycoris
-    # (both the dropout-read in lokr_utils AND this require the 2026-06-07 patch live).
+    # Crucible 2026-06-10: plumb adapter dropouts via setattr (NOT constructor kwargs)
+    # so this route works regardless of which fields LoKRConfig declares - inject_lokr_into_dit
+    # reads each via getattr() and forwards to LyCORIS create_lycoris. NOTE: `dropout` (normal)
+    # is a NO-OP for LoKr in LyCORIS (warns + ignores); rank_dropout/module_dropout are the
+    # implemented ones (verified in lycoris/modules/lokr.py 2026-06-10).
     setattr(adapter_cfg, "dropout", request.dropout)
+    setattr(adapter_cfg, "rank_dropout", request.rank_dropout)
+    setattr(adapter_cfg, "module_dropout", request.module_dropout)
     train_cfg = TrainingConfigV2(
         shift=request.training_shift,
         learning_rate=request.learning_rate,
@@ -212,7 +217,9 @@ def register_lokr_v2_training_start_route(
                     "optimizer_type": request.optimizer_type,
                     "scheduler_type": request.scheduler_type,
                     "cfg_ratio": request.cfg_ratio,
-                    "dropout": request.dropout,  # Crucible 2026-06-10: surface so /v1/training/status proves dropout engaged
+                    "dropout": request.dropout,  # Crucible 2026-06-10: surface so /v1/training/status proves dropout engaged (note: no-op for LoKr)
+                    "rank_dropout": request.rank_dropout,
+                    "module_dropout": request.module_dropout,
                     "attention_type": request.attention_type,
                     "target_modules": list(request.target_modules or []),
                 },

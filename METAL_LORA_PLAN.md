@@ -1285,6 +1285,18 @@ LoKRConfigV2 (field inherited from the 06-07-patched LoKRConfig; `inject_lokr_in
 it -> LyCORIS) + surface dropout in the status echo. REQUIRES box redeploy of the route file +
 engine restart. ATTEMPT 2 PENDING after redeploy: re-fire + VERIFY dropout:0.1 shows in status config
 AND the engine log prints "LoKr dropout config: dropout=0.1" BEFORE trusting the run.
+ATTEMPT 2 ABORTED (2026-06-10): deployed the 06-07 dropout machinery (was NEVER deployed - HELD per
+its README, not git-reverted; user confirmed no git pull) + the v2 route setattr fix. dropout=0.1 then
+reached LyCORIS (log: "Use Dropout value: 0.1" + "LoKr dropout config: dropout=0.1") BUT the console
+spammed `[WARN]LoHa/LoKr haven't implemented normal dropout yet.` x352 = NORMAL DROPOUT IS A NO-OP FOR
+LoKr in LyCORIS. VERIFIED in lycoris/modules/lokr.py: `dropout` is stored+warned+ignored (~L200); only
+`rank_dropout` (~L375, drops rank components/step) + `module_dropout` (~L544, skips modules) are
+IMPLEMENTED for LoKr. Stopped at ep~10. FIX: v2 route now also plumbs rank_dropout + module_dropout
+(only the route file needs re-copying; configs.py/lokr_utils.py already deployed + read all 3 via
+getattr). ATTEMPT 3 = send **rank_dropout:0.1** (NOT dropout) - the real LoKr regularizer. Verify NO
+"[WARN] normal dropout" spam + "LoKr dropout config: ... rank_dropout=0.1" before trusting.
+LESSON: "the feature ran" needed THREE layers of verification - route set it (status echo) -> reached
+LyCORIS (log line) -> LyCORIS actually IMPLEMENTS it (no warning). [[verify-feature-engaged-not-just-ran]]
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).

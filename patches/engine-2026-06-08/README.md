@@ -3,7 +3,18 @@
 INCREMENTAL, ADDITIVE. Does not supersede any prior patch (2026-05-30 / 2026-06-06 /
 2026-06-07 all still required). Adds ONE new route file + a 2-line wiring edit.
 
-## FIX 2026-06-10 - adapter `dropout` was declared but DROPPED ON THE FLOOR (REDEPLOY REQUIRED)
+## FIX 2026-06-10b - `dropout` (normal) is a NO-OP for LoKr; use rank_dropout/module_dropout
+After the 06-10a fix below got dropout=0.1 all the way to LyCORIS, the engine console showed
+`[WARN]LoHa/LoKr haven't implemented normal dropout yet.` x352 (once per module) + applied nothing.
+VERIFIED in `lycoris/modules/lokr.py`: `dropout` (normal) is stored + warned + IGNORED (line ~200);
+only `rank_dropout` (line ~375, drops rank components each step) and `module_dropout` (line ~544,
+skips whole modules) are IMPLEMENTED for LoKr. FIX: the v2 route now also declares + setattrs +
+echoes `rank_dropout` and `module_dropout` (inject_lokr_into_dit already reads all three via getattr,
+and configs.py/lokr_utils.py are already deployed). Only THIS route file needs re-copying. For LoKr
+regularization send **`rank_dropout`** (the dropout analog), NOT `dropout`. VERIFY after restart:
+console shows NO "[WARN]...normal dropout" spam AND `LoKr dropout config: ... rank_dropout=0.1`.
+
+## FIX 2026-06-10a - adapter `dropout` was declared but DROPPED ON THE FLOOR (REDEPLOY REQUIRED)
 The `StartLoKRV2TrainingRequest.dropout` field existed but `_build_v2_configs` never passed it
 into `LoKRConfigV2(...)`, so any `dropout` value was silently ignored = a no-op (caught when a
 `dropout:0.1` run showed no dropout in `/v1/training/status` config + no "LoKr dropout config:" log
