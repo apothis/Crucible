@@ -12,10 +12,13 @@ request.dropout)` AFTER building LoKRConfigV2 - NOT a constructor kwarg (a const
 CRASHES with "unexpected keyword argument 'dropout'" if LoKRConfig lacks the field; setattr +
 `inject_lokr_into_dit`'s `getattr` read works regardless); (2) add `"dropout"` to the status `config`
 echo so engagement is verifiable.
-DISCOVERY 2026-06-10: the 2026-06-07 dropout patch was NOT live on the box (reverted - v1
-`StartLoKRTrainingRequest` had no dropout fields + `LoKRConfigV2(dropout=)` threw). The dropout
-machinery (LoKRConfig field + `inject_lokr_into_dit` read) lives in the 06-07 `configs.py` +
-`lokr_utils.py`, so those MUST be re-deployed alongside this route fix. Box-diff-checked both vs
+DISCOVERY 2026-06-10: the 2026-06-07 dropout patch was NOT live on the box (v1
+`StartLoKRTrainingRequest` had no dropout fields + `LoKRConfigV2(dropout=)` threw). CAUSE = it was
+NEVER DEPLOYED (NOT a git-pull reversion - user confirmed no git pull): the 06-07 README marked
+"Deploy HELD until the 250ep run finishes", then we pivoted to the v2/Prodigy path (06-08) and never
+circled back. Unnoticed because dropout was never used until now. The dropout machinery (LoKRConfig
+field + `inject_lokr_into_dit` read) lives in the 06-07 `configs.py` + `lokr_utils.py`, so those MUST
+be deployed (FIRST TIME) alongside this route fix. Box-diff-checked both vs
 current upstream main 2026-06-10 = clean (upstream + our additions only). REDEPLOY: 06-07 `configs.py`
 + `lokr_utils.py` AND this route file, then OS-restart. VERIFY: a `dropout:0.1` run shows
 `dropout: 0.1` in `/v1/training/status` `config` AND the engine log prints `LoKr dropout config:
