@@ -1200,6 +1200,13 @@ as an outlier) -> RESTART#2 -> train. EAR TEST PENDING: full-artist bar [[lora-g
 (Yannis's voice + the band), judge over MULTIPLE gens per setting (single-gen A/B unreliable
 [[lora-scale-clean-seed-nondeterministic]]). If dim64 not enough, retry dim128.
 
+RESULT (done ~5.5h, 2026-06-09): final train loss min 0.560; curve first25% 0.86 -> mid 0.75 ->
+last25% 0.67 (less aggressive fit than the dim-128 runs ~0.40-0.59 = expected from dim64 + 39 tracks,
+generally less overfit). Saved FINAL (loadable) + per-epoch ckpts on box. EAR TEST PENDING: load final,
+judge at 0.5-0.8 over 2-3 gens/setting on the full-artist bar (Yannis's male tenor + the band/synth);
+does the bigger CLEAN dataset (39 vs 21 nightwish) carry more of the SPECIFIC artist? If not enough,
+dim128 next.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
