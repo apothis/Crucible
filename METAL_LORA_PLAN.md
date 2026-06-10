@@ -1195,8 +1195,14 @@ DATASET BUILD (full re-pipeline this session): 2 local Downloads folders (old 20
 lyrics) -> RESTART#1 -> scan -> autolabel xl-base+4B LM (merge SKIPPED = clean LM prose, no Last.fm
 genre-soup; LORA_DIT_MODEL changed sft->base) -> CAPTION FIX: 8 LM "female lead" mislabels (Yannis's
 high tenor) -> male + male reinforced, all 40 verified safe via full-field PUT (lyrics/bpm/key intact)
--> save -> preprocess -> 39 tensors (1 failed = "Battle Hymn" 6.9min > preprocess length cap; dropped
-as an outlier) -> RESTART#2 -> train. EAR TEST PENDING: full-artist bar [[lora-goal-full-artist-sound]]
+-> save -> preprocess -> 39 tensors (1 = "Battle Hymn" failed to encode + was silently skipped).
+NOTE 2026-06-10: the "6.9min > length cap" reason was WRONG (unverified guess) -- there is NO hard
+duration cap (Ghost Love Score ~10min trained fine; Battle Hymn encoded fine on the dim128 re-run's
+preprocess -> 40 tensors). The engine SILENTLY SKIPS any track that fails to encode and still reports
+"completed" with fewer tensors. Most likely cause of the one-off skip = transient VRAM/OOM on the
+SINGLE LONGEST track (biggest latent, first to OOM when VRAM tight per the stickiness bug
+[[engine-fresh-boot-for-lora]]); unproven retroactively (no engine log). -> RESTART#2 -> train.
+EAR TEST PENDING: full-artist bar [[lora-goal-full-artist-sound]]
 (Yannis's voice + the band), judge over MULTIPLE gens per setting (single-gen A/B unreliable
 [[lora-scale-clean-seed-nondeterministic]]). If dim64 not enough, retry dim128.
 
@@ -1206,6 +1212,25 @@ generally less overfit). Saved FINAL (loadable) + per-epoch ckpts on box. EAR TE
 judge at 0.5-0.8 over 2-3 gens/setting on the full-artist bar (Yannis's male tenor + the band/synth);
 does the bigger CLEAN dataset (39 vs 21 nightwish) carry more of the SPECIFIC artist? If not enough,
 dim128 next.
+
+### §13s: Beast in Black dim-128 + band-name-trigger experiment (2026-06-10)
+EAR VERDICT on §13r dim-64: messy at scale 0.8+, NO sign of Yannis's voice (full-artist bar FAILED).
+-> Two-lever retry: (1) DIM 64->128 for capacity to carry the timbre, (2) NEW experiment = a SHARED
+TRIGGER TOKEN. User's idea: line up generation to training by putting the band name in BOTH the
+training captions AND the song prompt (we'd previously DROPPED band names from style captions per
+[[lokr-style-fidelity]]; this deliberately reverses that to test if an explicit anchor helps).
+Mechanics: prepended "Beast in Black. " to all 40 captions via engine PUT (sample_idx + all 9 fields
+re-included, lyrics/bpm/key verified intact); since captions are baked into tensors, RE-PREPROCESSED
+(no re-upload/scan/autolabel) on xl-base -> this time 40 tensors (Battle Hymn encoded; see
+[[preprocess-silent-skip]] - last run's 39 was a silent encode skip, NOT a length cap). Heart of Winter
+song tags rewritten to mirror captions + lead with "Beast in Black" trigger; dropped the "clean/ringing
+head voice/controlled vibrato" that fought the gritty-tenor training distribution. Decision: train on
+all 40 (more genuine artist data; run already multi-lever so +1 track is noise).
+RUN (in flight, ~5.5h): train_20260610-094008__lokrv2_100ep_prodigy_dim128_cfg0.1. Champion v2 recipe
+at dim128: prodigy / constant / lr1.0 / cfg_ratio0.1 / factor8 / dim128 / alpha128 / attn+mlp
+(q,k,v,o,gate,up,down) / 100ep / save_every10. Gated on xl-base loaded (/health, not /v1/health).
+10 steps/epoch, ep1 loss 1.177 (stable at lr1.0 = Prodigy engaged, AdamW would NaN). EAR TEST PENDING:
+does dim128 + the shared band-name trigger finally surface Yannis + the band? Judge over 2-3 gens.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
