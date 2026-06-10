@@ -98,8 +98,12 @@ def _build_v2_configs(request: "StartLoKRV2TrainingRequest", device: str = "cuda
         weight_decompose=request.lokr_weight_decompose,
         target_modules=target_modules,
         attention_type=request.attention_type,
-        dropout=request.dropout,  # Crucible 2026-06-10: plumb adapter dropout (was declared but dropped on the floor; LoKRConfigV2 inherits the field from the 2026-06-07-patched LoKRConfig, and inject_lokr_into_dit reads it -> LyCORIS)
     )
+    # Crucible 2026-06-10: plumb adapter dropout. Set via setattr (NOT a constructor
+    # kwarg) so this route works whether or not LoKRConfig declares a `dropout` field -
+    # inject_lokr_into_dit reads it via getattr() and forwards to LyCORIS create_lycoris
+    # (both the dropout-read in lokr_utils AND this require the 2026-06-07 patch live).
+    setattr(adapter_cfg, "dropout", request.dropout)
     train_cfg = TrainingConfigV2(
         shift=request.training_shift,
         learning_rate=request.learning_rate,

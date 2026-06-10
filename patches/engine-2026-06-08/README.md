@@ -7,13 +7,19 @@ INCREMENTAL, ADDITIVE. Does not supersede any prior patch (2026-05-30 / 2026-06-
 The `StartLoKRV2TrainingRequest.dropout` field existed but `_build_v2_configs` never passed it
 into `LoKRConfigV2(...)`, so any `dropout` value was silently ignored = a no-op (caught when a
 `dropout:0.1` run showed no dropout in `/v1/training/status` config + no "LoKr dropout config:" log
-line). FIX (in `train_api_lokr_v2_start_route.py`): (1) add `dropout=request.dropout` to the
-`LoKRConfigV2(...)` constructor - the field is inherited from the 2026-06-07-patched `LoKRConfig`,
-and `inject_lokr_into_dit` (which v2's `fixed_lora_module.py` calls) already reads it -> LyCORIS;
-(2) add `"dropout"` to the status `config` echo so engagement is verifiable. DEPENDS ON the
-2026-06-07 patch being live (LoKRConfig must have the `dropout` field). Re-copy this route file to
-the box + OS-restart the engine. VERIFY after restart: a `dropout:0.1` run shows `dropout: 0.1` in
-`/v1/training/status` `config` AND the engine log prints `LoKr dropout config: dropout=0.1 ...`.
+line). FIX (in `train_api_lokr_v2_start_route.py`): (1) set dropout via `setattr(adapter_cfg, "dropout",
+request.dropout)` AFTER building LoKRConfigV2 - NOT a constructor kwarg (a constructor kwarg HARD-
+CRASHES with "unexpected keyword argument 'dropout'" if LoKRConfig lacks the field; setattr +
+`inject_lokr_into_dit`'s `getattr` read works regardless); (2) add `"dropout"` to the status `config`
+echo so engagement is verifiable.
+DISCOVERY 2026-06-10: the 2026-06-07 dropout patch was NOT live on the box (reverted - v1
+`StartLoKRTrainingRequest` had no dropout fields + `LoKRConfigV2(dropout=)` threw). The dropout
+machinery (LoKRConfig field + `inject_lokr_into_dit` read) lives in the 06-07 `configs.py` +
+`lokr_utils.py`, so those MUST be re-deployed alongside this route fix. Box-diff-checked both vs
+current upstream main 2026-06-10 = clean (upstream + our additions only). REDEPLOY: 06-07 `configs.py`
++ `lokr_utils.py` AND this route file, then OS-restart. VERIFY: a `dropout:0.1` run shows
+`dropout: 0.1` in `/v1/training/status` `config` AND the engine log prints `LoKr dropout config:
+dropout=0.1 ...` - gate on BOTH before trusting the run.
 
 ## Why
 The engine only exposes the v1 trainer over HTTP. v2 (`acestep/training_v2`) is CLI-only
