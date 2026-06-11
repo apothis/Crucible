@@ -1320,6 +1320,29 @@ final (0.518) vs min (0.398) = module_dropout per-step noise (random modules dro
 FINAL + per-epoch ckpts (save_every10). EAR TEST PENDING: audition FINAL on XL Base - does the usable
 strength window WIDEN (Yannis holds past ~0.6, no cram/messy breakup) vs champion? If final over-noisy,
 ladder ep~100/140/180. If window widens -> regularization IS the fix -> do proper rank_dropout tomorrow.
+EAR VERDICT (2026-06-11, user): BIG WIN. module_dropout "definitely widened the usable window" + the
+music is "more Beast in Black too" = regularization is confirmed the right lever (over-gearing was the
+breakup cause, as diagnosed §13g). REMAINING GAP = Yannis's specific VOICE: "not bad but not quite
+right" (band/feel/window all good now, timbre not nailed). So module_dropout 0.1 + dim128 is the new
+champion. NEXT QUESTION (user): is more dim worth it? 64->128 was a big win on THIS 40-track set (unlike
+the data-starved 21-track nightwish where dim128 just fried, §13o) so the capacity curve here has NOT
+flattened -> dim256 worth a shot, esp. now dropout de-risks pushing capacity. Honest caveat: the voice
+gap may instead be DATA/caption (captions say generic "gritty tenor", never pin HIS timbre) or a base-
+model vocal-resolution ceiling ("inspired-by not is" across ALL artists).
+
+### §13v: LyCORIS rank_dropout fix + dim256 capacity test (2026-06-11)
+PROPER FIX first: patched the LyCORIS rank_dropout device bug (patches/engine-2026-06-11/lokr.py:376,
+`torch.rand(..., device=weight.device)`; 1-line, diff-proven, box==upstream-main per traceback line #s;
+site-packages file -> reverts on any lycoris reinstall). VERIFIED working: dim256 + rank_dropout:0.1
+CLEARED step 0 (where it crashed pre-fix), ep1 step10 loss 1.078.
+RUN IN FLIGHT (2026-06-11 ~22:07, ~12h @ 200ep): train_20260611-220741__lokrv2_200ep_prodigy_dim256_
+a256_rankdrop0.1_cfg0.1. TWO changes vs the §13u module_dropout/dim128 winner (dim 128->256 AND
+module_dropout->rank_dropout) - deliberate "best adapter" push, not a clean ablation: rank_dropout is
+the FINER regularizer (drops rank components not whole modules) which pairs best with MORE capacity for
+a complex target like voice. alpha=dim=256 (scale 1.0 held). EAR TEST PENDING: does the VOICE
+specifically improve (his timbre, not just band/window) vs the module_dropout/dim128 champion? If yes ->
+capacity still the lever (consider 384/512). If just hotter/same voice -> gap is NOT capacity -> pivot
+to caption-pinning his timbre (re-preprocess) or Fisher-info targeted ranks (§13p).
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
