@@ -1312,6 +1312,14 @@ both 0). VERIFIED ENGAGED: config echo module_dropout=0.1 + cleared step 0 (wher
 rank_dropout but trains the adapter to work when partly absent (~ graceful degradation across inference
 strength). EAR TEST PENDING (full-artist bar): does the usable strength window WIDEN vs champion? TODO
 TOMORROW: patch LyCORIS rank_dropout device bug -> A/B rank_dropout 0.1 vs this module_dropout run.
+RESULT (done 2026-06-11, full 2000 steps): curve 0.819 -> 0.652 -> 0.559, min 0.398, final 0.518.
+ENCOURAGING SIGNATURE: despite 2x epochs (200 vs champion 100) it did NOT overfit to a lower floor -
+last25% 0.559 / min 0.398 ~= the 100ep champion (0.564/0.404), vs un-regularized dim128 that dove to
+~0.40 at 100ep = module_dropout held the fit back from over-cramming (regularization working). Higher
+final (0.518) vs min (0.398) = module_dropout per-step noise (random modules dropped each step). Saved
+FINAL + per-epoch ckpts (save_every10). EAR TEST PENDING: audition FINAL on XL Base - does the usable
+strength window WIDEN (Yannis holds past ~0.6, no cram/messy breakup) vs champion? If final over-noisy,
+ladder ep~100/140/180. If window widens -> regularization IS the fix -> do proper rank_dropout tomorrow.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
