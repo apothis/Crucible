@@ -29,6 +29,7 @@ tensor timestamps, find checkpoint folders, move adapters):
   GET  /fs/read?path=&max_bytes=&b64=  -> {content|b64, size, truncated}
   GET  /fs/tail?path=&lines=           -> {content} (last N lines; for logs)
   GET  /fs/find?root=&pattern=&max=    -> {matches:[...]} (recursive glob; checkpoint discovery)
+  GET  /fs/du?path=                    -> {bytes, files, human} (recursive size; find cleanup targets)
   POST /fs/write  {path, content|b64, backup?}  -> {bytes, mtime_iso, backup?}  (creates parent dirs)
   POST /fs/mkdir  {path}               -> {ok, path}
   POST /fs/move   {src, dst}           -> {ok}
@@ -37,9 +38,10 @@ tensor timestamps, find checkpoint folders, move adapters):
   POST /fs/pycompile {path}            -> {ok} | {ok:false, error}  (py_compile on the box)
 
 SAFETY: every fs path is realpath-resolved and must sit inside one of MG_FS_ROOTS
-(default: the engine install tree = two levels up from BASE, plus BASE). Paths outside
--> 403. If MG_FS_TOKEN is set, mutating ops (write/mkdir/move/copy/delete) require a
-matching `token` in the body. /fs/delete additionally requires `confirm:true`.
+(default: BASE + the auto-detected engine install dir [contains acestep/ AND .venv/, so
+`.venv/.../lycoris` patches work] + its parent for the HF `.cache`). Paths outside -> 403.
+If MG_FS_TOKEN is set, mutating ops (write/mkdir/move/copy/delete) require a matching
+`token` in the body. /fs/delete additionally requires `confirm:true`.
 Deliberately NO arbitrary command/exec endpoint in this cut - ask if you want one (opt-in).
 """
 import os
@@ -66,16 +68,36 @@ app = FastAPI()
 
 
 # ----------------------------- fs sandbox helpers -----------------------------
+def _engine_root():
+    """Walk UP from BASE to find the engine install dir = the ancestor that contains
+    `acestep/` (engine source) or `.venv/` (so .venv/Lib/site-packages/lycoris patches are
+    reachable). Robust regardless of how deep MG_LORA_DIR is nested under the engine."""
+    d = os.path.realpath(BASE)
+    for _ in range(8):
+        if os.path.isdir(os.path.join(d, "acestep")) or os.path.isdir(os.path.join(d, ".venv")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
 def _fs_roots():
     """Allowed roots for the filesystem API. MG_FS_ROOTS (os.pathsep-separated) overrides;
-    default = BASE + the engine install tree (1 and 2 dirs up from BASE), so reads/patches
-    of acestep source, the .venv site-packages, lora_data and the HF .cache all work, while
-    the rest of the disk stays out of reach."""
+    default = BASE + the detected engine install dir (covers acestep source AND
+    `.venv/.../lycoris` for site-packages patches) + that dir's parent (the HF `.cache`
+    modeling files). Everything else on disk stays 403."""
     env = os.environ.get("MG_FS_ROOTS", "").strip()
     if env:
         cands = [p for p in env.split(os.pathsep) if p.strip()]
     else:
-        cands = [BASE, os.path.dirname(BASE), os.path.dirname(os.path.dirname(BASE))]
+        cands = [BASE]
+        er = _engine_root()
+        if er:
+            cands += [er, os.path.dirname(er)]          # engine install (acestep + .venv) + parent (.cache)
+        else:
+            cands += [os.path.dirname(BASE), os.path.dirname(os.path.dirname(BASE))]  # fallback
     roots = []
     for p in cands:
         try:
@@ -85,6 +107,14 @@ def _fs_roots():
         except OSError:
             pass
     return roots
+
+
+def _human(n: float) -> str:
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f}{u}"
+        n /= 1024
+    return f"{n:.1f}PB"
 
 
 def _resolve(path: str) -> str:
@@ -327,6 +357,28 @@ def fs_find(root: str, pattern: str, max: int = 1000):
                 if len(matches) >= max:
                     return {"root": rp, "pattern": pattern, "matches": matches, "truncated": True}
     return {"root": rp, "pattern": pattern, "matches": matches, "truncated": False}
+
+
+@app.get("/fs/du")
+def fs_du(path: str):
+    """Recursive size of a file or directory tree - for finding which run/checkpoint
+    folders are eating disk before cleaning them up."""
+    rp = _resolve(path)
+    if not os.path.exists(rp):
+        raise HTTPException(404, "not found")
+    if os.path.isfile(rp):
+        sz = os.path.getsize(rp)
+        return {"path": rp, "bytes": sz, "files": 1, "human": _human(sz)}
+    total = 0
+    files = 0
+    for dp, _dirs, fns in os.walk(rp):
+        for n in fns:
+            try:
+                total += os.path.getsize(os.path.join(dp, n))
+                files += 1
+            except OSError:
+                pass
+    return {"path": rp, "bytes": total, "files": files, "human": _human(total)}
 
 
 @app.post("/fs/write")
