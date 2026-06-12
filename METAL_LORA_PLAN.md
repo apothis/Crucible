@@ -1365,6 +1365,23 @@ fingerprint. Pin a CONSISTENT specific timbre-core across all 40 (keep per-track
 re-preprocess, retrain champion recipe. HONEST: if that doesn't crack it, the specific voice is beyond
 ACE-Step+LoRA -> it's a MODEL-CHOICE problem (the LeVo path, RESEARCH.md) or accept "inspired-by".
 
+### §13w: GENERALIZATION test - apply the developed method to Avantasia (2026-06-11)
+User decision: rather than chase the Yannis voice ceiling further, prove the method generalizes to a
+2nd artist. Avantasia chosen (old build "worked quite well sometimes"; clean before/after to hear).
+KEY: Avantasia is a MULTI-SINGER metal opera (Tobias Sammet anchors, many guests incl. FEMALE - Floor
+Jansen on Moonglow etc.) = a BAND/PRODUCTION-style target, NOT a single-voice one -> dodges the
+single-timbre ceiling that walled Yannis/Tarja/Noora; plays to the method's proven strengths
+(production/feel/window). Existing crucible_avantasia = 50 tracks but OLD captions (Last.fm genre-soup
+prefix + LM prose, NO band trigger). APPLIED THE CURRENT METHOD: stripped the Last.fm soup
+(caption.partition('. ')[2], verified 50/50 cleanly strippable) + prepended "Avantasia. " trigger, via
+full-field engine PUT (sample_idx + all 9 fields; lyrics/bpm/key verified intact on sample 0 then all
+50). KEPT the ~6 female/soprano guest refs in the prose (CORRECT for Avantasia - do NOT blind-flip like
+the Yannis male-mislabel case). save -> preprocess on xl-base -> 50/50 tensors (no skips; Mac status
+route choked on the LM-restore phase but engine + load_tensor_info confirmed done). RUN PENDING (fresh
+boot): dim256/alpha256/rank_dropout0.1/200ep (the §13v BiB recipe, carried forward per user). EAR TEST
+PENDING: does the current full method beat the old avantasia build (factor-1/dim64/alpha128/discrete/
+lr0.01/AdamW/noisy-captions)? Esp. production/feel/window; voice ceiling should bite less here.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 
