@@ -1352,6 +1352,18 @@ device crashes = LyCORIS fix fully validated. Saved FINAL + per-epoch ckpts. EAR
 on XL Base, sweep 0.6/0.7/0.8 on Neon Crusader + Heart of Neon. KEY Qs: (1) does the VOICE improve vs
 champion? (2) did the usable WINDOW hold (rank_dropout still regularizing enough at the higher fit) or
 get hot again? If hotter, ladder mid ckpts and/or A/B rank_dropout vs module_dropout at dim256.
+EAR VERDICT (2026-06-11, user): SLIGHT improvement, close; a little keener to break up over 0.8 (the
+harder fit showing) but still produced a decent 0.8 take. CRUCIALLY: "doesn't really improve the voice
+in most gens." => CAPACITY IS TAPPED OUT FOR THE VOICE: dim64->128 helped the voice (big), 128->256 did
+NOT. Band/feel/window are good across the recent adapters; the residual gap is Yannis's SPECIFIC TIMBRE.
+Same "inspired-by not is" voice verdict we got on EVERY artist (nightwish, battlebeast) = strong hint of
+an ACE-Step vocal-RESOLUTION CEILING, not a tuning problem. DECISION: stop the capacity/dropout knobs
+(they're polish now). LAST accessible LoRA lever for the VOICE = CAPTION-PINNING his specific timbre
+(§13w): the 40 captions currently describe his voice GENERICALLY and INCONSISTENTLY (per-track LM prose
+varies raspy/clean/operatic/scream) so the adapter learns a fuzzy CLASS of gritty tenor, not HIS
+fingerprint. Pin a CONSISTENT specific timbre-core across all 40 (keep per-track delivery variation),
+re-preprocess, retrain champion recipe. HONEST: if that doesn't crack it, the specific voice is beyond
+ACE-Step+LoRA -> it's a MODEL-CHOICE problem (the LeVo path, RESEARCH.md) or accept "inspired-by".
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
