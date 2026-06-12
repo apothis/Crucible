@@ -1377,10 +1377,13 @@ prefix + LM prose, NO band trigger). APPLIED THE CURRENT METHOD: stripped the La
 full-field engine PUT (sample_idx + all 9 fields; lyrics/bpm/key verified intact on sample 0 then all
 50). KEPT the ~6 female/soprano guest refs in the prose (CORRECT for Avantasia - do NOT blind-flip like
 the Yannis male-mislabel case). save -> preprocess on xl-base -> 50/50 tensors (no skips; Mac status
-route choked on the LM-restore phase but engine + load_tensor_info confirmed done). RUN PENDING (fresh
-boot): dim256/alpha256/rank_dropout0.1/200ep (the §13v BiB recipe, carried forward per user). EAR TEST
-PENDING: does the current full method beat the old avantasia build (factor-1/dim64/alpha128/discrete/
-lr0.01/AdamW/noisy-captions)? Esp. production/feel/window; voice ceiling should bite less here.
+route choked on the LM-restore phase but engine + load_tensor_info confirmed done; USER verified tensor
+files have current timestamps = definitively NEW, not the old build's). RUN IN FLIGHT (2026-06-12
+~14:10, ~12-15h @ 200ep/50 tracks): train_20260612-141026__lokrv2_200ep_prodigy_dim256_a256_rankdrop0.1
+_cfg0.1 (the §13v BiB recipe carried forward per user: dim256/alpha256/rank_dropout0.1/prodigy/constant/
+lr1.0/cfg0.1/factor8/attn+mlp). Gated xl-base, config echo dim256+rank_dropout0.1. EAR TEST PENDING:
+does the current full method beat the old avantasia build (factor-1/dim64/alpha128/discrete/lr0.01/
+AdamW/noisy-captions)? Esp. production/feel/window; voice ceiling should bite less here (multi-singer).
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
