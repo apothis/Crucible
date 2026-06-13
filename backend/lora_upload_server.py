@@ -37,9 +37,11 @@ tensor timestamps, find checkpoint folders, move adapters):
   POST /fs/delete {path, confirm:true} -> {ok, removed}
   POST /fs/pycompile {path}            -> {ok} | {ok:false, error}  (py_compile on the box)
 
-SAFETY: every fs path is realpath-resolved and must sit inside one of MG_FS_ROOTS
+SAFETY: every fs path is realpath-resolved and must sit inside one of the allowed roots
 (default: BASE + the auto-detected engine install dir [contains acestep/ AND .venv/, so
-`.venv/.../lycoris` patches work] + its parent for the HF `.cache`). Paths outside -> 403.
+`.venv/.../lycoris` patches work] + its parent for the HF `.cache` + any auto-detected
+sibling ComfyUI install for the video pipeline). MG_FS_ROOTS full-overrides that set;
+MG_FS_EXTRA_ROOTS adds to it. Paths outside -> 403.
 If MG_FS_TOKEN is set, mutating ops (write/mkdir/move/copy/delete) require a matching
 `token` in the body. /fs/delete additionally requires `confirm:true`.
 Deliberately NO arbitrary command/exec endpoint in this cut - ask if you want one (opt-in).
@@ -83,11 +85,33 @@ def _engine_root():
     return None
 
 
+def _comfy_roots():
+    """Auto-detect a ComfyUI install sitting next to (or one level above) the engine, so
+    the fs API can place custom_nodes + model files for the video pipeline. Matches dir
+    names like `Comfyui`, `ComfyUI`, `ComfyUI_windows_portable` (case/separator-insensitive)."""
+    er = _engine_root()
+    bases = [os.path.dirname(er), os.path.dirname(os.path.dirname(er))] if er else [os.path.dirname(BASE)]
+    found = []
+    for b in bases:
+        try:
+            for name in os.listdir(b):
+                norm = name.lower().replace("_", "").replace("-", "").replace(" ", "")
+                p = os.path.join(b, name)
+                if norm.startswith("comfyui") and os.path.isdir(p):
+                    found.append(p)
+        except OSError:
+            pass
+    return found
+
+
 def _fs_roots():
-    """Allowed roots for the filesystem API. MG_FS_ROOTS (os.pathsep-separated) overrides;
-    default = BASE + the detected engine install dir (covers acestep source AND
+    """Allowed roots for the filesystem API.
+    - MG_FS_ROOTS (os.pathsep-separated) FULL-OVERRIDES the auto-detected default set.
+    - MG_FS_EXTRA_ROOTS (os.pathsep-separated) is ADDED to whatever set is in effect.
+    Default = BASE + the detected engine install dir (covers acestep source AND
     `.venv/.../lycoris` for site-packages patches) + that dir's parent (the HF `.cache`
-    modeling files). Everything else on disk stays 403."""
+    modeling files) + any auto-detected sibling ComfyUI install (custom_nodes + models for
+    the video pipeline). Everything else on disk stays 403."""
     env = os.environ.get("MG_FS_ROOTS", "").strip()
     if env:
         cands = [p for p in env.split(os.pathsep) if p.strip()]
@@ -98,6 +122,10 @@ def _fs_roots():
             cands += [er, os.path.dirname(er)]          # engine install (acestep + .venv) + parent (.cache)
         else:
             cands += [os.path.dirname(BASE), os.path.dirname(os.path.dirname(BASE))]  # fallback
+        cands += _comfy_roots()                          # sibling ComfyUI (video pipeline deploys)
+    extra = os.environ.get("MG_FS_EXTRA_ROOTS", "").strip()
+    if extra:                                            # additive, honored even under a full override
+        cands += [p for p in extra.split(os.pathsep) if p.strip()]
     roots = []
     for p in cands:
         try:
