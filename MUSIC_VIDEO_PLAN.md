@@ -129,3 +129,34 @@ music engine [[no-concurrent-clap-engine]], likely an overnight run.
 (Z-Image character LoRA settings), HF Qwen-Image-Edit-2511, ComfyUI VACE docs, digen/onemoreshot AI
 music-video guides (shot-list + beat-sync). Character-LoRA params + Qwen-Edit consistency VERIFIED via
 multiple sources; VACE 24GB fit + Z-Image zero-shot face-id UNVERIFIED.
+
+## 8. Character consistency - ALL FOUR methods built (2026-06-14)
+
+Per "pre-build both alternatives", every consistency path is now wired into the Music Video tab
+(method selector: auto / anchor / Qwen / VACE / LoRA). Each covers a different failure mode:
+
+| Method | Code | Covers | Status |
+|---|---|---|---|
+| Anchor still | genShot anchor branch (i2v on the ref still) | quick, no extra models | WORKS (Phase A) |
+| Qwen-Image-Edit | build_qwen_char_still + /api/video/char_still | place character in new scene (face fidelity) | built from spec, GGUF downloading |
+| Wan VACE ref2v | build_vace_ref2v + /api/video/vace | identity held THROUGH motion (i2v drift) | built from spec, GGUF downloading |
+| Z-Image char LoRA | build_still `lora` + /api/video/loras + cast picker | highest face fidelity, any pose | consuming side built; train externally |
+
+`auto` resolves to: LoRA if the character has one, else Qwen if its GGUF is present, else anchor.
+video_qwen / video_vace config flags auto-detect their GGUFs (so the options enable themselves once
+download_video_models2.bat finishes + ComfyUI restarts).
+
+### Z-Image character-LoRA training (external tool - Ostris AI Toolkit)
+Crucible CONSUMES the LoRA (cast picker -> build_still applies LoraLoaderModelOnly); training is done
+in **Ostris AI Toolkit** (github.com/ostris/ai-toolkit - 1-click Windows installer + its own web UI;
+VERIFIED supports Z-Image Turbo LoRAs with 24GB configs). Per-character recipe (VERIFIED from multiple
+2026 tutorials): 5-15 (up to 25) images of the character at 1024x1024, rank 8-16 (8 or 16), lr 1e-4
+(down to 5e-5 for tighter identity), ~3000 steps, batch 1-2; ~1h on a 5090 (slower on the 3090).
+Bootstrap the image set from one good Z-Image still -> a few Qwen-Edit/VACE variations, or user photos.
+**Integration:** drop the trained `.safetensors` into ComfyUI/models/loras -> it appears in the cast
+LoRA picker -> select it on a character -> that character's shots generate with the LoRA (consistent
+identity in any scene). NOT shipping a from-scratch install bat (ai-toolkit's own installer + cu130
+torch are better handled by its maintained setup; an untested heavy install would be fragile).
+
+ALL untested-on-hardware paths (Qwen/VACE/LoRA graphs) need a first-fire check once models land +
+a ComfyUI restart - watch for node-wiring errors and report them.
