@@ -1392,6 +1392,15 @@ train_20260605-234720__lokr_150ep_discrete. EAR TEST PENDING: XL Base, sweep 0.6
 (ACE not seed-reproducible [[lora-scale-clean-seed-nondeterministic]]). Q: does the full developed
 method clearly beat the old build on production/feel/window + Tobias/guest voices? = the generalization
 verdict for everything built this session.
+EAR VERDICT (2026-06-12, user): the new full-method build is BETTER than the old discrete build = THE
+DEVELOPED METHOD GENERALIZES (not a BiB fluke). Across the ep100/150/200 ladder it's mixed, ep200
+marginally best but "not huge". => my overfit prediction was WRONG: rank_dropout + the 50-track dataset
+kept the 200ep final from over-baking, so checkpoint-laddering mattered little here (keep the final).
+NET SESSION RESULT: the matured recipe (clean LM captions + band-name trigger + Prodigy/constant/lr1.0
++ dim256 + rank_dropout0.1 + cfg0.1 + attn+mlp, xl-base, ~100-200ep) reliably beats the old approach on
+BOTH BiB and Avantasia for band/production/feel/usable-window. Residual limit = the SPECIFIC-VOICE
+ceiling (ACE-Step vocal resolution), which no LoRA lever cracked -> that's a MODEL-CHOICE frontier (LeVo,
+RESEARCH.md), not more LoRA tuning. Avantasia keeper = train_20260612-141026 FINAL.
 
 ### §13x: Fisher / gradient-sensitivity - built, probed, SHELVED (2026-06-12)
 Wired the engine's unused run_estimation into HTTP (patches/engine-2026-06-12: /v1/training/estimate
