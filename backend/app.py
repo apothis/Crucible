@@ -308,6 +308,10 @@ def ws_loop():
     while True:
         try:
             ws = websocket.create_connection(url, timeout=10)
+            ws.settimeout(None)   # block on recv; video jobs go >10s silent during VAE
+            # decode + mp4 encode, and a recv-timeout reconnect would MISS the terminal
+            # "executing null" completion message (job stuck at running). reconcile_loop
+            # is the safety net regardless.
             while True:
                 msg = ws.recv()
                 if isinstance(msg, (bytes, bytearray)):
@@ -315,6 +319,77 @@ def ws_loop():
                 handle_msg(json.loads(msg))
         except Exception:
             time.sleep(2)
+
+
+def reconcile_video_job(pid, mode, params):
+    """Finalize a video job from ComfyUI /history (independent of the live WS). Pulls the
+    produced still/clip into the library. Safe to call repeatedly; idempotent."""
+    try:
+        entry = C.history(pid).get(pid)
+    except Exception:
+        return False
+    if not entry:
+        return False   # not in history yet => still rendering/queued
+    if entry.get("status", {}).get("status_str") == "error":
+        with LOCK:
+            if pid in JOBS:
+                JOBS[pid]["status"] = "error"
+                JOBS[pid]["error"] = "comfy execution error"
+        return True
+    for out in entry.get("outputs", {}).values():
+        for items in out.values():
+            if not isinstance(items, list):
+                continue
+            for it in items:
+                if not isinstance(it, dict) or "filename" not in it:
+                    continue
+                ext = os.path.splitext(it["filename"])[1].lower()
+                if ext not in MEDIA_EXTS:
+                    continue
+                path = os.path.join(LIBRARY, f"{pid}{ext}")
+                if not os.path.exists(path):
+                    data = C.view_bytes(it["filename"], it.get("subfolder", ""), it.get("type", "output"))
+                    with open(path, "wb") as f:
+                        f.write(data)
+                with LOCK:
+                    if pid in JOBS:
+                        JOBS[pid]["audio_file"] = path
+                        JOBS[pid]["status"] = "done"
+                save_done_row(pid, mode, params, path)
+                return True
+    return False
+
+
+def _unfinished_video_jobs():
+    """{pid: (mode, params)} for video jobs not yet done/errored — from live memory AND
+    the DB (so a finished-but-stuck job recovers even across a backend restart)."""
+    out = {}
+    with LOCK:
+        for pid, j in JOBS.items():
+            if j.get("mode") in VIDEO_MODES and j.get("status") in ("pending", "running", "finalizing"):
+                out[pid] = (j["mode"], j.get("params", {}))
+    try:
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT id, mode, params FROM jobs WHERE mode IN ('videostill','videoclip','videolipsync') "
+                "AND status NOT IN ('done','error')").fetchall()
+        for r in rows:
+            out.setdefault(r["id"], (r["mode"], json.loads(r["params"] or "{}")))
+    except Exception:
+        pass
+    return out
+
+
+def reconcile_loop():
+    """Safety net: poll ComfyUI history for video jobs the WS may have missed (long silent
+    VAE/encode tails) and finalize them into the library."""
+    while True:
+        time.sleep(5)
+        try:
+            for pid, (mode, params) in _unfinished_video_jobs().items():
+                reconcile_video_job(pid, mode, params)
+        except Exception:
+            pass
 
 
 # ---------------- API ----------------
@@ -325,6 +400,7 @@ app = FastAPI(title="MusicGen")
 def startup():
     init_db()
     threading.Thread(target=ws_loop, daemon=True).start()
+    threading.Thread(target=reconcile_loop, daemon=True).start()
 
 
 @app.get("/api/config")
