@@ -980,7 +980,7 @@ RECOMMENDED:
 OPTIONAL (native covers the same ground; add only if needed):
 - `ComfyUI-WanVideoWrapper` (Kijai) - context-window arbitrary-length + extra control. github.com/kijai/ComfyUI-WanVideoWrapper
 - `ComfyUI-LatentSyncWrapper` (ShmuelRonen) - alt lip-sync vs native S2V/InfiniteTalk. github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper
-- identity (decide at Phase 3): `ComfyUI-PuLID-Flux` (Flux face-id) OR PhotoMaker/InstantID (SDXL).
+- identity (decide at Phase 3, stills=Z-Image Turbo): a trained Z-Image character LoRA, or an IPAdapter/InstantID-equivalent face-id node, or A/B Qwen-Image-2512 + its Edit-2511 model for reference-driven consistency.
 
 ### Models - HuggingFace (no token, fetch directly to the box)
 Wan2.2 video (Comfy-Org/Wan_2.2_ComfyUI_Repackaged unless noted):
@@ -992,16 +992,18 @@ Wan2.2 video (Comfy-Org/Wan_2.2_ComfyUI_Repackaged unless noted):
 - `wan2.2_vae.safetensors` -> vae  (5B only)  AND  `wan_2.1_vae.safetensors` -> vae  (14B + S2V)  (~250MB each)
 - `wav2vec2_large_english_fp16.safetensors` -> audio_encoders  (~0.6GB; S2V audio encoder)
 - lightx2v 4-step distill LoRAs (high+low noise) from lightx2v/Wan2.2-Distill-Loras -> loras  (~0.6GB each; 20-24x speedup, schedule [1000,750,500,250])
-Stills (photoreal text-to-image, default = Flux):
-- `flux1-dev-fp8.safetensors` (Comfy-Org/flux1-dev repackaged, fp8 ~11GB) -> diffusion_models  + `t5xxl_fp8_e4m3fn.safetensors` + `clip_l.safetensors` -> text_encoders + `ae.safetensors` -> vae. NOTE Flux.1-dev base weights are LICENSE-GATED on HF (accept license / HF token).
+Stills (photoreal text-to-image) - **= Z-Image Turbo** (CORRECTED 2026-06-13; NOT Flux - I had defaulted to Flux from memory, wrong. See [[photoreal-image-models]]). Verified mid-2026 ranking for photoreal HUMANS on the 24GB 3090: Z-Image Turbo (6B, Apache 2.0, best-reported skin/faces, ~1-2min/img, 8 steps, fits 16GB) > Qwen-Image-2512 (2nd, above Flux.2 Dev, ~5-6min/img, Q8 ~21GB) > **FLUX.2 dev (IMPRACTICAL on 24GB: Q8 ~32GB, >20min/img, gated, skin "oddly weak")**. So Flux.1/Flux.2 are NOT the default for a 3090.
+- `z_image_turbo_bf16.safetensors` (Comfy-Org/z_image_turbo, **ungated**, ~12GB) -> diffusion_models
+- `qwen_3_4b.safetensors` (same repo) -> text_encoders  (Z-Image's Qwen3-4B text encoder; distinct from umt5)
+- `ae.safetensors` (same repo) -> vae
+- fp8 + all-in-one (`-aio`) variants exist; bf16 is fine on 24GB. Identity across shots: Z-Image has no native multi-reference -> character LoRA / IPAdapter-equiv at Phase 3 (or A/B Qwen-Image-2512 + its Edit-2511 model).
 Upscale: an ESRGAN model (e.g. `4x-UltraSharp` / `4x_NMKD-Siax`) -> upscale_models  (~60MB; native UpscaleModelLoader).
 
-### Models - Civitai (geoblocked -> USER VPNs + transfers, [[civitai-vpn]]) -- ONLY if we pick the SDXL stills route instead of Flux
-- A photoreal SDXL checkpoint: RealVisXL V5.0 or Juggernaut XL -> checkpoints  (~6.5GB). Plus optional realism/skin LoRAs.
-- (Flux route avoids Civitai entirely except optional Flux realism LoRAs.)
+### Models - Civitai / gated
+NONE required. All stills + video models above are ungated (Apache 2.0 / Comfy-Org repackaged) -> the box fetches them directly with NO HF token ([[no-hf-token-scripts]]). Civitai only enters later for optional Z-Image realism/character LoRAs ([[civitai-vpn]]).
 
 ### Disk + phasing
-Full set ~80-140GB (fp8 vs fp16, Flux included). **Phase 1 GATE minimal subset (~45-55GB):** ti2v_5B fp16 + umt5 fp8 + both VAEs + 1 lightx2v LoRA (i2v gate) ; s2v_14B fp8 + wav2vec (lip-sync gate) ; flux1-dev-fp8 + its clip/vae (one photoreal still). Validate photorealism + metal-vocal lip-sync by eye BEFORE pulling the rest.
+Full set ~70-110GB. **Phase 1 GATE minimal subset (~45-55GB):** Z-Image Turbo (bf16 + qwen3-4b + ae = one photoreal still) ; ti2v_5B fp16 + umt5 fp8 + both VAEs + lightx2v pair (i2v gate) ; s2v_14B fp8 + wav2vec (lip-sync gate). Validate photorealism + metal-vocal lip-sync by eye BEFORE pulling the 14B i2v hero pair. This = exactly what `download_video_models.bat` (min mode) pulls.
 
 ### Deploy mechanics (how Phase 0 actually gets onto the box)
 fs API is write-only (no exec), so provisioning = author two scripts via fs/write, USER runs them once + restarts ComfyUI (user-only [[engine-restart-is-user-only]]; ComfyUI also serves cover/repaint per [[acestep-engine-outcome]] so its restart is a user op too):
