@@ -422,6 +422,7 @@ def config():
             "lora_train": bool(ACESTEP_HOST),       # train/use LoRAs on the official engine
             "lora_upload": bool(LORA_UPLOAD_HOST),  # box dataset upload helper present
             "video": _video_available(),            # Wan2.2 + Z-Image video pipeline models present
+            "video_qwen": _qwen_available(),        # Qwen-Image-Edit GGUF present (char consistency)
             "genres": genres}
 
 
@@ -430,6 +431,14 @@ def _video_available():
     try:
         have = set(C.models("diffusion_models"))
         return video_mod.Z_IMAGE_UNET in have and video_mod.WAN_TI2V in have
+    except Exception:
+        return False
+
+
+def _qwen_available():
+    """True when the Qwen-Image-Edit GGUF (character consistency) is on the box."""
+    try:
+        return video_mod.QWEN_EDIT_GGUF in set(C.models("unet"))
     except Exception:
         return False
 
@@ -671,6 +680,26 @@ def video_lipsync(p: dict):
     resolved["still_id"] = os.path.basename(p.get("still_id"))
     resolved["audio_id"] = os.path.basename(p.get("audio_id"))
     return _submit_video(graph, resolved, "videolipsync")
+
+
+@app.post("/api/video/char_still")
+def video_char_still(p: dict):
+    """Generate a consistent character still in a NEW scene from reference still(s)
+    (Qwen-Image-Edit-2511). p: {ref_ids: [library still id, ...] (1-3), prompt, ...}."""
+    refs = [_lib_image_path(x) for x in (p.get("ref_ids") or [])]
+    refs = [r for r in refs if r]
+    if not refs:
+        raise HTTPException(400, "ref_ids must reference 1-3 generated stills in the library")
+    try:
+        uploaded = []
+        for r in refs[:3]:
+            with open(r, "rb") as f:
+                uploaded.append(C.upload_audio(f.read(), os.path.basename(r)))
+        graph, resolved = video_mod.build_qwen_char_still(p, uploaded)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["ref_ids"] = [os.path.basename(x) for x in (p.get("ref_ids") or [])][:3]
+    return _submit_video(graph, resolved, "videostill")
 
 
 @app.post("/api/mv/script")

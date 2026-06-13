@@ -59,7 +59,16 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
       if (shot.lipsync && char && audioId) {
         const { job_id } = await api.videoLipsync({ still_id: char.refStillId, audio_id: audioId, prompt: shot.scene, audio_start: shot.start }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); pollJob(job_id, card.id, ctx);
+      } else if (char && cfg.video_qwen) {
+        // Phase B: place the character into THIS shot's scene (Qwen-Edit, keeps identity), then animate.
+        ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: placing ${char.name}...` });
+        const cs = await api.videoCharStill({ ref_ids: [char.refStillId], prompt: shot.scene }) as { job_id: string };
+        await waitDone(cs.job_id);
+        ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
+        const { job_id } = await api.videoI2V({ still_id: cs.job_id, prompt: shot.motion || "subtle cinematic motion" }) as { job_id: string };
+        pollJob(job_id, card.id, ctx);
       } else if (char) {
+        // Phase A fallback (no Qwen yet): anchor on the reference still as-is.
         const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.motion || shot.scene }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); pollJob(job_id, card.id, ctx);
       } else {
@@ -81,7 +90,8 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
 
   return (
     <div className="space-y-4">
-      <p className="text-[11px] text-[var(--color-muted)]">Turn a song into a beat-cut music video: generate a shot list, define the cast, then render each shot. (Phase A: anchor-still consistency.)</p>
+      <p className="text-[11px] text-[var(--color-muted)]">Turn a song into a beat-cut music video: generate a shot list, define the cast, then render each shot.
+        {" "}Character consistency: <span className="text-[var(--color-accent2)]">{cfg.video_qwen ? "Qwen-Edit (places each character into the scene)" : "anchor-still (download Qwen-Edit + restart ComfyUI to upgrade)"}</span>.</p>
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="Song project" hint="its arrangement drives the script">

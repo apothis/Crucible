@@ -33,6 +33,12 @@ WAV2VEC = "wav2vec2_large_english_fp16.safetensors"
 # one to the single S2V model): cuts 20 steps -> 4 and CFG 6 -> 1 (~10x fewer DiT evals).
 WAN_LIGHTX_HIGH = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
 
+# Qwen-Image-Edit-2511 (GGUF) - reference-driven character consistency, no training.
+# Files from download_video_models2.py. GGUF UNET loads via UnetLoaderGGUF (ComfyUI-GGUF).
+QWEN_EDIT_GGUF = "qwen-image-edit-2511-Q6_K.gguf"
+QWEN_CLIP = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+QWEN_VAE = "qwen_image_vae.safetensors"
+
 # A readable English negative that steers Wan/Z-Image away from the usual artifacts.
 DEFAULT_NEG = ("low quality, blurry, distorted, deformed, bad anatomy, extra fingers, "
                "watermark, text, jpeg artifacts, overexposed, static, plastic skin, cartoon")
@@ -82,6 +88,60 @@ def build_still(p):
     }
     return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
                "prompt": prompt, "kind": "image"}
+
+
+# ---------------------------------------- Qwen-Image-Edit-2511: consistent character still
+def build_qwen_char_still(p, ref_images):
+    """Generate a still of a referenced character in a NEW scene/pose, keeping identity
+    (Qwen-Image-Edit-2511 GGUF, reference-driven, no training). ref_images = 1-3 uploaded
+    image names on ComfyUI (image1 = the primary reference). p: {prompt (the new scene),
+    negative?, seed?, steps?, cfg?}. Wiring mirrors the verified ComfyUI 2511 edit template
+    (full-quality, non-turbo path). Output: SaveImage -> videogen/charstill."""
+    seed = _seed(p)
+    steps = int(p.get("steps", 40))
+    cfg = float(p.get("cfg", 4.0))
+    prompt = (p.get("prompt") or "").strip()
+    neg = p.get("negative")
+    neg = "" if neg is None else neg          # template uses an empty negative for edit
+    refs = [r for r in (ref_images or []) if r][:3]
+    if not refs:
+        raise ValueError("at least one reference image is required")
+    g = {
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": QWEN_EDIT_GGUF}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": QWEN_CLIP, "type": "qwen_image", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": QWEN_VAE}},
+        "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.1}},
+        "5": {"class_type": "CFGNorm", "inputs": {"model": ["4", 0], "strength": 1.0}},
+        "6": {"class_type": "LoadImage", "inputs": {"image": refs[0]}},
+        "7": {"class_type": "FluxKontextImageScale", "inputs": {"image": ["6", 0]}},
+    }
+    # positive/negative TextEncodeQwenImageEditPlus: image1 = scaled primary ref; image2/3 raw
+    pos_in = {"clip": ["2", 0], "vae": ["3", 0], "image1": ["7", 0], "prompt": prompt}
+    neg_in = {"clip": ["2", 0], "vae": ["3", 0], "image1": ["7", 0], "prompt": neg}
+    nid = 20
+    for i, r in enumerate(refs[1:], start=2):          # extra references -> image2, image3
+        g[str(nid)] = {"class_type": "LoadImage", "inputs": {"image": r}}
+        pos_in[f"image{i}"] = [str(nid), 0]
+        neg_in[f"image{i}"] = [str(nid), 0]
+        nid += 1
+    g["8"] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": pos_in}
+    g["9"] = {"class_type": "TextEncodeQwenImageEditPlus", "inputs": neg_in}
+    g["10"] = {"class_type": "FluxKontextMultiReferenceLatentMethod",
+               "inputs": {"conditioning": ["8", 0], "reference_latents_method": "index_timestep_zero"}}
+    g["11"] = {"class_type": "FluxKontextMultiReferenceLatentMethod",
+               "inputs": {"conditioning": ["9", 0], "reference_latents_method": "index_timestep_zero"}}
+    g["12"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}}
+    g["13"] = {"class_type": "KSampler",
+               "inputs": {"model": ["5", 0], "seed": seed, "steps": steps, "cfg": cfg,
+                          "sampler_name": "euler", "scheduler": "simple",
+                          "positive": ["10", 0], "negative": ["11", 0],
+                          "latent_image": ["12", 0], "denoise": 1.0}}
+    g["14"] = {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}}
+    g["15"] = {"class_type": "SaveImage",
+               "inputs": {"images": ["14", 0], "filename_prefix": "videogen/charstill"}}
+    return g, {"seed": seed, "steps": steps, "cfg": cfg, "prompt": prompt,
+               "refs": len(refs), "kind": "image"}
 
 
 # ----------------------------------------------------- Wan2.2 5B TI2V (i2v)
