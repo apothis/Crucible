@@ -138,7 +138,7 @@ def build_s2v(p, image_ref, audio_ref):
     h = int(p.get("height", 640))
     length = int(p.get("length", 77))      # one S2V chunk = 77 frames ~ 4.8s @16fps
     fps = int(p.get("fps", 16))
-    fast = bool(p.get("fast", True))       # lightx2v 4-step accel (the gate default)
+    fast = bool(p.get("fast", False))      # opt-in lightx2v 4-step preview; default = full quality
     steps = int(p.get("steps", 4 if fast else 20))
     cfg = float(p.get("cfg", 1.0 if fast else 6.0))
     prompt = (p.get("prompt") or "a person singing into a microphone").strip()

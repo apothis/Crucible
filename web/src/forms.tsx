@@ -2159,6 +2159,8 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
   const [stillId, setStillId] = d.use("stillId", "");
   const [audioId, setAudioId] = d.use("audioId", "");
   const [lipPrompt, setLipPrompt] = d.use("lipPrompt", "a metal singer performing into a microphone, photorealistic");
+  const [fastLip, setFastLip] = d.use("fastLip", false);   // opt-in 4-step lightx2v preview (lower quality, faster)
+  const [lipStart, setLipStart] = d.use("lipStart", "");   // start offset (s) into the track so the clip lands on vocals
 
   const stills = library.filter((i) => i.mode === "videostill" && i.media_url);
   const audios = library.filter((i) => i.audio_url);
@@ -2181,7 +2183,7 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
     : fail(ctx, "Pick a still to animate (generate one in step 1).");
   const runLipsync = () => !stillId ? fail(ctx, "Pick a portrait still first.")
     : !audioId ? fail(ctx, "Pick a song/vocal track to lip-sync to.")
-    : launch("Wan2.2-S2V", () => api.videoLipsync({ still_id: stillId, audio_id: audioId, prompt: lipPrompt }) as Promise<{ job_id: string }>);
+    : launch("Wan2.2-S2V", () => api.videoLipsync({ still_id: stillId, audio_id: audioId, prompt: lipPrompt, fast: fastLip, audio_start: lipStart ? Number(lipStart) : 0 }) as Promise<{ job_id: string }>);
 
   if (!cfg.video) {
     return <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-4 text-xs text-[var(--color-muted)]">
@@ -2240,9 +2242,16 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
               {audios.map((a) => <option key={a.id} value={a.id}>{audioLabel(a)}</option>)}
             </select>
           </Field>
+          <Field label="Start at (s)" hint="offset into the track — point it at a singing part (clip covers ~5s from here)">
+            <input className={inp} type="number" min="0" step="1" placeholder="0" value={lipStart} onChange={(e) => setLipStart(e.target.value)} />
+          </Field>
           <Field label="Prompt" hint="optional scene description">
             <textarea className={inp} rows={2} value={lipPrompt} onChange={(e) => setLipPrompt(e.target.value)} />
           </Field>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+            <input type="checkbox" checked={fastLip} onChange={(e) => setFastLip(e.target.checked)} />
+            Fast preview <span className="text-[10px]">— 4-step lightx2v, ~10x faster but lower quality (off = full quality)</span>
+          </label>
           <PrimaryButton onClick={runLipsync} disabled={busy}>{busy ? "Working…" : "Lip-sync clip"}</PrimaryButton>
         </div>
       )}

@@ -592,6 +592,17 @@ def _lib_image_path(pid):
     return None
 
 
+def _trim_audio_window(path, start, dur):
+    """Return WAV bytes for [start, start+dur] of an audio file (mp3/wav). Mac CPU only."""
+    import io
+    import librosa
+    import soundfile as sf
+    y, sr = librosa.load(path, sr=None, mono=True, offset=max(0.0, start), duration=dur)
+    buf = io.BytesIO()
+    sf.write(buf, y, sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
 def _submit_video(graph, resolved, mode):
     res = submit_comfy(graph)
     if res.get("node_errors"):
@@ -642,14 +653,20 @@ def video_lipsync(p: dict):
     audio = _lib_source_path(p.get("audio_id"))
     if not audio:
         raise HTTPException(400, "audio_id must reference a library track")
+    # S2V renders only ~4.8s (one 77-frame chunk) from the START of the supplied audio.
+    # Trim to a window beginning at audio_start so the clip lands on a vocal passage
+    # (otherwise an intro with no singing = nothing to lip-sync).
+    start = max(0.0, float(p.get("audio_start") or 0))
+    win = float(p.get("length", 77)) / float(p.get("fps", 16)) + 1.5
     try:
         with open(still, "rb") as f:
             img_ref = C.upload_audio(f.read(), os.path.basename(still))
-        with open(audio, "rb") as f:
-            aud_ref = C.upload_audio(f.read(), os.path.basename(audio))
+        aud_bytes = _trim_audio_window(audio, start, win)
+        aud_ref = C.upload_audio(aud_bytes, "s2v_clip.wav")
         graph, resolved = video_mod.build_s2v(p, img_ref, aud_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
+    resolved["audio_start"] = start
     resolved["still_id"] = os.path.basename(p.get("still_id"))
     resolved["audio_id"] = os.path.basename(p.get("audio_id"))
     return _submit_video(graph, resolved, "videolipsync")
