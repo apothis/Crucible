@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import comfy
+from . import video as video_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -180,8 +181,52 @@ def save_done_row(jid, mode, params, audio_path, bucket=""):
 
 
 # ---------------- WebSocket progress listener ----------------
+VIDEO_MODES = {"videostill", "videoclip", "videolipsync"}   # produce image/mp4, not audio
+MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mkv")
+_MEDIA_CT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4",
+             ".webm": "video/webm", ".mkv": "video/x-matroska"}
+
+
+def on_complete_media(pid):
+    """Fetch history, download the produced image/video into the library. ComfyUI
+    reports SaveImage under 'images' and SaveVideo/VHS under 'images'/'gifs'/'video',
+    so we scan every output list for a dict with a media-extension filename."""
+    try:
+        h = C.history(pid)
+        if pid not in h:
+            return
+        for _, out in h[pid].get("outputs", {}).items():
+            for key, items in out.items():
+                if not isinstance(items, list):
+                    continue
+                for it in items:
+                    if not isinstance(it, dict) or "filename" not in it:
+                        continue
+                    fn = it["filename"]
+                    ext = os.path.splitext(fn)[1].lower()
+                    if ext not in MEDIA_EXTS:
+                        continue
+                    data = C.view_bytes(fn, it.get("subfolder", ""), it.get("type", "output"))
+                    path = os.path.join(LIBRARY, f"{pid}{ext}")
+                    with open(path, "wb") as f:
+                        f.write(data)
+                    with LOCK:
+                        JOBS[pid]["audio_file"] = path   # reuse the field; it is just a path
+                        JOBS[pid]["status"] = "done"
+                    save_job(pid)
+                    return
+    except Exception as e:
+        with LOCK:
+            JOBS[pid]["status"] = "error"
+            JOBS[pid]["error"] = f"download failed: {e}"
+        save_job(pid)
+
+
 def on_complete(pid):
     """Fetch history, download the produced audio into the library."""
+    if JOBS.get(pid, {}).get("mode") in VIDEO_MODES:
+        return on_complete_media(pid)
     try:
         h = C.history(pid)
         if pid not in h:
@@ -299,7 +344,17 @@ def config():
             "analyze_box": bool(ANALYZE_HOST),
             "lora_train": bool(ACESTEP_HOST),       # train/use LoRAs on the official engine
             "lora_upload": bool(LORA_UPLOAD_HOST),  # box dataset upload helper present
+            "video": _video_available(),            # Wan2.2 + Z-Image video pipeline models present
             "genres": genres}
+
+
+def _video_available():
+    """True when the core video-pipeline models are on the ComfyUI box."""
+    try:
+        have = set(C.models("diffusion_models"))
+        return video_mod.Z_IMAGE_UNET in have and video_mod.WAN_TI2V in have
+    except Exception:
+        return False
 
 
 @app.get("/api/acestep/info")
@@ -448,6 +503,91 @@ def generate(p: dict):
         JOBS[pid] = _new_job(_decorate(resolved), gmode)
     save_job(pid)
     return {"job_id": pid, "seed": resolved["seed"]}
+
+
+# ---------------- Video pipeline (Phase 1 gate: still -> i2v -> lip-sync) ----------------
+def _lib_image_path(pid):
+    """Absolute path to a library item's image file (by id)."""
+    pid = os.path.basename(pid or "")
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        p = os.path.join(LIBRARY, f"{pid}{ext}")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _submit_video(graph, resolved, mode):
+    res = submit_comfy(graph)
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, mode)
+    save_job(pid)
+    return {"job_id": pid, "seed": resolved.get("seed"), "media_url": f"/api/media/{pid}"}
+
+
+@app.post("/api/video/still")
+def video_still(p: dict):
+    """Generate a photoreal still (Z-Image Turbo). p: {prompt, negative?, seed?, width?,
+    height?, steps?, cfg?}."""
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required")
+    try:
+        graph, resolved = video_mod.build_still(p)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    return _submit_video(graph, resolved, "videostill")
+
+
+@app.post("/api/video/i2v")
+def video_i2v(p: dict):
+    """Animate a library still (Wan2.2 5B TI2V). p: {still_id, prompt, ...}."""
+    still = _lib_image_path(p.get("still_id"))
+    if not still:
+        raise HTTPException(400, "still_id must reference a generated still in the library")
+    try:
+        with open(still, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(still))   # /upload/image helper
+        graph, resolved = video_mod.build_i2v(p, ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["still_id"] = os.path.basename(p.get("still_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
+@app.post("/api/video/lipsync")
+def video_lipsync(p: dict):
+    """Lip-sync a portrait still to a song (Wan2.2-S2V, single ~4.8s clip).
+    p: {still_id, audio_id, prompt?, ...}."""
+    still = _lib_image_path(p.get("still_id"))
+    if not still:
+        raise HTTPException(400, "still_id must reference a generated still in the library")
+    audio = _lib_source_path(p.get("audio_id"))
+    if not audio:
+        raise HTTPException(400, "audio_id must reference a library track")
+    try:
+        with open(still, "rb") as f:
+            img_ref = C.upload_audio(f.read(), os.path.basename(still))
+        with open(audio, "rb") as f:
+            aud_ref = C.upload_audio(f.read(), os.path.basename(audio))
+        graph, resolved = video_mod.build_s2v(p, img_ref, aud_ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["still_id"] = os.path.basename(p.get("still_id"))
+    resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+    return _submit_video(graph, resolved, "videolipsync")
+
+
+@app.get("/api/media/{pid}")
+def media(pid: str):
+    """Serve a generated still/video by id with the right content-type."""
+    pid = os.path.basename(pid)
+    for ext, ct in _MEDIA_CT.items():
+        path = os.path.join(LIBRARY, f"{pid}{ext}")
+        if os.path.exists(path):
+            return FileResponse(path, media_type=ct)
+    raise HTTPException(404, "no media")
 
 
 @app.post("/api/restyle")
@@ -1214,16 +1354,22 @@ def job(pid: str):
     with LOCK:
         j = JOBS.get(pid)
         if j:
+            is_vid = j.get("mode") in VIDEO_MODES
+            done_file = bool(j.get("audio_file"))
             return {"id": pid, "status": j["status"], "progress": j.get("progress", 0),
                     "max": j.get("max", 0), "error": j.get("error"),
-                    "audio_url": f"/api/audio/{pid}" if j.get("audio_file") else None}
+                    "audio_url": (f"/api/audio/{pid}" if done_file and not is_vid else None),
+                    "media_url": (f"/api/media/{pid}" if done_file and is_vid else None),
+                    "kind": j.get("params", {}).get("kind")}
     # fall back to persisted library row (e.g. after a restart)
     with db() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (pid,)).fetchone()
     if not row:
         raise HTTPException(404, "unknown job")
+    is_vid = row["mode"] in VIDEO_MODES
     return {"id": pid, "status": row["status"], "error": row["error"],
-            "audio_url": f"/api/audio/{pid}" if row["audio"] else None}
+            "audio_url": (f"/api/audio/{pid}" if row["audio"] and not is_vid else None),
+            "media_url": (f"/api/media/{pid}" if row["audio"] and is_vid else None)}
 
 
 @app.post("/api/cancel")
@@ -1237,10 +1383,15 @@ def library():
     with db() as conn:
         rows = conn.execute(
             "SELECT * FROM jobs WHERE status='done' ORDER BY created DESC LIMIT 500").fetchall()
-    return [{"id": r["id"], "created": r["created"], "mode": r["mode"],
-             "params": json.loads(r["params"]), "audio_url": f"/api/audio/{r['id']}",
-             "bucket": (r["bucket"] if "bucket" in r.keys() else "") or ""}
-            for r in rows]
+    out = []
+    for r in rows:
+        is_vid = r["mode"] in VIDEO_MODES
+        out.append({"id": r["id"], "created": r["created"], "mode": r["mode"],
+                    "params": json.loads(r["params"]),
+                    "audio_url": (None if is_vid else f"/api/audio/{r['id']}"),
+                    "media_url": (f"/api/media/{r['id']}" if is_vid else None),
+                    "bucket": (r["bucket"] if "bucket" in r.keys() else "") or ""})
+    return out
 
 
 @app.post("/api/library/{jid}/bucket")
@@ -1255,7 +1406,7 @@ def set_library_bucket(jid: str, body: dict):
 def delete_library_item(jid: str):
     jid = os.path.basename(jid)  # guard against path traversal
     removed = []
-    for ext in (".mp3", ".wav"):
+    for ext in (".mp3", ".wav") + MEDIA_EXTS:
         p = os.path.join(LIBRARY, jid + ext)
         if os.path.exists(p):
             os.remove(p)
