@@ -64,16 +64,21 @@ Ostris - NEW tool; our ACE-Step LoRA infra is audio-only) + a training image set
 for the lead singer + named band members.
 
 **(C) Qwen-Image-Edit-2511 reference-driven (Tier 2 alt, NO training).** VERIFIED to do reference-
-driven multi-person consistency; could generate each shot's keyframe from character reference(s) with
-no per-character LoRA. Heavier model (~21GB Q8, slow, see [[photoreal-image-models]]). Good for the
-BAND (multi-person in one frame) and to avoid a training pipeline. VERIFY-AT-BUILD: 24GB fit + quality
-vs Z-Image+LoRA.
+driven multi-person consistency; generates each shot's keyframe from character reference(s) with no
+per-character LoRA. **GGUF fits 24GB (VERIFIED sizes):** Q5_K_M 14.9GB / Q6_K 16.8GB (Q8 21.8GB) via
+the installed ComfyUI-GGUF node -> Q5/Q6 leaves room for text encoder + VAE. So this is PRACTICAL on
+the 3090, not just theoretical. Best for the BAND (multi-person in one frame) and to avoid a training
+pipeline. (unsloth/Qwen-Image-Edit-2511-GGUF, QuantStack/Qwen-Image-Edit-GGUF.)
 
 **(D) Wan VACE / Phantom reference-to-video (Tier 3, video-side identity).** Native on our box
 (WanVaceToVideo, WanPhantomSubjectToVideo). Pushes identity through motion from a reference image.
-VERIFY-AT-BUILD: VACE is 14B and one source put it at ~32GB -> 24GB fit UNVERIFIED; may need fp8/GGUF
-or we stick with anchor-still i2v (A). Zero-shot PuLID/IPAdapter face-id FOR Z-IMAGE is UNVERIFIED
-(PuLID is FLUX-oriented) - do not assume it exists; check before relying on it.
+fp16/fp8 14B is heavy (~32GB cited) BUT **a GGUF exists (QuantStack Wan2.1_14B_VACE-GGUF)** -> 24GB
+feasible via Q5/Q6, VERIFY-AT-BUILD. Otherwise fall back to anchor-still i2v (A). Zero-shot
+PuLID/IPAdapter face-id FOR Z-IMAGE is UNVERIFIED (PuLID is FLUX-oriented) - do not assume; check first.
+
+**GGUF is a standing VRAM lever ([[check-gguf-for-vram]]).** Every 14B Wan variant has a GGUF
+(QuantStack/city96): S2V Q5 ~14.3GB (the cure for the gate's sampling-time shared-RAM spill), i2v/t2v
+A14B Q5 ~10-11GB. So "too heavy for 24GB" should always be checked against a GGUF before being believed.
 
 **Recommended layering:** start with (A) for an end-to-end pipeline, add (B) Z-Image LoRA for the lead
 singer + key band members (strong varied-shot consistency), use (C) Qwen-Edit for multi-person band
@@ -113,9 +118,12 @@ music engine [[no-concurrent-clap-engine]], likely an overnight run.
 ## 7. Open verifications (do before depending on them)
 1. Z-Image image-LoRA training on the 3090: tool (ai-toolkit/Ostris), time, VRAM, and how to build a
    per-character training set.
-2. Qwen-Image-Edit-2511: 24GB fit + reference-consistency quality vs Z-Image+LoRA.
-3. Wan VACE/Phantom 14B on 24GB (fp8/GGUF?) - or confirm anchor-still i2v is enough for video identity.
+2. Qwen-Image-Edit-2511 GGUF (Q5/Q6, fits 24GB - sizes VERIFIED): reference-consistency quality vs
+   Z-Image+LoRA in practice.
+3. Wan VACE/Phantom 14B GGUF (exists, QuantStack) actual 24GB fit + identity quality - or confirm
+   anchor-still i2v is enough for video identity.
 4. Any zero-shot face-id (PuLID/IPAdapter/InstantID) that actually works with Z-Image in ComfyUI.
+5. (Carried from the gate) S2V GGUF Q5 (~14.3GB) as the spill cure if the driver setting isn't enough.
 
 **Sources (S3/S4):** runcomfy (consistent-character workflows, Wan2.2 VACE Fun), apatero + nextdiffusion
 (Z-Image character LoRA settings), HF Qwen-Image-Edit-2511, ComfyUI VACE docs, digen/onemoreshot AI
