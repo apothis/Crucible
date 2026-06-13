@@ -59,8 +59,10 @@ SHOT_TYPES = ("performance", "narrative", "broll")
 
 
 def _song_summary(song):
-    """Human-readable song brief for the LLM + total duration (sec)."""
-    lines = [f"Title: {song.get('title') or 'Untitled'}",
+    """Human-readable song brief for the LLM + total duration (sec). Lyrics are shown line by
+    line under each section's time window so shots can be anchored to the words sung then."""
+    title = song.get("title") or "Untitled"
+    lines = [f"Title: {title}",
              f"Genre/mood tags: {song.get('tags') or ''}"]
     if song.get("bpm"):
         lines.append(f"BPM: {song['bpm']}")
@@ -71,24 +73,42 @@ def _song_summary(song):
     body = []
     for s in secs:
         dur = int(s.get("seconds") or 0)
-        lyr = (s.get("lyrics") or "").strip().replace("\n", " / ")
-        body.append(f"  [{t}-{t + dur}s] {s.get('type') or 'section'}: "
-                    + (lyr[:160] if lyr else "(instrumental)"))
+        lyr = (s.get("lyrics") or "").strip()
+        head = f"  [{t}-{t + dur}s] {s.get('type') or 'section'}:"
+        if lyr:
+            body.append(head)
+            for ln in lyr.splitlines():
+                ln = ln.strip()
+                if ln:
+                    body.append(f'      "{ln}"')
+        else:
+            body.append(head + " (instrumental - no lyrics)")
         t += dur
-    lines.append(f"Approx duration: {t}s across {len(secs)} sections:")
+    lines.append(f"Approx duration: {t}s across {len(secs)} sections. Lyrics with their time windows:")
     lines.extend(body)
     return "\n".join(lines), t
 
 
 def build_prompt(song, cast, n_shots):
     summary, total = _song_summary(song)
+    title = song.get("title") or "Untitled"
     cast_txt = "\n".join(f"  - {c.get('name')} ({c.get('role', 'character')})"
                          for c in cast if c.get("name")) or "  (no fixed cast - lean scenic/atmospheric)"
     target = n_shots or max(12, min(30, round((total or 180) / 8)))   # ~1 shot / 8s
-    system = ("You are a music video director and editor. Output a SHOT LIST as STRICT JSON ONLY "
-              "(no prose, no markdown fences). The video matches the song's energy and lyrics, cuts "
-              "on the beat, and keeps the named characters visually consistent across their shots.")
+    system = ("You are a music video director. Output a SHOT LIST as STRICT JSON ONLY (no prose, no "
+              "markdown fences). Direct the video from TWO anchors: (1) the SONG TITLE as the "
+              "overarching visual concept and story, and (2) the LYRICS sung in each shot's time "
+              "window - every shot should literally depict or evoke the exact words sung then. Cut "
+              "on the beat and keep named characters visually consistent.")
     prompt = f"""{summary}
+
+DIRECTION (follow both):
+- The song is titled "{title}". Make the TITLE the central visual theme of the WHOLE video: the
+  recurring imagery, setting, world, and story should embody what the title means.
+- For every shot, read the lyric lines in that shot's time window above and make the scene VISUALLY
+  ILLUSTRATE those exact words - their imagery, story beat, or emotion. (e.g. a shot over a line
+  about "blades of lightning in our hands" should literally show that, not a generic stage.)
+  Instrumental windows have no lyrics: there, advance the title's story or show atmosphere.
 
 Characters (keep each visually consistent wherever they appear):
 {cast_txt}
@@ -97,14 +117,14 @@ Write about {target} shots covering the whole song IN ORDER, 0 to {total}s with 
 Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
-  "scene": "<vivid PHOTOREAL image prompt: setting, subject, wardrobe, lighting, camera/lens>",
+  "scene": "<vivid PHOTOREAL prompt GROUNDED in the lyrics at this time + the title theme: setting, subject, wardrobe, lighting, camera/lens>",
   "motion": "<how the shot moves over ~5s>",
   "characters": [<names of any named characters present; [] if none>],
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
 
 Rules: performance/lipsync shots only on SUNG sections; scenic/broll on instrumental sections;
-vary shot types and framing (close-up, wide, tracking); scene prompts must be concrete and
-photoreal (this is a live-action style metal video, not animation)."""
+vary shot types and framing (close-up, wide, tracking); photoreal live-action metal video (not
+animation). Every scene must connect to BOTH the title theme AND the specific lyrics in its window."""
     return system, prompt
 
 
