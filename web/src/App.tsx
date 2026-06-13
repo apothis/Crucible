@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, versionInfo, type Config, type LibItem, type Project, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm } from "./forms";
+import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, VideoForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { SoloBuilderForm } from "./SoloBuilder";
 import { ImportForm } from "./Import";
@@ -31,6 +31,7 @@ const MODES = [
   { id: "deglitch", label: "De-glitch" },
   { id: "compare", label: "Compare" },
   { id: "mix", label: "Mix" },
+  { id: "video", label: "Video" },
   { id: "loratrain", label: "Train LoRA" },
 ] as const;
 
@@ -40,6 +41,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master", "shape", "deglitch", "compare"] },
+  { name: "Video", modes: ["video"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
@@ -184,7 +186,9 @@ function AppInner() {
         {libOpen && (
           <aside className="w-[520px] flex-none min-h-0 overflow-y-auto border-l border-[var(--color-line)] bg-[var(--color-panel)] p-4">
             <Library items={library}
-              onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100, url: it.audio_url + "?t=" + Date.now() }])}
+              onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100,
+                url: (it.media_url || it.audio_url) + "?t=" + Date.now(),
+                media: it.media_url ? (it.mode === "videostill" ? "image" : "video") : undefined }])}
               onDelete={(id) => api.deleteLib(id).then(refreshLib).catch(() => {})}
               onBucket={(id, b) => api.setBucket(id, b).then(refreshLib).catch(() => {})}
               onCompare={(id) => { setCompare((c) => c.includes(id) ? c : [...c, id]); setMode("compare"); }}
@@ -244,6 +248,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "shape": return <ShapeForm {...p} />;
     case "deglitch": return <DeglitchForm {...p} />;
     case "mix": return <MixForm {...p} />;
+    case "video": return <VideoForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;
@@ -371,7 +376,11 @@ function ResultCard({ r }: { r: Result }) {
         <span className="text-xs font-semibold text-[var(--color-accent2)]">{r.title}</span>
         <span className="text-[10px] text-[var(--color-muted)]">{r.status}</span>
       </div>
-      {r.status === "done" && r.url ? (
+      {r.status === "done" && r.url && r.media === "image" ? (
+        <img src={r.url} alt="" className="w-full rounded-lg" />
+      ) : r.status === "done" && r.url && r.media === "video" ? (
+        <video src={r.url} controls loop className="w-full rounded-lg" />
+      ) : r.status === "done" && r.url ? (
         <WavePlayer url={r.url} />
       ) : r.status === "error" ? (
         <p className="text-xs text-red-400">{r.err}</p>
@@ -402,6 +411,9 @@ function libDesc(it: LibItem): string {
     ].filter(Boolean);
     return "Vocal Builder · " + parts.join(" · ");
   }
+  if (it.mode === "videostill") return `still: ${p.prompt ? String(p.prompt).slice(0, 40) : "?"}`;
+  if (it.mode === "videoclip") return `i2v clip${p.length ? ` · ${p.length}f` : ""}${p.prompt ? " · " + String(p.prompt).slice(0, 28) : ""}`;
+  if (it.mode === "videolipsync") return `lip-sync${p.length ? ` · ${p.length}f` : ""}${p.audio_id ? " · " + String(p.audio_id).slice(0, 10) : ""}`;
   if (it.mode === "stem") return `${p.kind || "stem"}${p.source ? " · from " + String(p.source).slice(0, 28) : ""}`;
   if (it.mode === "source") return String(p.source || p.title || "imported audio").slice(0, 40);
   if (it.mode === "tone") return `tone: ${p.preset || "?"}${p.source ? " · from " + String(p.source).slice(0, 24) : ""}`;
@@ -451,6 +463,9 @@ const LIB_SECTIONS = [
   { key: "master", label: "Mastered" },
   { key: "stem", label: "Stems" },
   { key: "source", label: "Source audio" },
+  { key: "videostill", label: "Stills" },
+  { key: "videoclip", label: "Video clips" },
+  { key: "videolipsync", label: "Lip-sync clips" },
 ];
 
 type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void; onOpenInBuilder?: (it: LibItem) => void; onCompare?: (id: string) => void };
@@ -503,7 +518,11 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
             ))}
           </div>
         )}
-        <audio className="h-8 w-full" controls src={it.audio_url} />
+        {it.media_url && it.mode === "videostill"
+          ? <img src={it.media_url} alt="" className="w-full rounded-lg" />
+          : it.media_url
+          ? <video src={it.media_url} controls loop className="w-full rounded-lg" />
+          : <audio className="h-8 w-full" controls src={it.audio_url} />}
       </div>
     </div>
   );

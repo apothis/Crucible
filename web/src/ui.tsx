@@ -52,6 +52,7 @@ export type Result = {
   status: "pending" | "running" | "done" | "error";
   pct: number;
   url?: string;
+  media?: "image" | "video";   // when set, url is an image/video (not audio)
   err?: string;
 };
 
@@ -71,8 +72,13 @@ export function pollJob(jobId: string, resultId: string, ctx: RunCtx) {
     if (!j) return;
     if (j.status === "running" || j.status === "finalizing") {
       ctx.patch(resultId, { status: "running", pct: j.max ? Math.round((100 * j.progress) / j.max) : 10 });
-    } else if (j.status === "done" && j.audio_url) {
-      ctx.patch(resultId, { status: "done", pct: 100, url: j.audio_url + "?t=" + Date.now() });
+    } else if (j.status === "done" && (j.audio_url || j.media_url)) {
+      if (j.media_url) {
+        ctx.patch(resultId, { status: "done", pct: 100, url: j.media_url + "?t=" + Date.now(),
+                              media: j.kind === "image" ? "image" : "video" });
+      } else {
+        ctx.patch(resultId, { status: "done", pct: 100, url: j.audio_url + "?t=" + Date.now() });
+      }
       clearInterval(t);
       ctx.onDone();
     } else if (j.status === "error") {

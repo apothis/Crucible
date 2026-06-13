@@ -2131,3 +2131,121 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     </div>
   );
 }
+
+// ---------------- Video (Phase 1 gate: still -> animate -> lip-sync) ----------------
+const VIDEO_TABS = [
+  { id: "still", label: "1 · Still" },
+  { id: "animate", label: "2 · Animate" },
+  { id: "lipsync", label: "3 · Lip-sync" },
+];
+const STILL_PROMPT_DEFAULT =
+  "photorealistic close-up portrait of a male heavy metal singer on a dark concert stage mid-performance, sweat on his face, intense expression, long hair, leather jacket, dramatic rim lighting, blue stage spotlights, smoke haze, shallow depth of field, 85mm photo, ultra-detailed skin texture, film grain, cinematic";
+
+function stillLabel(it: LibItem): string {
+  return (it.params?.prompt ? String(it.params.prompt).slice(0, 48) : it.id.slice(0, 8));
+}
+function audioLabel(it: LibItem): string {
+  const p = it.params || {};
+  return (p.title || p.tags || p.source || it.mode || it.id).toString().slice(0, 48);
+}
+
+export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library: LibItem[] }) {
+  const d = useDrafts("video");
+  const [tab, setTab] = d.use("tab", "still");
+  const [stillPrompt, setStillPrompt] = d.use("stillPrompt", STILL_PROMPT_DEFAULT);
+  const [stillSeed, setStillSeed] = d.use("stillSeed", "");
+  const [motionPrompt, setMotionPrompt] = d.use("motionPrompt",
+    "the singer screams into the microphone, hair moving, stage lights flicker, slow camera push-in");
+  const [stillId, setStillId] = d.use("stillId", "");
+  const [audioId, setAudioId] = d.use("audioId", "");
+  const [lipPrompt, setLipPrompt] = d.use("lipPrompt", "a metal singer performing into a microphone, photorealistic");
+
+  const stills = library.filter((i) => i.mode === "videostill" && i.media_url);
+  const audios = library.filter((i) => i.audio_url);
+  const selStill = stills.find((s) => s.id === stillId);
+
+  async function launch(title: string, call: () => Promise<{ job_id: string }>) {
+    const c = { id: rid(), title: title + "…", status: "pending" as const, pct: 0 };
+    ctx.setResults([c]);
+    try {
+      const { job_id } = await call();
+      ctx.patch(c.id, { title, status: "running", pct: 5 });
+      pollJob(job_id, c.id, ctx);
+    } catch (e) { ctx.patch(c.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+  const runStill = () => stillPrompt.trim()
+    ? launch("Z-Image still", () => api.videoStill({ prompt: stillPrompt, seed: stillSeed || undefined }) as Promise<{ job_id: string }>)
+    : fail(ctx, "Add a prompt first.");
+  const runAnimate = () => stillId
+    ? launch("Wan2.2 i2v", () => api.videoI2V({ still_id: stillId, prompt: motionPrompt }) as Promise<{ job_id: string }>)
+    : fail(ctx, "Pick a still to animate (generate one in step 1).");
+  const runLipsync = () => !stillId ? fail(ctx, "Pick a portrait still first.")
+    : !audioId ? fail(ctx, "Pick a song/vocal track to lip-sync to.")
+    : launch("Wan2.2-S2V", () => api.videoLipsync({ still_id: stillId, audio_id: audioId, prompt: lipPrompt }) as Promise<{ job_id: string }>);
+
+  if (!cfg.video) {
+    return <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-4 text-xs text-[var(--color-muted)]">
+      Video models not detected on the ComfyUI box. Run <code>download_video_models.bat</code> on the box, then restart the backend.
+    </div>;
+  }
+
+  const StillPicker = (
+    <Field label="Still" hint={stills.length ? "from your generated stills" : "generate a still in step 1 first"}>
+      <select className={inp} value={stillId} onChange={(e) => setStillId(e.target.value)}>
+        <option value="">— pick a still —</option>
+        {stills.map((s) => <option key={s.id} value={s.id}>{stillLabel(s)}</option>)}
+      </select>
+    </Field>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1.5">
+        {VIDEO_TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex-1 rounded-lg border py-1.5 text-sm ${tab === t.id ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{t.label}</button>
+        ))}
+      </div>
+
+      {selStill && (tab === "animate" || tab === "lipsync") && (
+        <img src={selStill.media_url!} alt="" className="max-h-48 rounded-lg border border-[var(--color-line)]" />
+      )}
+
+      {tab === "still" && (
+        <div className="space-y-3">
+          <Field label="Prompt" hint="photoreal scene/performer — Z-Image Turbo">
+            <textarea className={inp} rows={4} value={stillPrompt} onChange={(e) => setStillPrompt(e.target.value)} />
+          </Field>
+          <Field label="Seed" hint="blank = random"><input className={inp} type="number" placeholder="random" value={stillSeed} onChange={(e) => setStillSeed(e.target.value)} /></Field>
+          <PrimaryButton onClick={runStill} disabled={busy}>{busy ? "Working…" : "Generate still"}</PrimaryButton>
+        </div>
+      )}
+
+      {tab === "animate" && (
+        <div className="space-y-3">
+          {StillPicker}
+          <Field label="Motion" hint="how it should move — Wan2.2 5B image-to-video (~5s)">
+            <textarea className={inp} rows={3} value={motionPrompt} onChange={(e) => setMotionPrompt(e.target.value)} />
+          </Field>
+          <PrimaryButton onClick={runAnimate} disabled={busy}>{busy ? "Working…" : "Animate still"}</PrimaryButton>
+        </div>
+      )}
+
+      {tab === "lipsync" && (
+        <div className="space-y-3">
+          {StillPicker}
+          <Field label="Song / vocal" hint="track to lip-sync to — Wan2.2-S2V (~5s clip)">
+            <select className={inp} value={audioId} onChange={(e) => setAudioId(e.target.value)}>
+              <option value="">— pick a track —</option>
+              {audios.map((a) => <option key={a.id} value={a.id}>{audioLabel(a)}</option>)}
+            </select>
+          </Field>
+          <Field label="Prompt" hint="optional scene description">
+            <textarea className={inp} rows={2} value={lipPrompt} onChange={(e) => setLipPrompt(e.target.value)} />
+          </Field>
+          <PrimaryButton onClick={runLipsync} disabled={busy}>{busy ? "Working…" : "Lip-sync clip"}</PrimaryButton>
+        </div>
+      )}
+    </div>
+  );
+}
