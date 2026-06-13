@@ -1384,6 +1384,14 @@ _cfg0.1 (the §13v BiB recipe carried forward per user: dim256/alpha256/rank_dro
 lr1.0/cfg0.1/factor8/attn+mlp). Gated xl-base, config echo dim256+rank_dropout0.1. EAR TEST PENDING:
 does the current full method beat the old avantasia build (factor-1/dim64/alpha128/discrete/lr0.01/
 AdamW/noisy-captions)? Esp. production/feel/window; voice ceiling should bite less here (multi-singer).
+RESULT (done 2026-06-12, full 2600 steps / 13 per-epoch x 200): curve 0.828 -> 0.642 -> 0.549, min
+0.415, final 0.601 (final>min = rank_dropout per-step noise). Fit LESS hard than BiB's dim256
+(0.43/0.286) = expected from 50 tracks (more data, less overfit) vs BiB's 40. Saved FINAL + per-epoch
+ckpts. A/B READY (both in picker): NEW train_20260612-141026__...dim256_a256_rankdrop0.1 vs OLD
+train_20260605-234720__lokr_150ep_discrete. EAR TEST PENDING: XL Base, sweep 0.6-0.8, 2-3 gens each
+(ACE not seed-reproducible [[lora-scale-clean-seed-nondeterministic]]). Q: does the full developed
+method clearly beat the old build on production/feel/window + Tobias/guest voices? = the generalization
+verdict for everything built this session.
 
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
