@@ -88,6 +88,17 @@ def run_estimation(
         precision=gpu.precision,
     )
 
+    # Crucible 2026-06-12: match the training path's VRAM management so the full 4B
+    # forward+backward fits on 24GB (without this it spills to shared RAM and crawls).
+    # offload_non_decoder is safe: estimation uses PRECOMPUTED encoder states, never the VAE.
+    try:
+        from acestep.training_v2.trainer_helpers import configure_memory_features, offload_non_decoder
+        _off = offload_non_decoder(model)
+        _ck, _cache, _ig = configure_memory_features(model.decoder)
+        logger.info("[Side-Step] VRAM mgmt: offloaded=%d grad_ckpt=%s input_grads=%s", _off, _ck, _ig)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[Side-Step] VRAM mgmt setup failed (%s); may use more VRAM", _e)
+
     # Identify targetable attention modules
     target_modules = _find_attention_modules(model, granularity)
     logger.info("[Side-Step] Found %d targetable modules", len(target_modules))
