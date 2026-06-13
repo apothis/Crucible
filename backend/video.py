@@ -64,17 +64,26 @@ def build_still(p):
     h = int(p.get("height", 1024))
     steps = int(p.get("steps", 8))
     cfg = float(p.get("cfg", 1.0))
+    lora = p.get("lora")                          # optional Z-Image character LoRA (filename)
+    lora_strength = float(p.get("lora_strength", 1.0))
     prompt = (p.get("prompt") or "").strip()
     neg = p.get("negative")
     neg = DEFAULT_NEG if neg is None else neg
+    model_src = ["1", 0]
     g = {
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": Z_IMAGE_UNET, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader",
               "inputs": {"clip_name": Z_IMAGE_CLIP, "type": "lumina2", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": Z_IMAGE_VAE}},
-        "4": {"class_type": "ModelSamplingAuraFlow",
-              "inputs": {"model": ["1", 0], "shift": 3.0}},
+    }
+    if lora:                                       # trained character LoRA -> consistent identity
+        g["16"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": ["1", 0], "lora_name": lora, "strength_model": lora_strength}}
+        model_src = ["16", 0]
+    g["4"] = {"class_type": "ModelSamplingAuraFlow",
+              "inputs": {"model": model_src, "shift": 3.0}}
+    g.update({
         "5": {"class_type": "CLIPTextEncode",
               "inputs": {"clip": ["2", 0], "text": prompt}},
         "6": {"class_type": "CLIPTextEncode",
@@ -89,9 +98,9 @@ def build_still(p):
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
         "10": {"class_type": "SaveImage",
                "inputs": {"images": ["9", 0], "filename_prefix": "videogen/still"}},
-    }
+    })
     return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
-               "prompt": prompt, "kind": "image"}
+               "prompt": prompt, "lora": lora, "kind": "image"}
 
 
 # ---------------------------------------- Qwen-Image-Edit-2511: consistent character still

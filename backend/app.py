@@ -711,6 +711,17 @@ def video_char_still(p: dict):
     return _submit_video(graph, resolved, "videostill")
 
 
+@app.get("/api/video/loras")
+def video_loras():
+    """LoRAs available on the box (for the character-LoRA picker). Excludes the pipeline's
+    own speed LoRAs so only user/character LoRAs show."""
+    try:
+        skip = ("lightx2v", "causvid", "lightning")
+        return [n for n in C.models("loras") if not any(s in n.lower() for s in skip)]
+    except Exception:
+        return []
+
+
 @app.post("/api/video/vace")
 def video_vace(p: dict):
     """Reference-to-video: animate a referenced character directly (Wan VACE), holding
