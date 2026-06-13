@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import comfy
 from . import video as video_mod
+from . import musicvideo as musicvideo_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -670,6 +671,28 @@ def video_lipsync(p: dict):
     resolved["still_id"] = os.path.basename(p.get("still_id"))
     resolved["audio_id"] = os.path.basename(p.get("audio_id"))
     return _submit_video(graph, resolved, "videolipsync")
+
+
+@app.post("/api/mv/script")
+def mv_script(body: dict):
+    """Generate an editable music-video shot list from a song. Body: {project? (key) OR
+    song (normalized view with sections), cast?: [{name, role}], provider?, model?, shots?}."""
+    song = body.get("song")
+    if not song and body.get("project"):
+        r = _resolve_project(body["project"])
+        if not r:
+            raise HTTPException(404, "project not found")
+        song = _project_song_view(json.loads(r["data"] or "{}"))
+    if not song or not song.get("sections"):
+        raise HTTPException(400, "provide a song with sections, or a project key with a Song arrangement")
+    try:
+        shots = musicvideo_mod.generate_script(
+            song, body.get("cast") or [], body.get("provider") or "", body.get("model") or "",
+            CFG.get("claude_model", "claude-3-5-sonnet-latest"), int(body.get("shots") or 0))
+    except Exception as e:
+        raise HTTPException(500, f"script generation failed: {e}")
+    return {"shots": shots, "song_title": song.get("title"),
+            "duration": sum(int(s.get("seconds") or 0) for s in song.get("sections", []))}
 
 
 @app.get("/api/media/{pid}")
