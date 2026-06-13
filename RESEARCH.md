@@ -900,3 +900,65 @@ Same preprocessed tensors feed both (switching is cheap; the engine has `/v1/tra
 - Full fine-tune (not LoRA) is documented in `Large_Scale_SFT_Training_Guide.md` — far heavier; out of scope vs a LoRA/LoKr.
 
 **Sources (§18):** ACE-Step-1.5 LoRA tutorial `docs/en/LoRA_Training_Tutorial.md` · `train.py` + `acestep/training_v2/cli/args.py` (model variants incl. xl_*) · `acestep/api/train_api_models.py` (request schemas/defaults) · `acestep/api/train_api_lora_start_route.py`, `train_api_lokr_start_route.py`, `acestep/api/http/lora_routes.py` (`/v1/lora`) · data-prep scripts `scripts/lora_data_prepare/` · community advanced toolkit **Side-Step** (`github.com/koda-dernet/Side-Step`, bundled docs under `docs/sidestep/`) · Key-BPM-Finder (vocalremover.org) · existing metal-adjacent LoRA card (RESEARCH §15).
+
+## 19. ULTRA-REALISTIC MUSIC VIDEOS for our songs — research (2026-06-13)
+
+_Goal: photoreal (NOT anime/stylized) 3-4 min music videos matching our generated metal songs, runnable in ComfyUI on the single Windows RTX 3090 (24 GB), with an honest local-vs-cloud verdict. Deep-research pass (105 agents, 23 sources, 25 claims adversarially verified 3-vote). Provenance tags below: VERIFIED = 3-0 primary-source vote; MEDIUM = 2-1; UNVERIFIED = not established by evidence; REFUTED = killed in verification, do NOT cite._
+
+### 19.1 Bottom line (recommended stack)
+
+**Local base = Wan2.2 in ComfyUI.** It is the strongest verified local option mid-2026, with first-class NATIVE ComfyUI support (Day-0, built into core, not just a wrapper) across every variant we need:
+- **Wan2.2 5B TI2V** (unified t2v+i2v) — fits ~8 GB with native offloading => trivial headroom on 24 GB. Our FAST iteration + B-roll model. [VERIFIED]
+- **Wan2.2 14B T2V / I2V** — runs on 24 GB via fp8 / GGUF (Kijai quants Q4_K_M / Q6_K / Q8_0). Our HERO-SHOT quality model. [VERIFIED]
+- **Wan2.2 Fun InP** — first-frame-to-last-frame interpolation between two supplied stills = the core SHOT BUILDING BLOCK for chaining. Fun Control adds pose/depth/canny/trajectory. [VERIFIED]
+- **Wan2.2-S2V (14B, audio-driven)** — still image + audio -> lip-synced singing/performance video; fp8 fits 24 GB; chains ~4.8 s (77 frames @16fps) subgraphs to minute-level. Our VOCAL-PERFORMANCE / lip-sync path. [VERIFIED capability; quality on screamed/fast metal vocals UNVERIFIED]
+
+**Speed lever:** lightx2v 4-step distill LoRA -> Wan2.2 in 4 steps (schedule [1000,750,500,250]), ~20-24x speedup, already wired into ComfyUI's Wan2.2 templates. [VERIFIED, but measured on a 4090D 24 GB, NOT a 3090 -> our per-clip time is an inference, must be measured.]
+
+**Beat-sync:** ComfyUI_Yvann-Nodes -> Audio Analysis node emits per-frame reactive weights (Drums Only / Vocals / Full / Bass / Others via open-unmix) + Audio Peaks Detection (threshold + min-distance) for beat-driven cuts/motion. Feeds IPAdapter/ControlNet scheduling. [VERIFIED]
+
+**Lip-sync (alt to S2V):** ComfyUI-LatentSyncWrapper (ByteDance LatentSync 1.6), 512x512, ~20 GB => 3090-compatible; v1.6 fixed v1.5 teeth/lip blur. Use as a POST pass on an already-animated face. [VERIFIED]
+
+**Cloud top-up (hybrid):** Sora 2 base $0.10/sec ($6/min @720p), Sora 2 Pro $0.30-0.50/sec ($18/min, cinematic physics + synced audio). Use ONLY for a handful of hero cinematic shots where local photorealism falls short. [Sora 2 pricing VERIFIED; Kling/Runway/Veo/Hailuo/Pika per-minute costs UNVERIFIED here -> re-price before committing to any of them.]
+
+### 19.2 The honest risk (read this first)
+
+This is the video-side twin of our LeVo voice-ceiling problem. The research VERIFIED *capability and VRAM fit* for every component above, but it did NOT establish actual **photoreal-human aesthetic quality** for any local model — faces, performers, and especially **lip-sync on fast/screamed metal vocals** are UNVERIFIED. That is exactly the dimension that historically breaks on open models. So treat §19.3 Phase 1 as a hard go/no-go gate, the same way ACE-Step's "can it even do distorted guitar" was a gate before we built the music app. Do not build the full pipeline until a single photoreal-human i2v clip + one S2V/LatentSync vocal close-up pass our eyes.
+
+Also unsettled / do-not-trust: exact WanVideoWrapper context-window numbers (frames/overlap/stride) were REFUTED; the "3-4s per clip @576x1024 default" figure was REFUTED; an LTX-Video "12 GB / ~90s on 4090 / 3-4x faster" figure was REFUTED; a Veo 3.1 "$0.75/sec native-4K best-lip-sync" figure was REFUTED. LTX-Video / Hunyuan / CogVideoX / Mochi were NOT shown to beat Wan2.2 for our use case in any verified claim -> Wan2.2 is the pick, the others are watch-list only.
+
+### 19.3 Recommended pipeline (image-first, the photoreal path)
+
+The reliable route to photoreal is to nail the frame in IMAGE space first, then animate, rather than hoping pure t2v lands a photoreal face:
+
+1. **Stills/keyframes** — generate photoreal shot stills with a realism image model (Flux.1-dev or an SDXL photoreal checkpoint we already use for artwork, §14) + a character LoRA / reference for a CONSISTENT performer face across shots.
+2. **Animate** — feed each still as the i2v start frame to Wan2.2 14B I2V (hero) or 5B TI2V (B-roll). Use Fun InP to interpolate motion between two stills (start/end) for controlled transitions.
+3. **Performance shots** — singer close-ups via Wan2.2-S2V (image + the actual song audio) OR animate the face then LatentSync as a lip-sync post pass.
+4. **Beat-sync** — Yvann Audio Analysis drives motion strength / cut timing off drums or full mix; Peaks Detection marks beat cuts.
+5. **Assemble** — segment the song into shots (intro / verse / chorus / solo / outro), render each as ~3-5 s clips, smooth + raise fps with RIFE/FILM interpolation, upscale (2x) for delivery, then cut together in a NLE (or ComfyUI-VideoHelperSuite) and mux the song audio.
+6. **Hero top-up (optional)** — send 2-5 marquee shots to Sora 2 / Kling, intercut with the local base.
+
+**Identity consistency across a 3-4 min video** is the operational hard part (UNVERIFIED best practice): lean on (a) a fixed performer character LoRA for stills, (b) i2v from those consistent stills rather than free t2v, (c) Fun InP start/end anchoring. WanVideoWrapper context-windows give arbitrary length [MEDIUM, 2-1] but exact settings were REFUTED -> tune empirically.
+
+### 19.4 Cost
+
+- **Disk:** budget ~120-200 GB. Wan2.2 is a MoE pair (high-noise + low-noise) so 14B fp8 is ~2 model files (~16-17 GB each), 5B ~10 GB, S2V 14B fp8 ~16 GB, umt5 text encoder ~11 GB, VAE, LatentSync weights, plus the Flux/SDXL stills model (~12-24 GB).
+- **Compute:** electricity + time only for the local base. Per-clip 3090 time is UNVERIFIED (4-step lightx2v should put a 5 s clip in the low-minutes range, but MEASURE it). A full 3-4 min video is ~40-70 shots of ~5 s => plausibly several hours of GPU render per video; it's a batch/overnight job, and it CANNOT overlap a music gen / CLAP / LoRA-training run (shared 3090, strict serialization, [[no-concurrent-clap-engine]]).
+- **Cloud (optional):** Sora 2 base $6/min, Pro $18/min. A handful of 5-10 s hero shots = a few dollars per video. Only Sora 2 pricing is verified; re-price Kling/Runway/Veo before using them.
+
+### 19.5 Phased plan
+
+- **Phase 0 — Provision (no GPU fire).** Decide model set; I draft the shopping list (Wan2.2 14B fp8 + 5B + S2V + umt5 + VAE + lightx2v LoRA + Flux/SDXL realism + LatentSync) and the ComfyUI custom-node list (native is built-in; add Kijai WanVideoWrapper + KJNodes + ComfyUI-GGUF + Yvann-Nodes + LatentSyncWrapper + VideoHelperSuite + a RIFE/FILM interpolation node). Civitai-gated weights go on the [[civitai-vpn]] shopping list; HF weights I can fetch or script. Deploy nodes via the box-fs API ([[box-fs-api]]); USER does the ComfyUI restart.
+- **Phase 1 — GO/NO-GO photoreal gate (the validation, like ACE's guitar test).** One photoreal still -> one Wan2.2 14B i2v clip (~5 s). One S2V (or LatentSync) singer close-up against a real song snippet. MEASURE 3090 time + VRAM. Judge photorealism + lip-sync BY EYE. If faces/lips are bad, stop and reassess (cloud-hero-heavy or different model) before investing further.
+- **Phase 2 — One full shot type end-to-end.** Stills -> i2v -> RIFE -> upscale -> a single polished 5-10 s segment, beat-synced via Yvann, cut to a chorus.
+- **Phase 3 — Identity + chaining.** Lock a consistent performer (character LoRA), chain Fun InP transitions, prove the same face holds across 4-6 shots.
+- **Phase 4 — Full 3-4 min build.** Shot list across the song structure, batch-render overnight (serialized vs the music engine), assemble + mux, optional Sora 2 hero intercuts.
+- **Phase 5 — Crucible integration (optional, later).** A "Video" tab driving the box ComfyUI video workflow over its HTTP/WS API (we already have the ACE pattern), reusing the song's own structure/sections to auto-build the shot list.
+
+### 19.6 Open questions to resolve empirically (don't assume)
+1. Actual measured 3090 per-clip time + VRAM for Wan2.2 14B fp8 i2v and S2V at our target res (only a 4090D number exists).
+2. S2V / LatentSync lip-sync quality on fast/screamed/distorted metal vocals (vs Sonic / Hallo / MuseTalk).
+3. Verified current per-minute cost + photoreal/consistency quality of Kling / Runway Gen-4 / Veo / Hailuo / Pika beyond Sora 2.
+4. Reliable WanVideoWrapper context-window settings + best identity-consistency technique for many chained shots.
+
+**Sources (§19, verified):** ComfyUI docs (docs.comfy.org/tutorials/video/wan/wan2_2, /wan2-2-fun-inp, /wan2-2-s2v) · ComfyUI blog (blog.comfy.org wan22 day-0, fun-inp) · Wan repo (github.com/Wan-Video/Wan2.2) · Kijai GGUF (huggingface.co/Kijai/WanVideo_comfy_GGUF) + KJNodes · alibaba-pai/Wan2.2-Fun-5B-InP · Wan-AI/Wan2.2-S2V-14B (arXiv 2508.18621) · lightx2v/Wan2.2-Distill-Loras · github.com/yvann-ba/ComfyUI_Yvann-Nodes · github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper + ByteDance/LatentSync-1.6 · OpenAI Sora 2 API docs. REFUTED (do not cite): localaimaster.com Wan/LTX benchmark figures, buildmvpfast.com cloud price range, Veo 3.1 $0.75/sec claim.
