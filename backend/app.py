@@ -423,6 +423,7 @@ def config():
             "lora_upload": bool(LORA_UPLOAD_HOST),  # box dataset upload helper present
             "video": _video_available(),            # Wan2.2 + Z-Image video pipeline models present
             "video_qwen": _qwen_available(),        # Qwen-Image-Edit GGUF present (char consistency)
+            "video_vace": _vace_available(),        # Wan VACE GGUF present (reference-to-video)
             "genres": genres}
 
 
@@ -439,6 +440,14 @@ def _qwen_available():
     """True when the Qwen-Image-Edit GGUF (character consistency) is on the box."""
     try:
         return video_mod.QWEN_EDIT_GGUF in set(C.models("unet"))
+    except Exception:
+        return False
+
+
+def _vace_available():
+    """True when the Wan VACE GGUF (reference-to-video) is on the box."""
+    try:
+        return video_mod.WAN_VACE_GGUF in set(C.models("unet"))
     except Exception:
         return False
 
@@ -700,6 +709,23 @@ def video_char_still(p: dict):
         raise HTTPException(500, f"build failed: {e}")
     resolved["ref_ids"] = [os.path.basename(x) for x in (p.get("ref_ids") or [])][:3]
     return _submit_video(graph, resolved, "videostill")
+
+
+@app.post("/api/video/vace")
+def video_vace(p: dict):
+    """Reference-to-video: animate a referenced character directly (Wan VACE), holding
+    identity through motion. p: {still_id, prompt, ...}."""
+    still = _lib_image_path(p.get("still_id"))
+    if not still:
+        raise HTTPException(400, "still_id must reference a generated still in the library")
+    try:
+        with open(still, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(still))
+        graph, resolved = video_mod.build_vace_ref2v(p, ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["still_id"] = os.path.basename(p.get("still_id"))
+    return _submit_video(graph, resolved, "videoclip")
 
 
 @app.post("/api/mv/script")

@@ -39,6 +39,10 @@ QWEN_EDIT_GGUF = "qwen-image-edit-2511-Q6_K.gguf"
 QWEN_CLIP = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
 QWEN_VAE = "qwen_image_vae.safetensors"
 
+# Wan2.1 VACE 14B (GGUF) - reference-to-VIDEO: holds a subject's identity from a reference
+# image straight through motion (the video-side consistency alternative to Qwen stills).
+WAN_VACE_GGUF = "Wan2.1_14B_VACE-Q6_K.gguf"
+
 # A readable English negative that steers Wan/Z-Image away from the usual artifacts.
 DEFAULT_NEG = ("low quality, blurry, distorted, deformed, bad anatomy, extra fingers, "
                "watermark, text, jpeg artifacts, overexposed, static, plastic skin, cartoon")
@@ -142,6 +146,54 @@ def build_qwen_char_still(p, ref_images):
                "inputs": {"images": ["14", 0], "filename_prefix": "videogen/charstill"}}
     return g, {"seed": seed, "steps": steps, "cfg": cfg, "prompt": prompt,
                "refs": len(refs), "kind": "image"}
+
+
+# --------------------------------- Wan VACE: reference-to-video (identity through motion)
+def build_vace_ref2v(p, image_ref):
+    """Generate a video of a referenced subject in motion, holding identity from a single
+    reference image (Wan2.1 14B VACE GGUF). The video-side consistency alternative: skips
+    the still->i2v chain and animates the character directly. control_video/masks are
+    optional (omitted = free generation guided by reference + prompt). p: {prompt, negative?,
+    seed?, width?, height?, length?, fps?, steps?, cfg?, strength?}. Output: videogen/vace."""
+    seed = _seed(p)
+    w = int(p.get("width", 768))
+    h = int(p.get("height", 768))
+    length = int(p.get("length", 81))
+    fps = int(p.get("fps", 16))
+    steps = int(p.get("steps", 20))
+    cfg = float(p.get("cfg", 6.0))
+    strength = float(p.get("strength", 1.0))
+    prompt = (p.get("prompt") or "").strip()
+    neg = p.get("negative")
+    neg = DEFAULT_NEG if neg is None else neg
+    g = {
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": WAN_VACE_GGUF}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": WAN_CLIP, "type": "wan", "device": "cpu"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": WAN21_VAE}},
+        "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8.0}},
+        "5": {"class_type": "LoadImage", "inputs": {"image": image_ref}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": neg}},
+        "8": {"class_type": "WanVaceToVideo",
+              "inputs": {"positive": ["6", 0], "negative": ["7", 0], "vae": ["3", 0],
+                         "width": w, "height": h, "length": length, "batch_size": 1,
+                         "strength": strength, "reference_image": ["5", 0]}},
+        "9": {"class_type": "KSampler",
+              "inputs": {"model": ["4", 0], "seed": seed, "steps": steps, "cfg": cfg,
+                         "sampler_name": "uni_pc", "scheduler": "simple",
+                         "positive": ["8", 0], "negative": ["8", 1],
+                         "latent_image": ["8", 2], "denoise": 1.0}},
+        "10": {"class_type": "TrimVideoLatent",
+               "inputs": {"samples": ["9", 0], "trim_amount": ["8", 3]}},
+        "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+        "12": {"class_type": "CreateVideo", "inputs": {"images": ["11", 0], "fps": fps}},
+        "13": {"class_type": "SaveVideo",
+               "inputs": {"video": ["12", 0], "filename_prefix": "videogen/vace",
+                          "format": "auto", "codec": "auto"}},
+    }
+    return g, {"seed": seed, "width": w, "height": h, "length": length, "fps": fps,
+               "steps": steps, "cfg": cfg, "strength": strength, "prompt": prompt, "kind": "video"}
 
 
 # ----------------------------------------------------- Wan2.2 5B TI2V (i2v)
