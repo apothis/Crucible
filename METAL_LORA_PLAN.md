@@ -252,6 +252,38 @@ Adding generation mid-training would require swapping VAE/TE/LM back to GPU, run
 
 **Plan 1 routes around this**: everything that runs *during* training is CPU-only weight introspection. Everything *perceptual* runs *after* training against the on-disk checkpoints, with the engine in a clean inference-mode state.
 
+### 11.1a CORRECTION 2026-06-13 — VRAM IS freeable in-process; "needs an OS restart to free VRAM" was overgeneralized
+Source-verified by reading the box engine (NOT runtime-measured; no GPU-mem telemetry endpoint).
+The earlier belief that the engine cannot release VRAM without an OS-level `run_acestep_api.bat`
+restart is **largely wrong**. What is actually true:
+
+- **Ephemeral decoder (estimation + CLI training) frees CLEANLY, in-process.**
+  `acestep/training_v2/estimate.py::run_estimation` loads its decoder via
+  `model_loader.load_decoder_for_training()` into a LOCAL variable, then calls
+  `unload_models()` (`.to("cpu")` + `del` + `gc.collect()` + `empty_cache()`). Only local refs
+  held it, so VRAM drops to near-idle the instant the run ends. THIS is the "GPU released
+  everything the moment the run finished" the user observed - no restart involved. Proof that the
+  engine has a working on-demand full-free path inside one running process.
+- **Repeated `/v1/init` does NOT leak the DiT.** `init_service_loader.py::_load_main_model_from_checkpoint`
+  does `if self.model is not None: del self.model; self.model=None` then `torch.cuda.empty_cache()`
+  BEFORE loading a new DiT. So re-init frees-before-reload. The old "multi-init accumulates orphan
+  tensors" claim is unsupported by current source (that file predates the original 2026-05-29
+  diagnosis, so the 22-24GB-pegged / 7x-slower symptoms were almost certainly shared-memory spill
+  or offload/restore, mis-attributed to an un-freeable DiT).
+- **The one real (partial) stickiness component: the vLLM LM.** `LLMHandler.unload()` is best-effort
+  (reset + destroy process group + None + gc + empty_cache) but skips vLLM's `destroy_model_parallel`,
+  so it can leave a residual pool. Full LM teardown still favors an OS restart.
+- **Persistent serving model is held by design** (in `app.state`), reused by HTTP training via
+  `RuntimeComponentManager` offload/restore; after HTTP training the engine returns to its full
+  ~5-8GB baseline, not near-zero.
+
+**New tool (deployed 2026-06-13, `patches/engine-2026-06-13/`): `POST /v1/free`.** Drops the
+persistent DiT/VAE/text-encoder (+ optionally the LM) and `empty_cache()`s, in-process - then
+`POST /v1/reinitialize` reloads the serving model. So a fresh boot is NO LONGER required just to
+*recover* VRAM mid-session, or to run estimate when a model is already loaded. It REDUCES the
+user-restart count; it does not fully eliminate restarts (vLLM residual remains the one case the
+restart still guarantees). See [[engine-fresh-boot-for-lora]].
+
 ### 11.2 During-training surface (CPU only, zero GPU)
 A watcher thread spawned from `/api/lora/train` (parallels the existing best-history poller, commit `9f6b613`). Watches `<output_dir>/checkpoints/` for new `epoch_NN_loss_X.XXXX/` directories.
 
@@ -930,7 +962,10 @@ Design (reverse-engineered from GitHub main; see patch README for the source rea
 - v2 `FixedLoRATrainer(model, adapter_cfg, train_cfg)` takes an ALREADY-LOADED model and
   `train()` is a generator yielding `TrainingUpdate(step, loss, msg, kind, epoch=)`. So the
   wrapper runs v2 IN-PROCESS reusing the engine's loaded decoder (same VRAM mgmt as v1
-  start_lokr) - NO subprocess, NO double-VRAM (avoids the never-frees bug, §task18).
+  start_lokr) - NO subprocess, NO double-VRAM (a subprocess would load a 2nd copy of the model;
+  the in-process route reuses the loaded one). NOTE 2026-06-13: the "never-frees bug" framing is
+  corrected in §11.1a - the in-process model DOES free; the real reason to avoid a subprocess is
+  double-occupancy, not an inability to free.
 - v2 reads via the same `acestep.training.data_module` as v1 -> our v1 `tensors/` SHOULD
   feed it directly (the showstopper to verify = [V5] tensor-key compat).
 - v2 LoKr saves the same `lokr_weights.safetensors` -> loads in our picker unchanged.
@@ -1200,8 +1235,10 @@ NOTE 2026-06-10: the "6.9min > length cap" reason was WRONG (unverified guess) -
 duration cap (Ghost Love Score ~10min trained fine; Battle Hymn encoded fine on the dim128 re-run's
 preprocess -> 40 tensors). The engine SILENTLY SKIPS any track that fails to encode and still reports
 "completed" with fewer tensors. Most likely cause of the one-off skip = transient VRAM/OOM on the
-SINGLE LONGEST track (biggest latent, first to OOM when VRAM tight per the stickiness bug
-[[engine-fresh-boot-for-lora]]); unproven retroactively (no engine log). -> RESTART#2 -> train.
+SINGLE LONGEST track (biggest latent, first to OOM when VRAM tight); unproven retroactively (no
+engine log). NOTE 2026-06-13: "stickiness bug" corrected in §11.1a - VRAM frees in-process; a
+tight-VRAM OOM on the longest track is plausibly shared-memory spill, not an un-freeable model.
+-> RESTART#2 -> train.
 EAR TEST PENDING: full-artist bar [[lora-goal-full-artist-sound]]
 (Yannis's voice + the band), judge over MULTIPLE gens per setting (single-gen A/B unreliable
 [[lora-scale-clean-seed-nondeterministic]]). If dim64 not enough, retry dim128.
