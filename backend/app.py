@@ -1796,6 +1796,71 @@ def project_song_patch(key: str, body: dict):
     return {"id": r["id"], "name": r["name"], "updated": now, "song": _project_song_view(data)}
 
 
+# ---- Programmatic music-video script read/patch (so I can INJECT shots/cast into a
+# project's Music Video tab, marked to time, and the user edits them). The tab restores
+# from data.drafts.musicvideo on Open, same as the Song builder. ----
+def _normalize_shots(shots):
+    out = []
+    for s in shots or []:
+        if not isinstance(s, dict):
+            continue
+        t = s.get("type")
+        item = {"section": str(s.get("section") or ""),
+                "start": int(float(s.get("start") or 0)),
+                "end": int(float(s.get("end") or 0)),
+                "type": t if t in ("performance", "narrative", "broll") else "broll",
+                "scene": str(s.get("scene") or "").strip(),
+                "motion": str(s.get("motion") or "").strip(),
+                "characters": [str(x) for x in (s.get("characters") or []) if x],
+                "lipsync": bool(s.get("lipsync"))}
+        if s.get("clipId"):
+            item["clipId"] = s["clipId"]
+        out.append(item)
+    out.sort(key=lambda x: (x["start"], x["end"]))
+    for i, s in enumerate(out):
+        s["idx"] = i
+    return out
+
+
+def _project_video_view(data: dict) -> dict:
+    mv = (data.get("drafts") or {}).get("musicvideo") or {}
+    return {"cast": mv.get("cast") or [], "shots": mv.get("shots") or [],
+            "audioId": mv.get("audioId"), "method": mv.get("method") or "auto"}
+
+
+@app.get("/api/projects/{key}/video")
+def project_video_get(key: str):
+    """Read a project's Music Video script (cast + timed shots)."""
+    r = _resolve_project(key)
+    if not r:
+        raise HTTPException(404, "project not found")
+    return {"id": r["id"], "name": r["name"], "video": _project_video_view(json.loads(r["data"] or "{}"))}
+
+
+@app.post("/api/projects/{key}/video")
+def project_video_patch(key: str, body: dict):
+    """Write/inject a project's Music Video script. Body (all optional): cast, audioId, method,
+    shots (REPLACE the list), add_shots (APPEND new shots, each {start,end,scene,type,motion?,
+    characters?,lipsync?,section?}). Shots are normalized + sorted by start time. The change
+    loads when the user opens the project."""
+    r = _resolve_project(key)
+    if not r:
+        raise HTTPException(404, "project not found")
+    data = json.loads(r["data"] or "{}")
+    mv = data.setdefault("drafts", {}).setdefault("musicvideo", {})
+    for k in ("cast", "audioId", "method"):
+        if k in body:
+            mv[k] = body[k]
+    shots = body["shots"] if "shots" in body else (mv.get("shots") or [])
+    if body.get("add_shots"):
+        shots = list(shots) + list(body["add_shots"])
+    mv["shots"] = _normalize_shots(shots)
+    with db() as conn:
+        conn.execute("UPDATE projects SET data=?,updated=? WHERE id=?",
+                     (json.dumps(data), time.time(), r["id"]))
+    return {"id": r["id"], "name": r["name"], "video": _project_video_view(data)}
+
+
 @app.get("/api/rvc/voices")
 def rvc_voices():
     return R.voices()
