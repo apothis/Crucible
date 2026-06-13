@@ -182,7 +182,7 @@ def save_done_row(jid, mode, params, audio_path, bucket=""):
 
 
 # ---------------- WebSocket progress listener ----------------
-VIDEO_MODES = {"videostill", "videoclip", "videolipsync"}   # produce image/mp4, not audio
+VIDEO_MODES = {"videostill", "videoclip", "videolipsync", "musicvideo"}   # produce image/mp4, not audio
 MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mkv")
 _MEDIA_CT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4",
@@ -722,6 +722,30 @@ def mv_script(body: dict):
         raise HTTPException(500, f"script generation failed: {e}")
     return {"shots": shots, "song_title": song.get("title"),
             "duration": sum(int(s.get("seconds") or 0) for s in song.get("sections", []))}
+
+
+@app.post("/api/mv/assemble")
+def mv_assemble(body: dict):
+    """Stitch generated shot clips into one MP4 + the song audio (GPU-free, ffmpeg on the
+    Mac). Body: {shots: [{clip_id, start, end}], audio_id?, title?}."""
+    segs = []
+    for s in body.get("shots") or []:
+        cid = os.path.basename(str(s.get("clip_id") or ""))
+        clip = os.path.join(LIBRARY, f"{cid}.mp4")
+        if cid and os.path.exists(clip):
+            dur = float(s.get("end") or 0) - float(s.get("start") or 0)
+            segs.append({"path": clip, "dur": dur if dur > 0 else 5.0})
+    if not segs:
+        raise HTTPException(400, "no rendered shot clips found - generate the shots first")
+    audio = _lib_source_path(body.get("audio_id"))
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.mp4")
+    try:
+        musicvideo_mod.assemble(segs, audio, out)
+    except Exception as e:
+        raise HTTPException(500, f"assembly failed: {e}")
+    save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video")}, out)
+    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
 
 
 @app.get("/api/media/{pid}")

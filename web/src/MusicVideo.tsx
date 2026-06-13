@@ -7,6 +7,7 @@ type Shot = {
   idx: number; section: string; start: number; end: number;
   type: "performance" | "narrative" | "broll";
   scene: string; motion: string; characters: string[]; lipsync: boolean;
+  clipId?: string;   // library id of the rendered clip for this shot
 };
 type Character = { name: string; role: string; refStillId: string };
 type Project = { id: string; name: string };
@@ -48,6 +49,19 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   }
 
   function patchShot(i: number, p: Partial<Shot>) { setShots(shots.map((s, j) => j === i ? { ...s, ...p } : s)); }
+  function recordClip(idx: number, clipId: string) { setShots(shots.map((s, j) => j === idx ? { ...s, clipId } : s)); }
+
+  async function assemble() {
+    const ready = shots.filter((s) => s.clipId);
+    if (!ready.length) { ctx.setResults([{ id: rid(), title: "Nothing to assemble", status: "error", pct: 0, err: "Generate some shots first - each rendered clip is stitched in order." }]); return; }
+    const card = { id: rid(), title: `assembling ${ready.length} shots...`, status: "running" as const, pct: 30 };
+    ctx.setResults([card]);
+    try {
+      const r = await api.mvAssemble({ shots: ready.map((s) => ({ clip_id: s.clipId, start: s.start, end: s.end })), audio_id: audioId, title: projects.find((p) => p.id === projectId)?.name || "music video" }) as { media_url: string };
+      ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
+      ctx.onDone();
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
 
   // generate one shot: lip-sync (if a named singer w/ ref still + audio) -> S2V; character
   // shot -> i2v anchored on the character's ref still; scenic -> fresh still then i2v.
@@ -58,7 +72,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     try {
       if (shot.lipsync && char && audioId) {
         const { job_id } = await api.videoLipsync({ still_id: char.refStillId, audio_id: audioId, prompt: shot.scene, audio_start: shot.start }) as { job_id: string };
-        ctx.patch(card.id, { status: "running", pct: 5 }); pollJob(job_id, card.id, ctx);
+        ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else if (char && cfg.video_qwen) {
         // Phase B: place the character into THIS shot's scene (Qwen-Edit, keeps identity), then animate.
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: placing ${char.name}...` });
@@ -66,18 +80,18 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
         await waitDone(cs.job_id);
         ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
         const { job_id } = await api.videoI2V({ still_id: cs.job_id, prompt: shot.motion || "subtle cinematic motion" }) as { job_id: string };
-        pollJob(job_id, card.id, ctx);
+        recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else if (char) {
         // Phase A fallback (no Qwen yet): anchor on the reference still as-is.
         const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.motion || shot.scene }) as { job_id: string };
-        ctx.patch(card.id, { status: "running", pct: 5 }); pollJob(job_id, card.id, ctx);
+        ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else {
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: still...` });
         const still = await api.videoStill({ prompt: shot.scene }) as { job_id: string };
         await waitDone(still.job_id);
         ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
         const { job_id } = await api.videoI2V({ still_id: still.job_id, prompt: shot.motion || "subtle cinematic motion" }) as { job_id: string };
-        pollJob(job_id, card.id, ctx);
+        recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       }
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
@@ -144,12 +158,19 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
                 <span className="rounded bg-[var(--color-panel)] px-1.5 py-0.5">{s.type}</span>
                 <label className="flex items-center gap-1 text-[10px] text-[var(--color-muted)]"><input type="checkbox" checked={s.lipsync} onChange={(e) => patchShot(i, { lipsync: e.target.checked })} />lip-sync</label>
                 {s.characters.length > 0 && <span className="text-[10px] text-[var(--color-muted)]">{s.characters.join(", ")}</span>}
-                <button onClick={() => genShot(s)} disabled={busy} className="ml-auto rounded bg-[var(--color-accent)] px-2 py-0.5 text-[11px] text-white disabled:opacity-50">Generate</button>
+                {s.clipId && <span className="text-[10px] text-green-400" title="rendered">rendered</span>}
+                <button onClick={() => genShot(s)} disabled={busy} className="ml-auto rounded bg-[var(--color-accent)] px-2 py-0.5 text-[11px] text-white disabled:opacity-50">{s.clipId ? "Re-gen" : "Generate"}</button>
               </div>
               <textarea className={inp} rows={2} value={s.scene} onChange={(e) => patchShot(i, { scene: e.target.value })} />
               <input className={inp} value={s.motion} placeholder="motion" onChange={(e) => patchShot(i, { motion: e.target.value })} />
             </div>
           ))}
+          <div className="flex items-center gap-2 pt-1">
+            <PrimaryButton onClick={assemble} disabled={busy || shots.filter((s) => s.clipId).length === 0}>
+              {`Assemble video (${shots.filter((s) => s.clipId).length}/${shots.length} shots rendered)`}
+            </PrimaryButton>
+          </div>
+          <p className="text-[10px] text-[var(--color-muted)]">Stitches the rendered clips in order, fits each to its shot timing, and muxes the song. Interpolation/upscale come later.</p>
         </div>
       )}
     </div>

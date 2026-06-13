@@ -6,9 +6,54 @@ The user edits it, then each shot is rendered with the existing video builders (
 or S2V) anchored on each character's reference still. Plain ASCII.
 """
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 
 from . import llm as llm_mod
+
+
+def _ffmpeg():
+    return shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+
+
+def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24):
+    """Stitch shot clips into one MP4 (GPU-free, ffmpeg). segments = [{path, dur}]: each clip
+    is scaled+padded to width x height, set to a common fps, and fitted to exactly `dur`
+    seconds (long clips trimmed; short clips hold their last frame). Concatenated in order,
+    then the full song audio is muxed over the result (replacing per-clip audio)."""
+    ff = _ffmpeg()
+    work = tempfile.mkdtemp(prefix="mvasm_")
+    try:
+        norm = []
+        for i, seg in enumerate(segments):
+            o = os.path.join(work, f"seg{i:03d}.mp4")
+            vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                  f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},"
+                  f"tpad=stop_mode=clone:stop_duration=3600")
+            subprocess.run([ff, "-y", "-loglevel", "error", "-i", seg["path"], "-vf", vf,
+                            "-t", f"{max(0.1, seg['dur']):.3f}", "-an", "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p", "-r", str(fps), o], check=True)
+            norm.append(o)
+        listf = os.path.join(work, "list.txt")
+        with open(listf, "w") as f:
+            for o in norm:
+                f.write("file '%s'\n" % o)
+        concat = os.path.join(work, "concat.mp4")
+        subprocess.run([ff, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                        "-i", listf, "-c", "copy", concat], check=True)
+        total = sum(max(0.1, s["dur"]) for s in segments)
+        if audio_path:
+            subprocess.run([ff, "-y", "-loglevel", "error", "-i", concat, "-i", audio_path,
+                            "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+                            "-t", f"{total:.3f}", out_path], check=True)
+        else:
+            shutil.move(concat, out_path)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return out_path
 
 SHOT_TYPES = ("performance", "narrative", "broll")
 

@@ -414,6 +414,7 @@ function libDesc(it: LibItem): string {
     ].filter(Boolean);
     return "Vocal Builder · " + parts.join(" · ");
   }
+  if (it.mode === "musicvideo") return `music video: ${p.title || "?"} (${p.shots || "?"} shots)`;
   if (it.mode === "videostill") return `still: ${p.prompt ? String(p.prompt).slice(0, 40) : "?"}`;
   if (it.mode === "videoclip") return `i2v clip${p.length ? ` · ${p.length}f` : ""}${p.prompt ? " · " + String(p.prompt).slice(0, 28) : ""}`;
   if (it.mode === "videolipsync") return `lip-sync${p.length ? ` · ${p.length}f` : ""}${p.audio_id ? " · " + String(p.audio_id).slice(0, 10) : ""}`;
@@ -469,6 +470,7 @@ const LIB_SECTIONS = [
   { key: "videostill", label: "Stills" },
   { key: "videoclip", label: "Video clips" },
   { key: "videolipsync", label: "Lip-sync clips" },
+  { key: "musicvideo", label: "Music videos" },
 ];
 
 type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void; onOpenInBuilder?: (it: LibItem) => void; onCompare?: (id: string) => void };

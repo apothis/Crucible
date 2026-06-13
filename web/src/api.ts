@@ -47,6 +47,7 @@ export const api = {
   videoLipsync: (p: unknown) => jpost("/api/video/lipsync", p),
   videoCharStill: (p: unknown) => jpost("/api/video/char_still", p),
   mvScript: (p: unknown) => jpost("/api/mv/script", p),
+  mvAssemble: (p: unknown) => jpost("/api/mv/assemble", p),
   restyle: (fd: FormData) => jform("/api/restyle", fd),
   cover: (fd: FormData) => jform("/api/cover", fd),
   transcribe: (fd: FormData) => jform("/api/transcribe", fd),
