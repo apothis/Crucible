@@ -962,3 +962,49 @@ The reliable route to photoreal is to nail the frame in IMAGE space first, then 
 4. Reliable WanVideoWrapper context-window settings + best identity-consistency technique for many chained shots.
 
 **Sources (§19, verified):** ComfyUI docs (docs.comfy.org/tutorials/video/wan/wan2_2, /wan2-2-fun-inp, /wan2-2-s2v) · ComfyUI blog (blog.comfy.org wan22 day-0, fun-inp) · Wan repo (github.com/Wan-Video/Wan2.2) · Kijai GGUF (huggingface.co/Kijai/WanVideo_comfy_GGUF) + KJNodes · alibaba-pai/Wan2.2-Fun-5B-InP · Wan-AI/Wan2.2-S2V-14B (arXiv 2508.18621) · lightx2v/Wan2.2-Distill-Loras · github.com/yvann-ba/ComfyUI_Yvann-Nodes · github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper + ByteDance/LatentSync-1.6 · OpenAI Sora 2 API docs. REFUTED (do not cite): localaimaster.com Wan/LTX benchmark figures, buildmvpfast.com cloud price range, Veo 3.1 $0.75/sec claim.
+
+## 19a. Video pipeline - Phase 0 provisioning manifest (2026-06-13, verified against the box)
+
+_Box state probed live via the fs API. ComfyUI = `E:\AI\MusicGen\Comfyui\ComfyUI_windows_portable\ComfyUI\` (portable, **v0.22.0**, torch **2.11.0+cu130**, python_embeded). Model buckets already exist (loras, vae, text_encoders, clip_vision, controlnet, upscale_models, frame_interpolation, optical_flow, photomaker, audio_encoders, ...). Existing custom_nodes: ComfyUI-ACEStep-Repaint, ComfyUI-Manager, rgthree-comfy._
+
+**KEY FINDING: native Wan nodes are ALREADY present** in 0.22.0 `comfy_extras/nodes_wan.py` - NO ComfyUI update needed. Registered classes include `WanImageToVideo`, `Wan22ImageToVideoLatent`, `WanFunInpaintToVideo` (Fun InP first/last-frame), `Wan22FunControlToVideo` (pose/depth/canny), `WanFirstLastFrameToVideo`, `WanSoundImageToVideo` + `WanSoundImageToVideoExtend` (S2V audio-driven + minute-level chaining), plus `WanInfiniteTalkToVideo`, `WanAnimateToVideo`, `WanHuMoImageToVideo`. So the whole core path (TI2V / I2V / Fun InP / FLF / S2V) runs on native nodes; custom nodes are only for assembly, beat-sync, interpolation, and optional VRAM/consistency.
+
+### Custom nodes (git clone into custom_nodes\, pip deps via python_embeded)
+REQUIRED:
+- `ComfyUI-VideoHelperSuite` (Kosinkadink) - load/save/combine video, frame I/O, mux audio. github.com/Kosinkadink/ComfyUI-VideoHelperSuite
+- `ComfyUI-Frame-Interpolation` (Fannovel16) - RIFE/FILM smooth + fps boost (models -> models/frame_interpolation, autodownloads). github.com/Fannovel16/ComfyUI-Frame-Interpolation
+- `ComfyUI_Yvann-Nodes` (yvann-ba) - Audio Analysis (per-frame reactive weights, Drums/Vocals/Full via open-unmix) + Audio Peaks Detection (beat cuts). github.com/yvann-ba/ComfyUI_Yvann-Nodes
+RECOMMENDED:
+- `ComfyUI-GGUF` (city96) - load GGUF 14B quants for tighter VRAM. github.com/city96/ComfyUI-GGUF
+- `ComfyUI-KJNodes` (Kijai) - utility nodes many Wan workflows expect. github.com/kijai/ComfyUI-KJNodes
+OPTIONAL (native covers the same ground; add only if needed):
+- `ComfyUI-WanVideoWrapper` (Kijai) - context-window arbitrary-length + extra control. github.com/kijai/ComfyUI-WanVideoWrapper
+- `ComfyUI-LatentSyncWrapper` (ShmuelRonen) - alt lip-sync vs native S2V/InfiniteTalk. github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper
+- identity (decide at Phase 3): `ComfyUI-PuLID-Flux` (Flux face-id) OR PhotoMaker/InstantID (SDXL).
+
+### Models - HuggingFace (no token, fetch directly to the box)
+Wan2.2 video (Comfy-Org/Wan_2.2_ComfyUI_Repackaged unless noted):
+- `wan2.2_ti2v_5B_fp16.safetensors` -> diffusion_models  (~10GB; fast iter + B-roll, TI2V t2v+i2v)
+- `wan2.2_i2v_high_noise_14B_fp16.safetensors` + `wan2.2_i2v_low_noise_14B_fp16.safetensors` -> diffusion_models  (~14GB each; HERO i2v MoE pair. fp8 alt from Kijai/WanVideo_comfy to halve disk/VRAM)
+- `wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors` -> diffusion_models  (~7GB each; optional pure-t2v)
+- `wan2.2_s2v_14B_fp8_scaled.safetensors` -> diffusion_models  (~14GB; singer lip-sync. bf16 ~28GB optional)
+- `umt5_xxl_fp8_e4m3fn_scaled.safetensors` (repo: Comfy-Org/Wan_2.1_ComfyUI_repackaged) -> text_encoders  (~6GB; shared by ALL Wan workflows)
+- `wan2.2_vae.safetensors` -> vae  (5B only)  AND  `wan_2.1_vae.safetensors` -> vae  (14B + S2V)  (~250MB each)
+- `wav2vec2_large_english_fp16.safetensors` -> audio_encoders  (~0.6GB; S2V audio encoder)
+- lightx2v 4-step distill LoRAs (high+low noise) from lightx2v/Wan2.2-Distill-Loras -> loras  (~0.6GB each; 20-24x speedup, schedule [1000,750,500,250])
+Stills (photoreal text-to-image, default = Flux):
+- `flux1-dev-fp8.safetensors` (Comfy-Org/flux1-dev repackaged, fp8 ~11GB) -> diffusion_models  + `t5xxl_fp8_e4m3fn.safetensors` + `clip_l.safetensors` -> text_encoders + `ae.safetensors` -> vae. NOTE Flux.1-dev base weights are LICENSE-GATED on HF (accept license / HF token).
+Upscale: an ESRGAN model (e.g. `4x-UltraSharp` / `4x_NMKD-Siax`) -> upscale_models  (~60MB; native UpscaleModelLoader).
+
+### Models - Civitai (geoblocked -> USER VPNs + transfers, [[civitai-vpn]]) -- ONLY if we pick the SDXL stills route instead of Flux
+- A photoreal SDXL checkpoint: RealVisXL V5.0 or Juggernaut XL -> checkpoints  (~6.5GB). Plus optional realism/skin LoRAs.
+- (Flux route avoids Civitai entirely except optional Flux realism LoRAs.)
+
+### Disk + phasing
+Full set ~80-140GB (fp8 vs fp16, Flux included). **Phase 1 GATE minimal subset (~45-55GB):** ti2v_5B fp16 + umt5 fp8 + both VAEs + 1 lightx2v LoRA (i2v gate) ; s2v_14B fp8 + wav2vec (lip-sync gate) ; flux1-dev-fp8 + its clip/vae (one photoreal still). Validate photorealism + metal-vocal lip-sync by eye BEFORE pulling the rest.
+
+### Deploy mechanics (how Phase 0 actually gets onto the box)
+fs API is write-only (no exec), so provisioning = author two scripts via fs/write, USER runs them once + restarts ComfyUI (user-only [[engine-restart-is-user-only]]; ComfyUI also serves cover/repaint per [[acestep-engine-outcome]] so its restart is a user op too):
+1. `install_video_nodes.bat` - git clone the node repos into custom_nodes\ + `python_embeded\python.exe -m pip install -r <each>/requirements.txt`.
+2. `download_video_models.bat` - huggingface_hub / curl pulls into the right models\ subdirs (Phase-1-minimal first, full set behind a flag). Flux gated file needs the user's HF token.
+GPU serialization holds: a video render cannot overlap a music gen / CLAP / training run ([[no-concurrent-clap-engine]]).
