@@ -1393,6 +1393,24 @@ train_20260605-234720__lokr_150ep_discrete. EAR TEST PENDING: XL Base, sweep 0.6
 method clearly beat the old build on production/feel/window + Tobias/guest voices? = the generalization
 verdict for everything built this session.
 
+### §13x: Fisher / gradient-sensitivity - built, probed, SHELVED (2026-06-12)
+Wired the engine's unused run_estimation into HTTP (patches/engine-2026-06-12: /v1/training/estimate
+route + estimate.py MLP-coverage patch), deployed live via the box fs API. VRAM TRAP: run_estimation
+sets requires_grad on the FULL BASE projection weights (q/k/v/o + the MLP gate/up/down I added) and does
+a real backward -> GRADIENT STORAGE the size of those matrices (gigabytes), which gradient-checkpointing
+does NOT reduce (it only saves activations). First runs maxed the 3090 (23GB VRAM + 10-15GB shared,
+crawled). My configure_memory_features+offload_non_decoder fix did NOT help (wrong target: activations,
+not grads) and the MLP addition made it WORSE (FFN up/down are the biggest matrices). Training stays at
+~14GB ONLY because it grads the tiny LoKr adapter, not full base weights. A VRAM-safe estimate needs a
+CHUNKED rewrite (grad a subset of modules per pass, accumulate) - real work.
+DIAGNOSTIC obtained anyway (3-batch run completed in 124s via shared-RAM spill, then unloaded): for
+crucible_beastinblack, sensitivity concentrates in CROSS-ATTENTION q_proj at mid-late layers (21,30,19,
+17) + layer0 self_attn v_proj = the artist lives in the CONDITIONING paths, not the MLP. Noisy (n=3).
+DECISION (user-aligned): SHELVE the targeted-train pursuit - §13p says targeted ~= uniform at equal
+budget, and the voice gap is an ACE ceiling Fisher won't fix. Route left DORMANT (do NOT call without
+the chunked rewrite - it maxes the box). estimate.py edits kept (harmless dormant). Revisit only if a
+cheap chunked estimator is worth building.
+
 ## 14. Sources
 RESEARCH §18 (+ its sources): ACE-Step-1.5 `docs/en/LoRA_Training_Tutorial.md`, `train.py`, `acestep/training_v2/cli/args.py`, `acestep/api/train_api_models.py`, training/lora route files, `scripts/lora_data_prepare/`, Side-Step toolkit. Live verification: `192.168.1.201:8001/openapi.json` + status probes (2026-05-27).
 

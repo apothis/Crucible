@@ -1,5 +1,15 @@
 # Engine patch 2026-06-12 - Fisher / gradient-sensitivity estimation over HTTP
 
+> STATUS 2026-06-12: SHELVED / DORMANT. `/v1/training/estimate` WORKS but MAXES the 3090
+> (23GB VRAM + 10-15GB shared, crawls): run_estimation grads the FULL base projection weights, so
+> gradient STORAGE (not activations) is the hog - grad-checkpointing+offload do NOT fix it, and adding
+> MLP made it worse. Do NOT call this route as-is. A VRAM-safe version needs a CHUNKED rewrite (grad a
+> subset of modules per pass, accumulate). 3-batch diagnostic on BiB (completed via shared-RAM spill):
+> sensitivity concentrates in cross_attn.q_proj at mid-late layers -> artist lives in the conditioning
+> paths. Per METAL_LORA_PLAN §13x: shelved (targeted ~= uniform + voice is an ACE ceiling). Route + the
+> estimate.py edits left in place but dormant.
+
+
 Wires the engine's existing-but-unused `training_v2/estimate.py::run_estimation` (gradient-norm
 per-module sensitivity = empirical-Fisher proxy) into an HTTP route, so the targeted-capacity
 ("put rank where THIS artist lives") lever from METAL_LORA_PLAN §13p is usable from our pipeline.
