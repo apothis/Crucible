@@ -9,8 +9,9 @@ type Shot = {
   scene: string; motion: string; characters: string[]; lipsync: boolean;
   clipId?: string;   // library id of the rendered clip for this shot
 };
-type Character = { name: string; role: string; refStillId: string };
+type Character = { name: string; role: string; refStillId: string; loraName?: string };
 type Project = { id: string; name: string };
+type Method = "auto" | "anchor" | "qwen" | "vace" | "lora";
 
 // poll a job to completion (media-aware: stills/clips use media_url, not audio_url)
 function waitDone(jobId: string): Promise<void> {
@@ -31,9 +32,20 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   const [audioId, setAudioId] = d.use("audioId", "");
   const [cast, setCast] = d.use<Character[]>("cast", []);
   const [shots, setShots] = d.use<Shot[]>("shots", []);
+  const [method, setMethod] = d.use<Method>("method", "auto");
+  const [loras, setLoras] = useState<string[]>([]);
   const [gen, setGen] = useState(false);
 
   useEffect(() => { api.projects().then(setProjects).catch(() => {}); }, []);
+  useEffect(() => { api.videoLoras().then((r) => setLoras(r as string[])).catch(() => {}); }, []);
+
+  // resolve which consistency method to actually use for a character shot
+  function resolveMethod(char: Character): Method {
+    if (method !== "auto") return method;
+    if (char.loraName) return "lora";
+    if (cfg.video_qwen) return "qwen";
+    return "anchor";
+  }
   const stills = library.filter((i) => i.mode === "videostill" && i.media_url);
   const audios = library.filter((i) => i.audio_url);
 
@@ -73,18 +85,34 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
       if (shot.lipsync && char && audioId) {
         const { job_id } = await api.videoLipsync({ still_id: char.refStillId, audio_id: audioId, prompt: shot.scene, audio_start: shot.start }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
-      } else if (char && cfg.video_qwen) {
-        // Phase B: place the character into THIS shot's scene (Qwen-Edit, keeps identity), then animate.
-        ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: placing ${char.name}...` });
-        const cs = await api.videoCharStill({ ref_ids: [char.refStillId], prompt: shot.scene }) as { job_id: string };
-        await waitDone(cs.job_id);
-        ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
-        const { job_id } = await api.videoI2V({ still_id: cs.job_id, prompt: shot.motion || "subtle cinematic motion" }) as { job_id: string };
-        recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else if (char) {
-        // Phase A fallback (no Qwen yet): anchor on the reference still as-is.
-        const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.motion || shot.scene }) as { job_id: string };
-        ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
+        const m = resolveMethod(char);
+        if (m === "vace" && cfg.video_vace) {
+          // reference-to-video: animate the character directly (identity through motion)
+          ctx.patch(card.id, { status: "running", pct: 5, title: `shot ${shot.idx + 1}: VACE ${char.name}...` });
+          const { job_id } = await api.videoVace({ still_id: char.refStillId, prompt: `${shot.scene}. ${shot.motion}` }) as { job_id: string };
+          recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
+        } else if (m === "lora" && char.loraName) {
+          // trained character LoRA -> consistent still in the new scene, then animate
+          ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: ${char.name} (LoRA)...` });
+          const st = await api.videoStill({ prompt: shot.scene, lora: char.loraName }) as { job_id: string };
+          await waitDone(st.job_id);
+          ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
+          const { job_id } = await api.videoI2V({ still_id: st.job_id, prompt: shot.motion || "subtle cinematic motion" }) as { job_id: string };
+          recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
+        } else if (m === "qwen" && cfg.video_qwen) {
+          // place the character into THIS scene (Qwen-Edit, keeps identity), then animate
+          ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: placing ${char.name}...` });
+          const cs = await api.videoCharStill({ ref_ids: [char.refStillId], prompt: shot.scene }) as { job_id: string };
+          await waitDone(cs.job_id);
+          ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
+          const { job_id } = await api.videoI2V({ still_id: cs.job_id, prompt: shot.motion || "subtle cinematic motion" }) as { job_id: string };
+          recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
+        } else {
+          // anchor: reuse the reference still as-is
+          const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.motion || shot.scene }) as { job_id: string };
+          ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
+        }
       } else {
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: still...` });
         const still = await api.videoStill({ prompt: shot.scene }) as { job_id: string };
@@ -104,8 +132,16 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
 
   return (
     <div className="space-y-4">
-      <p className="text-[11px] text-[var(--color-muted)]">Turn a song into a beat-cut music video: generate a shot list, define the cast, then render each shot.
-        {" "}Character consistency: <span className="text-[var(--color-accent2)]">{cfg.video_qwen ? "Qwen-Edit (places each character into the scene)" : "anchor-still (download Qwen-Edit + restart ComfyUI to upgrade)"}</span>.</p>
+      <p className="text-[11px] text-[var(--color-muted)]">Turn a song into a beat-cut music video: generate a shot list, define the cast, then render each shot.</p>
+      <Field label="Character consistency" hint="how to keep a character on-model across shots">
+        <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as Method)}>
+          <option value="auto">Auto (LoRA if set, else Qwen, else anchor)</option>
+          <option value="anchor">Anchor still (reuse the reference)</option>
+          <option value="qwen" disabled={!cfg.video_qwen}>Qwen-Edit{cfg.video_qwen ? "" : " - not downloaded"}</option>
+          <option value="vace" disabled={!cfg.video_vace}>Wan VACE reference-to-video{cfg.video_vace ? "" : " - not downloaded"}</option>
+          <option value="lora">Character LoRA (per-character, trained)</option>
+        </select>
+      </Field>
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="Song project" hint="its arrangement drives the script">
@@ -130,12 +166,16 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
         </div>
         {cast.length === 0 && <p className="text-[11px] text-[var(--color-muted)]">No fixed cast - the video will lean scenic. Add a character (e.g. the singer) and pick a reference still to keep them consistent.</p>}
         {cast.map((c, i) => (
-          <div key={i} className="grid grid-cols-[1fr_1fr_1.4fr_auto] items-center gap-1.5">
+          <div key={i} className="grid grid-cols-[1fr_1fr_1.3fr_1.3fr_auto] items-center gap-1.5">
             <input className={inp} placeholder="name" value={c.name} onChange={(e) => setCast(cast.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
             <input className={inp} placeholder="role" value={c.role} onChange={(e) => setCast(cast.map((x, j) => j === i ? { ...x, role: e.target.value } : x))} />
             <select className={inp} value={c.refStillId} onChange={(e) => setCast(cast.map((x, j) => j === i ? { ...x, refStillId: e.target.value } : x))}>
               <option value="">- reference still -</option>
               {stills.map((s) => <option key={s.id} value={s.id}>{(s.params?.prompt || s.id).toString().slice(0, 36)}</option>)}
+            </select>
+            <select className={inp} value={c.loraName || ""} onChange={(e) => setCast(cast.map((x, j) => j === i ? { ...x, loraName: e.target.value } : x))} title="trained character LoRA (optional)">
+              <option value="">- LoRA (optional) -</option>
+              {loras.map((l) => <option key={l} value={l}>{l.replace(/\.safetensors$/, "").slice(0, 28)}</option>)}
             </select>
             <button onClick={() => setCast(cast.filter((_, j) => j !== i))} className="text-[var(--color-muted)] hover:text-red-400 px-1" title="Remove">x</button>
           </div>
