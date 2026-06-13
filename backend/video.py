@@ -29,6 +29,9 @@ WAN21_VAE = "wan_2.1_vae.safetensors"                 # 14B / S2V VAE
 
 WAN_S2V = "wan2.2_s2v_14B_fp8_scaled.safetensors"
 WAV2VEC = "wav2vec2_large_english_fp16.safetensors"
+# lightx2v 4-step distillation LoRA (the official S2V template applies the t2v high-noise
+# one to the single S2V model): cuts 20 steps -> 4 and CFG 6 -> 1 (~10x fewer DiT evals).
+WAN_LIGHTX_HIGH = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
 
 # A readable English negative that steers Wan/Z-Image away from the usual artifacts.
 DEFAULT_NEG = ("low quality, blurry, distorted, deformed, bad anatomy, extra fingers, "
@@ -135,16 +138,19 @@ def build_s2v(p, image_ref, audio_ref):
     h = int(p.get("height", 640))
     length = int(p.get("length", 77))      # one S2V chunk = 77 frames ~ 4.8s @16fps
     fps = int(p.get("fps", 16))
-    steps = int(p.get("steps", 20))
-    cfg = float(p.get("cfg", 6.0))
+    fast = bool(p.get("fast", True))       # lightx2v 4-step accel (the gate default)
+    steps = int(p.get("steps", 4 if fast else 20))
+    cfg = float(p.get("cfg", 1.0 if fast else 6.0))
     prompt = (p.get("prompt") or "a person singing into a microphone").strip()
     neg = p.get("negative")
     neg = DEFAULT_NEG if neg is None else neg
     g = {
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": WAN_S2V, "weight_dtype": "default"}},
+        # umt5 on CPU: keeps the 6.7GB text encoder out of VRAM so the 14B S2V fits the
+        # 24GB 3090 without spilling to shared RAM. Text encode is a quick one-off.
         "2": {"class_type": "CLIPLoader",
-              "inputs": {"clip_name": WAN_CLIP, "type": "wan", "device": "default"}},
+              "inputs": {"clip_name": WAN_CLIP, "type": "wan", "device": "cpu"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": WAN21_VAE}},
         "4": {"class_type": "AudioEncoderLoader", "inputs": {"audio_encoder_name": WAV2VEC}},
         "5": {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}},
@@ -153,7 +159,8 @@ def build_s2v(p, image_ref, audio_ref):
         "7": {"class_type": "LoadImage", "inputs": {"image": image_ref}},
         "8": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": neg}},
-        "10": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8.0}},
+        "10": {"class_type": "ModelSamplingSD3",
+               "inputs": {"model": (["16", 0] if fast else ["1", 0]), "shift": 8.0}},
         "11": {"class_type": "WanSoundImageToVideo",
                "inputs": {"positive": ["8", 0], "negative": ["9", 0], "vae": ["3", 0],
                           "width": w, "height": h, "length": length, "batch_size": 1,
@@ -170,5 +177,9 @@ def build_s2v(p, image_ref, audio_ref):
                "inputs": {"video": ["14", 0], "filename_prefix": "videogen/s2v",
                           "format": "auto", "codec": "auto"}},
     }
+    if fast:
+        g["16"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": ["1", 0], "lora_name": WAN_LIGHTX_HIGH,
+                              "strength_model": 1.0}}
     return g, {"seed": seed, "width": w, "height": h, "length": length, "fps": fps,
-               "steps": steps, "cfg": cfg, "prompt": prompt, "kind": "video"}
+               "steps": steps, "cfg": cfg, "fast": fast, "prompt": prompt, "kind": "video"}
