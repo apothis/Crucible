@@ -34,6 +34,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   const [castIds, setCastIds] = d.use<string[]>("castIds", []);   // library characters in THIS video
   const [shots, setShots] = d.use<Shot[]>("shots", []);
   const [method, setMethod] = d.use<Method>("method", "auto");    // default for chars set to "auto"
+  const [motionEngine, setMotionEngine] = d.use<"ltx" | "wan">("motionEngine", "ltx");  // i2v backbone
   const [libChars, setLibChars] = useState<Character[]>([]);       // global character library
   const [loras, setLoras] = useState<string[]>([]);
   const [gen, setGen] = useState(false);
@@ -124,6 +125,10 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
 
   // generate one shot: lip-sync (if a named singer w/ ref still + audio) -> S2V; character
   // shot -> i2v anchored on the character's ref still; scenic -> fresh still then i2v.
+  // i2v motion stage: LTX-2.3 (fast, SageAttention) when present + selected, else Wan2.2.
+  const animateClip = (p: { still_id: string; prompt: string }) =>
+    (motionEngine === "ltx" && cfg.video_ltx) ? api.videoLtxI2V(p) : api.videoI2V(p);
+
   async function genShot(shot: Shot) {
     const char = cast.find((c) => shot.characters.includes(c.name));
     const m = char ? resolveMethod(char) : "anchor";
@@ -132,7 +137,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     ctx.setResults([card]);
     const animate = async (stillJobId: string) => {
       ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
-      const { job_id } = await api.videoI2V({ still_id: stillJobId, prompt: shot.action || "subtle cinematic motion" }) as { job_id: string };
+      const { job_id } = await animateClip({ still_id: stillJobId, prompt: shot.action || "subtle cinematic motion" }) as { job_id: string };
       recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
     };
     try {
@@ -156,14 +161,14 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
         await waitDone(cs.job_id); await animate(cs.job_id);
       } else if (char?.refStillId) {
         // anchor: reuse the reference still as-is
-        const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.action || look }) as { job_id: string };
+        const { job_id } = await animateClip({ still_id: char.refStillId, prompt: shot.action || look }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else {
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: still...` });
         const still = await api.videoStill({ prompt: look }) as { job_id: string };
         await waitDone(still.job_id);
         ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
-        const { job_id } = await api.videoI2V({ still_id: still.job_id, prompt: shot.action || "subtle cinematic motion" }) as { job_id: string };
+        const { job_id } = await animateClip({ still_id: still.job_id, prompt: shot.action || "subtle cinematic motion" }) as { job_id: string };
         recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       }
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -211,15 +216,23 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-[var(--color-muted)]">Turn a song into a beat-cut music video: generate a shot list, define the cast, then render each shot.</p>
-      <Field label="Character consistency" hint="how to keep a character on-model across shots">
-        <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as Method)}>
-          <option value="auto">Auto (LoRA if set, else Qwen, else anchor)</option>
-          <option value="anchor">Anchor still (reuse the reference)</option>
-          <option value="qwen" disabled={!cfg.video_qwen}>Qwen-Edit{cfg.video_qwen ? "" : " - not downloaded"}</option>
-          <option value="vace" disabled={!cfg.video_vace}>Wan VACE reference-to-video{cfg.video_vace ? "" : " - not downloaded"}</option>
-          <option value="lora">Character LoRA (per-character, trained)</option>
-        </select>
-      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Character consistency" hint="how to keep a character on-model across shots">
+          <select className={inp} value={method} onChange={(e) => setMethod(e.target.value as Method)}>
+            <option value="auto">Auto (LoRA if set, else Qwen, else anchor)</option>
+            <option value="anchor">Anchor still (reuse the reference)</option>
+            <option value="qwen" disabled={!cfg.video_qwen}>Qwen-Edit{cfg.video_qwen ? "" : " - not downloaded"}</option>
+            <option value="vace" disabled={!cfg.video_vace}>Wan VACE reference-to-video{cfg.video_vace ? "" : " - not downloaded"}</option>
+            <option value="lora">Character LoRA (per-character, trained)</option>
+          </select>
+        </Field>
+        <Field label="Motion engine" hint="i2v backbone for animating each keyframe">
+          <select className={inp} value={motionEngine} onChange={(e) => setMotionEngine(e.target.value as "ltx" | "wan")}>
+            <option value="ltx" disabled={!cfg.video_ltx}>LTX-2.3 (fast{cfg.video_ltx ? "" : " - not downloaded"})</option>
+            <option value="wan">Wan2.2 (slower)</option>
+          </select>
+        </Field>
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="Song project" hint="its arrangement drives the script">
