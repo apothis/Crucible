@@ -45,6 +45,7 @@ export const api = {
   videoStill: (p: unknown) => jpost("/api/video/still", p),
   videoI2V: (p: unknown) => jpost("/api/video/i2v", p),
   videoLipsync: (p: unknown) => jpost("/api/video/lipsync", p),
+  videoS2v: (p: unknown) => jpost("/api/video/s2v_wrapper", p),   // Wan2.2-S2V via WanVideoWrapper (works on 24GB)
   videoCharStill: (p: unknown) => jpost("/api/video/char_still", p),
   videoVace: (p: unknown) => jpost("/api/video/vace", p),
   videoLtxI2V: (p: unknown) => jpost("/api/video/ltx_i2v", p),

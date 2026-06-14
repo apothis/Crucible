@@ -145,7 +145,8 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     };
     try {
       if (shot.lipsync && char?.refStillId && audioId) {
-        const { job_id } = await api.videoLipsync({ still_id: char.refStillId, audio_id: audioId, prompt: shot.scene, audio_start: shot.start }) as { job_id: string };
+        // Wan2.2-S2V via WanVideoWrapper (the path that actually runs on 24GB); was the native S2V that thrashed
+        const { job_id } = await api.videoS2v({ still_id: char.refStillId, audio_id: audioId, prompt: shot.scene, audio_start: shot.start }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else if (char && m === "vace" && cfg.video_vace && char.refStillId) {
         // reference-to-video: animate the character directly (identity through motion)
