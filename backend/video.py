@@ -33,6 +33,17 @@ WAV2VEC = "wav2vec2_large_english_fp16.safetensors"
 # one to the single S2V model): cuts 20 steps -> 4 and CFG 6 -> 1 (~10x fewer DiT evals).
 WAN_LIGHTX_HIGH = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
 
+# Wan2.2-S2V via the Kijai WanVideoWrapper (block-swap) - the path that actually fits the
+# 14B on a 24GB 3090. Recipe traced verbatim from the wrapper's own example workflow
+# (custom_nodes/ComfyUI-WanVideoWrapper/s2v/wanvideo2_2_S2V_context_window_testing.json):
+# WanVideoModelLoader(attention=sageattn, fp8_e4m3fn_scaled, offload_device) - because the
+# wrapper casts dtype correctly, sage ENGAGES here (no fp32 fallback like the native nodes);
+# block-swap streams blocks to RAM so it fits; lightx2v v2 distill -> 4 steps; wav2vec2 audio.
+WAN_S2V_KJ = "Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors"   # diffusion_models (Kijai repack)
+WAN21_VAE_BF16 = "Wan2_1_VAE_bf16.safetensors"                   # vae
+UMT5_ENC_BF16 = "umt5-xxl-enc-bf16.safetensors"                  # text_encoders
+LIGHTX2V_V2 = "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"  # loras
+
 # Qwen-Image-Edit-2511 (GGUF) - reference-driven character consistency, no training.
 # Files from download_video_models2.py. GGUF UNET loads via UnetLoaderGGUF (ComfyUI-GGUF).
 QWEN_EDIT_GGUF = "qwen-image-edit-2511-Q6_K.gguf"
@@ -334,6 +345,85 @@ def build_s2v(p, image_ref, audio_ref):
                               "strength_model": 1.0}}
     return g, {"seed": seed, "width": w, "height": h, "length": length, "fps": fps,
                "steps": steps, "cfg": cfg, "fast": fast, "prompt": prompt, "kind": "video"}
+
+
+# -------------------------------------- Wan2.2-S2V via WanVideoWrapper (block-swap, fits 24GB)
+def build_s2v_wrapper(p, image_ref, audio_ref):
+    """Audio-driven lip-sync (Wan2.2-S2V) on the Kijai WanVideoWrapper with block-swap, which
+    fits the 14B on a 24GB 3090 where the native nodes thrashed. image_ref/audio_ref = uploaded
+    names on ComfyUI. p: {prompt?, seed?, width?, height?, frames?, fps?, steps?, cfg?, shift?,
+    blocks_to_swap?, lora_strength?, audio_scale?}. Output: SaveVideo -> videogen/s2v.
+    Graph traced from the wrapper's own example workflow - settings are its proven defaults."""
+    seed = _seed(p)
+    w = int(p.get("width", 832))
+    h = int(p.get("height", 480))
+    frames = int(p.get("frames", 77))                  # one S2V window (~4.8s @16fps); single-window v1
+    fps = int(p.get("fps", 16))                        # S2V native frame rate
+    steps = int(p.get("steps", 4))                     # lightx2v distill -> 4 steps
+    cfg = float(p.get("cfg", 1.0))
+    shift = float(p.get("shift", 4.0))
+    blocks = int(p.get("blocks_to_swap", 25))          # 25/40 blocks -> fits 24GB (raise if OOM)
+    lstr = float(p.get("lora_strength", 1.5))
+    audio_scale = float(p.get("audio_scale", 1.0))
+    prompt = (p.get("prompt") or "a person singing into a microphone, close up").strip()
+    neg = p.get("negative") or "blurry, distorted, static, low quality"
+    g = {
+        "1": {"class_type": "WanVideoModelLoader",
+              "inputs": {"model": WAN_S2V_KJ, "base_precision": "fp16_fast",
+                         "quantization": "fp8_e4m3fn_scaled", "load_device": "offload_device",
+                         "attention_mode": "sageattn"}},
+        "2": {"class_type": "WanVideoLoraSelectMulti",
+              "inputs": {"lora_0": LIGHTX2V_V2, "strength_0": lstr, "lora_1": "none",
+                         "strength_1": 1.0, "lora_2": "none", "strength_2": 1.0,
+                         "lora_3": "none", "strength_3": 1.0, "lora_4": "none", "strength_4": 1.0}},
+        "3": {"class_type": "WanVideoSetLoRAs", "inputs": {"model": ["1", 0], "lora": ["2", 0]}},
+        "4": {"class_type": "WanVideoBlockSwap",
+              "inputs": {"blocks_to_swap": blocks, "offload_img_emb": False,
+                         "offload_txt_emb": False, "use_non_blocking": True}},
+        "5": {"class_type": "WanVideoSetBlockSwap",
+              "inputs": {"model": ["3", 0], "block_swap_args": ["4", 0]}},
+        "6": {"class_type": "WanVideoVAELoader",
+              "inputs": {"model_name": WAN21_VAE_BF16, "precision": "bf16"}},
+        "7": {"class_type": "WanVideoTextEncodeCached",
+              "inputs": {"model_name": UMT5_ENC_BF16, "precision": "bf16",
+                         "positive_prompt": prompt, "negative_prompt": neg,
+                         "quantization": "disabled", "use_disk_cache": False, "device": "gpu"}},
+        "8": {"class_type": "LoadImage", "inputs": {"image": image_ref}},
+        "9": {"class_type": "ImageResizeKJv2",
+              "inputs": {"image": ["8", 0], "width": w, "height": h, "upscale_method": "lanczos",
+                         "keep_proportion": "crop", "pad_color": "0, 0, 0",
+                         "crop_position": "center", "divisible_by": 2, "device": "cpu"}},
+        "10": {"class_type": "WanVideoEncode",
+               "inputs": {"vae": ["6", 0], "image": ["9", 0], "enable_vae_tiling": False,
+                          "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}},
+        "11": {"class_type": "AudioEncoderLoader", "inputs": {"audio_encoder_name": WAV2VEC}},
+        "12": {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}},
+        "13": {"class_type": "AudioEncoderEncode",
+               "inputs": {"audio_encoder": ["11", 0], "audio": ["12", 0]}},
+        "14": {"class_type": "WanVideoEmptyEmbeds",
+               "inputs": {"width": ["9", 1], "height": ["9", 2], "num_frames": frames}},
+        "15": {"class_type": "WanVideoAddS2VEmbeds",
+               "inputs": {"embeds": ["14", 0], "frame_window_size": frames,
+                          "audio_scale": audio_scale, "pose_start_percent": 0.0,
+                          "pose_end_percent": 1.0, "audio_encoder_output": ["13", 0],
+                          "ref_latent": ["10", 0]}},
+        "16": {"class_type": "WanVideoSampler",
+               "inputs": {"model": ["5", 0], "image_embeds": ["15", 0], "steps": steps,
+                          "cfg": cfg, "shift": shift, "seed": seed, "force_offload": True,
+                          "scheduler": "dpm++_sde", "riflex_freq_index": 0,
+                          "text_embeds": ["7", 0]}},
+        "17": {"class_type": "WanVideoDecode",
+               "inputs": {"vae": ["6", 0], "samples": ["16", 0], "enable_vae_tiling": False,
+                          "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}},
+        "18": {"class_type": "CreateVideo",
+               "inputs": {"images": ["17", 0], "fps": fps, "audio": ["12", 0]}},
+        "19": {"class_type": "SaveVideo",
+               "inputs": {"video": ["18", 0], "filename_prefix": "videogen/s2v",
+                          "format": "auto", "codec": "auto"}},
+    }
+    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+               "steps": steps, "cfg": cfg, "shift": shift, "blocks_to_swap": blocks,
+               "lora_strength": lstr, "prompt": prompt, "kind": "video"}
 
 
 # ============================================================ LTX-2.3 (fast backbone)
