@@ -108,6 +108,34 @@ class Comfy:
         except Exception:
             pass
 
+    def cleanup(self, node="easy cleanGpuUsed", anything_input=True):
+        """Run an in-graph memory-cleanup node. STRONGER than /free: the node does
+        gc.collect() + torch.cuda.empty_cache() + full model unload, which reclaims the GGUF
+        system-RAM/dequant residue that /free leaves behind (city96 ComfyUI-GGUF #376). Without
+        it, switching big GGUF models (Qwen-Edit -> LTX) leaves RAM polluted and the next model
+        streams weights from SSD (150s/step thrash). node = the cleanup node's class_type
+        ('easy cleanGpuUsed' is on the box; LevelPixel 'Soft Full Clean RAM and VRAM' is stronger).
+        anything_input=True feeds a trivial source into a passthrough cleanup node; False runs a
+        standalone output node. Submits a tiny prompt and waits for it to execute."""
+        import time
+        try:
+            if anything_input:
+                graph = {"1": {"class_type": "easy int", "inputs": {"value": 0}},
+                         "2": {"class_type": node, "inputs": {"anything": ["1", 0]}}}
+            else:
+                graph = {"1": {"class_type": node, "inputs": {}}}
+            r = requests.post(f"{self.base}/prompt", json={"prompt": graph}, timeout=15)
+            pid = (r.json() or {}).get("prompt_id")
+            if not pid:
+                return False
+            for _ in range(30):                              # cleanup executes in ~1-3s
+                if requests.get(f"{self.base}/history/{pid}", timeout=8).json().get(pid):
+                    return True
+                time.sleep(1)
+        except Exception:
+            pass
+        return False
+
 
 # ---- shared node fragments ----
 def _loaders(variant_file, shift=3.0):

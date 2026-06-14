@@ -649,6 +649,9 @@ def _submit_video(graph, resolved, mode):
     # ComfyUI keeps prior models cached, squeezing the next one - see the load log). Reload
     # cost (~20s) is far cheaper than per-step PCIe transfers.
     try:
+        # NOTE: do NOT run an in-graph cleanup node (easy cleanGpuUsed / LevelPixel) before GGUF
+        # jobs - forcing unload_all_models on a GGUF-patched model segfaults ComfyUI (access
+        # violation in ComfyUI-GGUF unpatch_model -> torch .to, 2026-06-15). Plain /free is safe.
         C.free(unload_models=True, free_memory=True)
     except Exception:
         pass

@@ -246,5 +246,12 @@ CRITICAL (observed 2026-06-15): ComfyUI /free clears VRAM but NOT the GGUF syste
 residue. After the Qwen-Edit phase (20GB GGUF), LTX could not fit and streamed weights from SSD
 every step (150s/step vs 10s/step clean). So a phase SWITCH between big GGUF models needs a true
 teardown - a ComfyUI RESTART is the only reliable clear; /free is sufficient only within a same-model
-phase. Phased-batch must restart ComfyUI (or equivalent hard RAM reclaim) between model phases. Verified: long LTX
+phase. Phased-batch must restart ComfyUI (or equivalent hard RAM reclaim) between model phases.
+DEAD END (2026-06-15): in-graph cleanup nodes (easy cleanGpuUsed / LevelPixel Soft-Full-Clean)
+are NOT usable - forcing unload_all_models on a GGUF-patched model SEGFAULTS ComfyUI (access
+violation: ComfyUI-GGUF unpatch_model -> torch .to -> c10.dll). So neither /free-residue nor a
+cleanup node solves the GGUF RAM leak. Real options: (1) fp8/safetensors models instead of GGUF
+for the phase-switching models (clean unload, no residue - our S2V is fp8 and never thrashed/crashed),
+(2) ComfyUI restart between big-GGUF phases. fp8 is the durable fix.
+ Verified: long LTX
 clips are real (241 frames @24fps = 10.0s) and cheap (load-dominated), so prefer fewer/longer clips.
