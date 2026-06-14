@@ -43,6 +43,31 @@ QWEN_VAE = "qwen_image_vae.safetensors"
 # image straight through motion (the video-side consistency alternative to Qwen stills).
 WAN_VACE_GGUF = "Wan2.1_14B_VACE-Q6_K.gguf"
 
+# LTX-2.3 (the fast video backbone: SageAttention runtime, native synced audio, ~12s clips).
+# All node signatures + file names verified live on the box /object_info (ComfyUI v0.22.0)
+# and against reference/LTX-2-3_ULTRA_WORKFLOW-V2.json (AItrepreneur). LTXDirector is the
+# orchestrator: takes model+clip+prompt, emits (model, positive cond, video_latent,
+# audio_latent, guide_data, frame_rate, combined_audio) so the prompt-encode + latent-init
+# plumbing collapses into one node. Sampling is joint audio+video: concat AV latent ->
+# SamplerCustomAdvanced (euler + the distilled 8-step sigma schedule, CFG 1) -> separate ->
+# spatio-temporal tiled video decode + audio VAE decode.
+LTX_UNET_GGUF = "ltx-2.3-22b-dev-Q8_0.gguf"          # UnetLoaderGGUF
+LTX_CLIP1 = "gemma_3_12B_it_fp4_mixed.safetensors"   # DualCLIPLoader clip_name1
+LTX_CLIP2 = "ltx-2.3_text_projection_bf16.safetensors"  # clip_name2; type "ltxv"
+LTX_VAE_VIDEO = "LTX23_video_vae_bf16.safetensors"   # VAELoaderKJ main_device/bf16
+LTX_VAE_AUDIO = "LTX23_audio_vae_bf16.safetensors"   # VAELoaderKJ cpu/bf16
+LTX_LORA_DISTILL = "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"  # few-step distill (req'd for 8-step)
+LTX_LORA_DETAILER = "ltx-2-19b-ic-lora-detailer.safetensors"         # texture/detail
+# 8-step distilled sigma schedule (9 values = 8 steps), verbatim from the ULTRA base pass.
+LTX_SIGMAS_BASE = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+
+
+def _ltx_frames(n, fps):
+    """LTX temporal VAE needs (frames-1) divisible by 8. Round to the nearest valid count."""
+    n = max(9, int(n))
+    k = round((n - 1) / 8)
+    return 8 * k + 1
+
 # A readable English negative that steers Wan/Z-Image away from the usual artifacts.
 DEFAULT_NEG = ("low quality, blurry, distorted, deformed, bad anatomy, extra fingers, "
                "watermark, text, jpeg artifacts, overexposed, static, plastic skin, cartoon")
@@ -304,3 +329,106 @@ def build_s2v(p, image_ref, audio_ref):
                               "strength_model": 1.0}}
     return g, {"seed": seed, "width": w, "height": h, "length": length, "fps": fps,
                "steps": steps, "cfg": cfg, "fast": fast, "prompt": prompt, "kind": "video"}
+
+
+# ============================================================ LTX-2.3 (fast backbone)
+def _build_ltx(p, image_ref=None):
+    """Shared LTX-2.3 t2v/i2v graph. image_ref None = text-to-video; a uploaded image name
+    = image-to-video (the keyframe is imprinted onto LTXDirector's video latent as frame 0).
+    Joint audio+video sampling with the distilled 8-step schedule; LTX native audio is decoded
+    and carried into the file (the music-video assembly muxes the real song over it later).
+    p: {prompt, seed?, width?, height?, frames?, fps?, cfg?, distill_strength?,
+    detailer_strength?, img_strength?}. Output: SaveVideo -> videogen/ltx."""
+    seed = _seed(p)
+    w = int(p.get("width", 768))
+    h = int(p.get("height", 512))
+    fps = int(p.get("fps", 24))
+    frames = _ltx_frames(p.get("frames", 97), fps)     # default ~4s @24; valid 8k+1
+    secs = round(frames / fps, 3)
+    cfg = float(p.get("cfg", 1.0))                     # distilled LoRA -> CFG 1 (negative ignored)
+    distill = float(p.get("distill_strength", 0.5))
+    detailer = float(p.get("detailer_strength", 0.2))
+    img_strength = float(p.get("img_strength", 0.7))   # keyframe imprint strength (i2v)
+    prompt = (p.get("prompt") or "").strip()
+    g = {
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": LTX_UNET_GGUF}},
+        "2": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": LTX_LORA_DISTILL,
+                         "strength_model": distill}},
+        "3": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["2", 0], "lora_name": LTX_LORA_DETAILER,
+                         "strength_model": detailer}},
+        "4": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": LTX_CLIP1, "clip_name2": LTX_CLIP2,
+                         "type": "ltxv", "device": "default"}},
+        "5": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_VIDEO, "device": "main_device",
+                         "weight_dtype": "bf16"}},
+        "6": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
+        # LTXDirector: prompt encode + latent init + conditioning, all in one.
+        "7": {"class_type": "LTXDirector",
+              "inputs": {"model": ["3", 0], "clip": ["4", 0], "global_prompt": prompt,
+                         "duration_frames": frames, "duration_seconds": secs,
+                         "timeline_data": "{\"segments\":[],\"audioSegments\":[]}",
+                         "local_prompts": "", "segment_lengths": "", "epsilon": 0.001,
+                         "guide_strength": "", "audio_vae": ["6", 0],
+                         "use_custom_audio": False, "frame_rate": float(fps),
+                         "display_mode": "frames", "custom_width": w, "custom_height": h,
+                         "resize_method": "maintain aspect ratio", "divisible_by": 32,
+                         "img_compression": 18}},
+        "8": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["7", 1]}},
+        "9": {"class_type": "LTXVConditioning",
+              "inputs": {"positive": ["7", 1], "negative": ["8", 0], "frame_rate": ["7", 5]}},
+        "10": {"class_type": "LTXVConcatAVLatent",
+               "inputs": {"video_latent": ["7", 2], "audio_latent": ["7", 3]}},
+        "11": {"class_type": "CFGGuider",
+               "inputs": {"model": ["7", 0], "positive": ["9", 0], "negative": ["9", 1],
+                          "cfg": cfg}},
+        "12": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "13": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "14": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},
+        "15": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["12", 0], "guider": ["11", 0], "sampler": ["13", 0],
+                          "sigmas": ["14", 0], "latent_image": ["10", 0]}},
+        "16": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["15", 0]}},
+        "17": {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+               "inputs": {"vae": ["5", 0], "latents": ["16", 0], "spatial_tiles": 4,
+                          "spatial_overlap": 4, "temporal_tile_length": 48,
+                          "temporal_overlap": 8, "last_frame_fix": False,
+                          "working_device": "auto", "working_dtype": "auto"}},
+        "18": {"class_type": "LTXVAudioVAEDecode",
+               "inputs": {"samples": ["16", 1], "audio_vae": ["6", 0]}},
+        "19": {"class_type": "CreateVideo",
+               "inputs": {"images": ["17", 0], "fps": fps, "audio": ["18", 0]}},
+        "20": {"class_type": "SaveVideo",
+               "inputs": {"video": ["19", 0], "filename_prefix": "videogen/ltx",
+                          "format": "auto", "codec": "auto"}},
+    }
+    if image_ref is not None:                          # i2v: imprint the keyframe as frame 0
+        g["30"] = {"class_type": "LoadImage", "inputs": {"image": image_ref}}
+        g["31"] = {"class_type": "LTXVPreprocess",
+                   "inputs": {"image": ["30", 0], "img_compression": 18}}
+        g["32"] = {"class_type": "LTXVImgToVideoInplace",
+                   "inputs": {"vae": ["5", 0], "image": ["31", 0], "latent": ["7", 2],
+                              "strength": img_strength, "bypass": False}}
+        g["10"]["inputs"]["video_latent"] = ["32", 0]  # concat uses the imprinted latent
+    resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+                "seconds": secs, "cfg": cfg, "distill_strength": distill,
+                "detailer_strength": detailer, "prompt": prompt, "kind": "video"}
+    if image_ref is not None:
+        resolved["img_strength"] = img_strength
+    return g, resolved
+
+
+def build_ltx_t2v(p):
+    """LTX-2.3 text-to-video. p: {prompt, seed?, width?, height?, frames?, fps?, cfg?}.
+    Output: SaveVideo -> videogen/ltx."""
+    return _build_ltx(p, image_ref=None)
+
+
+def build_ltx_i2v(p, image_ref):
+    """LTX-2.3 image-to-video from a keyframe still (character keyframe -> motion).
+    image_ref = uploaded image name on ComfyUI. p as build_ltx_t2v plus {img_strength?}.
+    Output: SaveVideo -> videogen/ltx."""
+    return _build_ltx(p, image_ref=image_ref)

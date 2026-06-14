@@ -428,6 +428,7 @@ def config():
             "video": _video_available(),            # Wan2.2 + Z-Image video pipeline models present
             "video_qwen": _qwen_available(),        # Qwen-Image-Edit GGUF present (char consistency)
             "video_vace": _vace_available(),        # Wan VACE GGUF present (reference-to-video)
+            "video_ltx": _ltx_available(),          # LTX-2.3 GGUF present (fast video backbone)
             "genres": genres}
 
 
@@ -452,6 +453,14 @@ def _vace_available():
     """True when the Wan VACE GGUF (reference-to-video) is on the box."""
     try:
         return video_mod.WAN_VACE_GGUF in set(C.gguf_unets())
+    except Exception:
+        return False
+
+
+def _ltx_available():
+    """True when the LTX-2.3 GGUF (fast video backbone) is on the box."""
+    try:
+        return video_mod.LTX_UNET_GGUF in set(C.gguf_unets())
     except Exception:
         return False
 
@@ -745,6 +754,36 @@ def video_vace(p: dict):
         with open(still, "rb") as f:
             ref = C.upload_audio(f.read(), os.path.basename(still))
         graph, resolved = video_mod.build_vace_ref2v(p, ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["still_id"] = os.path.basename(p.get("still_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
+@app.post("/api/video/ltx_t2v")
+def video_ltx_t2v(p: dict):
+    """LTX-2.3 text-to-video (fast backbone, native synced audio). p: {prompt, seed?,
+    width?, height?, frames?, fps?, cfg?}."""
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required")
+    try:
+        graph, resolved = video_mod.build_ltx_t2v(p)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    return _submit_video(graph, resolved, "videoclip")
+
+
+@app.post("/api/video/ltx_i2v")
+def video_ltx_i2v(p: dict):
+    """LTX-2.3 image-to-video: animate a library keyframe still (Z-Image/Qwen-Edit still ->
+    motion). p: {still_id, prompt, seed?, width?, height?, frames?, fps?, cfg?, img_strength?}."""
+    still = _lib_image_path(p.get("still_id"))
+    if not still:
+        raise HTTPException(400, "still_id must reference a generated still in the library")
+    try:
+        with open(still, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(still))
+        graph, resolved = video_mod.build_ltx_i2v(p, ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     resolved["still_id"] = os.path.basename(p.get("still_id"))
