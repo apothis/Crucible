@@ -367,11 +367,15 @@ def _build_ltx(p, image_ref=None):
         "6": {"class_type": "VAELoaderKJ",
               "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
         # LTXDirector: prompt encode + latent init + conditioning, all in one.
+        # local_prompts carries the per-segment prompt (split on "|"); >=1 non-empty required.
+        # global_prompt is only a shared style overlay. One full-length segment = prompt in
+        # local_prompts, segment_lengths empty (auto-covers all frames). Source-verified in
+        # the LTXDirector node's _encode_relay (WhatDreamsCost-ComfyUI/ltx_director.py).
         "7": {"class_type": "LTXDirector",
-              "inputs": {"model": ["3", 0], "clip": ["4", 0], "global_prompt": prompt,
+              "inputs": {"model": ["3", 0], "clip": ["4", 0], "global_prompt": "",
                          "duration_frames": frames, "duration_seconds": secs,
                          "timeline_data": "{\"segments\":[],\"audioSegments\":[]}",
-                         "local_prompts": "", "segment_lengths": "", "epsilon": 0.001,
+                         "local_prompts": prompt, "segment_lengths": "", "epsilon": 0.001,
                          "guide_strength": "", "audio_vae": ["6", 0],
                          "use_custom_audio": False, "frame_rate": float(fps),
                          "display_mode": "frames", "custom_width": w, "custom_height": h,
