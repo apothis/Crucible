@@ -161,6 +161,36 @@ torch are better handled by its maintained setup; an untested heavy install woul
 ALL untested-on-hardware paths (Qwen/VACE/LoRA graphs) need a first-fire check once models land +
 a ComfyUI restart - watch for node-wiring errors and report them.
 
+## 10. LTX-2.3 fast video backbone - BUILT 2026-06-14 (validation pending)
+Migrated the i2v motion stage off the slow Wan path (native nodes + GGUF, ~126s/step, GPU pegged
+on pytorch attention) onto LTX-2.3 (SageAttention runtime, distilled 8-step, native synced audio).
+Box provisioned: SageAttention installed, LTX nodes installed, 8/8 model files present (incl. the
+22.76GB ltx-2.3-22b-dev-Q8_0.gguf), ComfyUI restarted with --use-sage-attention.
+
+Built (all node sigs verified live on box /object_info, values from reference/LTX-2-3_ULTRA_WORKFLOW-V2.json):
+  - backend/video.py: build_ltx_t2v / build_ltx_i2v (shared _build_ltx). LTXDirector orchestrates
+    (model+clip+prompt -> positive cond + video_latent + audio_latent + frame_rate + combined_audio);
+    joint AV sampling = LTXVConcatAVLatent -> SamplerCustomAdvanced (euler + distilled 8-step sigmas,
+    CFG 1) -> LTXVSeparateAVLatent -> spatio-temporal tiled video decode + audio VAE decode -> CreateVideo.
+    i2v imprints the keyframe via LTXVImgToVideoInplace (strength 0.7) onto LTXDirector's video latent.
+    Defaults: 768x512, 97 frames (~4s @24fps; coerced to valid 8k+1), distilled LoRA 0.5 + detailer 0.2.
+  - app.py: /api/video/ltx_t2v + /api/video/ltx_i2v, video_ltx capability flag (detect via C.gguf_unets()).
+  - web: Music Video tab "Motion engine" selector (LTX fast / Wan fallback), genShot animate stage
+    routes through LTX i2v when video_ltx + selected. Lip-sync + still-gen unchanged.
+  - NOT ported for v1 (kept simple for the first measurable clip): the 2nd-stage LTXVLatentUpsampler
+    refine pass (extra sharpness), first-last-frame + extend/looping modes. Add after speed is confirmed.
+
+LIP-SYNC DECISION (LTX native audio vs S2V): LTX native audio is GENERATED from text (invented
+ambience/speech), NOT driven by our song vocal -> it does NOT lip-sync a singer to OUR track. So:
+  - NON-lip-sync motion/B-roll shots -> LTX i2v (the speed win); native audio discarded, song muxed at assembly.
+  - Lip-sync vocal shots -> stay on Wan2.2-S2V (audio-driven, proven). genShot already does exactly this.
+  - FOLLOW-UP: LTX 2.3 ships audio-conditioning nodes (LTXVReferenceAudio, LTXVSetAudioRefTokens,
+    LTXVAudioVideoMask) - evaluate whether they do true vocal-driven lip-sync to unify on the fast
+    backbone. Do not block the speed validation on it.
+
+VALIDATE NEXT (user presses Generate): render ONE shot with Motion engine = LTX, measure real s/step
+from the ComfyUI log (expect a big drop from 126s). Fix any node-wiring error on first fire.
+
 ## 9. QUEUED (after LTX) - Z-Image ULTRA finishing pass (opt-in)
 Source: reference/Z-IMAGE_TURBO_ULTRA_WORKFLOW-V2.json (AItrepreneur). Verified 2026-06-14 that our
 build_still already matches the ULTRA CORE (ModelSamplingAuraFlow shift ~3, lumina2 CLIP, ae VAE,
