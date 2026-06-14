@@ -241,5 +241,10 @@ generate into MODEL PHASES so each model loads ONCE per video, not once per shot
   - Phase 3: all Wan2.2-S2V lip-sync shots - load S2V once.
 Catch: we deliberately FREE ComfyUI VRAM before each heavy job (commit 2a30d6f, anti-thrash), which
 forces the reload. Batch mode must free only BETWEEN phases (model switch), not between same-model
-shots. Measured payoff: LTX clips 2..N in a phase drop from ~280s to ~40s each. Verified: long LTX
+shots. Measured payoff: LTX clips 2..N in a phase drop from ~280s to ~40s each.
+CRITICAL (observed 2026-06-15): ComfyUI /free clears VRAM but NOT the GGUF system-RAM / dequant
+residue. After the Qwen-Edit phase (20GB GGUF), LTX could not fit and streamed weights from SSD
+every step (150s/step vs 10s/step clean). So a phase SWITCH between big GGUF models needs a true
+teardown - a ComfyUI RESTART is the only reliable clear; /free is sufficient only within a same-model
+phase. Phased-batch must restart ComfyUI (or equivalent hard RAM reclaim) between model phases. Verified: long LTX
 clips are real (241 frames @24fps = 10.0s) and cheap (load-dominated), so prefer fewer/longer clips.
