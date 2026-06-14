@@ -129,8 +129,12 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   // shot -> i2v anchored on the character's ref still; scenic -> fresh still then i2v.
   // i2v motion stage: LTX-2.3 (fast) when present + selected, else Wan2.2. LTX honors the
   // selected GGUF quant (Q5_K_S is lighter on system RAM than Q8_0).
-  const animateClip = (p: { still_id: string; prompt: string }) =>
-    (motionEngine === "ltx" && cfg.video_ltx) ? api.videoLtxI2V({ ...p, quant: motionQuant }) : api.videoI2V(p);
+  const animateClip = (p: { still_id: string; prompt: string; frames?: number }) =>
+    (motionEngine === "ltx" && cfg.video_ltx)
+      ? api.videoLtxI2V({ still_id: p.still_id, prompt: p.prompt, quant: motionQuant, frames: p.frames })
+      : api.videoI2V({ still_id: p.still_id, prompt: p.prompt, length: p.frames });
+  // LTX clip length from the shot's duration (24fps), capped at the LTX ceiling (~12s / 293 frames).
+  const shotFramesFor = (s: Shot) => Math.min(293, Math.max(49, Math.round(Math.max(2, (s.end - s.start) || 4) * 24)));
 
   async function genShot(shot: Shot) {
     const char = cast.find((c) => shot.characters.includes(c.name));
@@ -140,7 +144,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     ctx.setResults([card]);
     const animate = async (stillJobId: string) => {
       ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
-      const { job_id } = await animateClip({ still_id: stillJobId, prompt: shot.action || "subtle cinematic motion" }) as { job_id: string };
+      const { job_id } = await animateClip({ still_id: stillJobId, prompt: shot.action || "subtle cinematic motion", frames: shotFramesFor(shot) }) as { job_id: string };
       recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
     };
     try {
@@ -165,7 +169,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
         await waitDone(cs.job_id); await animate(cs.job_id);
       } else if (char?.refStillId) {
         // anchor: reuse the reference still as-is
-        const { job_id } = await animateClip({ still_id: char.refStillId, prompt: shot.action || look }) as { job_id: string };
+        const { job_id } = await animateClip({ still_id: char.refStillId, prompt: shot.action || look, frames: shotFramesFor(shot) }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else {
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: still...` });
