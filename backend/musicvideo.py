@@ -92,8 +92,20 @@ def _song_summary(song):
 def build_prompt(song, cast, n_shots):
     summary, total = _song_summary(song)
     title = song.get("title") or "Untitled"
-    cast_txt = "\n".join(f"  - {c.get('name')} ({c.get('role', 'character')})"
-                         for c in cast if c.get("name")) or "  (no fixed cast - lean scenic/atmospheric)"
+    named = [c for c in cast if c.get("name")]
+    musicians = [c for c in named if c.get("kind") != "actor"]   # default = musician/band
+    actors = [c for c in named if c.get("kind") == "actor"]
+
+    def _fmt(lst):
+        return "\n".join(f"  - {c['name']} ({c.get('role') or 'character'})" for c in lst)
+    cast_parts = []
+    if musicians:
+        cast_parts.append("Band / musicians (appear in PERFORMANCE shots playing/singing; the "
+                          "lead singer lip-syncs the vocals):\n" + _fmt(musicians))
+    if actors:
+        cast_parts.append("Actors (appear in NARRATIVE / story shots, NOT performing music):\n"
+                          + _fmt(actors))
+    cast_txt = "\n\n".join(cast_parts) or "  (no fixed cast - lean scenic/atmospheric)"
     target = n_shots or max(12, min(30, round((total or 180) / 8)))   # ~1 shot / 8s
     system = ("You are a music video director. Output a SHOT LIST as STRICT JSON ONLY (no prose, no "
               "markdown fences). Direct the video from TWO anchors: (1) the SONG TITLE as the "
@@ -122,9 +134,11 @@ Return ONLY a JSON array. Each element is an object:
   "characters": [<names of any named characters present; [] if none>],
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
 
-Rules: performance/lipsync shots only on SUNG sections; scenic/broll on instrumental sections;
-vary shot types and framing (close-up, wide, tracking); photoreal live-action metal video (not
-animation). Every scene must connect to BOTH the title theme AND the specific lyrics in its window."""
+Rules: performance/lipsync shots only on SUNG sections and feature the BAND/MUSICIANS (the lead
+singer lip-syncs); NARRATIVE shots tell the title's story and feature the ACTORS; scenic/broll on
+instrumental sections. Put the right people in each shot's "characters" by name. Vary shot types and
+framing (close-up, wide, tracking); photoreal live-action metal video (not animation). Every scene
+must connect to BOTH the title theme AND the specific lyrics in its window."""
     return system, prompt
 
 
@@ -145,7 +159,8 @@ def parse_shots(text):
             "type": t if t in SHOT_TYPES else "broll",
             "scene": str(s.get("scene") or "").strip(),
             "action": str(s.get("action") or s.get("motion") or "").strip(),
-            "characters": [str(x) for x in (s.get("characters") or []) if x],
+            "characters": [str(x).strip() for x in (s.get("characters") or [])
+                           if x and str(x).strip() not in ("[]", "none", "None", "-", "")],
             "lipsync": bool(s.get("lipsync")),
         })
     return out

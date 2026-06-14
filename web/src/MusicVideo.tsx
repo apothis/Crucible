@@ -10,7 +10,8 @@ type Shot = {
   clipId?: string;   // library id of the rendered clip for this shot
 };
 type Method = "auto" | "anchor" | "qwen" | "vace" | "lora";
-type Character = { id: string; name: string; role: string; refStillId?: string; loraName?: string; method?: Method; notes?: string };
+type CharKind = "musician" | "actor";
+type Character = { id: string; name: string; role: string; kind?: CharKind; refStillId?: string; loraName?: string; method?: Method; notes?: string };
 type Project = { id: string; name: string };
 
 // poll a job to completion (media-aware: stills/clips use media_url, not audio_url)
@@ -56,8 +57,8 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   const audios = library.filter((i) => i.audio_url);
 
   async function saveChar(c: Partial<Character>) { await api.characterSave(c); await reloadChars(); }
-  async function addChar() {
-    const r = await api.characterSave({ name: "New character", role: "lead singer", method: "auto" }) as Character;
+  async function addChar(kind: CharKind) {
+    const r = await api.characterSave({ name: kind === "actor" ? "New actor" : "New musician", role: kind === "actor" ? "protagonist" : "lead singer", kind, method: "auto" }) as Character;
     await reloadChars(); setCastIds([...castIds, r.id]);
   }
   async function delChar(id: string) { await api.characterDelete(id); setCastIds(castIds.filter((x) => x !== id)); await reloadChars(); }
@@ -70,7 +71,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     if (!projectId) return ctx.setResults([{ id: rid(), title: "Pick a song project first", status: "error", pct: 0, err: "Choose a project whose Song arrangement to base the video on." }]);
     setGen(true);
     try {
-      const r = await api.mvScript({ project: projectId, cast: cast.map((c) => ({ name: c.name, role: c.role })) }) as { shots: Shot[] };
+      const r = await api.mvScript({ project: projectId, cast: cast.map((c) => ({ name: c.name, role: c.role, kind: c.kind || "musician" })) }) as { shots: Shot[] };
       setShots(r.shots || []);
     } catch (e) {
       ctx.setResults([{ id: rid(), title: "Script generation failed", status: "error", pct: 0, err: (e as Error).message }]);
@@ -173,6 +174,39 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     </div>;
   }
 
+  const renderChar = (c: Character) => {
+    const inVideo = castIds.includes(c.id);
+    return (
+      <div key={c.id} className={`rounded border p-2 space-y-1.5 ${inVideo ? "border-[var(--color-accent)]" : "border-[var(--color-line)]"}`}>
+        <div className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-1.5">
+          <input type="checkbox" checked={inVideo} title="in this video" onChange={(e) => setCastIds(e.target.checked ? [...castIds, c.id] : castIds.filter((x) => x !== c.id))} />
+          <input className={inp} placeholder="name" value={c.name} onChange={(e) => patchChar(c, { name: e.target.value })} />
+          <input className={inp} placeholder={c.kind === "actor" ? "character role" : "instrument / part"} value={c.role || ""} onChange={(e) => patchChar(c, { role: e.target.value })} />
+          <button onClick={() => delChar(c.id)} className="text-[var(--color-muted)] hover:text-red-400 px-1" title="Delete from library">x</button>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          <select className={inp} value={c.method || "auto"} title="consistency method" onChange={(e) => patchChar(c, { method: e.target.value as Method })}>
+            <option value="auto">Auto</option>
+            <option value="anchor">Anchor still</option>
+            <option value="qwen" disabled={!cfg.video_qwen}>Qwen{cfg.video_qwen ? "" : " (n/a)"}</option>
+            <option value="vace" disabled={!cfg.video_vace}>VACE{cfg.video_vace ? "" : " (n/a)"}</option>
+            <option value="lora">LoRA (trained)</option>
+          </select>
+          <select className={inp} value={c.refStillId || ""} title="reference still (zero-shot)" onChange={(e) => patchChar(c, { refStillId: e.target.value })}>
+            <option value="">- reference still -</option>
+            {stills.map((s) => <option key={s.id} value={s.id}>{(s.params?.prompt || s.id).toString().slice(0, 30)}</option>)}
+          </select>
+          <select className={inp} value={c.loraName || ""} title="trained LoRA" onChange={(e) => patchChar(c, { loraName: e.target.value })}>
+            <option value="">- LoRA (trained) -</option>
+            {loras.map((l) => <option key={l} value={l}>{l.replace(/\.safetensors$/, "").slice(0, 24)}</option>)}
+          </select>
+        </div>
+      </div>
+    );
+  };
+  const musicians = libChars.filter((c) => c.kind !== "actor");
+  const actors = libChars.filter((c) => c.kind === "actor");
+
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-[var(--color-muted)]">Turn a song into a beat-cut music video: generate a shot list, define the cast, then render each shot.</p>
@@ -201,44 +235,21 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
         </Field>
       </div>
 
-      {/* Character library + per-video cast selection */}
+      {/* Character library (reusable; musicians + actors) + per-video cast selection */}
       <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3 space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold text-[var(--color-accent2)]">Character library</span>
-          <GhostButton onClick={addChar}>+ character</GhostButton>
+          <span className="flex gap-2">
+            <GhostButton onClick={() => addChar("musician")}>+ musician</GhostButton>
+            <GhostButton onClick={() => addChar("actor")}>+ actor</GhostButton>
+          </span>
         </div>
-        {libChars.length === 0 && <p className="text-[11px] text-[var(--color-muted)]">Build a reusable cast: add a character, set its consistency method + assets (reference still for zero-shot, or a trained LoRA), then tick which appear in this video. Characters persist across all your videos.</p>}
-        {libChars.map((c) => {
-          const inVideo = castIds.includes(c.id);
-          return (
-          <div key={c.id} className={`rounded border p-2 space-y-1.5 ${inVideo ? "border-[var(--color-accent)]" : "border-[var(--color-line)]"}`}>
-            <div className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-1.5">
-              <input type="checkbox" checked={inVideo} title="in this video" onChange={(e) => setCastIds(e.target.checked ? [...castIds, c.id] : castIds.filter((x) => x !== c.id))} />
-              <input className={inp} placeholder="name" value={c.name} onChange={(e) => patchChar(c, { name: e.target.value })} />
-              <input className={inp} placeholder="role" value={c.role || ""} onChange={(e) => patchChar(c, { role: e.target.value })} />
-              <button onClick={() => delChar(c.id)} className="text-[var(--color-muted)] hover:text-red-400 px-1" title="Delete from library">x</button>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5">
-              <select className={inp} value={c.method || "auto"} title="consistency method" onChange={(e) => patchChar(c, { method: e.target.value as Method })}>
-                <option value="auto">Auto</option>
-                <option value="anchor">Anchor still</option>
-                <option value="qwen" disabled={!cfg.video_qwen}>Qwen{cfg.video_qwen ? "" : " (n/a)"}</option>
-                <option value="vace" disabled={!cfg.video_vace}>VACE{cfg.video_vace ? "" : " (n/a)"}</option>
-                <option value="lora">LoRA (trained)</option>
-              </select>
-              <select className={inp} value={c.refStillId || ""} title="reference still (zero-shot)" onChange={(e) => patchChar(c, { refStillId: e.target.value })}>
-                <option value="">- reference still -</option>
-                {stills.map((s) => <option key={s.id} value={s.id}>{(s.params?.prompt || s.id).toString().slice(0, 30)}</option>)}
-              </select>
-              <select className={inp} value={c.loraName || ""} title="trained LoRA" onChange={(e) => patchChar(c, { loraName: e.target.value })}>
-                <option value="">- LoRA (trained) -</option>
-                {loras.map((l) => <option key={l} value={l}>{l.replace(/\.safetensors$/, "").slice(0, 24)}</option>)}
-              </select>
-            </div>
-          </div>
-          );
-        })}
-        <p className="text-[10px] text-[var(--color-muted)]">Each character set up before you start: pick a reference still (zero-shot: Qwen/VACE) and/or a trained LoRA, choose its method. Tick the ones in this video. Make stills in the Video tab; train LoRAs in AI Toolkit (see plan).</p>
+        {libChars.length === 0 && <p className="text-[11px] text-[var(--color-muted)]">Build a reusable cast - the band (musicians, who perform + lip-sync) and actors (who appear in the story scenes). Set each up once with a reference still (zero-shot) and/or a trained LoRA + method, then tick who's in this video. The library persists across all your videos.</p>}
+        {musicians.length > 0 && <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Musicians (band)</div>}
+        {musicians.map(renderChar)}
+        {actors.length > 0 && <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)] pt-1">Actors</div>}
+        {actors.map(renderChar)}
+        <p className="text-[10px] text-[var(--color-muted)]">Musicians appear in performance shots (the singer lip-syncs); actors appear in narrative/story shots. Make stills in the Video tab; train LoRAs in AI Toolkit (see plan).</p>
       </div>
 
       <PrimaryButton onClick={generateScript} disabled={gen || !projectId}>{gen ? "Writing script..." : shots.length ? "Regenerate script" : "Generate script"}</PrimaryButton>

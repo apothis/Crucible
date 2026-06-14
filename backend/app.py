@@ -1854,7 +1854,7 @@ def characters_upsert(body: dict):
     if not name:
         raise HTTPException(400, "character name required")
     cid = os.path.basename(str(body.get("id") or "")) or uuid.uuid4().hex
-    data = {k: body.get(k) for k in ("role", "refStillId", "refStillIds", "loraName", "method", "notes")
+    data = {k: body.get(k) for k in ("kind", "role", "refStillId", "refStillIds", "loraName", "method", "notes")
             if body.get(k) is not None}
     now = time.time()
     with db() as conn:
