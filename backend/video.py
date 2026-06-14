@@ -368,10 +368,13 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
     prompt = (p.get("prompt") or "a person singing into a microphone, close up").strip()
     neg = p.get("negative") or "blurry, distorted, static, low quality"
     g = {
+        # attention=sdpa (NOT sageattn): on a 3090 (Ampere, no native fp8) sage + the fp8 model
+        # produces BLACK output (SageAttention issue #221, WanVideoWrapper #1605); sage also
+        # silently falls back to pytorch on this card anyway, so we lose nothing real.
         "1": {"class_type": "WanVideoModelLoader",
               "inputs": {"model": WAN_S2V_KJ, "base_precision": "fp16_fast",
                          "quantization": "fp8_e4m3fn_scaled", "load_device": "offload_device",
-                         "attention_mode": "sageattn"}},
+                         "attention_mode": "sdpa"}},
         "2": {"class_type": "WanVideoLoraSelectMulti",
               "inputs": {"lora_0": LIGHTX2V_V2, "strength_0": lstr, "lora_1": "none",
                          "strength_1": 1.0, "lora_2": "none", "strength_2": 1.0,
