@@ -363,6 +363,7 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
     cfg = float(p.get("cfg", 1.0))
     shift = float(p.get("shift", 4.0))
     blocks = int(p.get("blocks_to_swap", 25))          # 25/40 blocks -> fits 24GB (raise if OOM)
+    load_device = p.get("load_device") or "offload_device"  # "main_device" = model on GPU (more VRAM, faster)
     lstr = float(p.get("lora_strength", 1.5))
     audio_scale = float(p.get("audio_scale", 1.0))
     prompt = (p.get("prompt") or "a person singing into a microphone, close up").strip()
@@ -373,7 +374,7 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
         # silently falls back to pytorch on this card anyway, so we lose nothing real.
         "1": {"class_type": "WanVideoModelLoader",
               "inputs": {"model": WAN_S2V_KJ, "base_precision": "fp16_fast",
-                         "quantization": "fp8_e4m3fn_scaled", "load_device": "offload_device",
+                         "quantization": "fp8_e4m3fn_scaled", "load_device": load_device,
                          "attention_mode": "sdpa"}},
         "2": {"class_type": "WanVideoLoraSelectMulti",
               "inputs": {"lora_0": LIGHTX2V_V2, "strength_0": lstr, "lora_1": "none",
