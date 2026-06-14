@@ -161,6 +161,10 @@ def init_db():
         # plus the song arrangement and current tab. `data` is the JSON the UI serializes.
         conn.execute("""CREATE TABLE IF NOT EXISTS projects(
             id TEXT PRIMARY KEY, name TEXT, created REAL, updated REAL, data TEXT)""")
+        # A reusable CHARACTER (cast member), global across projects. `data` JSON holds
+        # role, ref_still_ids, lora_name, method (anchor/qwen/vace/lora), notes.
+        conn.execute("""CREATE TABLE IF NOT EXISTS characters(
+            id TEXT PRIMARY KEY, name TEXT, created REAL, updated REAL, data TEXT)""")
 
 
 def save_job(pid):
@@ -1810,7 +1814,7 @@ def _normalize_shots(shots):
                 "end": int(float(s.get("end") or 0)),
                 "type": t if t in ("performance", "narrative", "broll") else "broll",
                 "scene": str(s.get("scene") or "").strip(),
-                "motion": str(s.get("motion") or "").strip(),
+                "action": str(s.get("action") or s.get("motion") or "").strip(),
                 "characters": [str(x) for x in (s.get("characters") or []) if x],
                 "lipsync": bool(s.get("lipsync"))}
         if s.get("clipId"):
@@ -1824,8 +1828,49 @@ def _normalize_shots(shots):
 
 def _project_video_view(data: dict) -> dict:
     mv = (data.get("drafts") or {}).get("musicvideo") or {}
-    return {"cast": mv.get("cast") or [], "shots": mv.get("shots") or [],
-            "audioId": mv.get("audioId"), "method": mv.get("method") or "auto"}
+    return {"cast": mv.get("cast") or [], "castIds": mv.get("castIds") or [],
+            "shots": mv.get("shots") or [], "audioId": mv.get("audioId"),
+            "method": mv.get("method") or "auto"}
+
+
+@app.get("/api/characters")
+def characters_list():
+    """The reusable character library (cast members), newest first."""
+    with db() as conn:
+        rows = conn.execute("SELECT id,name,data,updated FROM characters ORDER BY updated DESC").fetchall()
+    out = []
+    for r in rows:
+        c = json.loads(r["data"] or "{}")
+        c.update({"id": r["id"], "name": r["name"], "updated": r["updated"]})
+        out.append(c)
+    return out
+
+
+@app.post("/api/characters")
+def characters_upsert(body: dict):
+    """Create or update a character. Body: {id?, name, role?, refStillId?, refStillIds?,
+    loraName?, method?, notes?}. Returns the saved record."""
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "character name required")
+    cid = os.path.basename(str(body.get("id") or "")) or uuid.uuid4().hex
+    data = {k: body.get(k) for k in ("role", "refStillId", "refStillIds", "loraName", "method", "notes")
+            if body.get(k) is not None}
+    now = time.time()
+    with db() as conn:
+        ex = conn.execute("SELECT created FROM characters WHERE id=?", (cid,)).fetchone()
+        created = ex["created"] if ex else now
+        conn.execute("REPLACE INTO characters(id,name,created,updated,data) VALUES(?,?,?,?,?)",
+                     (cid, name, created, now, json.dumps(data)))
+    return {"id": cid, "name": name, "updated": now, **data}
+
+
+@app.delete("/api/characters/{cid}")
+def characters_delete(cid: str):
+    cid = os.path.basename(cid)
+    with db() as conn:
+        conn.execute("DELETE FROM characters WHERE id=?", (cid,))
+    return {"ok": True}
 
 
 @app.get("/api/projects/{key}/video")
@@ -1848,7 +1893,7 @@ def project_video_patch(key: str, body: dict):
         raise HTTPException(404, "project not found")
     data = json.loads(r["data"] or "{}")
     mv = data.setdefault("drafts", {}).setdefault("musicvideo", {})
-    for k in ("cast", "audioId", "method"):
+    for k in ("cast", "castIds", "audioId", "method"):
         if k in body:
             mv[k] = body[k]
     shots = body["shots"] if "shots" in body else (mv.get("shots") or [])

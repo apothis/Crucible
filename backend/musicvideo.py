@@ -117,8 +117,8 @@ Write about {target} shots covering the whole song IN ORDER, 0 to {total}s with 
 Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
-  "scene": "<vivid PHOTOREAL prompt GROUNDED in the lyrics at this time + the title theme: setting, subject, wardrobe, lighting, camera/lens>",
-  "motion": "<how the shot moves over ~5s>",
+  "scene": "<SCENE description = the static look of the frame: setting/environment, subject, wardrobe, lighting, framing and lens. Photoreal, grounded in the lyrics at this time + the title theme>",
+  "action": "<ACTION description = what happens over ~5s: what the subject DOES and how the camera moves>",
   "characters": [<names of any named characters present; [] if none>],
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
 
@@ -144,7 +144,7 @@ def parse_shots(text):
             "end": int(float(s.get("end") or 0)),
             "type": t if t in SHOT_TYPES else "broll",
             "scene": str(s.get("scene") or "").strip(),
-            "motion": str(s.get("motion") or "").strip(),
+            "action": str(s.get("action") or s.get("motion") or "").strip(),
             "characters": [str(x) for x in (s.get("characters") or []) if x],
             "lipsync": bool(s.get("lipsync")),
         })
