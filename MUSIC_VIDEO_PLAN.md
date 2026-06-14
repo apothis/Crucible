@@ -231,8 +231,10 @@ Backend work (mirror existing build_* pattern, additions OPTIONAL/gated OFF):
 
 ## 11. QUEUED - phased-batch "Generate all shots" (model loaded once per phase)
 Design note (user observation 2026-06-14): the per-shot flow reloads the 22GB LTX model from SSD
-for EVERY shot (~240s load dominates the ~280s/clip; sampling is only ~40s, so extra clip length
-is nearly free). The huge waste is re-loading the model per shot. Restructure the full-video
+for EVERY shot. Measured (97f=239s, 240f=281s): ~0.29s/frame sampling + ~210s FIXED overhead
+(bundles model load + text encode + VAE decode + setup; the load portion alone is NOT isolated -
+do not claim a specific load-vs-render split). Fixed overhead dominates, so extra clip length is
+cheap and the waste is re-loading the model per shot. Restructure the full-video
 generate into MODEL PHASES so each model loads ONCE per video, not once per shot:
   - Phase 1: all stills (Z-Image t2i + Qwen-Edit char stills) - small model.
   - Phase 2: all LTX i2v animates, run consecutively WITHOUT freeing VRAM between them (LTX stays resident).
