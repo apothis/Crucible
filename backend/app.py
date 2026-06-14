@@ -627,6 +627,14 @@ def _trim_audio_window(path, start, dur):
 
 
 def _submit_video(graph, resolved, mode):
+    # Free ComfyUI's resident models first so the heavy video model loads FULLY into VRAM
+    # instead of partially offloading to CPU (the offload thrash = the ~130s/step slowness;
+    # ComfyUI keeps prior models cached, squeezing the next one - see the load log). Reload
+    # cost (~20s) is far cheaper than per-step PCIe transfers.
+    try:
+        C.free(unload_models=True, free_memory=True)
+    except Exception:
+        pass
     res = submit_comfy(graph)
     if res.get("node_errors"):
         raise HTTPException(400, f"node errors: {res['node_errors']}")
