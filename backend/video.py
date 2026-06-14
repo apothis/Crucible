@@ -51,7 +51,12 @@ WAN_VACE_GGUF = "Wan2.1_14B_VACE-Q6_K.gguf"
 # plumbing collapses into one node. Sampling is joint audio+video: concat AV latent ->
 # SamplerCustomAdvanced (euler + the distilled 8-step sigma schedule, CFG 1) -> separate ->
 # spatio-temporal tiled video decode + audio VAE decode.
-LTX_UNET_GGUF = "ltx-2.3-22b-dev-Q8_0.gguf"          # UnetLoaderGGUF
+# UNet quant is configurable per-request: pass {"quant": "Q5_K_S"} etc. Tiers (AItrepreneur):
+# Q4_K_S (<12GB), Q5_K_S (12-16GB; comfortable on 32GB system RAM), Q6_K, Q8_0 (best, 24GB+).
+LTX_UNET_TMPL = "ltx-2.3-22b-dev-{quant}.gguf"       # UnetLoaderGGUF
+LTX_QUANT_DEFAULT = "Q8_0"
+LTX_QUANTS = ("Q4_K_S", "Q5_K_S", "Q6_K", "Q8_0")
+LTX_UNET_GGUF = LTX_UNET_TMPL.format(quant=LTX_QUANT_DEFAULT)  # default file
 LTX_CLIP1 = "gemma_3_12B_it_fp4_mixed.safetensors"   # DualCLIPLoader clip_name1
 LTX_CLIP2 = "ltx-2.3_text_projection_bf16.safetensors"  # clip_name2; type "ltxv"
 LTX_VAE_VIDEO = "LTX23_video_vae_bf16.safetensors"   # VAELoaderKJ main_device/bf16
@@ -349,9 +354,13 @@ def _build_ltx(p, image_ref=None):
     distill = float(p.get("distill_strength", 0.5))
     detailer = float(p.get("detailer_strength", 0.2))
     img_strength = float(p.get("img_strength", 0.7))   # keyframe imprint strength (i2v)
+    quant = (p.get("quant") or LTX_QUANT_DEFAULT).strip()
+    if quant not in LTX_QUANTS:
+        quant = LTX_QUANT_DEFAULT
+    unet = LTX_UNET_TMPL.format(quant=quant)
     prompt = (p.get("prompt") or "").strip()
     g = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": LTX_UNET_GGUF}},
+        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
         "2": {"class_type": "LoraLoaderModelOnly",
               "inputs": {"model": ["1", 0], "lora_name": LTX_LORA_DISTILL,
                          "strength_model": distill}},
@@ -418,7 +427,7 @@ def _build_ltx(p, image_ref=None):
                               "strength": img_strength, "bypass": False}}
         g["10"]["inputs"]["video_latent"] = ["32", 0]  # concat uses the imprinted latent
     resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
-                "seconds": secs, "cfg": cfg, "distill_strength": distill,
+                "seconds": secs, "cfg": cfg, "quant": quant, "distill_strength": distill,
                 "detailer_strength": detailer, "prompt": prompt, "kind": "video"}
     if image_ref is not None:
         resolved["img_strength"] = img_strength

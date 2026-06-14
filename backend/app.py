@@ -429,6 +429,7 @@ def config():
             "video_qwen": _qwen_available(),        # Qwen-Image-Edit GGUF present (char consistency)
             "video_vace": _vace_available(),        # Wan VACE GGUF present (reference-to-video)
             "video_ltx": _ltx_available(),          # LTX-2.3 GGUF present (fast video backbone)
+            "video_ltx_quants": _ltx_quants_present(),  # which LTX quants are on the box
             "genres": genres}
 
 
@@ -457,12 +458,19 @@ def _vace_available():
         return False
 
 
-def _ltx_available():
-    """True when the LTX-2.3 GGUF (fast video backbone) is on the box."""
+def _ltx_quants_present():
+    """Which LTX-2.3 22B quants are actually on the box (any of Q4_K_S/Q5_K_S/Q6_K/Q8_0)."""
     try:
-        return video_mod.LTX_UNET_GGUF in set(C.gguf_unets())
+        have = set(C.gguf_unets())
+        return [q for q in video_mod.LTX_QUANTS
+                if video_mod.LTX_UNET_TMPL.format(quant=q) in have]
     except Exception:
-        return False
+        return []
+
+
+def _ltx_available():
+    """True when any LTX-2.3 GGUF quant (fast video backbone) is on the box."""
+    return bool(_ltx_quants_present())
 
 
 @app.get("/api/acestep/info")
