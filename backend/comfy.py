@@ -48,6 +48,15 @@ class Comfy:
         except Exception:
             return []
 
+    def gguf_unets(self):
+        """GGUF UNETs the box can actually load (from UnetLoaderGGUF's options - the HTTP
+        /models/unet folder isn't exposed, so this is the authoritative list)."""
+        try:
+            r = requests.get(f"{self.base}/object_info/UnetLoaderGGUF", timeout=8).json()
+            return r["UnetLoaderGGUF"]["input"]["required"]["unet_name"][0]
+        except Exception:
+            return []
+
     def available_variants(self):
         have = set(self.models("diffusion_models"))
         out = []

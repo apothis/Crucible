@@ -443,7 +443,7 @@ def _video_available():
 def _qwen_available():
     """True when the Qwen-Image-Edit GGUF (character consistency) is on the box."""
     try:
-        return video_mod.QWEN_EDIT_GGUF in set(C.models("unet"))
+        return video_mod.QWEN_EDIT_GGUF in set(C.gguf_unets())
     except Exception:
         return False
 
@@ -451,7 +451,7 @@ def _qwen_available():
 def _vace_available():
     """True when the Wan VACE GGUF (reference-to-video) is on the box."""
     try:
-        return video_mod.WAN_VACE_GGUF in set(C.models("unet"))
+        return video_mod.WAN_VACE_GGUF in set(C.gguf_unets())
     except Exception:
         return False
 
