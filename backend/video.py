@@ -337,23 +337,28 @@ def build_s2v(p, image_ref, audio_ref):
 
 
 # ============================================================ LTX-2.3 (fast backbone)
-def _build_ltx(p, image_ref=None):
+def _build_ltx(p, image_ref=None, lipsync_audio=None):
     """Shared LTX-2.3 t2v/i2v graph. image_ref None = text-to-video; a uploaded image name
     = image-to-video (the keyframe is imprinted onto LTXDirector's video latent as frame 0).
     Joint audio+video sampling with the distilled 8-step schedule; LTX native audio is decoded
     and carried into the file (the music-video assembly muxes the real song over it later).
+    lipsync_audio (an uploaded vocal name) = run LatentSync as a mouth-only POST pass on the
+    LTX frames so they sync to that vocal - keeps one consistent look (no second video model).
     p: {prompt, seed?, width?, height?, frames?, fps?, cfg?, distill_strength?,
-    detailer_strength?, img_strength?}. Output: SaveVideo -> videogen/ltx."""
+    detailer_strength?, img_strength?, lips_expression?, inference_steps?}.
+    Output: SaveVideo -> videogen/ltx."""
     seed = _seed(p)
     w = int(p.get("width", 768))
     h = int(p.get("height", 512))
-    fps = int(p.get("fps", 24))
-    frames = _ltx_frames(p.get("frames", 97), fps)     # default ~4s @24; valid 8k+1
+    fps = int(p.get("fps", 25 if lipsync_audio else 24))   # LatentSync wants 25fps input
+    frames = _ltx_frames(p.get("frames", 97), fps)     # default ~4s; valid 8k+1
     secs = round(frames / fps, 3)
     cfg = float(p.get("cfg", 1.0))                     # distilled LoRA -> CFG 1 (negative ignored)
     distill = float(p.get("distill_strength", 0.5))
     detailer = float(p.get("detailer_strength", 0.2))
     img_strength = float(p.get("img_strength", 0.7))   # keyframe imprint strength (i2v)
+    lips_expr = float(p.get("lips_expression", 1.5))   # LatentSync lip-movement intensity 1.0-3.0
+    lip_steps = int(p.get("inference_steps", 20))      # LatentSync denoise steps
     quant = (p.get("quant") or LTX_QUANT_DEFAULT).strip()
     if quant not in LTX_QUANTS:
         quant = LTX_QUANT_DEFAULT
@@ -426,11 +431,22 @@ def _build_ltx(p, image_ref=None):
                    "inputs": {"vae": ["5", 0], "image": ["31", 0], "latent": ["7", 2],
                               "strength": img_strength, "bypass": False}}
         g["10"]["inputs"]["video_latent"] = ["32", 0]  # concat uses the imprinted latent
+    if lipsync_audio is not None:                       # LatentSync mouth-only post pass on LTX frames
+        g["40"] = {"class_type": "LoadAudio", "inputs": {"audio": lipsync_audio}}
+        g["41"] = {"class_type": "LatentSyncNode",
+                   "inputs": {"images": ["17", 0], "audio": ["40", 0], "seed": seed,
+                              "lips_expression": lips_expr, "inference_steps": lip_steps}}
+        g["19"]["inputs"]["images"] = ["41", 0]         # save the lip-synced frames...
+        g["19"]["inputs"]["audio"] = ["40", 0]          # ...carrying the vocal (not LTX native audio)
     resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                 "seconds": secs, "cfg": cfg, "quant": quant, "distill_strength": distill,
                 "detailer_strength": detailer, "prompt": prompt, "kind": "video"}
     if image_ref is not None:
         resolved["img_strength"] = img_strength
+    if lipsync_audio is not None:
+        resolved["lipsync"] = True
+        resolved["lips_expression"] = lips_expr
+        resolved["inference_steps"] = lip_steps
     return g, resolved
 
 
@@ -445,3 +461,11 @@ def build_ltx_i2v(p, image_ref):
     image_ref = uploaded image name on ComfyUI. p as build_ltx_t2v plus {img_strength?}.
     Output: SaveVideo -> videogen/ltx."""
     return _build_ltx(p, image_ref=image_ref)
+
+
+def build_ltx_lipsync(p, image_ref, audio_ref):
+    """LTX-2.3 i2v + LatentSync lip-sync in one graph: animate the keyframe, then re-sync the
+    mouth to the supplied vocal (all on LTX footage -> one consistent look, no second video
+    model). image_ref/audio_ref = uploaded names on ComfyUI. p as build_ltx_i2v plus
+    {lips_expression?, inference_steps?}. Output: SaveVideo -> videogen/ltx."""
+    return _build_ltx(p, image_ref=image_ref, lipsync_audio=audio_ref)

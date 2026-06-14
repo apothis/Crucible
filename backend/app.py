@@ -798,6 +798,35 @@ def video_ltx_i2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/ltx_lipsync")
+def video_ltx_lipsync(p: dict):
+    """LTX-2.3 i2v + LatentSync lip-sync: animate a keyframe still, then sync its mouth to a
+    vocal window from a library track - all on LTX footage (one consistent look). p: {still_id,
+    audio_id, audio_start?, prompt?, frames?, lips_expression?, inference_steps?}."""
+    still = _lib_image_path(p.get("still_id"))
+    if not still:
+        raise HTTPException(400, "still_id must reference a generated still in the library")
+    audio = _lib_source_path(p.get("audio_id"))
+    if not audio:
+        raise HTTPException(400, "audio_id must reference a library track")
+    start = max(0.0, float(p.get("audio_start") or 0))
+    fps = 25                                            # LatentSync input rate
+    frames = int(p.get("frames", 97))
+    win = frames / fps + 1.0                            # vocal window >= clip length
+    try:
+        with open(still, "rb") as f:
+            img_ref = C.upload_audio(f.read(), os.path.basename(still))
+        aud_bytes = _trim_audio_window(audio, start, win)
+        aud_ref = C.upload_audio(aud_bytes, "ltx_vocal.wav")
+        graph, resolved = video_mod.build_ltx_lipsync(p, img_ref, aud_ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["audio_start"] = start
+    resolved["still_id"] = os.path.basename(p.get("still_id"))
+    resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+    return _submit_video(graph, resolved, "videolipsync")
+
+
 @app.post("/api/mv/script")
 def mv_script(body: dict):
     """Generate an editable music-video shot list from a song. Body: {project? (key) OR
