@@ -160,3 +160,41 @@ torch are better handled by its maintained setup; an untested heavy install woul
 
 ALL untested-on-hardware paths (Qwen/VACE/LoRA graphs) need a first-fire check once models land +
 a ComfyUI restart - watch for node-wiring errors and report them.
+
+## 9. QUEUED (after LTX) - Z-Image ULTRA finishing pass (opt-in)
+Source: reference/Z-IMAGE_TURBO_ULTRA_WORKFLOW-V2.json (AItrepreneur). Verified 2026-06-14 that our
+build_still already matches the ULTRA CORE (ModelSamplingAuraFlow shift ~3, lumina2 CLIP, ae VAE,
+euler/simple ~8-9 steps cfg 1.0, LoRA). This batch adds the ULTRA's FINISHING layers as opt-in
+toggles in the Music Video tab; DEFAULT OFF, never changes current still behavior.
+
+DO NOT run the ULTRA install bat on the box - it downloads a FRESH ComfyUI portable (v0.3.76) and
+relaunches it (a second parallel ComfyUI). Cherry-pick into our EXISTING ComfyUI instead.
+
+Already present on box (verified via /object_info): CLIPLoaderGGUF, UnetLoaderGGUF,
+ModelSamplingAuraFlow, Power Lora Loader, UpscaleModelLoader, QwenImageDiffsynthControlnet,
+InpaintModelConditioning, ModelPatchLoader, SamplerCustomAdvanced, easy clearCacheAll/cleanGpuUsed.
+
+MISSING custom nodes to add (git clone into ComfyUI/custom_nodes, then pip -r requirements):
+  - Detail-Daemon         github.com/Jonseed/ComfyUI-Detail-Daemon       -> DetailDaemonSamplerNode (HIGH: skin/texture realism)
+  - vrgamedevgirl         github.com/vrgamegirl19/comfyui-vrgamedevgirl  -> FastFilmGrain, FastLaplacianSharpen (HIGH: photoreal finish)
+  - wlsh_nodes            github.com/wallish77/wlsh_nodes                -> Upscale by Factor with Model (WLSH) (HIGH: 1080p to match LTX)
+  - controlnet_aux        github.com/Fannovel16/comfyui_controlnet_aux   -> DepthAnythingV2/Canny/DWPose preproc (HIGH: cross-shot pose consistency)
+  - ComfyUI_essentials    github.com/cubiq/ComfyUI_essentials            -> ImageResize+ (helper)
+  - SeedVarianceEnhancer  github.com/ChangeTheConstants/SeedVarianceEnhancer (LOW: seed variety)
+
+MISSING model files (from HF Aitrepreneur/FLX, ungated; download script or box-fs):
+  - model_patches/Z-Image-Turbo-Fun-Controlnet-Union-fp8-e5m2.safetensors  (pose/depth control)
+  - upscale_models/4x-ClearRealityV1.pth, RealESRGAN_x4plus_anime_6B.pth   (upscalers)
+  - (OPTIONAL, we already have bf16 equivalents - skip unless VRAM-pinched:
+     unet/z_image_turbo-Q8_0.gguf, text_encoders/Qwen3-4B-UD-Q6_K_XL.gguf)
+  - controlnet_aux preproc weights (DepthAnythingV2, DWPose) auto-download on first use.
+
+Backend work (mirror existing build_* pattern, additions OPTIONAL/gated OFF):
+  - Extend build_still (or build_still2) with optional chain after KSampler:
+      detail: swap KSampler -> SamplerCustomAdvanced + DetailDaemonSamplerNode
+      finish: FastLaplacianSharpen + FastFilmGrain on the decoded image
+      upscale: Upscale by Factor with Model (WLSH) -> 1080p+ keyframe (match LTX)
+      pose:    ControlNet-Union + Depth/Canny/DWPose preproc from a reference pose image
+  - app.py: new optional params on the still endpoint (detail/grain/sharpen/upscale/pose), each default off.
+  - Music Video tab: small "Still finishing" toggles group; off = current behavior verbatim.
+  - First-fire validation on box (user presses Generate); report any node-wiring errors.
