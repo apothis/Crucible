@@ -228,3 +228,16 @@ Backend work (mirror existing build_* pattern, additions OPTIONAL/gated OFF):
   - app.py: new optional params on the still endpoint (detail/grain/sharpen/upscale/pose), each default off.
   - Music Video tab: small "Still finishing" toggles group; off = current behavior verbatim.
   - First-fire validation on box (user presses Generate); report any node-wiring errors.
+
+## 11. QUEUED - phased-batch "Generate all shots" (model loaded once per phase)
+Design note (user observation 2026-06-14): the per-shot flow reloads the 22GB LTX model from SSD
+for EVERY shot (~240s load dominates the ~280s/clip; sampling is only ~40s, so extra clip length
+is nearly free). The huge waste is re-loading the model per shot. Restructure the full-video
+generate into MODEL PHASES so each model loads ONCE per video, not once per shot:
+  - Phase 1: all stills (Z-Image t2i + Qwen-Edit char stills) - small model.
+  - Phase 2: all LTX i2v animates, run consecutively WITHOUT freeing VRAM between them (LTX stays resident).
+  - Phase 3: all Wan2.2-S2V lip-sync shots - load S2V once.
+Catch: we deliberately FREE ComfyUI VRAM before each heavy job (commit 2a30d6f, anti-thrash), which
+forces the reload. Batch mode must free only BETWEEN phases (model switch), not between same-model
+shots. Measured payoff: LTX clips 2..N in a phase drop from ~280s to ~40s each. Verified: long LTX
+clips are real (241 frames @24fps = 10.0s) and cheap (load-dominated), so prefer fewer/longer clips.
