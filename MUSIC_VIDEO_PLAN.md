@@ -253,5 +253,9 @@ violation: ComfyUI-GGUF unpatch_model -> torch .to -> c10.dll). So neither /free
 cleanup node solves the GGUF RAM leak. Real options: (1) fp8/safetensors models instead of GGUF
 for the phase-switching models (clean unload, no residue - our S2V is fp8 and never thrashed/crashed),
 (2) ComfyUI restart between big-GGUF phases. fp8 is the durable fix.
+APPLIED 2026-06-15 (box patch, reverts on ComfyUI-GGUF update - re-apply): ComfyUI-GGUF
+nodes.py line ~78 unpatch_model -> super().unpatch_model(..., unpatch_weights=False) per city96
+#444. Stops the segfault on a GGUF full-unload (mmap weights). Fixes the CRASH only; the RAM
+residue leak (Comfy #11775) is separate and still points to fp8.
  Verified: long LTX
 clips are real (241 frames @24fps = 10.0s) and cheap (load-dominated), so prefer fewer/longer clips.
