@@ -100,8 +100,9 @@ def build_prompt(song, cast, n_shots):
         return "\n".join(f"  - {c['name']} ({c.get('role') or 'character'})" for c in lst)
     cast_parts = []
     if musicians:
-        cast_parts.append("Band / musicians (appear in PERFORMANCE shots playing/singing; the "
-                          "lead singer lip-syncs the vocals):\n" + _fmt(musicians))
+        cast_parts.append("Band / musicians (primarily PERFORMANCE shots playing/singing - the "
+                          "lead singer lip-syncs; but they MAY ALSO act in NARRATIVE scenes, in "
+                          "costume):\n" + _fmt(musicians))
     if actors:
         cast_parts.append("Actors (appear in NARRATIVE / story shots, NOT performing music):\n"
                           + _fmt(actors))
@@ -129,8 +130,9 @@ Write about {target} shots covering the whole song IN ORDER, 0 to {total}s with 
 Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
-  "scene": "<SCENE description = the static look of the frame: setting/environment, subject, wardrobe, lighting, framing and lens. Photoreal, grounded in the lyrics at this time + the title theme>",
+  "scene": "<SCENE description = the static look of the frame: setting/environment, subject, lighting, framing and lens. Photoreal, grounded in the lyrics at this time + the title theme>",
   "action": "<ACTION description = what happens over ~5s: what the subject DOES and how the camera moves>",
+  "costume": "<what the named characters WEAR in this shot - lets the same person change outfits between scenes; '' if not notable or on-stage performance wear>",
   "characters": [<names of any named characters present; [] if none>],
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
 
@@ -159,6 +161,7 @@ def parse_shots(text):
             "type": t if t in SHOT_TYPES else "broll",
             "scene": str(s.get("scene") or "").strip(),
             "action": str(s.get("action") or s.get("motion") or "").strip(),
+            "costume": str(s.get("costume") or "").strip(),
             "characters": [str(x).strip() for x in (s.get("characters") or [])
                            if x and str(x).strip() not in ("[]", "none", "None", "-", "")],
             "lipsync": bool(s.get("lipsync")),

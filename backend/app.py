@@ -1815,6 +1815,7 @@ def _normalize_shots(shots):
                 "type": t if t in ("performance", "narrative", "broll") else "broll",
                 "scene": str(s.get("scene") or "").strip(),
                 "action": str(s.get("action") or s.get("motion") or "").strip(),
+                "costume": str(s.get("costume") or "").strip(),
                 "characters": [str(x) for x in (s.get("characters") or []) if x],
                 "lipsync": bool(s.get("lipsync"))}
         if s.get("clipId"):

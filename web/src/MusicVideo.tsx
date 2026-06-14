@@ -6,7 +6,7 @@ import { useDrafts } from "./drafts";
 type Shot = {
   idx: number; section: string; start: number; end: number;
   type: "performance" | "narrative" | "broll";
-  scene: string; action: string; characters: string[]; lipsync: boolean;
+  scene: string; action: string; costume?: string; characters: string[]; lipsync: boolean;
   clipId?: string;   // library id of the rendered clip for this shot
 };
 type Method = "auto" | "anchor" | "qwen" | "vace" | "lora";
@@ -127,6 +127,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   async function genShot(shot: Shot) {
     const char = cast.find((c) => shot.characters.includes(c.name));
     const m = char ? resolveMethod(char) : "anchor";
+    const look = shot.costume ? `${shot.scene}, wearing ${shot.costume}` : shot.scene;   // per-shot costume override
     const card = { id: rid(), title: `shot ${shot.idx + 1} (${shot.type})`, status: "pending" as const, pct: 0 };
     ctx.setResults([card]);
     const animate = async (stillJobId: string) => {
@@ -141,25 +142,25 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
       } else if (char && m === "vace" && cfg.video_vace && char.refStillId) {
         // reference-to-video: animate the character directly (identity through motion)
         ctx.patch(card.id, { status: "running", pct: 5, title: `shot ${shot.idx + 1}: VACE ${char.name}...` });
-        const { job_id } = await api.videoVace({ still_id: char.refStillId, prompt: `${shot.scene}. ${shot.action}` }) as { job_id: string };
+        const { job_id } = await api.videoVace({ still_id: char.refStillId, prompt: `${look}. ${shot.action}` }) as { job_id: string };
         recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else if (char && m === "lora" && char.loraName) {
         // trained character LoRA -> consistent still in the new scene (no ref still needed), then animate
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: ${char.name} (LoRA)...` });
-        const st = await api.videoStill({ prompt: shot.scene, lora: char.loraName }) as { job_id: string };
+        const st = await api.videoStill({ prompt: look, lora: char.loraName }) as { job_id: string };
         await waitDone(st.job_id); await animate(st.job_id);
       } else if (char && m === "qwen" && cfg.video_qwen && char.refStillId) {
         // place the character into THIS scene (Qwen-Edit, keeps identity), then animate
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: placing ${char.name}...` });
-        const cs = await api.videoCharStill({ ref_ids: [char.refStillId], prompt: shot.scene }) as { job_id: string };
+        const cs = await api.videoCharStill({ ref_ids: [char.refStillId], prompt: look }) as { job_id: string };
         await waitDone(cs.job_id); await animate(cs.job_id);
       } else if (char?.refStillId) {
         // anchor: reuse the reference still as-is
-        const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.action || shot.scene }) as { job_id: string };
+        const { job_id } = await api.videoI2V({ still_id: char.refStillId, prompt: shot.action || look }) as { job_id: string };
         ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
       } else {
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: still...` });
-        const still = await api.videoStill({ prompt: shot.scene }) as { job_id: string };
+        const still = await api.videoStill({ prompt: look }) as { job_id: string };
         await waitDone(still.job_id);
         ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
         const { job_id } = await api.videoI2V({ still_id: still.job_id, prompt: shot.action || "subtle cinematic motion" }) as { job_id: string };
@@ -290,7 +291,10 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
               <textarea className={inp} rows={2} value={s.scene} placeholder="setting, subject, wardrobe, lighting, framing" onChange={(e) => patchShot(i, { scene: e.target.value })} />
               <label className="block text-[10px] text-[var(--color-muted)]">Action <span className="opacity-70">- what happens + camera move (feeds the animation)</span></label>
               <textarea className={inp} rows={2} value={s.action} placeholder="what the subject does + how the camera moves over ~5s" onChange={(e) => patchShot(i, { action: e.target.value })} />
-              <input className={inp} value={s.characters.join(", ")} placeholder="characters (comma-separated)" onChange={(e) => patchShot(i, { characters: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+              <div className="grid grid-cols-2 gap-1.5">
+                <input className={inp} value={s.characters.join(", ")} placeholder="characters (comma-separated)" onChange={(e) => patchShot(i, { characters: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+                <input className={inp} value={s.costume || ""} placeholder="costume (overrides the look for this shot)" onChange={(e) => patchShot(i, { costume: e.target.value })} />
+              </div>
             </div>
           ))}
           <div className="flex items-center gap-2 pt-1">
