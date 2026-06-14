@@ -180,7 +180,7 @@ export type LoraTrack = { name: string; bpm: number; keyscale: string; has_lyric
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };
-export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; analyze?: boolean; lora_train?: boolean; lora_upload?: boolean; video?: boolean; video_qwen?: boolean; video_vace?: boolean; video_ltx?: boolean; genres: Genre[] };
+export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; analyze?: boolean; lora_train?: boolean; lora_upload?: boolean; video?: boolean; video_qwen?: boolean; video_vace?: boolean; video_ltx?: boolean; video_ltx_quants?: string[]; genres: Genre[] };
 export type LibItem = { id: string; created: number; mode: string; params: Record<string, any>; audio_url: string; media_url?: string | null; bucket?: string };
 // Arrangement shared from the Song Constructor to the Vocal Builder.
 export type SongDraft = { blocks: { type: string; seconds: number; lyrics: string }[]; key: string; bpm: number; tags: string };

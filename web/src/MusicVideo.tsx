@@ -35,6 +35,8 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   const [shots, setShots] = d.use<Shot[]>("shots", []);
   const [method, setMethod] = d.use<Method>("method", "auto");    // default for chars set to "auto"
   const [motionEngine, setMotionEngine] = d.use<"ltx" | "wan">("motionEngine", "ltx");  // i2v backbone
+  const ltxQuants = cfg.video_ltx_quants || [];                  // LTX quants present on the box
+  const [motionQuant, setMotionQuant] = d.use<string>("motionQuant", "Q8_0");  // LTX GGUF quant
   const [libChars, setLibChars] = useState<Character[]>([]);       // global character library
   const [loras, setLoras] = useState<string[]>([]);
   const [gen, setGen] = useState(false);
@@ -125,9 +127,10 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
 
   // generate one shot: lip-sync (if a named singer w/ ref still + audio) -> S2V; character
   // shot -> i2v anchored on the character's ref still; scenic -> fresh still then i2v.
-  // i2v motion stage: LTX-2.3 (fast, SageAttention) when present + selected, else Wan2.2.
+  // i2v motion stage: LTX-2.3 (fast) when present + selected, else Wan2.2. LTX honors the
+  // selected GGUF quant (Q5_K_S is lighter on system RAM than Q8_0).
   const animateClip = (p: { still_id: string; prompt: string }) =>
-    (motionEngine === "ltx" && cfg.video_ltx) ? api.videoLtxI2V(p) : api.videoI2V(p);
+    (motionEngine === "ltx" && cfg.video_ltx) ? api.videoLtxI2V({ ...p, quant: motionQuant }) : api.videoI2V(p);
 
   async function genShot(shot: Shot) {
     const char = cast.find((c) => shot.characters.includes(c.name));
@@ -233,6 +236,13 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
           </select>
         </Field>
       </div>
+      {motionEngine === "ltx" && cfg.video_ltx && ltxQuants.length > 1 && (
+        <Field label="LTX quant" hint="GGUF size/quality; lighter quants ease system RAM (Q5_K_S < Q8_0)">
+          <select className={inp} value={motionQuant} onChange={(e) => setMotionQuant(e.target.value)}>
+            {ltxQuants.map((q) => <option key={q} value={q}>{q}</option>)}
+          </select>
+        </Field>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <Field label="Song project" hint="its arrangement drives the script">
