@@ -882,7 +882,11 @@ def video_s2v_wrapper(p: dict):
     if not audio:
         raise HTTPException(400, "audio_id must reference a library track")
     start = max(0.0, float(p.get("audio_start") or 0))
-    win = int(p.get("frames", 77)) / int(p.get("fps", 16)) + 1.5
+    # Trim enough audio to cover the TOTAL clip (seconds, or frames). For multi-window long S2V
+    # the window count is derived from the audio length, so the audio must span the whole clip.
+    fps = int(p.get("fps", 16))
+    total_frames = int(round(float(p["seconds"]) * fps)) if p.get("seconds") else int(p.get("frames", 77))
+    win = total_frames / fps + 1.5
     try:
         with open(still, "rb") as f:
             img_ref = C.upload_audio(f.read(), os.path.basename(still))
