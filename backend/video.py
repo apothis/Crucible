@@ -608,10 +608,14 @@ def build_seedvr2_upscale(p, video_ref, fps):
     1920x1080 for 16:9). Output: SaveVideo -> videogen/upscale (keeps the source audio)."""
     seed = _seed(p)
     model = p.get("model") or SEEDVR2_DIT_DEFAULT
-    resolution = int(p.get("resolution", 1080))            # target short side
-    batch = int(p.get("batch_size", 5))
+    resolution = int(p.get("resolution", 1440))            # target short side; 1440 = 2x from 720p
+    # 4K is much heavier (4K/batch5 peaked ~20.8GB on the 3090) so keep the batch small there;
+    # at <=1440 there is VRAM headroom, so default a bigger batch for better temporal coherence.
+    # batch_size MUST be 4n+1. Caller can override either.
+    default_batch = 5 if resolution >= 2000 else 13
+    batch = int(p.get("batch_size", default_batch))
     if (batch - 1) % 4 != 0:                               # SeedVR2 requires 4n+1
-        batch = 5
+        batch = default_batch
     cc = p.get("color_correction") or "wavelet"           # match upscaled colors to the source
     blocks = int(p.get("blocks_to_swap", 0))              # raise if the DiT OOMs in diffusion (7B/4K)
     # DiT offload to CPU after diffusion so the ~7GB model is NOT resident during VAE decode.
