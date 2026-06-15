@@ -928,7 +928,8 @@ def mv_grades():
 @app.post("/api/mv/assemble")
 def mv_assemble(body: dict):
     """Stitch generated shot clips into one MP4 + the song audio (GPU-free, ffmpeg on the
-    Mac). Body: {shots: [{clip_id, start, end}], audio_id?, title?}."""
+    Mac). Body: {shots: [{clip_id, start, end}], audio_id?, title?, grade?, width?, height?}.
+    width/height set the output canvas (default 1280x720; pass 2560x1440 for upscaled clips)."""
     segs = []
     for s in body.get("shots") or []:
         cid = os.path.basename(str(s.get("clip_id") or ""))
@@ -940,10 +941,12 @@ def mv_assemble(body: dict):
         raise HTTPException(400, "no rendered shot clips found - generate the shots first")
     audio = _lib_source_path(body.get("audio_id"))
     grade = str(body.get("grade") or "none")
+    width = int(body.get("width") or 1280)
+    height = int(body.get("height") or 720)
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:
-        musicvideo_mod.assemble(segs, audio, out, grade=grade)
+        musicvideo_mod.assemble(segs, audio, out, width=width, height=height, grade=grade)
     except Exception as e:
         raise HTTPException(500, f"assembly failed: {e}")
     save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade}, out)
