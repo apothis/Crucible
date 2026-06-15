@@ -34,6 +34,28 @@ GRADES = {
              "curves=all='0/0 0.2/0.12 0.8/0.9 1/1'"),
     "bleach_bypass": "eq=saturation=0.42:contrast=1.34:brightness=0.03,curves=all='0/0.02 1/0.98'",
     "vibrant": "eq=saturation=1.18:contrast=1.08,vibrance=intensity=0.25",
+    # Film / director / art-style inspired looks (all verified to render distinctly on footage).
+    "fincher_thriller": ("curves=all='0/0.02 0.5/0.45 1/0.95',eq=saturation=0.62:contrast=1.18,"
+                         "colorbalance=rs=-0.06:gs=0.04:bs=0.05:gm=0.03:gh=-0.03"),
+    "wes_anderson": ("eq=saturation=1.05:contrast=0.90:brightness=0.05,"
+                     "colorbalance=rm=0.06:gm=0.04:rh=0.05:bh=-0.05,colortemperature=temperature=7400"),
+    "blade_runner": ("colorbalance=rs=-0.10:bs=0.12:rh=0.10:gh=-0.04:bh=0.04,"
+                     "eq=saturation=1.15:contrast=1.12"),
+    "dune_amber": ("colorbalance=rm=0.12:gm=0.04:bm=-0.08:rh=0.12:bh=-0.10,"
+                   "eq=saturation=0.80:contrast=1.10,colortemperature=temperature=9200"),
+    "matrix_green": ("colorbalance=gm=0.10:gs=0.06:gh=0.08:rm=-0.03:bm=-0.03,"
+                     "eq=saturation=0.85:contrast=1.10"),
+    "kodachrome_70s": "curves=preset=vintage,eq=saturation=0.95:contrast=1.04",
+    "technicolor": "eq=saturation=1.40:contrast=1.15,vibrance=intensity=0.30",
+    "moonlight_teal": ("colorbalance=bs=0.09:gs=0.03:rh=0.05:bh=-0.02,"
+                       "eq=saturation=1.10:contrast=1.08"),
+    "sepia": ("colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131,"
+              "eq=contrast=1.05"),
+    "fury_road": ("colorbalance=rs=-0.12:bs=0.12:rh=0.15:bh=-0.12,"
+                  "eq=saturation=1.30:contrast=1.20"),
+    "cross_process": "curves=preset=cross_process,eq=saturation=1.10",
+    "amelie_gold": ("colorbalance=rm=0.05:gm=0.06:bm=-0.05:gh=0.04:bh=-0.06,"
+                    "eq=saturation=1.12:contrast=1.05,colortemperature=temperature=8000"),
 }
 
 
