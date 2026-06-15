@@ -718,6 +718,11 @@ def build_svi_i2v(p, image_ref):
     fps = int(p.get("fps", 16))
     seg = SVI_SEG_FRAMES
     ov = int(p.get("overlap", SVI_OVERLAP))
+    steps = int(p.get("steps", 6))                     # total; split half high / half low
+    split = max(1, steps // 2)
+    lightx = float(p.get("lightx_strength", 1.0))      # lower (+more steps) restores motion (anti slow-mo)
+    continue_frames = int(p.get("continue_frames", 1)) # latent continuity frames (reference: 1)
+    seg_offset = int(p.get("segment_offset", 4))       # video_frame_offset for segments after the first
     if p.get("segments"):
         nseg = max(1, int(p["segments"]))
     else:
@@ -738,12 +743,12 @@ def build_svi_i2v(p, image_ref):
     g = {
         # high-noise expert chain: base -> lightx2v(t2v high) -> SVI HIGH -> ModelSamplingSD3
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": SVI_I2V_HIGH, "weight_dtype": "default"}},
-        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": SVI_LIGHTX_HIGH, "strength_model": 1.0}},
+        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": SVI_LIGHTX_HIGH, "strength_model": lightx}},
         "3": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["2", 0], "lora_name": SVI_LORA_HIGH, "strength_model": 1.0}},
         "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["3", 0], "shift": 5.0}},
         # low-noise expert chain: base -> lightx2v(i2v low) -> SVI LOW -> ModelSamplingSD3
         "5": {"class_type": "UNETLoader", "inputs": {"unet_name": SVI_I2V_LOW, "weight_dtype": "default"}},
-        "6": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["5", 0], "lora_name": SVI_LIGHTX_LOW, "strength_model": 1.0}},
+        "6": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["5", 0], "lora_name": SVI_LIGHTX_LOW, "strength_model": lightx}},
         "7": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["6", 0], "lora_name": SVI_LORA_LOW, "strength_model": 1.0}},
         "8": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["7", 0], "shift": 5.0}},
         "9": {"class_type": "CLIPLoader", "inputs": {"clip_name": SVI_CLIP, "type": "wan", "device": "default"}},
@@ -758,26 +763,29 @@ def build_svi_i2v(p, image_ref):
     for s in range(nseg):
         adv, hi, lo, dec = str(nid), str(nid + 1), str(nid + 2), str(nid + 3)
         pos = str(nid + 4)                                   # this segment's positive encode
-        seg_seed = seed + s                                  # different seed per segment (no repetition)
         seg_prompt = seg_prompts[min(s, len(seg_prompts) - 1)]   # clamp to last if fewer than segments
         g[pos] = {"class_type": "CLIPTextEncode", "inputs": {"clip": ["9", 0], "text": seg_prompt}}
+        # reference uses ONE seed across all segments (prev_latent gives continuity); varying it
+        # per segment caused the look/colour shift at the join. video_frame_offset = 0 first, then
+        # seg_offset for continuations (reference: 0, 4, 4...).
         adv_in = {"positive": [pos, 0], "negative": ["12", 0], "vae": ["10", 0],
                   "width": w, "height": h, "length": seg, "batch_size": 1,
                   "mode": "NORMAL", "long_video_mode": "SVI", "start_image": ["13", 0],
-                  "continue_frames_count": ov, "enable_middle_frame": False}
+                  "video_frame_offset": (0 if s == 0 else seg_offset),
+                  "continue_frames_count": continue_frames, "enable_middle_frame": False}
         if prev_low is not None:
             adv_in["prev_latent"] = prev_low
         g[adv] = {"class_type": "WanAdvancedI2V", "inputs": adv_in}
         # WanAdvancedI2V outs: 0 positive_high, 1 positive_low, 2 negative, 3 latent
         g[hi] = {"class_type": "KSamplerAdvanced",
-                 "inputs": {"add_noise": "enable", "noise_seed": seg_seed, "steps": 6, "cfg": 1.0,
+                 "inputs": {"add_noise": "enable", "noise_seed": seed, "steps": steps, "cfg": 1.0,
                             "sampler_name": "euler", "scheduler": "simple", "start_at_step": 0,
-                            "end_at_step": 3, "return_with_leftover_noise": "enable",
+                            "end_at_step": split, "return_with_leftover_noise": "enable",
                             "model": ["4", 0], "positive": [adv, 0], "negative": [adv, 2],
                             "latent_image": [adv, 3]}}
         g[lo] = {"class_type": "KSamplerAdvanced",
-                 "inputs": {"add_noise": "disable", "noise_seed": seg_seed, "steps": 6, "cfg": 1.0,
-                            "sampler_name": "euler", "scheduler": "simple", "start_at_step": 3,
+                 "inputs": {"add_noise": "disable", "noise_seed": seed, "steps": steps, "cfg": 1.0,
+                            "sampler_name": "euler", "scheduler": "simple", "start_at_step": split,
                             "end_at_step": 10000, "return_with_leftover_noise": "disable",
                             "model": ["8", 0], "positive": [adv, 1], "negative": [adv, 2],
                             "latent_image": [hi, 0]}}
@@ -808,4 +816,5 @@ def build_svi_i2v(p, image_ref):
                "overlap": ov, "frames": total_frames, "fps": fps,
                "seconds": round(total_frames / fps, 2), "prompt": prompt,
                "segment_prompts": len(seg_prompts) if len(seg_prompts) > 1 else 1,
-               "per_segment_seed": True, "kind": "video"}
+               "steps": steps, "lightx_strength": lightx, "continue_frames": continue_frames,
+               "segment_offset": seg_offset, "kind": "video"}
