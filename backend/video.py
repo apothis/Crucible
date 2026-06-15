@@ -196,16 +196,32 @@ def build_qwen_char_still(p, ref_images):
     g["11"] = {"class_type": "FluxKontextMultiReferenceLatentMethod",
                "inputs": {"conditioning": ["9", 0], "reference_latents_method": "index_timestep_zero"}}
     g["12"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}}
+    # Output canvas: by default the latent (and so the output shape) follows the scaled
+    # reference via VAEEncode - that is why square refs yield square stills. If width/height
+    # are supplied, generate on a fresh EmptySD3LatentImage canvas at that exact shape instead
+    # (EmptySD3LatentImage is the node the Qwen-Image base txt2img template uses, verified on
+    # box). denoise stays 1.0 so identity still comes from the reference conditioning (image1/2/3
+    # via TextEncodeQwenImageEditPlus); only the output aspect changes.
+    cw = int(p.get("width") or 0)
+    ch = int(p.get("height") or 0)
+    latent_src = ["12", 0]
+    if cw > 0 and ch > 0:
+        g["16"] = {"class_type": "EmptySD3LatentImage",
+                   "inputs": {"width": cw, "height": ch, "batch_size": 1}}
+        latent_src = ["16", 0]
     g["13"] = {"class_type": "KSampler",
                "inputs": {"model": ["5", 0], "seed": seed, "steps": steps, "cfg": cfg,
                           "sampler_name": "euler", "scheduler": "simple",
                           "positive": ["10", 0], "negative": ["11", 0],
-                          "latent_image": ["12", 0], "denoise": 1.0}}
+                          "latent_image": latent_src, "denoise": 1.0}}
     g["14"] = {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}}
     g["15"] = {"class_type": "SaveImage",
                "inputs": {"images": ["14", 0], "filename_prefix": "videogen/charstill"}}
-    return g, {"seed": seed, "steps": steps, "cfg": cfg, "prompt": prompt,
-               "refs": len(refs), "kind": "image"}
+    meta = {"seed": seed, "steps": steps, "cfg": cfg, "prompt": prompt,
+            "refs": len(refs), "kind": "image"}
+    if cw > 0 and ch > 0:
+        meta["width"], meta["height"] = cw, ch
+    return g, meta
 
 
 # --------------------------------- Wan VACE: reference-to-video (identity through motion)
