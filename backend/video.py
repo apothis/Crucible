@@ -384,26 +384,29 @@ def build_s2v(p, image_ref, audio_ref):
 def build_s2v_wrapper(p, image_ref, audio_ref):
     """Audio-driven lip-sync (Wan2.2-S2V) on the Kijai WanVideoWrapper with block-swap, which
     fits the 14B on a 24GB 3090 where the native nodes thrashed. image_ref/audio_ref = uploaded
-    names on ComfyUI. p: {prompt?, seed?, width?, height?, frames?, seconds?, window?, fps?,
-    steps?, cfg?, shift?, blocks_to_swap?, lora_strength?, audio_scale?}. frames/seconds = TOTAL
-    length (multi-window when > window); window = per-window size (~77-80, keep small for VRAM).
+    names on ComfyUI. p: {prompt?, seed?, width?, height?, frames?, seconds?, context_frames?,
+    context_overlap?, fps?, steps?, cfg?, shift?, blocks_to_swap?, lora_strength?, audio_scale?}.
+    frames/seconds = TOTAL length; past one window (context_frames, def 81) it adds a
+    WanVideoContextOptions node for seamless overlapping-window long-form (Kijai S2V reference).
     Output: SaveVideo -> videogen/s2v.
     Graph traced from the wrapper's own example workflow - settings are its proven defaults."""
     seed = _seed(p)
     w = int(p.get("width", 832))
     h = int(p.get("height", 480))
     fps = int(p.get("fps", 16))                        # S2V native frame rate
-    # frames = TOTAL output frames. The S2V sampler processes the audio in windows of
-    # `window` (frame_window_size) and chains them - the window count is derived from the audio
-    # length (WanVideoAddS2VEmbeds), so frames > window = a longer continuous lip-sync at bounded
-    # per-window VRAM, only more time. Default frames == window == 77 = single window (unchanged).
-    # Pass `seconds` for a friendly duration, or `frames` directly; `window` stays ~77-80.
+    # frames = TOTAL output frames (pass `seconds` for a friendly duration). For long-form we
+    # follow Kijai's own S2V context-window reference workflow: keep frame_window_size = total,
+    # and add a WanVideoContextOptions node (overlapping windows) into the sampler. The overlap
+    # is what makes the window transitions seamless. Default frames=77 (< ctx_frames) = a single
+    # clip, no context options = unchanged behavior.
     if p.get("seconds"):
         frames = int(round(float(p["seconds"]) * fps))
     else:
         frames = int(p.get("frames", 77))
     frames = max(5, ((frames - 1) // 4) * 4 + 1)       # Wan latents need 4n+1
-    window = max(5, min(int(p.get("window", 77)), frames))  # per-window size; cannot exceed total
+    ctx_frames = int(p.get("context_frames", 81))      # per-window size (reference: 81)
+    ctx_overlap = int(p.get("context_overlap", 16))    # window overlap for seamless joins (ref: 16)
+    long_form = frames > ctx_frames                    # context windowing only kicks in past one window
     steps = int(p.get("steps", 4))                     # lightx2v distill -> 4 steps
     cfg = float(p.get("cfg", 1.0))
     shift = float(p.get("shift", 4.0))
@@ -453,7 +456,7 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
         "14": {"class_type": "WanVideoEmptyEmbeds",
                "inputs": {"width": ["9", 1], "height": ["9", 2], "num_frames": frames}},
         "15": {"class_type": "WanVideoAddS2VEmbeds",
-               "inputs": {"embeds": ["14", 0], "frame_window_size": window,
+               "inputs": {"embeds": ["14", 0], "frame_window_size": frames,
                           "audio_scale": audio_scale, "pose_start_percent": 0.0,
                           "pose_end_percent": 1.0, "audio_encoder_output": ["13", 0],
                           "ref_latent": ["10", 0]}},
@@ -471,8 +474,18 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
                "inputs": {"video": ["18", 0], "filename_prefix": "videogen/s2v",
                           "format": "auto", "codec": "auto"}},
     }
-    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "window": window,
-               "fps": fps, "seconds": round(frames / fps, 2), "windows": -(-frames // window),
+    if long_form:
+        # Kijai S2V context-window long-form: overlapping windows for seamless joins. Only added
+        # past one window so the default single-clip graph is untouched.
+        g["20"] = {"class_type": "WanVideoContextOptions",
+                   "inputs": {"context_schedule": "uniform_standard", "context_frames": ctx_frames,
+                              "context_stride": 4, "context_overlap": ctx_overlap,
+                              "freenoise": True, "verbose": False, "fuse_method": "linear"}}
+        g["16"]["inputs"]["context_options"] = ["20", 0]
+    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+               "seconds": round(frames / fps, 2), "long_form": long_form,
+               "context_frames": ctx_frames if long_form else None,
+               "context_overlap": ctx_overlap if long_form else None,
                "steps": steps, "cfg": cfg, "shift": shift, "blocks_to_swap": blocks,
                "lora_strength": lstr, "prompt": prompt, "kind": "video"}
 
