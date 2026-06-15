@@ -801,6 +801,24 @@ def video_ltx_i2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/svi_i2v")
+def video_svi_i2v(p: dict):
+    """SVI2 Pro long-form Wan 2.2 A14B i2v: animate a library still into a long continuous clip
+    via chained 81-frame segments (two-expert, fp8). p: {still_id, prompt?, seconds?/frames?/
+    segments?, width?, height?, fps?, overlap?, seed?}."""
+    still = _lib_image_path(p.get("still_id"))
+    if not still:
+        raise HTTPException(400, "still_id must reference a generated still in the library")
+    try:
+        with open(still, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(still))
+        graph, resolved = video_mod.build_svi_i2v(p, ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["still_id"] = os.path.basename(p.get("still_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
 def _lib_video_path(vid):
     """Absolute path to a library video (clip or assembled music video) by id."""
     vid = os.path.basename(vid or "")

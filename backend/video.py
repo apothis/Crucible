@@ -684,3 +684,112 @@ def build_seedvr2_upscale(p, video_ref, fps):
     return g, {"seed": seed, "model": model, "resolution": resolution, "batch_size": batch,
                "color_correction": cc, "blocks_to_swap": blocks, "offload": offload,
                "tiled": tiled, "tile_size": tile, "fps": fps, "kind": "video"}
+
+
+# ------------------------------------------------ SVI2 Pro: long-form Wan 2.2 A14B i2v
+# Two-expert (high/low noise) Wan 2.2 i2v, 4-step lightx2v, extended to long video via the
+# Wan22FMLF SVI nodes: each 81-frame segment chains off the previous segment's latent (motion
+# continuity) and the decoded segments are overlap-blended into one clip. fp8 native, no GGUF.
+# Model/lora chains + sampler split mirror wallen0322's "SVI pro" reference workflow.
+SVI_I2V_HIGH = "wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step_comfyui_1030.safetensors"
+SVI_I2V_LOW = "wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step_comfyui.safetensors"
+SVI_LORA_HIGH = "SVI_v2_PRO_Wan2.2-I2V-A14B_HIGH_lora_rank_128_fp16.safetensors"
+SVI_LORA_LOW = "SVI_v2_PRO_Wan2.2-I2V-A14B_LOW_lora_rank_128_fp16.safetensors"
+SVI_LIGHTX_HIGH = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
+SVI_LIGHTX_LOW = "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+SVI_CLIP = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+SVI_VAE = "wan_2.1_vae.safetensors"
+SVI_SEG_FRAMES = 81          # frames per SVI segment (reference)
+SVI_OVERLAP = 5              # overlap-blend frames between segments (reference)
+
+
+def build_svi_i2v(p, image_ref):
+    """SVI2 Pro long-form Wan 2.2 A14B i2v from a keyframe still. Chains N 81-frame segments
+    (two-expert high/low, 4-step), each conditioned on the previous segment's latent, then
+    overlap-blends the decoded segments into one continuous clip. image_ref = uploaded still.
+    p: {prompt?, negative?, seed?, width?, height?, frames?/seconds?/segments?, fps?, overlap?}.
+    Output: SaveVideo -> videogen/svi.
+    DRAFT: node wiring mirrors the reference workflow; the WanAdvancedI2V continuity params
+    (offset/continue/middle-frame) are pending a live 2-segment test to confirm and tune."""
+    seed = _seed(p)
+    w = int(p.get("width", 832))
+    h = int(p.get("height", 480))
+    fps = int(p.get("fps", 16))
+    seg = SVI_SEG_FRAMES
+    ov = int(p.get("overlap", SVI_OVERLAP))
+    if p.get("segments"):
+        nseg = max(1, int(p["segments"]))
+    else:
+        total = int(round(float(p["seconds"]) * fps)) if p.get("seconds") else int(p.get("frames", seg))
+        nseg = max(1, 1 + -(-(max(seg, total) - seg) // (seg - ov)))   # ceil over (seg-overlap) steps
+    prompt = (p.get("prompt") or "").strip()
+    neg = p.get("negative")
+    neg = DEFAULT_NEG if neg is None else neg
+    g = {
+        # high-noise expert chain: base -> lightx2v(t2v high) -> SVI HIGH -> ModelSamplingSD3
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": SVI_I2V_HIGH, "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": SVI_LIGHTX_HIGH, "strength_model": 1.0}},
+        "3": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["2", 0], "lora_name": SVI_LORA_HIGH, "strength_model": 1.0}},
+        "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["3", 0], "shift": 5.0}},
+        # low-noise expert chain: base -> lightx2v(i2v low) -> SVI LOW -> ModelSamplingSD3
+        "5": {"class_type": "UNETLoader", "inputs": {"unet_name": SVI_I2V_LOW, "weight_dtype": "default"}},
+        "6": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["5", 0], "lora_name": SVI_LIGHTX_LOW, "strength_model": 1.0}},
+        "7": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["6", 0], "lora_name": SVI_LORA_LOW, "strength_model": 1.0}},
+        "8": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["7", 0], "shift": 5.0}},
+        "9": {"class_type": "CLIPLoader", "inputs": {"clip_name": SVI_CLIP, "type": "wan", "device": "default"}},
+        "10": {"class_type": "VAELoader", "inputs": {"vae_name": SVI_VAE}},
+        "11": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["9", 0], "text": prompt}},
+        "12": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["9", 0], "text": neg}},
+        "13": {"class_type": "LoadImage", "inputs": {"image": image_ref}},
+    }
+    prev_low = None          # previous segment's low-noise latent = motion continuity
+    decodes = []
+    nid = 20
+    for s in range(nseg):
+        adv, hi, lo, dec = str(nid), str(nid + 1), str(nid + 2), str(nid + 3)
+        adv_in = {"positive": ["11", 0], "negative": ["12", 0], "vae": ["10", 0],
+                  "width": w, "height": h, "length": seg, "batch_size": 1,
+                  "mode": "NORMAL", "long_video_mode": "SVI", "start_image": ["13", 0],
+                  "continue_frames_count": ov, "enable_middle_frame": False}
+        if prev_low is not None:
+            adv_in["prev_latent"] = prev_low
+        g[adv] = {"class_type": "WanAdvancedI2V", "inputs": adv_in}
+        # WanAdvancedI2V outs: 0 positive_high, 1 positive_low, 2 negative, 3 latent
+        g[hi] = {"class_type": "KSamplerAdvanced",
+                 "inputs": {"add_noise": "enable", "noise_seed": seed, "steps": 6, "cfg": 1.0,
+                            "sampler_name": "euler", "scheduler": "simple", "start_at_step": 0,
+                            "end_at_step": 3, "return_with_leftover_noise": "enable",
+                            "model": ["4", 0], "positive": [adv, 0], "negative": [adv, 2],
+                            "latent_image": [adv, 3]}}
+        g[lo] = {"class_type": "KSamplerAdvanced",
+                 "inputs": {"add_noise": "disable", "noise_seed": seed, "steps": 6, "cfg": 1.0,
+                            "sampler_name": "euler", "scheduler": "simple", "start_at_step": 3,
+                            "end_at_step": 10000, "return_with_leftover_noise": "disable",
+                            "model": ["8", 0], "positive": [adv, 1], "negative": [adv, 2],
+                            "latent_image": [hi, 0]}}
+        g[dec] = {"class_type": "VAEDecode", "inputs": {"samples": [lo, 0], "vae": ["10", 0]}}
+        prev_low = [lo, 0]
+        decodes.append(dec)
+        nid += 10
+    # overlap-blend the decoded segments (ImageBatchExtendWithOverlap, out2 = extended_images)
+    if len(decodes) == 1:
+        frames_out = [decodes[0], 0]
+    else:
+        stitch = None
+        sid = nid
+        for i in range(1, len(decodes)):
+            src = stitch if stitch else [decodes[0], 0]
+            g[str(sid)] = {"class_type": "ImageBatchExtendWithOverlap",
+                           "inputs": {"source_images": src, "new_images": [decodes[i], 0],
+                                      "overlap": ov, "overlap_side": "source", "overlap_mode": "linear_blend"}}
+            stitch = [str(sid), 2]
+            sid += 1
+        frames_out = stitch
+    g["900"] = {"class_type": "CreateVideo", "inputs": {"images": frames_out, "fps": fps}}
+    g["901"] = {"class_type": "SaveVideo",
+                "inputs": {"video": ["900", 0], "filename_prefix": "videogen/svi",
+                           "format": "auto", "codec": "auto"}}
+    total_frames = seg + (nseg - 1) * (seg - ov)
+    return g, {"seed": seed, "width": w, "height": h, "segments": nseg, "seg_frames": seg,
+               "overlap": ov, "frames": total_frames, "fps": fps,
+               "seconds": round(total_frames / fps, 2), "prompt": prompt, "kind": "video"}
