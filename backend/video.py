@@ -693,6 +693,10 @@ def build_seedvr2_upscale(p, video_ref, fps):
 # Model/lora chains + sampler split mirror wallen0322's "SVI pro" reference workflow.
 SVI_I2V_HIGH = "wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step_comfyui_1030.safetensors"
 SVI_I2V_LOW = "wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step_comfyui.safetensors"
+# Non-distilled bases (same 14B fp8 size, same VRAM) - motion is controllable (more steps + CFG)
+# so natural speed instead of the distilled models' slow-motion. model="full" selects these.
+SVI_I2V_FULL_HIGH = "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+SVI_I2V_FULL_LOW = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
 SVI_LORA_HIGH = "SVI_v2_PRO_Wan2.2-I2V-A14B_HIGH_lora_rank_128_fp16.safetensors"
 SVI_LORA_LOW = "SVI_v2_PRO_Wan2.2-I2V-A14B_LOW_lora_rank_128_fp16.safetensors"
 SVI_LIGHTX_HIGH = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
@@ -718,9 +722,16 @@ def build_svi_i2v(p, image_ref):
     fps = int(p.get("fps", 16))
     seg = SVI_SEG_FRAMES
     ov = int(p.get("overlap", SVI_OVERLAP))
-    steps = int(p.get("steps", 6))                     # total; split half high / half low
+    # model: "distilled" (4-step lightx baked, fast but slow-motion) or "full" (non-distilled,
+    # natural motion via more steps + CFG). Each picks its base files + sensible step/cfg/lightx
+    # defaults; all still overridable. "full" needs the non-distilled models on the box.
+    full = (p.get("model") or "distilled").lower() in ("full", "natural", "nondistilled", "non-distilled")
+    hi_model = SVI_I2V_FULL_HIGH if full else SVI_I2V_HIGH
+    lo_model = SVI_I2V_FULL_LOW if full else SVI_I2V_LOW
+    steps = int(p.get("steps", 20 if full else 6))     # total; split half high / half low
     split = max(1, steps // 2)
-    lightx = float(p.get("lightx_strength", 1.0))      # lower (+more steps) restores motion (anti slow-mo)
+    cfg = float(p.get("cfg", 3.5 if full else 1.0))    # distilled needs cfg 1; full uses real CFG
+    lightx = float(p.get("lightx_strength", 0.0 if full else 1.0))  # full: no speed-LoRA (natural motion)
     continue_frames = int(p.get("continue_frames", 1)) # latent continuity frames (reference: 1)
     seg_offset = int(p.get("segment_offset", 4))       # video_frame_offset for segments after the first
     if p.get("segments"):
@@ -742,12 +753,12 @@ def build_svi_i2v(p, image_ref):
     neg = DEFAULT_NEG if neg is None else neg
     g = {
         # high-noise expert chain: base -> lightx2v(t2v high) -> SVI HIGH -> ModelSamplingSD3
-        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": SVI_I2V_HIGH, "weight_dtype": "default"}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": hi_model, "weight_dtype": "default"}},
         "2": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": SVI_LIGHTX_HIGH, "strength_model": lightx}},
         "3": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["2", 0], "lora_name": SVI_LORA_HIGH, "strength_model": 1.0}},
         "4": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["3", 0], "shift": 5.0}},
         # low-noise expert chain: base -> lightx2v(i2v low) -> SVI LOW -> ModelSamplingSD3
-        "5": {"class_type": "UNETLoader", "inputs": {"unet_name": SVI_I2V_LOW, "weight_dtype": "default"}},
+        "5": {"class_type": "UNETLoader", "inputs": {"unet_name": lo_model, "weight_dtype": "default"}},
         "6": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["5", 0], "lora_name": SVI_LIGHTX_LOW, "strength_model": lightx}},
         "7": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["6", 0], "lora_name": SVI_LORA_LOW, "strength_model": 1.0}},
         "8": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["7", 0], "shift": 5.0}},
@@ -778,13 +789,13 @@ def build_svi_i2v(p, image_ref):
         g[adv] = {"class_type": "WanAdvancedI2V", "inputs": adv_in}
         # WanAdvancedI2V outs: 0 positive_high, 1 positive_low, 2 negative, 3 latent
         g[hi] = {"class_type": "KSamplerAdvanced",
-                 "inputs": {"add_noise": "enable", "noise_seed": seed, "steps": steps, "cfg": 1.0,
+                 "inputs": {"add_noise": "enable", "noise_seed": seed, "steps": steps, "cfg": cfg,
                             "sampler_name": "euler", "scheduler": "simple", "start_at_step": 0,
                             "end_at_step": split, "return_with_leftover_noise": "enable",
                             "model": ["4", 0], "positive": [adv, 0], "negative": [adv, 2],
                             "latent_image": [adv, 3]}}
         g[lo] = {"class_type": "KSamplerAdvanced",
-                 "inputs": {"add_noise": "disable", "noise_seed": seed, "steps": steps, "cfg": 1.0,
+                 "inputs": {"add_noise": "disable", "noise_seed": seed, "steps": steps, "cfg": cfg,
                             "sampler_name": "euler", "scheduler": "simple", "start_at_step": split,
                             "end_at_step": 10000, "return_with_leftover_noise": "disable",
                             "model": ["8", 0], "positive": [adv, 1], "negative": [adv, 2],
@@ -816,5 +827,6 @@ def build_svi_i2v(p, image_ref):
                "overlap": ov, "frames": total_frames, "fps": fps,
                "seconds": round(total_frames / fps, 2), "prompt": prompt,
                "segment_prompts": len(seg_prompts) if len(seg_prompts) > 1 else 1,
-               "steps": steps, "lightx_strength": lightx, "continue_frames": continue_frames,
+               "model": "full" if full else "distilled", "steps": steps, "cfg": cfg,
+               "lightx_strength": lightx, "continue_frames": continue_frames,
                "segment_offset": seg_offset, "kind": "video"}
