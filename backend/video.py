@@ -707,8 +707,9 @@ def build_svi_i2v(p, image_ref):
     """SVI2 Pro long-form Wan 2.2 A14B i2v from a keyframe still. Chains N 81-frame segments
     (two-expert high/low, 4-step), each conditioned on the previous segment's latent, then
     overlap-blends the decoded segments into one continuous clip. image_ref = uploaded still.
-    p: {prompt?, negative?, seed?, width?, height?, frames?/seconds?/segments?, fps?, overlap?}.
-    Output: SaveVideo -> videogen/svi.
+    p: {prompt?, prompts? (list, one per segment - evolve the motion, keep identity constant),
+    negative?, seed? (varied +1 per segment), width?, height?, frames?/seconds?/segments?, fps?,
+    overlap?}. Output: SaveVideo -> videogen/svi.
     DRAFT: node wiring mirrors the reference workflow; the WanAdvancedI2V continuity params
     (offset/continue/middle-frame) are pending a live 2-segment test to confirm and tune."""
     seed = _seed(p)
@@ -723,6 +724,15 @@ def build_svi_i2v(p, image_ref):
         total = int(round(float(p["seconds"]) * fps)) if p.get("seconds") else int(p.get("frames", seg))
         nseg = max(1, 1 + -(-(max(seg, total) - seg) // (seg - ov)))   # ceil over (seg-overlap) steps
     prompt = (p.get("prompt") or "").strip()
+    # Per-segment prompts: pass `prompts` (list) to evolve the motion across the clip - each
+    # segment gets its own CLIPTextEncode. Keep the subject identity verbatim-constant across
+    # them (only change motion/camera) to avoid drift. Falls back to the single `prompt` for any
+    # uncovered segment, and for all segments if no list is given.
+    _pl = p.get("prompts")
+    if isinstance(_pl, list) and any((x or "").strip() for x in _pl):
+        seg_prompts = [(x or "").strip() or prompt for x in _pl]
+    else:
+        seg_prompts = [prompt]
     neg = p.get("negative")
     neg = DEFAULT_NEG if neg is None else neg
     g = {
@@ -738,7 +748,7 @@ def build_svi_i2v(p, image_ref):
         "8": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["7", 0], "shift": 5.0}},
         "9": {"class_type": "CLIPLoader", "inputs": {"clip_name": SVI_CLIP, "type": "wan", "device": "default"}},
         "10": {"class_type": "VAELoader", "inputs": {"vae_name": SVI_VAE}},
-        "11": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["9", 0], "text": prompt}},
+        # positive prompt(s) are per-segment (created in the loop); 12 = shared negative
         "12": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["9", 0], "text": neg}},
         "13": {"class_type": "LoadImage", "inputs": {"image": image_ref}},
     }
@@ -747,7 +757,11 @@ def build_svi_i2v(p, image_ref):
     nid = 20
     for s in range(nseg):
         adv, hi, lo, dec = str(nid), str(nid + 1), str(nid + 2), str(nid + 3)
-        adv_in = {"positive": ["11", 0], "negative": ["12", 0], "vae": ["10", 0],
+        pos = str(nid + 4)                                   # this segment's positive encode
+        seg_seed = seed + s                                  # different seed per segment (no repetition)
+        seg_prompt = seg_prompts[min(s, len(seg_prompts) - 1)]   # clamp to last if fewer than segments
+        g[pos] = {"class_type": "CLIPTextEncode", "inputs": {"clip": ["9", 0], "text": seg_prompt}}
+        adv_in = {"positive": [pos, 0], "negative": ["12", 0], "vae": ["10", 0],
                   "width": w, "height": h, "length": seg, "batch_size": 1,
                   "mode": "NORMAL", "long_video_mode": "SVI", "start_image": ["13", 0],
                   "continue_frames_count": ov, "enable_middle_frame": False}
@@ -756,13 +770,13 @@ def build_svi_i2v(p, image_ref):
         g[adv] = {"class_type": "WanAdvancedI2V", "inputs": adv_in}
         # WanAdvancedI2V outs: 0 positive_high, 1 positive_low, 2 negative, 3 latent
         g[hi] = {"class_type": "KSamplerAdvanced",
-                 "inputs": {"add_noise": "enable", "noise_seed": seed, "steps": 6, "cfg": 1.0,
+                 "inputs": {"add_noise": "enable", "noise_seed": seg_seed, "steps": 6, "cfg": 1.0,
                             "sampler_name": "euler", "scheduler": "simple", "start_at_step": 0,
                             "end_at_step": 3, "return_with_leftover_noise": "enable",
                             "model": ["4", 0], "positive": [adv, 0], "negative": [adv, 2],
                             "latent_image": [adv, 3]}}
         g[lo] = {"class_type": "KSamplerAdvanced",
-                 "inputs": {"add_noise": "disable", "noise_seed": seed, "steps": 6, "cfg": 1.0,
+                 "inputs": {"add_noise": "disable", "noise_seed": seg_seed, "steps": 6, "cfg": 1.0,
                             "sampler_name": "euler", "scheduler": "simple", "start_at_step": 3,
                             "end_at_step": 10000, "return_with_leftover_noise": "disable",
                             "model": ["8", 0], "positive": [adv, 1], "negative": [adv, 2],
@@ -792,4 +806,6 @@ def build_svi_i2v(p, image_ref):
     total_frames = seg + (nseg - 1) * (seg - ov)
     return g, {"seed": seed, "width": w, "height": h, "segments": nseg, "seg_frames": seg,
                "overlap": ov, "frames": total_frames, "fps": fps,
-               "seconds": round(total_frames / fps, 2), "prompt": prompt, "kind": "video"}
+               "seconds": round(total_frames / fps, 2), "prompt": prompt,
+               "segment_prompts": len(seg_prompts) if len(seg_prompts) > 1 else 1,
+               "per_segment_seed": True, "kind": "video"}
