@@ -29,6 +29,13 @@ WAN21_VAE = "wan_2.1_vae.safetensors"                 # 14B / S2V VAE
 
 WAN_S2V = "wan2.2_s2v_14B_fp8_scaled.safetensors"
 WAV2VEC = "wav2vec2_large_english_fp16.safetensors"
+
+# SeedVR2 (numz/ComfyUI-SeedVR2_VideoUpscaler) diffusion video upscaler. Models auto-download
+# on first use into models/SEEDVR2 (no HF token). 3B fp16 fits 24GB with offload none; the 7B
+# variants want block-swap. attention sdpa (Ampere has no fp8/flash3; sage stays off per our
+# fp8 rule). batch_size MUST be 4n+1 (1,5,9...): larger = better temporal consistency + VRAM.
+SEEDVR2_DIT_DEFAULT = "seedvr2_ema_3b_fp16.safetensors"
+SEEDVR2_VAE = "ema_vae_fp16.safetensors"
 # lightx2v 4-step distillation LoRA (the official S2V template applies the t2v high-noise
 # one to the single S2V model): cuts 20 steps -> 4 and CFG 6 -> 1 (~10x fewer DiT evals).
 WAN_LIGHTX_HIGH = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors"
@@ -590,3 +597,46 @@ def build_ltx_lipsync(p, image_ref, audio_ref):
     model). image_ref/audio_ref = uploaded names on ComfyUI. p as build_ltx_i2v plus
     {lips_expression?, inference_steps?}. Output: SaveVideo -> videogen/ltx."""
     return _build_ltx(p, image_ref=image_ref, lipsync_audio=audio_ref)
+
+
+# ------------------------------------------------ SeedVR2 video upscale (post-process)
+def build_seedvr2_upscale(p, video_ref, fps):
+    """Upscale a finished clip/video with SeedVR2 (diffusion video upscaler, temporal-aware).
+    video_ref = uploaded video name on ComfyUI; fps = source fps (probed by the caller so the
+    output timing matches). p: {model?, resolution?, batch_size?, color_correction?,
+    blocks_to_swap?, offload?, frame_cap?, seed?}. resolution = target SHORT side (e.g. 1080 ->
+    1920x1080 for 16:9). Output: SaveVideo -> videogen/upscale (keeps the source audio)."""
+    seed = _seed(p)
+    model = p.get("model") or SEEDVR2_DIT_DEFAULT
+    resolution = int(p.get("resolution", 1080))            # target short side
+    batch = int(p.get("batch_size", 5))
+    if (batch - 1) % 4 != 0:                               # SeedVR2 requires 4n+1
+        batch = 5
+    cc = p.get("color_correction") or "wavelet"           # match upscaled colors to the source
+    blocks = int(p.get("blocks_to_swap", 0))              # raise if the DiT OOMs (esp. 7B)
+    offload = p.get("offload") or "none"                  # DiT offload; "none" fits 3B on 24GB
+    cap = int(p.get("frame_cap", 0))                      # 0 = all frames
+    g = {
+        "1": {"class_type": "VHS_LoadVideo",
+              "inputs": {"video": video_ref, "force_rate": 0.0, "custom_width": 0,
+                         "custom_height": 0, "frame_load_cap": cap, "skip_first_frames": 0,
+                         "select_every_nth": 1}},
+        "2": {"class_type": "SeedVR2LoadDiTModel",
+              "inputs": {"model": model, "device": "cuda:0", "blocks_to_swap": blocks,
+                         "offload_device": offload, "attention_mode": "sdpa"}},
+        "3": {"class_type": "SeedVR2LoadVAEModel",
+              "inputs": {"model": SEEDVR2_VAE, "device": "cuda:0"}},
+        "4": {"class_type": "SeedVR2VideoUpscaler",
+              "inputs": {"image": ["1", 0], "dit": ["2", 0], "vae": ["3", 0], "seed": seed,
+                         "resolution": resolution, "max_resolution": 0, "batch_size": batch,
+                         "uniform_batch_size": False, "color_correction": cc,
+                         "offload_device": "cpu"}},
+        # frame_count=[1,1], audio=[1,2], video_info=[1,3] are the other VHS_LoadVideo outputs.
+        "5": {"class_type": "CreateVideo",
+              "inputs": {"images": ["4", 0], "fps": float(fps), "audio": ["1", 2]}},
+        "6": {"class_type": "SaveVideo",
+              "inputs": {"video": ["5", 0], "filename_prefix": "videogen/upscale",
+                         "format": "auto", "codec": "auto"}},
+    }
+    return g, {"seed": seed, "model": model, "resolution": resolution, "batch_size": batch,
+               "color_correction": cc, "blocks_to_swap": blocks, "fps": fps, "kind": "video"}

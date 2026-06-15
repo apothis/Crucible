@@ -801,6 +801,46 @@ def video_ltx_i2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+def _lib_video_path(vid):
+    """Absolute path to a library video (clip or assembled music video) by id."""
+    vid = os.path.basename(vid or "")
+    path = os.path.join(LIBRARY, f"{vid}.mp4")
+    return path if vid and os.path.exists(path) else None
+
+
+def _probe_fps(path, default=24.0):
+    """Source video fps (so the upscaled output keeps the same timing)."""
+    import subprocess
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                              "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=15).stdout.strip()
+        num, den = (out.split("/") + ["1"])[:2] if "/" in out else (out, "1")
+        return round(float(num) / float(den), 3) if float(den) else default
+    except Exception:
+        return default
+
+
+@app.post("/api/video/upscale")
+def video_upscale(p: dict):
+    """SeedVR2 diffusion upscale of a finished library clip/video (temporal-aware). p:
+    {video_id, resolution? (target short side, default 1080), model?, batch_size? (4n+1),
+    color_correction?, blocks_to_swap?, offload?, frame_cap?, seed?}. First run auto-downloads
+    the SeedVR2 model into models/SEEDVR2."""
+    vid = _lib_video_path(p.get("video_id"))
+    if not vid:
+        raise HTTPException(400, "video_id must reference a generated clip/video in the library")
+    fps = _probe_fps(vid)
+    try:
+        with open(vid, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(vid))
+        graph, resolved = video_mod.build_seedvr2_upscale(p, ref, fps)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["video_id"] = os.path.basename(p.get("video_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/ltx_lipsync")
 def video_ltx_lipsync(p: dict):
     """LTX-2.3 i2v + LatentSync lip-sync: animate a keyframe still, then sync its mouth to a
