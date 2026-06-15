@@ -19,12 +19,37 @@ def _ffmpeg():
     return shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 
 
-def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24):
+# Color-grade "looks": ffmpeg filter chains applied identically to every segment at assemble
+# time. One grade across all clips is what unifies the separately-generated shots into a single
+# consistent feel. GPU-free; opt-in (default "none"). Add LUT-based looks later via lut3d.
+GRADES = {
+    "none": "",
+    "cold_gothic": ("eq=saturation=0.72:contrast=1.12,"
+                    "curves=all='0/0 0.25/0.18 1/0.96',colorbalance=rs=-0.05:bs=0.07:bm=0.05"),
+    "teal_orange": ("colorbalance=rs=-0.08:bs=0.08:rh=0.10:bh=-0.08,"
+                    "eq=contrast=1.10:saturation=1.06"),
+    "warm_film": ("colortemperature=temperature=8200,curves=all='0/0.06 1/0.97',"
+                  "eq=saturation=0.92:contrast=1.05"),
+    "noir": ("eq=saturation=0.12:contrast=1.35:brightness=-0.02,"
+             "curves=all='0/0 0.2/0.12 0.8/0.9 1/1'"),
+    "bleach_bypass": "eq=saturation=0.42:contrast=1.34:brightness=0.03,curves=all='0/0.02 1/0.98'",
+    "vibrant": "eq=saturation=1.18:contrast=1.08,vibrance=intensity=0.25",
+}
+
+
+def grade_names():
+    """The available grade looks, 'none' first (for the UI picker)."""
+    return ["none"] + [k for k in GRADES if k != "none"]
+
+
+def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, grade="none"):
     """Stitch shot clips into one MP4 (GPU-free, ffmpeg). segments = [{path, dur}]: each clip
     is scaled+padded to width x height, set to a common fps, and fitted to exactly `dur`
     seconds (long clips trimmed; short clips hold their last frame). Concatenated in order,
-    then the full song audio is muxed over the result (replacing per-clip audio)."""
+    then the full song audio is muxed over the result (replacing per-clip audio). `grade` =
+    a key in GRADES, applied identically to every segment for a consistent look."""
     ff = _ffmpeg()
+    grade_chain = GRADES.get(grade or "none", "")
     work = tempfile.mkdtemp(prefix="mvasm_")
     try:
         norm = []
@@ -33,6 +58,8 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24):
             vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                   f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},"
                   f"tpad=stop_mode=clone:stop_duration=3600")
+            if grade_chain:
+                vf += "," + grade_chain
             subprocess.run([ff, "-y", "-loglevel", "error", "-i", seg["path"], "-vf", vf,
                             "-t", f"{max(0.1, seg['dur']):.3f}", "-an", "-c:v", "libx264",
                             "-pix_fmt", "yuv420p", "-r", str(fps), o], check=True)

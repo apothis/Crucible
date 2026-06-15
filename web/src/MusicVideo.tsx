@@ -40,9 +40,12 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   const [libChars, setLibChars] = useState<Character[]>([]);       // global character library
   const [loras, setLoras] = useState<string[]>([]);
   const [gen, setGen] = useState(false);
+  const [grade, setGrade] = d.use<string>("grade", "none");        // color-grade look for assembly
+  const [grades, setGrades] = useState<string[]>(["none"]);        // available looks (from backend)
 
   useEffect(() => { api.projects().then(setProjects).catch(() => {}); }, []);
   useEffect(() => { api.videoLoras().then((r) => setLoras(r as string[])).catch(() => {}); }, []);
+  useEffect(() => { api.mvGrades().then((r) => setGrades((r as { grades: string[] }).grades)).catch(() => {}); }, []);
   const reloadChars = () => api.characters().then((r) => setLibChars(r as Character[])).catch(() => {});
   useEffect(() => { reloadChars(); }, []);
 
@@ -119,7 +122,7 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     const card = { id: rid(), title: `assembling ${ready.length} shots...`, status: "running" as const, pct: 30 };
     ctx.setResults([card]);
     try {
-      const r = await api.mvAssemble({ shots: ready.map((s) => ({ clip_id: s.clipId, start: s.start, end: s.end })), audio_id: audioId, title: projects.find((p) => p.id === projectId)?.name || "music video" }) as { media_url: string };
+      const r = await api.mvAssemble({ shots: ready.map((s) => ({ clip_id: s.clipId, start: s.start, end: s.end })), audio_id: audioId, grade, title: projects.find((p) => p.id === projectId)?.name || "music video" }) as { media_url: string };
       ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
       ctx.onDone();
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -329,6 +332,12 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
             <PrimaryButton onClick={assemble} disabled={busy || shots.filter((s) => s.clipId).length === 0}>
               {`Assemble video (${shots.filter((s) => s.clipId).length}/${shots.length} shots rendered)`}
             </PrimaryButton>
+            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Color-grade look applied to every shot for a consistent feel (GPU-free)">
+              Grade
+              <select className={inp} style={{ width: "auto" }} value={grade} onChange={(e) => setGrade(e.target.value)}>
+                {grades.map((g) => <option key={g} value={g}>{g.replace(/_/g, " ")}</option>)}
+              </select>
+            </label>
           </div>
           <p className="text-[10px] text-[var(--color-muted)]">Edit any shot's timing, type, scene, motion, or characters; add/delete/reorder freely. Save to project to keep edits (and to let me inject or revise shots). Assemble stitches the rendered clips, fitted to their timings, with the song.</p>
         </div>

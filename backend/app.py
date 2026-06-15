@@ -879,6 +879,12 @@ def mv_script(body: dict):
             "duration": sum(int(s.get("seconds") or 0) for s in song.get("sections", []))}
 
 
+@app.get("/api/mv/grades")
+def mv_grades():
+    """Color-grade looks available for assembly (the Music Video tab picker)."""
+    return {"grades": musicvideo_mod.grade_names()}
+
+
 @app.post("/api/mv/assemble")
 def mv_assemble(body: dict):
     """Stitch generated shot clips into one MP4 + the song audio (GPU-free, ffmpeg on the
@@ -893,13 +899,14 @@ def mv_assemble(body: dict):
     if not segs:
         raise HTTPException(400, "no rendered shot clips found - generate the shots first")
     audio = _lib_source_path(body.get("audio_id"))
+    grade = str(body.get("grade") or "none")
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:
-        musicvideo_mod.assemble(segs, audio, out)
+        musicvideo_mod.assemble(segs, audio, out, grade=grade)
     except Exception as e:
         raise HTTPException(500, f"assembly failed: {e}")
-    save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video")}, out)
+    save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
 
 

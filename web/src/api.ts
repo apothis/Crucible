@@ -52,6 +52,7 @@ export const api = {
   videoLtxT2V: (p: unknown) => jpost("/api/video/ltx_t2v", p),
   videoLoras: () => jget("/api/video/loras"),
   mvScript: (p: unknown) => jpost("/api/mv/script", p),
+  mvGrades: () => jget("/api/mv/grades"),
   mvAssemble: (p: unknown) => jpost("/api/mv/assemble", p),
   projectVideoGet: (id: string) => jget(`/api/projects/${id}/video`),
   projectVideoSave: (id: string, body: unknown) => jpost(`/api/projects/${id}/video`, body),
