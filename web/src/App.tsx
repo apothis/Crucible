@@ -10,6 +10,7 @@ import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
 import { DraftProvider, useDraftCtx } from "./drafts";
+import { Lightbox, openLightbox } from "./Lightbox";
 import type { Result, RunCtx } from "./ui";
 
 const MODES = [
@@ -52,6 +53,7 @@ export default function App() {
   return (
     <DraftProvider>
       <AppInner />
+      <Lightbox />
     </DraftProvider>
   );
 }
@@ -380,7 +382,7 @@ function ResultCard({ r }: { r: Result }) {
         <span className="text-[10px] text-[var(--color-muted)]">{r.status}</span>
       </div>
       {r.status === "done" && r.url && r.media === "image" ? (
-        <img src={r.url} alt="" className="w-full rounded-lg" />
+        <img src={r.url} alt="" onClick={() => openLightbox(r.url!)} title="Click to enlarge" className="w-full cursor-zoom-in rounded-lg" />
       ) : r.status === "done" && r.url && r.media === "video" ? (
         <video src={r.url} controls loop className="w-full rounded-lg" />
       ) : r.status === "done" && r.url ? (
@@ -524,7 +526,7 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
           </div>
         )}
         {it.media_url && it.mode === "videostill"
-          ? <img src={it.media_url} alt="" className="w-full rounded-lg" />
+          ? <img src={it.media_url} alt="" onClick={() => openLightbox(it.media_url!)} title="Click to enlarge" className="w-full cursor-zoom-in rounded-lg" />
           : it.media_url
           ? <video src={it.media_url} controls loop className="w-full rounded-lg" />
           : <audio className="h-8 w-full" controls src={it.audio_url} />}

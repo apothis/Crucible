@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { api, trackLabel, type Config, type Genre, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, Slider, pollJob, waitJob, runSync, rid, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
+import { openLightbox } from "./Lightbox";
 import { SONG_TEMPLATES, type Preset, type SongTemplate } from "./presets";
 import { RegionSelector } from "./RegionSelector";
 import { LoraPicker, loraBody, type LoraSel } from "./LoraPicker";
@@ -2210,7 +2211,7 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
       </div>
 
       {selStill && (tab === "animate" || tab === "lipsync") && (
-        <img src={selStill.media_url!} alt="" className="max-h-48 rounded-lg border border-[var(--color-line)]" />
+        <img src={selStill.media_url!} alt="" onClick={() => openLightbox(selStill.media_url!)} title="Click to enlarge" className="max-h-48 cursor-zoom-in rounded-lg border border-[var(--color-line)]" />
       )}
 
       {tab === "still" && (
