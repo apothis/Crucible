@@ -613,8 +613,16 @@ def build_seedvr2_upscale(p, video_ref, fps):
     if (batch - 1) % 4 != 0:                               # SeedVR2 requires 4n+1
         batch = 5
     cc = p.get("color_correction") or "wavelet"           # match upscaled colors to the source
-    blocks = int(p.get("blocks_to_swap", 0))              # raise if the DiT OOMs (esp. 7B)
-    offload = p.get("offload") or "none"                  # DiT offload; "none" fits 3B on 24GB
+    blocks = int(p.get("blocks_to_swap", 0))              # raise if the DiT OOMs in diffusion (7B/4K)
+    # DiT offload to CPU after diffusion so the ~7GB model is NOT resident during VAE decode.
+    # "none" left it on-GPU and the decode phase fragmented/OOM'd on a 24GB card (it self-healed
+    # via empty_cache per batch, but slowly). cpu = clean headroom for decode.
+    offload = p.get("offload") or "cpu"
+    # Tile BOTH VAE encode and decode. SeedVR2 resizes the input UP to the target resolution
+    # before VAE-encoding it, so at 4K the encode is a 3744x2160 block that OOMs the GroupNorm
+    # concat. Both phases are off-by-default in the node; we default them ON (mandatory at 2K/4K).
+    tiled = bool(p.get("tiled", True))
+    tile = int(p.get("tile_size", 1024))
     cap = int(p.get("frame_cap", 0))                      # 0 = all frames
     g = {
         "1": {"class_type": "VHS_LoadVideo",
@@ -625,7 +633,11 @@ def build_seedvr2_upscale(p, video_ref, fps):
               "inputs": {"model": model, "device": "cuda:0", "blocks_to_swap": blocks,
                          "offload_device": offload, "attention_mode": "sdpa"}},
         "3": {"class_type": "SeedVR2LoadVAEModel",
-              "inputs": {"model": SEEDVR2_VAE, "device": "cuda:0"}},
+              "inputs": {"model": SEEDVR2_VAE, "device": "cuda:0",
+                         "encode_tiled": tiled, "encode_tile_size": tile,
+                         "encode_tile_overlap": 128,
+                         "decode_tiled": tiled, "decode_tile_size": tile,
+                         "decode_tile_overlap": 128}},
         "4": {"class_type": "SeedVR2VideoUpscaler",
               "inputs": {"image": ["1", 0], "dit": ["2", 0], "vae": ["3", 0], "seed": seed,
                          "resolution": resolution, "max_resolution": 0, "batch_size": batch,
@@ -639,4 +651,5 @@ def build_seedvr2_upscale(p, video_ref, fps):
                          "format": "auto", "codec": "auto"}},
     }
     return g, {"seed": seed, "model": model, "resolution": resolution, "batch_size": batch,
-               "color_correction": cc, "blocks_to_swap": blocks, "fps": fps, "kind": "video"}
+               "color_correction": cc, "blocks_to_swap": blocks, "offload": offload,
+               "tiled": tiled, "tile_size": tile, "fps": fps, "kind": "video"}
