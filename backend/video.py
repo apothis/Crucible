@@ -609,10 +609,11 @@ def build_seedvr2_upscale(p, video_ref, fps):
     seed = _seed(p)
     model = p.get("model") or SEEDVR2_DIT_DEFAULT
     resolution = int(p.get("resolution", 1440))            # target short side; 1440 = 2x from 720p
-    # 4K is much heavier (4K/batch5 peaked ~20.8GB on the 3090) so keep the batch small there;
-    # at <=1440 there is VRAM headroom, so default a bigger batch for better temporal coherence.
-    # batch_size MUST be 4n+1. Caller can override either.
-    default_batch = 5 if resolution >= 2000 else 13
+    # batch_size MUST be 4n+1 (5, 9, 13, ...). 4K is much heavier (4K/batch5 peaked ~20.8GB) so
+    # keep it small there. At 1440, batch 13 rode the ceiling (~23.7GB, held only by aggressive
+    # offload) - so default 9 for a ~2-3GB margin on the longer clips, still better coherence
+    # than 5. Caller can override either.
+    default_batch = 5 if resolution >= 2000 else 9
     batch = int(p.get("batch_size", default_batch))
     if (batch - 1) % 4 != 0:                               # SeedVR2 requires 4n+1
         batch = default_batch
