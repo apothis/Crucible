@@ -46,7 +46,10 @@ LIGHTX2V_V2 = "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors
 
 # Qwen-Image-Edit-2511 (GGUF) - reference-driven character consistency, no training.
 # Files from download_video_models2.py. GGUF UNET loads via UnetLoaderGGUF (ComfyUI-GGUF).
-QWEN_EDIT_GGUF = "qwen-image-edit-2511-Q6_K.gguf"
+QWEN_EDIT_GGUF = "qwen-image-edit-2511-Q6_K.gguf"        # legacy GGUF (UnetLoaderGGUF)
+# fp8 migration (same rationale as LTX above): clean-unloading scaled fp8 safetensors via
+# UNETLoader weight_dtype "default". Keeps the CLIPLoader + VAELoader + edit wiring unchanged.
+QWEN_EDIT_FP8 = "qwen_image_edit_2511_fp8mixed.safetensors"  # UNETLoader
 QWEN_CLIP = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
 QWEN_VAE = "qwen_image_vae.safetensors"
 
@@ -67,7 +70,13 @@ WAN_VACE_GGUF = "Wan2.1_14B_VACE-Q6_K.gguf"
 LTX_UNET_TMPL = "ltx-2.3-22b-dev-{quant}.gguf"       # UnetLoaderGGUF
 LTX_QUANT_DEFAULT = "Q8_0"
 LTX_QUANTS = ("Q4_K_S", "Q5_K_S", "Q6_K", "Q8_0")
-LTX_UNET_GGUF = LTX_UNET_TMPL.format(quant=LTX_QUANT_DEFAULT)  # default file
+LTX_UNET_GGUF = LTX_UNET_TMPL.format(quant=LTX_QUANT_DEFAULT)  # default GGUF file (legacy)
+# fp8 migration: clean-unloading scaled fp8 safetensors (no GGUF unpatch segfault, no RAM
+# residue leak that thrashed the next model on a switch). Transformer-only: keeps the gemma
+# DualCLIP + the two VAELoaderKJ VAEs + distill/detailer LoRAs below. Loads via UNETLoader
+# weight_dtype "default" (storage-only fp8, dequant to bf16 in compute; matches our working
+# fp8 S2V pattern). NOT _fast: the 3090/Ampere has no fp8 matmul, _fast would mis-engage it.
+LTX_UNET_FP8 = "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors"  # UNETLoader
 LTX_CLIP1 = "gemma_3_12B_it_fp4_mixed.safetensors"   # DualCLIPLoader clip_name1
 LTX_CLIP2 = "ltx-2.3_text_projection_bf16.safetensors"  # clip_name2; type "ltxv"
 LTX_VAE_VIDEO = "LTX23_video_vae_bf16.safetensors"   # VAELoaderKJ main_device/bf16
@@ -161,7 +170,8 @@ def build_qwen_char_still(p, ref_images):
     if not refs:
         raise ValueError("at least one reference image is required")
     g = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": QWEN_EDIT_GGUF}},
+        "1": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": QWEN_EDIT_FP8, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader",
               "inputs": {"clip_name": QWEN_CLIP, "type": "qwen_image", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": QWEN_VAE}},
@@ -454,13 +464,13 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
     img_strength = float(p.get("img_strength", 0.7))   # keyframe imprint strength (i2v)
     lips_expr = float(p.get("lips_expression", 1.5))   # LatentSync lip-movement intensity 1.0-3.0
     lip_steps = int(p.get("inference_steps", 20))      # LatentSync denoise steps
-    quant = (p.get("quant") or LTX_QUANT_DEFAULT).strip()
-    if quant not in LTX_QUANTS:
-        quant = LTX_QUANT_DEFAULT
-    unet = LTX_UNET_TMPL.format(quant=quant)
+    quant = (p.get("quant") or LTX_QUANT_DEFAULT).strip()  # accepted for back-compat; fp8 is a
+    if quant not in LTX_QUANTS:                            # single file so quant no longer selects
+        quant = LTX_QUANT_DEFAULT                          # a model (kept only to not break callers)
     prompt = (p.get("prompt") or "").strip()
     g = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}},
+        "1": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
         "2": {"class_type": "LoraLoaderModelOnly",
               "inputs": {"model": ["1", 0], "lora_name": LTX_LORA_DISTILL,
                          "strength_model": distill}},
@@ -534,7 +544,7 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
         g["19"]["inputs"]["images"] = ["41", 0]         # save the lip-synced frames...
         g["19"]["inputs"]["audio"] = ["40", 0]          # ...carrying the vocal (not LTX native audio)
     resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
-                "seconds": secs, "cfg": cfg, "quant": quant, "distill_strength": distill,
+                "seconds": secs, "cfg": cfg, "quant": "fp8", "distill_strength": distill,
                 "detailer_strength": detailer, "prompt": prompt, "kind": "video"}
     if image_ref is not None:
         resolved["img_strength"] = img_strength
