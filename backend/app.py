@@ -819,6 +819,25 @@ def video_svi_i2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/retime")
+def video_retime(p: dict):
+    """Speed up/down a finished library clip (GPU-free ffmpeg) - the fix for uniform slow-motion
+    (e.g. distilled SVI output). p: {video_id, speed (>1 = faster, default 1.7), fps?}."""
+    vid = _lib_video_path(p.get("video_id"))
+    if not vid:
+        raise HTTPException(400, "video_id must reference a generated clip in the library")
+    speed = max(0.1, float(p.get("speed") or 1.7))
+    fps = int(p.get("fps") or 24)
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.mp4")
+    try:
+        musicvideo_mod.retime(vid, out, speed, fps)
+    except Exception as e:
+        raise HTTPException(500, f"retime failed: {e}")
+    save_done_row(jid, "videoclip", {"source": os.path.basename(p.get("video_id")), "speed": speed}, out)
+    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
 def _lib_video_path(vid):
     """Absolute path to a library video (clip or assembled music video) by id."""
     vid = os.path.basename(vid or "")

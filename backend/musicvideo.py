@@ -104,6 +104,18 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
         shutil.rmtree(work, ignore_errors=True)
     return out_path
 
+
+def retime(in_path, out_path, speed, fps=24):
+    """Speed up (or down) a clip, GPU-free. speed > 1 = faster/shorter (fixes uniform slow-motion
+    by scaling the whole clip back to natural speed). Re-encodes at `fps`; drops any per-clip
+    audio (the master is added at assemble)."""
+    ff = _ffmpeg()
+    speed = max(0.1, float(speed))
+    subprocess.run([ff, "-y", "-loglevel", "error", "-i", in_path,
+                    "-vf", f"setpts=PTS/{speed:.4f},fps={fps}", "-an",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path], check=True)
+    return out_path
+
 SHOT_TYPES = ("performance", "narrative", "broll")
 
 

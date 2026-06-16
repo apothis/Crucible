@@ -712,10 +712,12 @@ def build_svi_i2v(p, image_ref):
     (two-expert high/low, 4-step), each conditioned on the previous segment's latent, then
     overlap-blends the decoded segments into one continuous clip. image_ref = uploaded still.
     p: {prompt?, prompts? (list, one per segment - evolve the motion, keep identity constant),
-    negative?, seed? (varied +1 per segment), width?, height?, frames?/seconds?/segments?, fps?,
-    overlap?}. Output: SaveVideo -> videogen/svi.
-    DRAFT: node wiring mirrors the reference workflow; the WanAdvancedI2V continuity params
-    (offset/continue/middle-frame) are pending a live 2-segment test to confirm and tune."""
+    negative?, seed? (one seed for all - continuity comes from prev_latent), width?, height?,
+    frames?/seconds?/segments?, fps?, overlap?, model? ("distilled"=fast/slow-motion default, or
+    "full"=non-distilled), steps?, cfg?, lightx_strength?}. Output: SaveVideo -> videogen/svi.
+    Validated 2026-06-16: seam-free joins (same seed + video_frame_offset 0->4 + continue_frames
+    1), per-segment prompts, distilled output is uniformly slow -> retime to natural speed via
+    /api/video/retime (full mode gives differential subject/scene motion + ping-pong, not used)."""
     seed = _seed(p)
     w = int(p.get("width", 832))
     h = int(p.get("height", 480))

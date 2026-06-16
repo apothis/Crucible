@@ -34,7 +34,8 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
   const [castIds, setCastIds] = d.use<string[]>("castIds", []);   // library characters in THIS video
   const [shots, setShots] = d.use<Shot[]>("shots", []);
   const [method, setMethod] = d.use<Method>("method", "auto");    // default for chars set to "auto"
-  const [motionEngine, setMotionEngine] = d.use<"ltx" | "wan">("motionEngine", "ltx");  // i2v backbone
+  const [motionEngine, setMotionEngine] = d.use<"ltx" | "wan" | "svi2pro">("motionEngine", "ltx");  // i2v backbone
+  const SVI_SPEED = 1.7;   // SVI distilled output is uniformly slow; generate longer + retime back to natural
   const ltxQuants = cfg.video_ltx_quants || [];                  // LTX quants present on the box
   const [motionQuant, setMotionQuant] = d.use<string>("motionQuant", "Q8_0");  // LTX GGUF quant
   const [libChars, setLibChars] = useState<Character[]>([]);       // global character library
@@ -145,9 +146,23 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
     const look = shot.costume ? `${shot.scene}, wearing ${shot.costume}` : shot.scene;   // per-shot costume override
     const card = { id: rid(), title: `shot ${shot.idx + 1} (${shot.type})`, status: "pending" as const, pct: 0 };
     ctx.setResults([card]);
-    const animate = async (stillJobId: string) => {
+    const animate = async (stillJobId: string, promptText?: string) => {
+      const prompt = promptText || shot.action || "subtle cinematic motion";
+      if (motionEngine === "svi2pro") {
+        // long-form Wan2.2: generate at SVI_SPEED x the shot length (it comes out slow), then
+        // retime back to natural speed to exactly fill the shot window. Both steps awaited here.
+        const dur = Math.max(2, (shot.end - shot.start) || 4);
+        ctx.patch(card.id, { status: "running", pct: 15, title: `shot ${shot.idx + 1}: SVI generating (slow)...` });
+        const gen = await api.videoSviI2V({ still_id: stillJobId, prompt, seconds: dur * SVI_SPEED }) as { job_id: string };
+        await waitDone(gen.job_id);
+        ctx.patch(card.id, { pct: 85, title: `shot ${shot.idx + 1}: retiming to natural speed...` });
+        const rt = await api.videoRetime({ video_id: gen.job_id, speed: SVI_SPEED }) as { job_id: string; media_url: string };
+        recordClip(shot.idx, rt.job_id);
+        ctx.patch(card.id, { status: "done", pct: 100, url: rt.media_url + "?t=" + Date.now(), media: "video" });
+        return;
+      }
       ctx.patch(card.id, { pct: 50, title: `shot ${shot.idx + 1}: animating...` });
-      const { job_id } = await animateClip({ still_id: stillJobId, prompt: shot.action || "subtle cinematic motion", frames: shotFramesFor(shot) }) as { job_id: string };
+      const { job_id } = await animateClip({ still_id: stillJobId, prompt, frames: shotFramesFor(shot) }) as { job_id: string };
       recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
     };
     try {
@@ -172,8 +187,8 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
         await waitDone(cs.job_id); await animate(cs.job_id);
       } else if (char?.refStillId) {
         // anchor: reuse the reference still as-is
-        const { job_id } = await animateClip({ still_id: char.refStillId, prompt: shot.action || look, frames: shotFramesFor(shot) }) as { job_id: string };
-        ctx.patch(card.id, { status: "running", pct: 5 }); recordClip(shot.idx, job_id); pollJob(job_id, card.id, ctx);
+        ctx.patch(card.id, { status: "running", pct: 5 });
+        await animate(char.refStillId, shot.action || look);
       } else {
         ctx.patch(card.id, { status: "running", pct: 3, title: `shot ${shot.idx + 1}: still...` });
         const still = await api.videoStill({ prompt: look }) as { job_id: string };
@@ -238,9 +253,10 @@ export function MusicVideoForm({ cfg, busy, library, ...ctx }: { cfg: Config; bu
           </select>
         </Field>
         <Field label="Motion engine" hint="i2v backbone for animating each keyframe">
-          <select className={inp} value={motionEngine} onChange={(e) => setMotionEngine(e.target.value as "ltx" | "wan")}>
+          <select className={inp} value={motionEngine} onChange={(e) => setMotionEngine(e.target.value as "ltx" | "wan" | "svi2pro")}>
             <option value="ltx" disabled={!cfg.video_ltx}>LTX-2.3 (fast{cfg.video_ltx ? "" : " - not downloaded"})</option>
             <option value="wan">Wan2.2 (slower)</option>
+            <option value="svi2pro">SVI2 Pro long-form (Wan2.2, slow; auto-retimed)</option>
           </select>
         </Field>
       </div>
