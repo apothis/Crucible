@@ -2138,6 +2138,7 @@ const VIDEO_TABS = [
   { id: "still", label: "1 · Still" },
   { id: "animate", label: "2 · Animate" },
   { id: "lipsync", label: "3 · Lip-sync" },
+  { id: "dub", label: "4 · Dub" },
 ];
 const STILL_PROMPT_DEFAULT =
   "photorealistic close-up portrait of a male heavy metal singer on a dark concert stage mid-performance, sweat on his face, intense expression, long hair, leather jacket, dramatic rim lighting, blue stage spotlights, smoke haze, shallow depth of field, 85mm photo, ultra-detailed skin texture, film grain, cinematic";
@@ -2162,9 +2163,13 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
   const [lipPrompt, setLipPrompt] = d.use("lipPrompt", "a metal singer performing into a microphone, photorealistic");
   const [fastLip, setFastLip] = d.use("fastLip", false);   // opt-in 4-step lightx2v preview (lower quality, faster)
   const [lipStart, setLipStart] = d.use("lipStart", "");   // start offset (s) into the track so the clip lands on vocals
+  const [dubClipId, setDubClipId] = d.use("dubClipId", "");   // existing motion clip to dub (InfiniteTalk v2v source)
+  const [dubStart, setDubStart] = d.use("dubStart", "");      // start offset (s) into the track
+  const [dubPrompt, setDubPrompt] = d.use("dubPrompt", "a person singing, cinematic photoreal");
 
   const stills = library.filter((i) => i.mode === "videostill" && i.media_url);
   const audios = library.filter((i) => i.audio_url);
+  const clips = library.filter((i) => i.mode === "videoclip" && i.media_url);   // motion clips = dub sources
   const selStill = stills.find((s) => s.id === stillId);
 
   async function launch(title: string, call: () => Promise<{ job_id: string }>) {
@@ -2185,6 +2190,10 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
   const runLipsync = () => !stillId ? fail(ctx, "Pick a portrait still first.")
     : !audioId ? fail(ctx, "Pick a song/vocal track to lip-sync to.")
     : launch("Wan2.2-S2V", () => api.videoLipsync({ still_id: stillId, audio_id: audioId, prompt: lipPrompt, fast: fastLip, audio_start: lipStart ? Number(lipStart) : 0 }) as Promise<{ job_id: string }>);
+  // InfiniteTalk v2v: keep an existing motion clip's movement/camera, redrive only the lips to a song.
+  const runDub = () => !dubClipId ? fail(ctx, "Pick a generated motion clip to dub.")
+    : !audioId ? fail(ctx, "Pick a song/vocal track to lip-sync to.")
+    : launch("InfiniteTalk v2v", () => api.videoInfinitetalk({ video_id: dubClipId, audio_id: audioId, prompt: dubPrompt, audio_start: dubStart ? Number(dubStart) : 0 }) as Promise<{ job_id: string }>);
 
   if (!cfg.video) {
     return <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-4 text-xs text-[var(--color-muted)]">
@@ -2254,6 +2263,34 @@ export function VideoForm({ cfg, busy, library, ...ctx }: FormProps & { library:
             Fast preview <span className="text-[10px]">— 4-step lightx2v, ~10x faster but lower quality (off = full quality)</span>
           </label>
           <PrimaryButton onClick={runLipsync} disabled={busy}>{busy ? "Working…" : "Lip-sync clip"}</PrimaryButton>
+        </div>
+      )}
+
+      {tab === "dub" && (
+        <div className="space-y-3">
+          <p className="text-xs text-[var(--color-muted)]">
+            Add singing to an <b>existing motion clip</b> — keeps its movement, camera and background, redrives only the
+            mouth. This is the "walking <i>and</i> singing" lane (InfiniteTalk v2v).
+          </p>
+          <Field label="Motion clip" hint={clips.length ? "a generated video clip (Animate / SVI / LTX)" : "generate a motion clip first (step 2 or the Music Video tab)"}>
+            <select className={inp} value={dubClipId} onChange={(e) => setDubClipId(e.target.value)}>
+              <option value="">— pick a clip —</option>
+              {clips.map((c) => <option key={c.id} value={c.id}>{stillLabel(c)}</option>)}
+            </select>
+          </Field>
+          <Field label="Song / vocal" hint="track to lip-sync to">
+            <select className={inp} value={audioId} onChange={(e) => setAudioId(e.target.value)}>
+              <option value="">— pick a track —</option>
+              {audios.map((a) => <option key={a.id} value={a.id}>{audioLabel(a)}</option>)}
+            </select>
+          </Field>
+          <Field label="Start at (s)" hint="offset into the track — point it at the singing part that matches this clip">
+            <input className={inp} type="number" min="0" step="1" placeholder="0" value={dubStart} onChange={(e) => setDubStart(e.target.value)} />
+          </Field>
+          <Field label="Prompt" hint="optional scene description">
+            <textarea className={inp} rows={2} value={dubPrompt} onChange={(e) => setDubPrompt(e.target.value)} />
+          </Field>
+          <PrimaryButton onClick={runDub} disabled={busy}>{busy ? "Working…" : "Dub clip (InfiniteTalk)"}</PrimaryButton>
         </div>
       )}
     </div>

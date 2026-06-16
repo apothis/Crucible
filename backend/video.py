@@ -51,6 +51,16 @@ WAN21_VAE_BF16 = "Wan2_1_VAE_bf16.safetensors"                   # vae
 UMT5_ENC_BF16 = "umt5-xxl-enc-bf16.safetensors"                  # text_encoders
 LIGHTX2V_V2 = "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"  # loras
 
+# InfiniteTalk video-to-video lip-sync (keep the source footage's motion/camera/background,
+# redrive only the mouth/face from audio). Built on Wan2.1 i2v 14B + the MultiTalk infra that
+# the Kijai wrapper already ships (MultiTalkModelLoader auto-detects InfiniteTalk by filename).
+# Recipe traced verbatim from the wrapper's wanvideo_2_1_14B_V2V_InfiniteTalk_example_02.json.
+INFINITETALK = "Wan2_1-InfiniTetalk-Single_fp16.safetensors"            # diffusion_models
+WAN21_I2V_FP8 = "Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors"           # diffusion_models (2.1 base)
+LIGHTX2V_I2V_480P = "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"  # loras (4-step)
+CLIP_VISION_H = "clip_vision_h.safetensors"                            # clip_vision (Wan2.1 i2v needs it)
+WAV2VEC_CN_BASE = "wav2vec2-chinese-base_fp16.safetensors"             # wav2vec2 (768-dim, MultiTalk)
+
 # Qwen-Image-Edit-2511 (GGUF) - reference-driven character consistency, no training.
 # Files from download_video_models2.py. GGUF UNET loads via UnetLoaderGGUF (ComfyUI-GGUF).
 QWEN_EDIT_GGUF = "qwen-image-edit-2511-Q6_K.gguf"        # legacy GGUF (UnetLoaderGGUF)
@@ -521,6 +531,115 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
                "context_overlap": ctx_overlap if long_form else None,
                "steps": steps, "cfg": cfg, "shift": shift, "blocks_to_swap": blocks,
                "lora_strength": lstr, "prompt": prompt, "kind": "video"}
+
+
+# ============================================================ InfiniteTalk (video-to-video lip-sync)
+def build_infinitetalk_v2v(p, video_ref, audio_ref):
+    """Video-to-video lip-sync: take EXISTING footage (e.g. an SVI/LTX walk clip) and redrive only
+    the mouth/face from audio, PRESERVING the source's motion, camera and background. This is the
+    "walking AND singing" lane that pose-guided S2V can't do (S2V locks to a reference still and
+    won't travel). Mechanism: the source video is VAE-encoded and fed as the sampler's init latent
+    (`samples`), plus start_image + clip-vision from the same frames, so denoising starts FROM the
+    real footage while MultiTalk audio embeds redrive the lips. InfiniteTalk = the Wan2.1 MultiTalk
+    variant the Kijai wrapper auto-detects by filename.
+    video_ref/audio_ref = uploaded names on ComfyUI. p: {prompt?, negative?, seed?, width?, height?,
+    fps?, frames?/seconds?, steps?, cfg?, shift?, blocks_to_swap?, lora_strength?, audio_scale?,
+    frame_window_size?, motion_frame?, colormatch?}. Output: SaveVideo -> videogen/infinitetalk.
+    Graph traced verbatim from the wrapper's wanvideo_2_1_14B_V2V_InfiniteTalk_example_02.json."""
+    seed = _seed(p)
+    w = int(p.get("width", 832))
+    h = int(p.get("height", 480))
+    fps = int(p.get("fps", 25))                            # Wan2.1 / MultiTalk native frame rate
+    if p.get("seconds"):
+        frames = int(round(float(p["seconds"]) * fps))
+    else:
+        frames = int(p.get("frames", 81))
+    frames = max(5, ((frames - 1) // 4) * 4 + 1)           # Wan latents need 4n+1
+    fws = int(p.get("frame_window_size", 81))              # per-window size (reference: 81)
+    motion_frame = int(p.get("motion_frame", 9))           # window overlap (reference: 9)
+    steps = int(p.get("steps", 4))                         # lightx2v i2v distill -> 4 steps
+    cfg = float(p.get("cfg", 1.0))
+    shift = float(p.get("shift", 11.0))                    # reference InfiniteTalk shift
+    blocks = int(p.get("blocks_to_swap", 20))              # 20 fits the 14B + InfiniteTalk on 24GB
+    lstr = float(p.get("lora_strength", 1.0))
+    audio_scale = float(p.get("audio_scale", 1.0))
+    colormatch = p.get("colormatch", "disabled")           # per-window color matching for long clips
+    prompt = (p.get("prompt") or "a person singing, cinematic photoreal").strip()
+    neg = p.get("negative") or "blurry, distorted, static, low quality, deformed mouth"
+    g = {
+        # attention=sdpa (NOT sageattn): Ampere fp8 + sage = black output on this card.
+        "1": {"class_type": "WanVideoModelLoader",
+              "inputs": {"model": WAN21_I2V_FP8, "base_precision": "fp16_fast",
+                         "quantization": "fp8_e4m3fn_scaled", "load_device": "offload_device",
+                         "attention_mode": "sdpa", "block_swap_args": ["2", 0], "lora": ["3", 0],
+                         "multitalk_model": ["4", 0]}},
+        "2": {"class_type": "WanVideoBlockSwap",
+              "inputs": {"blocks_to_swap": blocks, "offload_img_emb": False,
+                         "offload_txt_emb": False, "use_non_blocking": True}},
+        "3": {"class_type": "WanVideoLoraSelectMulti",
+              "inputs": {"lora_0": LIGHTX2V_I2V_480P, "strength_0": lstr, "lora_1": "none",
+                         "strength_1": 1.0, "lora_2": "none", "strength_2": 1.0,
+                         "lora_3": "none", "strength_3": 1.0, "lora_4": "none", "strength_4": 1.0,
+                         "merge_loras": False}},
+        "4": {"class_type": "MultiTalkModelLoader",
+              "inputs": {"model": INFINITETALK, "base_precision": "fp16"}},
+        "5": {"class_type": "WanVideoVAELoader",
+              "inputs": {"model_name": WAN21_VAE_BF16, "precision": "bf16"}},
+        "6": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": CLIP_VISION_H}},
+        "7": {"class_type": "Wav2VecModelLoader",
+              "inputs": {"model": WAV2VEC_CN_BASE, "base_precision": "fp16",
+                         "load_device": "main_device"}},
+        "8": {"class_type": "LoadAudio", "inputs": {"audio": audio_ref}},
+        # source footage -> resampled to fps -> resized to the generation canvas
+        "9": {"class_type": "VHS_LoadVideo",
+              "inputs": {"video": video_ref, "force_rate": float(fps), "custom_width": 0,
+                         "custom_height": 0, "frame_load_cap": frames, "skip_first_frames": 0,
+                         "select_every_nth": 1}},
+        "10": {"class_type": "ImageResizeKJv2",
+               "inputs": {"image": ["9", 0], "width": w, "height": h, "upscale_method": "lanczos",
+                          "keep_proportion": "crop", "pad_color": "0, 0, 0",
+                          "crop_position": "center", "divisible_by": 16, "device": "cpu"}},
+        "11": {"class_type": "WanVideoClipVisionEncode",
+               "inputs": {"clip_vision": ["6", 0], "image_1": ["10", 0], "strength_1": 1.0,
+                          "strength_2": 1.0, "crop": "center", "combine_embeds": "average",
+                          "force_offload": True}},
+        # VAE-encode the source frames -> init latent the sampler denoises FROM (motion preserved)
+        "12": {"class_type": "WanVideoEncode",
+               "inputs": {"vae": ["5", 0], "image": ["10", 0], "enable_vae_tiling": False,
+                          "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}},
+        "13": {"class_type": "MultiTalkWav2VecEmbeds",
+               "inputs": {"wav2vec_model": ["7", 0], "audio_1": ["8", 0], "normalize_loudness": True,
+                          "num_frames": frames, "fps": float(fps), "audio_scale": audio_scale,
+                          "audio_cfg_scale": 1.0, "multi_audio_type": "para"}},
+        "14": {"class_type": "WanVideoImageToVideoMultiTalk",
+               "inputs": {"vae": ["5", 0], "width": w, "height": h, "frame_window_size": fws,
+                          "motion_frame": motion_frame, "force_offload": False,
+                          "colormatch": colormatch, "start_image": ["10", 0],
+                          "clip_embeds": ["11", 0], "mode": "infinitetalk"}},
+        "15": {"class_type": "WanVideoTextEncodeCached",
+               "inputs": {"model_name": UMT5_ENC_BF16, "precision": "bf16",
+                          "positive_prompt": prompt, "negative_prompt": neg,
+                          "quantization": "disabled", "use_disk_cache": False, "device": "gpu"}},
+        # MultiTalk needs comfy rope (same reason as S2V framepack); samples = source init latent
+        "16": {"class_type": "WanVideoSampler",
+               "inputs": {"model": ["1", 0], "image_embeds": ["14", 0], "text_embeds": ["15", 0],
+                          "samples": ["12", 0], "multitalk_embeds": ["13", 0], "steps": steps,
+                          "cfg": cfg, "shift": shift, "seed": seed, "force_offload": True,
+                          "scheduler": "dpm++_sde", "riflex_freq_index": 0, "rope_function": "comfy"}},
+        "17": {"class_type": "WanVideoDecode",
+               "inputs": {"vae": ["5", 0], "samples": ["16", 0], "enable_vae_tiling": False,
+                          "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}},
+        "18": {"class_type": "CreateVideo",
+               "inputs": {"images": ["17", 0], "fps": fps, "audio": ["8", 0]}},
+        "19": {"class_type": "SaveVideo",
+               "inputs": {"video": ["18", 0], "filename_prefix": "videogen/infinitetalk",
+                          "format": "auto", "codec": "auto"}},
+    }
+    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+               "seconds": round(frames / fps, 2), "frame_window_size": fws,
+               "motion_frame": motion_frame, "steps": steps, "cfg": cfg, "shift": shift,
+               "blocks_to_swap": blocks, "lora_strength": lstr, "audio_scale": audio_scale,
+               "prompt": prompt, "kind": "video"}
 
 
 # ============================================================ LTX-2.3 (fast backbone)

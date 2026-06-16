@@ -52,6 +52,7 @@ export const api = {
   videoLtxT2V: (p: unknown) => jpost("/api/video/ltx_t2v", p),
   videoSviI2V: (p: unknown) => jpost("/api/video/svi_i2v", p),   // long-form Wan2.2 (SVI2 Pro)
   videoRetime: (p: unknown) => jpost("/api/video/retime", p),    // GPU-free speed-up (fixes SVI slow-mo)
+  videoInfinitetalk: (p: unknown) => jpost("/api/video/infinitetalk", p),  // v2v lip-sync (keep clip motion, redrive lips)
   videoLoras: () => jget("/api/video/loras"),
   mvScript: (p: unknown) => jpost("/api/mv/script", p),
   mvGrades: () => jget("/api/mv/grades"),

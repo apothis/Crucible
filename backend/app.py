@@ -965,6 +965,42 @@ def video_s2v_wrapper(p: dict):
     return _submit_video(graph, resolved, "videolipsync")
 
 
+@app.post("/api/video/infinitetalk")
+def video_infinitetalk(p: dict):
+    """InfiniteTalk video-to-video lip-sync: keep an EXISTING clip's motion/camera/background and
+    redrive only the mouth/face from a vocal window. The 'walking AND singing' lane that pose-S2V
+    can't do. p: {video_id (source motion clip in the library), audio_id, audio_start?, prompt?,
+    width?, height?, steps?, cfg?, shift?, blocks_to_swap?, audio_scale?}."""
+    src = _lib_video_path(p.get("video_id"))
+    if not src:
+        raise HTTPException(400, "video_id must reference a generated clip in the library")
+    audio = _lib_source_path(p.get("audio_id"))
+    if not audio:
+        raise HTTPException(400, "audio_id must reference a library track")
+    start = max(0.0, float(p.get("audio_start") or 0))
+    fps = int(p.get("fps", 25))
+    # Length follows the SOURCE clip (it provides the motion). Probe its duration -> seconds, so the
+    # generated clip spans the whole walk; the audio window is trimmed to match.
+    sfps = _probe_fps(src) or 25.0
+    snf = _probe_nframes(src) or 0
+    if snf and not p.get("seconds") and not p.get("frames"):
+        p["seconds"] = snf / sfps
+    total_frames = int(round(float(p["seconds"]) * fps)) if p.get("seconds") else int(p.get("frames", 81))
+    win = total_frames / fps + 1.5
+    try:
+        with open(src, "rb") as f:
+            vid_ref = C.upload_audio(f.read(), os.path.basename(src))   # name on ComfyUI
+        aud_bytes = _trim_audio_window(audio, start, win)
+        aud_ref = C.upload_audio(aud_bytes, "infinitetalk_clip.wav")
+        graph, resolved = video_mod.build_infinitetalk_v2v(p, vid_ref, aud_ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["audio_start"] = start
+    resolved["video_id"] = os.path.basename(p.get("video_id"))
+    resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+    return _submit_video(graph, resolved, "videolipsync")
+
+
 @app.post("/api/mv/script")
 def mv_script(body: dict):
     """Generate an editable music-video shot list from a song. Body: {project? (key) OR
