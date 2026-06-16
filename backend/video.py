@@ -568,9 +568,11 @@ def build_infinitetalk_v2v(p, video_ref, audio_ref):
     neg = p.get("negative") or "blurry, distorted, static, low quality, deformed mouth"
     g = {
         # attention=sdpa (NOT sageattn): Ampere fp8 + sage = black output on this card.
+        # the Wan2.1 i2v file is PLAIN fp8 (..._fp8_e4m3fn, not _scaled) -> quantization must be
+        # "fp8_e4m3fn" (the loader rejects "_scaled" on a non-scaled file).
         "1": {"class_type": "WanVideoModelLoader",
               "inputs": {"model": WAN21_I2V_FP8, "base_precision": "fp16_fast",
-                         "quantization": "fp8_e4m3fn_scaled", "load_device": "offload_device",
+                         "quantization": "fp8_e4m3fn", "load_device": "offload_device",
                          "attention_mode": "sdpa", "block_swap_args": ["2", 0], "lora": ["3", 0],
                          "multitalk_model": ["4", 0]}},
         "2": {"class_type": "WanVideoBlockSwap",
