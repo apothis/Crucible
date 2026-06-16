@@ -3,6 +3,7 @@
 Run:  python -m backend.app   (from the repo root)
 """
 import json
+import math
 import os
 import random
 import re
@@ -987,7 +988,19 @@ def video_infinitetalk(p: dict):
     if snf and not p.get("seconds") and not p.get("frames"):
         p["seconds"] = snf / sfps
     total_frames = int(round(float(p["seconds"]) * fps)) if p.get("seconds") else int(p.get("frames", 81))
-    win = total_frames / fps + 1.5
+    # The MultiTalk windowed sampler rounds the frame count UP to a whole number of windows
+    # (motion_frame + k*(frame_window_size - motion_frame)). If the audio embeds are computed for the
+    # un-rounded count, the rounded-up tail has no audio and the lips freeze for the last ~1-2s.
+    # Snap to the window boundary HERE so the audio embeds + trimmed audio cover exactly what's
+    # generated. (k*(fws-mf)+mf is always 4n+1, so it stays a valid Wan latent length.)
+    fws = int(p.get("frame_window_size", 81))
+    mf = int(p.get("motion_frame", 9))
+    step = max(1, fws - mf)
+    windows = max(1, math.ceil((total_frames - mf) / step))
+    total_frames = mf + windows * step
+    p["frames"] = total_frames          # builder uses this verbatim for num_frames
+    p.pop("seconds", None)              # frames is now authoritative
+    win = total_frames / fps + 1.0      # trim enough vocal to cover the whole clip
     # wav2vec drives the lips from PHONETIC content, so a full music mix (drums/guitars) muddies
     # the sync. Isolate the vocal first (default on for this route) -> much better singing lip-sync.
     # roformer (box GPU, SOTA) if configured + requested, else Demucs (Mac MPS). Falls back to the
