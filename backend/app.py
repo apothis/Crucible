@@ -993,30 +993,40 @@ def video_infinitetalk(p: dict):
     # roformer (box GPU, SOTA) if configured + requested, else Demucs (Mac MPS). Falls back to the
     # raw mix if separation fails. We trim the short window first, then separate just that (fast).
     isolate = p.get("isolate_vocal", True)
-    use_roformer = p.get("isolate_engine") == "roformer" and bool(ROFORMER_HOST)
+    # default = BS-RoFormer (the box service, SOTA). Demucs is only a fallback if RoFormer is
+    # unset or fails - it's documented-inadequate, so never the default. `isolate_engine:"demucs"`
+    # forces Demucs if ever wanted.
+    want_roformer = bool(ROFORMER_HOST) and p.get("isolate_engine") != "demucs"
     work = tempfile.mkdtemp(prefix="it_voc_")
-    vocal_isolated = False
+    iso_used = None
     try:
         with open(src, "rb") as f:
             vid_ref = C.upload_audio(f.read(), os.path.basename(src))   # name on ComfyUI
         aud_bytes = _trim_audio_window(audio, start, win)
         if isolate:
-            try:
-                clip_path = os.path.join(work, "clip.wav")
-                with open(clip_path, "wb") as f:
-                    f.write(aud_bytes)
-                if use_roformer:
+            clip_path = os.path.join(work, "clip.wav")
+            with open(clip_path, "wb") as f:
+                f.write(aud_bytes)
+            voc = None
+            if want_roformer:
+                try:
                     stems = _separate(clip_path, work, engine="roformer", stems="all")
                     voc = next((pp for (name, pp) in stems if name == "vocals"), None)
-                else:
+                    if voc:
+                        iso_used = "roformer"
+                except Exception:
+                    voc = None                                         # RoFormer down -> try Demucs
+            if not voc:
+                try:
                     files = stems_mod.separate(clip_path, work, mode="vocals")   # Demucs, Mac MPS
                     voc = next((f for f in files if os.path.basename(f).startswith("vocals")), None)
-                if voc and os.path.isfile(voc):
-                    with open(voc, "rb") as f:
-                        aud_bytes = f.read()
-                    vocal_isolated = True
-            except Exception:
-                pass                                                   # fall back to the full mix
+                    if voc:
+                        iso_used = "demucs"
+                except Exception:
+                    voc = None                                         # both failed -> full mix
+            if voc and os.path.isfile(voc):
+                with open(voc, "rb") as f:
+                    aud_bytes = f.read()
         aud_ref = C.upload_audio(aud_bytes, "infinitetalk_clip.wav")
         graph, resolved = video_mod.build_infinitetalk_v2v(p, vid_ref, aud_ref)
     except HTTPException:
@@ -1028,8 +1038,8 @@ def video_infinitetalk(p: dict):
     resolved["audio_start"] = start
     resolved["video_id"] = os.path.basename(p.get("video_id"))
     resolved["audio_id"] = os.path.basename(p.get("audio_id"))
-    resolved["vocal_isolated"] = vocal_isolated
-    resolved["isolate_engine"] = ("roformer" if use_roformer else "demucs") if vocal_isolated else None
+    resolved["vocal_isolated"] = bool(iso_used)
+    resolved["isolate_engine"] = iso_used
     return _submit_video(graph, resolved, "videolipsync")
 
 
