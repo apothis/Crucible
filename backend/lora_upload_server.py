@@ -543,6 +543,18 @@ def _listening_pids(port: int):
     return pids
 
 
+def _pid_image(pid: str):
+    """Image name for a PID (e.g. 'python.exe'), so we can confirm a kill target is actually
+    ComfyUI's python and not whatever else might transiently hold the port."""
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        m = re.match(r'"([^"]+)"', out)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
 def _comfy_up(port: int, timeout: float = 2.0) -> bool:
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{port}/system_stats", timeout=timeout)
@@ -569,12 +581,18 @@ def comfy_restart(body: dict = Body(default={})):
     if not bat or not os.path.isfile(bat):
         raise HTTPException(404, f"ComfyUI launcher not found (looked for {bat!r}); set MG_COMFY_DIR/MG_COMFY_LAUNCHER")
 
-    killed = []
+    killed, skipped = [], []
     if not body.get("launch_only"):
         for pid in _listening_pids(COMFY_PORT):
+            img = _pid_image(pid) or ""
+            # ONLY kill if this exact PID is python - never an unrelated process that might
+            # hold the port, and never by image name (which could hit the helper/other python).
+            if not img.lower().startswith("python"):
+                skipped.append({"pid": pid, "image": img})
+                continue
             try:
                 subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, timeout=20)
-                killed.append(pid)
+                killed.append({"pid": pid, "image": img})
             except Exception:
                 pass
         # wait for the port to actually free before relaunching (avoid bind clash)
@@ -583,10 +601,12 @@ def comfy_restart(body: dict = Body(default={})):
                 break
             time.sleep(0.5)
 
-    # relaunch detached, in its own console, so it outlives this request/helper
-    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    # relaunch in a VISIBLE titled console so the user can watch ComfyUI's output. cmd's "start"
+    # builtin opens a new window and returns immediately (so it outlives this request); the .bat's
+    # own trailing `pause` keeps the window up if ComfyUI ever exits.
+    batname = os.path.basename(bat)
     try:
-        subprocess.Popen(["cmd", "/c", os.path.basename(bat)], cwd=cwd, creationflags=flags, close_fds=True)
+        subprocess.Popen(f'start "ComfyUI" /D "{cwd}" "{batname}"', cwd=cwd, shell=True)
     except Exception as e:
         raise HTTPException(500, f"relaunch failed: {e}")
 
@@ -599,8 +619,8 @@ def comfy_restart(body: dict = Body(default={})):
                 waited = round(time.time() - t0, 1)
                 break
             time.sleep(2)
-    return {"killed_pids": killed, "launcher": bat, "relaunched": True,
-            "up": _comfy_up(COMFY_PORT), "waited_seconds": waited}
+    return {"killed": killed, "skipped_non_python": skipped, "launcher": bat,
+            "relaunched": True, "up": _comfy_up(COMFY_PORT), "waited_seconds": waited}
 
 
 if __name__ == "__main__":
