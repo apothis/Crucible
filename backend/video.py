@@ -510,6 +510,10 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
         # framepack mode requires the VAE in the embeds dict (sampler builds ref_motion_image
         # from it); without it the sampler hits `vae.dtype` on None and crashes.
         g["15"]["inputs"]["vae"] = ["6", 0]
+        # the frame_packer ALWAYS uses comfy-rope (rope_encode_comfy) internally; with the
+        # sampler's "default" rope, rope_embedder.k stays None and rope_riflex crashes on
+        # `k > 0`. Forcing comfy rope makes the sampler set k = riflex_freq_index (0).
+        g["16"]["inputs"]["rope_function"] = "comfy"
     return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                "seconds": round(frames / fps, 2), "long_form": long_form and not pose_video,
                "pose_guided": bool(pose_video),
