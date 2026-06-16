@@ -414,6 +414,10 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
     load_device = p.get("load_device") or "offload_device"  # "main_device" = model on GPU (more VRAM, faster)
     lstr = float(p.get("lora_strength", 1.5))
     audio_scale = float(p.get("audio_scale", 1.0))
+    # pose-guided combine: a motion video (e.g. an LTX/SVI walk clip) whose body POSE drives S2V
+    # while the audio drives the lips -> motion + lip-sync in one shot. Uses framepack mode (the
+    # pose path), which is mutually exclusive with the context-window long-form path.
+    pose_video = p.get("pose_video")
     prompt = (p.get("prompt") or "a person singing into a microphone, close up").strip()
     neg = p.get("negative") or "blurry, distorted, static, low quality"
     g = {
@@ -474,7 +478,7 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
                "inputs": {"video": ["18", 0], "filename_prefix": "videogen/s2v",
                           "format": "auto", "codec": "auto"}},
     }
-    if long_form:
+    if long_form and not pose_video:
         # Kijai S2V context-window long-form: overlapping windows for seamless joins. Only added
         # past one window so the default single-clip graph is untouched.
         g["20"] = {"class_type": "WanVideoContextOptions",
@@ -482,9 +486,31 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
                               "context_stride": 4, "context_overlap": ctx_overlap,
                               "freenoise": True, "verbose": False, "fuse_method": "linear"}}
         g["16"]["inputs"]["context_options"] = ["20", 0]
+    if pose_video:
+        # pose chain: motion video -> DWPose skeleton -> resize -> VAE encode -> pose_latent.
+        # The detector auto-downloads its TorchScript models on first use (hr16 HF repos).
+        g["30"] = {"class_type": "VHS_LoadVideo",
+                   "inputs": {"video": pose_video, "force_rate": float(fps), "custom_width": 0,
+                              "custom_height": 0, "frame_load_cap": frames, "skip_first_frames": 0,
+                              "select_every_nth": 1}}
+        g["31"] = {"class_type": "WanVideoUniAnimateDWPoseDetector",
+                   "inputs": {"pose_images": ["30", 0], "score_threshold": 0.3, "stick_width": 4,
+                              "draw_body": True, "body_keypoint_size": 4, "draw_feet": True,
+                              "draw_hands": True, "hand_keypoint_size": 4, "colorspace": "RGB",
+                              "handle_not_detected": "empty", "draw_head": True}}
+        g["32"] = {"class_type": "ImageResizeKJv2",
+                   "inputs": {"image": ["31", 0], "width": w, "height": h, "upscale_method": "lanczos",
+                              "keep_proportion": "crop", "pad_color": "0, 0, 0",
+                              "crop_position": "center", "divisible_by": 2, "device": "cpu"}}
+        g["33"] = {"class_type": "WanVideoEncode",
+                   "inputs": {"vae": ["6", 0], "image": ["32", 0], "enable_vae_tiling": False,
+                              "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}}
+        g["15"]["inputs"]["pose_latent"] = ["33", 0]
+        g["15"]["inputs"]["enable_framepack"] = True
     return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
-               "seconds": round(frames / fps, 2), "long_form": long_form,
-               "context_frames": ctx_frames if long_form else None,
+               "seconds": round(frames / fps, 2), "long_form": long_form and not pose_video,
+               "pose_guided": bool(pose_video),
+               "context_frames": ctx_frames if (long_form and not pose_video) else None,
                "context_overlap": ctx_overlap if long_form else None,
                "steps": steps, "cfg": cfg, "shift": shift, "blocks_to_swap": blocks,
                "lora_strength": lstr, "prompt": prompt, "kind": "video"}

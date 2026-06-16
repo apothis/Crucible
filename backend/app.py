@@ -845,6 +845,18 @@ def _lib_video_path(vid):
     return path if vid and os.path.exists(path) else None
 
 
+def _probe_nframes(path):
+    """Count video frames (so a pose-guided S2V clip matches the motion video's length)."""
+    import subprocess
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                              "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=40).stdout.strip()
+        return int(out) if out.isdigit() else 0
+    except Exception:
+        return 0
+
+
 def _probe_fps(path, default=24.0):
     """Source video fps (so the upscaled output keeps the same timing)."""
     import subprocess
@@ -919,9 +931,19 @@ def video_s2v_wrapper(p: dict):
     if not audio:
         raise HTTPException(400, "audio_id must reference a library track")
     start = max(0.0, float(p.get("audio_start") or 0))
+    fps = int(p.get("fps", 16))
+    # pose-guided combine: a motion clip's body pose drives S2V while the audio drives the lips.
+    # Match the clip length to the pose video (its frame count wins over seconds), and upload it.
+    pose_id = p.get("pose_video")
+    pose_path = None
+    if pose_id:
+        pose_path = _lib_video_path(pose_id)
+        if not pose_path:
+            raise HTTPException(400, "pose_video must reference a generated clip in the library")
+        p["frames"] = _probe_nframes(pose_path) or int(p.get("frames", 77))
+        p.pop("seconds", None)
     # Trim enough audio to cover the TOTAL clip (seconds, or frames). For multi-window long S2V
     # the window count is derived from the audio length, so the audio must span the whole clip.
-    fps = int(p.get("fps", 16))
     total_frames = int(round(float(p["seconds"]) * fps)) if p.get("seconds") else int(p.get("frames", 77))
     win = total_frames / fps + 1.5
     try:
@@ -929,12 +951,17 @@ def video_s2v_wrapper(p: dict):
             img_ref = C.upload_audio(f.read(), os.path.basename(still))
         aud_bytes = _trim_audio_window(audio, start, win)
         aud_ref = C.upload_audio(aud_bytes, "s2v_clip.wav")
+        if pose_path:
+            with open(pose_path, "rb") as f:
+                p["pose_video"] = C.upload_audio(f.read(), os.path.basename(pose_path))   # name on ComfyUI
         graph, resolved = video_mod.build_s2v_wrapper(p, img_ref, aud_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     resolved["audio_start"] = start
     resolved["still_id"] = os.path.basename(p.get("still_id"))
     resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+    if pose_id:
+        resolved["pose_video"] = os.path.basename(pose_id)
     return _submit_video(graph, resolved, "videolipsync")
 
 
