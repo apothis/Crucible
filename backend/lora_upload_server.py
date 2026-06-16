@@ -53,6 +53,9 @@ import datetime
 import fnmatch
 import py_compile
 import shutil
+import subprocess
+import time
+import urllib.request
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body
 from fastapi.responses import JSONResponse
@@ -499,6 +502,105 @@ def fs_pycompile(body: dict = Body(...)):
         return {"ok": True, "path": rp}
     except py_compile.PyCompileError as e:
         return {"ok": False, "path": rp, "error": str(e)}
+
+
+# ----------------------------- ComfyUI process control -----------------------------
+# Opt-in kill+restart for ComfyUI, so the caller can fully clear VRAM/RAM between jobs
+# (GGUF models hold allocations that only a process restart frees). Windows-only (the box).
+COMFY_PORT = int(os.environ.get("MG_COMFY_PORT", "8188"))
+
+
+def _comfy_launcher():
+    """Locate the ComfyUI portable dir + its LAN launcher .bat. MG_COMFY_LAUNCHER overrides
+    the .bat name; MG_COMFY_DIR overrides the working dir. Default = the auto-detected
+    ComfyUI_windows_portable folder + run_musicgen_lan.bat (the --listen + sage launcher)."""
+    bat = os.environ.get("MG_COMFY_LAUNCHER", "run_musicgen_lan.bat")
+    d = os.environ.get("MG_COMFY_DIR", "").strip()
+    if not d:
+        for r in _comfy_roots():
+            cand = r if os.path.isfile(os.path.join(r, bat)) else os.path.join(r, "ComfyUI_windows_portable")
+            if os.path.isfile(os.path.join(cand, bat)):
+                d = cand
+                break
+    return (d or None), os.path.join(d, bat) if d else None
+
+
+def _listening_pids(port: int):
+    """PIDs LISTENING on `port` (Windows netstat). Scoped to the exact local port + LISTENING
+    state so we never touch client connections or unrelated processes."""
+    pids = set()
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True,
+                             text=True, timeout=15).stdout
+    except Exception:
+        return pids
+    for line in out.splitlines():
+        p = line.split()
+        if len(p) >= 5 and p[0].upper() == "TCP" and p[3].upper() == "LISTENING" \
+                and p[1].endswith(":" + str(port)):
+            if p[4].isdigit() and p[4] != "0":
+                pids.add(p[4])
+    return pids
+
+
+def _comfy_up(port: int, timeout: float = 2.0) -> bool:
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/system_stats", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/comfy/status")
+def comfy_status():
+    cwd, bat = _comfy_launcher()
+    return {"port": COMFY_PORT, "up": _comfy_up(COMFY_PORT),
+            "listening_pids": sorted(_listening_pids(COMFY_PORT)),
+            "launcher": bat, "launcher_found": bool(bat and os.path.isfile(bat))}
+
+
+@app.post("/comfy/restart")
+def comfy_restart(body: dict = Body(default={})):
+    """Kill ComfyUI (only the PID LISTENING on its port - never by image name, so this can't
+    hit the helper or other python) and relaunch its LAN .bat in a detached console, then wait
+    for it to answer again. Body: {token?, wait?=true, timeout?=180, launch_only?=false}."""
+    _auth(body or {})
+    cwd, bat = _comfy_launcher()
+    if not bat or not os.path.isfile(bat):
+        raise HTTPException(404, f"ComfyUI launcher not found (looked for {bat!r}); set MG_COMFY_DIR/MG_COMFY_LAUNCHER")
+
+    killed = []
+    if not body.get("launch_only"):
+        for pid in _listening_pids(COMFY_PORT):
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", pid], capture_output=True, timeout=20)
+                killed.append(pid)
+            except Exception:
+                pass
+        # wait for the port to actually free before relaunching (avoid bind clash)
+        for _ in range(20):
+            if not _listening_pids(COMFY_PORT):
+                break
+            time.sleep(0.5)
+
+    # relaunch detached, in its own console, so it outlives this request/helper
+    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    try:
+        subprocess.Popen(["cmd", "/c", os.path.basename(bat)], cwd=cwd, creationflags=flags, close_fds=True)
+    except Exception as e:
+        raise HTTPException(500, f"relaunch failed: {e}")
+
+    waited = None
+    if body.get("wait", True):
+        timeout = float(body.get("timeout", 180))
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if _comfy_up(COMFY_PORT):
+                waited = round(time.time() - t0, 1)
+                break
+            time.sleep(2)
+    return {"killed_pids": killed, "launcher": bat, "relaunched": True,
+            "up": _comfy_up(COMFY_PORT), "waited_seconds": waited}
 
 
 if __name__ == "__main__":
