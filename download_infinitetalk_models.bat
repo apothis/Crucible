@@ -8,8 +8,10 @@ rem No PowerShell, no extraction, no python. Re-run any time to resume.
 rem All files are ungated (Kijai / Comfy-Org public repos). No HF token needed.
 rem Total ~24 GB. Windows 10/11 ships curl.exe so this runs as-is.
 rem ============================================================================
+rem Place this in the ComfyUI_windows_portable folder (same as the other installers) and run it.
 setlocal
-set MODELS=E:\AI\MusicGen\Comfyui\ComfyUI_windows_portable\ComfyUI\models
+cd /d "%~dp0"
+set MODELS=%~dp0ComfyUI\models
 
 echo.
 echo [1/5] InfiniteTalk model (5.1 GB) -^> diffusion_models
