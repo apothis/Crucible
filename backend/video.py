@@ -507,6 +507,9 @@ def build_s2v_wrapper(p, image_ref, audio_ref):
                               "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}}
         g["15"]["inputs"]["pose_latent"] = ["33", 0]
         g["15"]["inputs"]["enable_framepack"] = True
+        # framepack mode requires the VAE in the embeds dict (sampler builds ref_motion_image
+        # from it); without it the sampler hits `vae.dtype` on None and crashes.
+        g["15"]["inputs"]["vae"] = ["6", 0]
     return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                "seconds": round(frames / fps, 2), "long_form": long_form and not pose_video,
                "pose_guided": bool(pose_video),
