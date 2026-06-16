@@ -739,6 +739,30 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
                    "inputs": {"vae": ["5", 0], "image": ["31", 0], "latent": ["7", 2],
                               "strength": img_strength, "bypass": False}}
         g["10"]["inputs"]["video_latent"] = ["32", 0]  # concat uses the imprinted latent
+    # Opt-in temporal-tiled long-form path (LTXVLoopingSampler): generates the clip in overlapping
+    # ~56-frame chunks so peak VRAM is one tile, not the whole latent -> no shared-memory thrash on
+    # long/high-fps clips. VIDEO-ONLY (the looping sampler has no audio path; we don't need LTX's
+    # throwaway native audio for a walk - the song is muxed later). i2v via optional_cond_images
+    # per the node's own doc; reuses our noise/sampler/sigmas/CFGGuider. Wiring + tile values traced
+    # from the wrapper's LTX-2_V2V_Detailer.json (which uses a plain CFGGuider, not STGGuiderAdvanced).
+    if p.get("tiled") and image_ref is not None:
+        g["45"] = {"class_type": "LTXVLoopingSampler",
+                   "inputs": {"model": ["7", 0], "vae": ["5", 0], "noise": ["12", 0],
+                              "sampler": ["13", 0], "sigmas": ["14", 0], "guider": ["11", 0],
+                              "latents": ["7", 2],
+                              "temporal_tile_size": int(p.get("temporal_tile_size", 56)),
+                              "temporal_overlap": int(p.get("temporal_overlap", 24)),
+                              "guiding_strength": 1.0, "temporal_overlap_cond_strength": 0.5,
+                              "cond_image_strength": float(p.get("img_strength", 1.0)),
+                              "horizontal_tiles": 1, "vertical_tiles": 1, "spatial_overlap": 1,
+                              "adain_factor": float(p.get("adain_factor", 0.0)),
+                              "guiding_start_step": 0, "guiding_end_step": 1000,
+                              "optional_cond_images": ["30", 0],
+                              "optional_cond_image_indices": "0"}}
+        g["17"]["inputs"]["latents"] = ["45", 0]   # decode the tiled video latent directly
+        g["19"]["inputs"].pop("audio", None)       # video-only (no LTX native audio)
+        for n in ("10", "15", "16", "18", "32"):   # drop the unused AV-path nodes
+            g.pop(n, None)
     if lipsync_audio is not None:                       # LatentSync mouth-only post pass on LTX frames
         g["40"] = {"class_type": "LoadAudio", "inputs": {"audio": lipsync_audio}}
         g["41"] = {"class_type": "LatentSyncNode",
