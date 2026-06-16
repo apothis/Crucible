@@ -13,6 +13,12 @@ setlocal
 cd /d "%~dp0"
 set MODELS=%~dp0ComfyUI\models
 
+rem curl can write a file but cannot create a missing parent dir - make sure each target exists.
+if not exist "%MODELS%\diffusion_models" mkdir "%MODELS%\diffusion_models"
+if not exist "%MODELS%\loras" mkdir "%MODELS%\loras"
+if not exist "%MODELS%\clip_vision" mkdir "%MODELS%\clip_vision"
+if not exist "%MODELS%\wav2vec2" mkdir "%MODELS%\wav2vec2"
+
 echo.
 echo [1/5] InfiniteTalk model (5.1 GB) -^> diffusion_models
 curl -L -C - -o "%MODELS%\diffusion_models\Wan2_1-InfiniTetalk-Single_fp16.safetensors" "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/InfiniteTalk/Wan2_1-InfiniTetalk-Single_fp16.safetensors"
