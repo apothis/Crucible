@@ -671,6 +671,7 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
     motion_secs = round(frames / motion_fps, 3)
     cfg = float(p.get("cfg", 1.0))                     # distilled LoRA -> CFG 1 (negative ignored)
     distill = float(p.get("distill_strength", 0.5))
+    distill_lora = p.get("distill_lora") or LTX_LORA_DISTILL   # swap-in higher-ceiling distill (TenStrip)
     detailer = float(p.get("detailer_strength", 0.2))
     img_strength = float(p.get("img_strength", 0.7))   # keyframe imprint strength (i2v)
     lips_expr = float(p.get("lips_expression", 1.5))   # LatentSync lip-movement intensity 1.0-3.0
@@ -683,7 +684,7 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
         "2": {"class_type": "LoraLoaderModelOnly",
-              "inputs": {"model": ["1", 0], "lora_name": LTX_LORA_DISTILL,
+              "inputs": {"model": ["1", 0], "lora_name": distill_lora,
                          "strength_model": distill}},
         "3": {"class_type": "LoraLoaderModelOnly",
               "inputs": {"model": ["2", 0], "lora_name": LTX_LORA_DETAILER,
