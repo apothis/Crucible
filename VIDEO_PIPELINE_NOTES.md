@@ -49,6 +49,19 @@ All renders driven from the app Video tab -> backend/video.py graph builders -> 
   one loaded). Minor: mouth movement reads slightly exaggerated at 832x480 where the face is tiny -
   expected to read better in closer framing / higher res; not a problem per user.
 
+### Close-up SINGING via the same LTX MSR method -- SOLVED, supersedes S2V (2026-06-17/18)
+- Same route/recipe as walk+sing, just a CLOSE-UP framing prompt (stationary, no walk) + a dark
+  stage backdrop instead of the garden. User verdict (job c2bc08cd, 12s): "really good, the mouth
+  movement is fine for someone singing vigorously." Identity (MSR refs incl the face close-up
+  7b5f66b7), big expressive sung mouth, dark-ember background, clean photoreal.
+- Backdrop: dark-ember/stage-light scene must be a SEPARATE no-people still. Made via Z-Image Turbo
+  `/api/video/still` (a022b519) with an ABSTRACT-darkness prompt (drifting embers + warm rim glow +
+  haze, NO stage/floor/frame - a literal "empty stage" prompt gave a bad stage-set with a frame).
+  Feed it as MSR background_id.
+- THIS SUPERSEDES Wan2.2-S2V for singing close-ups: S2V = ~4.8s/one window, "ok not great", longer
+  needs unbuilt chaining. LTX MSR = 12s+, higher quality, on-model/consistent look. Keep S2V as a
+  fallback only.
+
 ### InfiniteTalk v2v dub lane -- BUILT (2026-06-16)
 - Route: `POST /api/video/infinitetalk` -> `build_infinitetalk_v2v`. Keeps an existing clip's
   motion/camera/bg, redrives ONLY the lips from audio. Wan2.1 i2v 14B + MultiTalk infra.
