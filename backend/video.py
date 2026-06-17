@@ -102,6 +102,9 @@ LTX_VAE_AUDIO = "LTX23_audio_vae_bf16.safetensors"   # VAELoaderKJ cpu/bf16
 # distill at the same 8-step speed (user verdict 2026-06-17, "a little less dramatic"). The stock
 # distill is ltx-2.3-22b-distilled-lora-384-1.1.safetensors; override per-call via distill_lora.
 LTX_LORA_DISTILL = "ltx-2.3-22b-distilled-lora-fro90_ceil72.safetensors"  # few-step distill (req'd for 8-step)
+# Stock distill: smoother/tamer gait. MSR walks default to this (ceil72's higher ceiling MAY have caused a
+# step hitch in a 20s tracking walk - possibly ephemeral, user verdict 2026-06-17 "stick with original").
+LTX_LORA_DISTILL_STOCK = "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
 LTX_LORA_DETAILER = "ltx-2-19b-ic-lora-detailer.safetensors"         # texture/detail
 LTX_LORA_VBVR = "VBVR-official-comfyui.safetensors"                  # LiconStudio motion-dynamics LoRA
 LTX_LORA_MSR = "LTX-2.3\\LTX-2.3-Licon-MSR-V1.safetensors"          # Multiple-Subject-Reference (IC-loader subfolder)
@@ -874,7 +877,7 @@ def build_ltx_msr(p, subject_refs, background_ref):
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
         "2": {"class_type": "LoraLoaderModelOnly",
-              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL),
+              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL_STOCK),
                          "strength_model": distill}},
         "3": {"class_type": "LoraLoaderModelOnly",
               "inputs": {"model": ["2", 0], "lora_name": LTX_LORA_DETAILER, "strength_model": detailer}},
