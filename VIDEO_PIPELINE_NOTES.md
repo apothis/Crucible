@@ -27,6 +27,28 @@ All renders driven from the app Video tab -> backend/video.py graph builders -> 
 - Custom nodes on box: ComfyUI-Licon-MSR, kijai ComfyUI-PromptRelay, word2number (pure-file
   deploy into python_embeded site-packages, NO pip into the venv).
 
+### Walk + SING in ONE on-model LTX pass -- SOLVED via MSR + native audio (2026-06-17)
+- Route: `POST /api/video/ltx_msr` with `audio_id` -> `build_ltx_msr(..., vocal_ref=...)`.
+- The singing lane. Lips are driven by the REAL song INSIDE the same MSR walk render - no keyframe
+  anchor, no Wan/InfiniteTalk, no LatentSync, no second-model degradation. User verdict 2026-06-17
+  (job 8f990ed4, 12s): "That works well... movement is good, all looks good." Identity + walk + clean
+  LTX look all intact, lips track the vocal.
+- THE RECIPE (the missing piece was the noise mask - traced from the official ia2v workflow
+  video_ltx2_3_ia2v.json):
+  1. RoFormer-isolate the vocal, trimmed to EXACTLY frames/fps (an over-long vocal misaligns the AV
+     latent and leaks uncropped MSR reference frames into the first ~second).
+  2. `LoadAudio -> LTXVAudioVAEEncode(audio_vae)` -> encode the vocal.
+  3. `SolidMask(value=0, 1024x1024) -> SetLatentNoiseMask(samples=audio_latent, mask)` -- value 0 =
+     noise mask of all zeros = "preserve, do NOT denoise" -> holds the vocal FIXED through sampling
+     so the video is generated to MATCH it. THIS is what makes lips actually sync. WITHOUT it, the
+     audio gets denoised away -> mouth moves but does NOT track the words (proven: job 357372f8).
+  4. `LTXVConcatAVLatent(video, masked_audio)` -> sampler -> separate -> crop -> decode.
+  5. Mux the driving vocal into CreateVideo.audio so playback has the song to judge sync.
+- CFG stays 1 (the official ia2v is also cfg=1; CFG was NOT the lever). Base LTX-2.3 does the
+  audio->lip conditioning natively - NO dedicated lip-sync IC-LoRA needed (the MSR IC-LoRA is the only
+  one loaded). Minor: mouth movement reads slightly exaggerated at 832x480 where the face is tiny -
+  expected to read better in closer framing / higher res; not a problem per user.
+
 ### InfiniteTalk v2v dub lane -- BUILT (2026-06-16)
 - Route: `POST /api/video/infinitetalk` -> `build_infinitetalk_v2v`. Keeps an existing clip's
   motion/camera/bg, redrives ONLY the lips from audio. Wan2.1 i2v 14B + MultiTalk infra.
@@ -55,6 +77,7 @@ All renders driven from the app Video tab -> backend/video.py graph builders -> 
 | Vocal stems for REMIX / re-timbre (Demucs / BS-RoFormer :5070) | Unusable AS STEMS | ACE bakes vocals into the mix; isolation smears at hi-fi/stem quality. NOTE: this is the STEM bar only -- RoFormer vocal IS adequate as a LIP-SYNC DRIVER (lower bar, see below). Do not over-apply. |
 | LongCat (alt to S2V) | Parked | quanto fp8 incompatible with our stack; bf16 too big for 32GB RAM. |
 | LTX LipDub IC-LoRA (`ltx-2.3-22b-ic-lora-lipdub-0.9`, on box) for SINGING | Wrong tool | Verified from the official workflow JSON (LTX-2.3_ICLoRA_Lipdub_Two_Stage_Distilled): NO LoadAudio node. It is TEXT-DRIVEN -- you type target DIALOGUE in the prompt and it GENERATES new audio+lips from that text. For spoken dubbing/translation only. It would invent a voice, not sync to our ACE-Step song. Do NOT use for walk+sing. |
+| InfiniteTalk v2v (Wan2.1) to dub the LTX MSR walk (job 649030fa) | Terrible (user verdict) | Runs the LTX footage through a SECOND model (Wan2.1). It DROPPED the walk (she stops mid-clip), shifted colour/saturation, and went fake/plastic by the end. ROOT PROBLEM: any v2v dub re-generates every frame through a foreign model -> degrades the LTX look + can lose the motion. Do NOT dub finished LTX clips through Wan. The fix is to stay in ONE LTX pass (LTX is natively audio+video). |
 
 ---
 
