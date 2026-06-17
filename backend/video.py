@@ -98,7 +98,10 @@ LTX_CLIP1 = "gemma_3_12B_it_fp4_mixed.safetensors"   # DualCLIPLoader clip_name1
 LTX_CLIP2 = "ltx-2.3_text_projection_bf16.safetensors"  # clip_name2; type "ltxv"
 LTX_VAE_VIDEO = "LTX23_video_vae_bf16.safetensors"   # VAELoaderKJ main_device/bf16
 LTX_VAE_AUDIO = "LTX23_audio_vae_bf16.safetensors"   # VAELoaderKJ cpu/bf16
-LTX_LORA_DISTILL = "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"  # few-step distill (req'd for 8-step)
+# Default = TenStrip higher-motion-ceiling distill variant (ceil72): less slow-mo than the stock
+# distill at the same 8-step speed (user verdict 2026-06-17, "a little less dramatic"). The stock
+# distill is ltx-2.3-22b-distilled-lora-384-1.1.safetensors; override per-call via distill_lora.
+LTX_LORA_DISTILL = "ltx-2.3-22b-distilled-lora-fro90_ceil72.safetensors"  # few-step distill (req'd for 8-step)
 LTX_LORA_DETAILER = "ltx-2-19b-ic-lora-detailer.safetensors"         # texture/detail
 LTX_LORA_VBVR = "VBVR-official-comfyui.safetensors"                  # LiconStudio motion-dynamics LoRA
 # 8-step distilled sigma schedule (9 values = 8 steps), verbatim from the ULTRA base pass.
