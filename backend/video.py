@@ -739,6 +739,24 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
                    "inputs": {"vae": ["5", 0], "image": ["31", 0], "latent": ["7", 2],
                               "strength": img_strength, "bypass": False}}
         g["10"]["inputs"]["video_latent"] = ["32", 0]  # concat uses the imprinted latent
+    # Opt-in NON-DISTILLED "natural motion" path: the distilled 8-step LoRA bakes in ~1.7x slow
+    # motion (gait analysis: she takes ~half the normal steps/20s). Drop the distill LoRA, add a
+    # real negative with "slow motion" (active now that cfg>1), more steps via the proper LTX
+    # scheduler, and cfg 3 - the levers the LTX docs + the 2.3 Full reference use for full-cadence
+    # motion. Heavier per step but at 24fps/481 frames it fits VRAM (no tiling). Mutually exclusive
+    # with tiled. Targeted overrides on the existing graph (reuses director + AV sampling + decode).
+    if (p.get("full") or p.get("nondistilled")) and not p.get("tiled"):
+        g["2"]["inputs"]["strength_model"] = float(p.get("distill_strength", 0.2))
+        g["8"] = {"class_type": "CLIPTextEncode",
+                  "inputs": {"clip": ["4", 0],
+                             "text": (p.get("negative") or
+                                      "slow motion, slow, static, motionless, still, frozen, "
+                                      "blurry, low quality, distorted, watermark, subtitles")}}
+        g["14"] = {"class_type": "LTXVScheduler",
+                   "inputs": {"steps": int(p.get("steps", 20)), "max_shift": 2.05,
+                              "base_shift": 0.95, "stretch": True, "terminal": 0.1,
+                              "latent": ["10", 0]}}
+        g["11"]["inputs"]["cfg"] = float(p.get("cfg", 3.0))
     # Opt-in temporal-tiled long-form path (LTXVLoopingSampler): generates the clip in overlapping
     # ~56-frame chunks so peak VRAM is one tile, not the whole latent -> no shared-memory thrash on
     # long/high-fps clips. VIDEO-ONLY (the looping sampler has no audio path; we don't need LTX's
