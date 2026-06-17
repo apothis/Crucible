@@ -54,6 +54,7 @@ All renders driven from the app Video tab -> backend/video.py graph builders -> 
 | ceil72 distill for MSR 20s walk | A step HITCH around 3-4s in one take | Higher motion ceiling MAY spike a jerk; stock distill (same seed) removed it. NOTE: may have been an ephemeral one-gen artifact, not definitively ceil72. |
 | Vocal stems for lip-sync audio (Demucs / BS-RoFormer :5070) | Unusable | ACE-Step bakes vocals into the mix; isolation smears. Days spent confirming. Stem-free is the only path. |
 | LongCat (alt to S2V) | Parked | quanto fp8 incompatible with our stack; bf16 too big for 32GB RAM. |
+| LTX LipDub IC-LoRA (`ltx-2.3-22b-ic-lora-lipdub-0.9`, on box) for SINGING | Wrong tool | Verified from the official workflow JSON (LTX-2.3_ICLoRA_Lipdub_Two_Stage_Distilled): NO LoadAudio node. It is TEXT-DRIVEN -- you type target DIALOGUE in the prompt and it GENERATES new audio+lips from that text. For spoken dubbing/translation only. It would invent a voice, not sync to our ACE-Step song. Do NOT use for walk+sing. |
 
 ---
 
@@ -81,9 +82,12 @@ All renders driven from the app Video tab -> backend/video.py graph builders -> 
 
 ## OPEN THREADS / NEXT
 
-- **LipDub** (`ltx-2.3-22b-ic-lora-lipdub-0.9`, on box): wire the in-LTX singing lip-sync on top
-  of the MSR walk so she walks AND sings. RESEARCH FIRST: does it dub a finished clip (v2v) or
-  generate jointly in one pass? Can MSR + LipDub IC-LoRAs coexist in one graph?
+- **Singing lane (walk + sing):** LipDub is OUT (text-driven, see dead ends). The audio-driven
+  options are (1) LTX LipSync -- native LTX-2.3, takes an audio file via LoadAudio, stays on-model
+  with the MSR walk, but we do NOT have this LoRA yet; (2) InfiniteTalk v2v -- already built
+  (Wan2.1). BOTH gate on the SAME open question: does an audio-driven lip model need ISOLATED
+  vocal (our stems-dead landmine) or can it lip-sync acceptably to the FULL music mix? Resolve
+  that BEFORE committing to either path.
 - Other LoRAs on box to evaluate: VBVR / OmniNFT / Motion-Track (motion), Crisp / Soft / Fantasy
   (look enhancers), plus a good single character LoRA for general use.
 - Music-video assembly (grade + upscale via SeedVR2) -- see project_mv-grade-and-upscale memory.
