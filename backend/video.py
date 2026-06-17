@@ -100,6 +100,7 @@ LTX_VAE_VIDEO = "LTX23_video_vae_bf16.safetensors"   # VAELoaderKJ main_device/b
 LTX_VAE_AUDIO = "LTX23_audio_vae_bf16.safetensors"   # VAELoaderKJ cpu/bf16
 LTX_LORA_DISTILL = "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"  # few-step distill (req'd for 8-step)
 LTX_LORA_DETAILER = "ltx-2-19b-ic-lora-detailer.safetensors"         # texture/detail
+LTX_LORA_VBVR = "VBVR-official-comfyui.safetensors"                  # LiconStudio motion-dynamics LoRA
 # 8-step distilled sigma schedule (9 values = 8 steps), verbatim from the ULTRA base pass.
 LTX_SIGMAS_BASE = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 
@@ -738,6 +739,15 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
                "inputs": {"video": ["19", 0], "filename_prefix": "videogen/ltx",
                           "format": "auto", "codec": "auto"}},
     }
+    # Opt-in VBVR motion-dynamics LoRA (LiconStudio, trained for ltx-2.3-22b): adds physically
+    # plausible movement with natural acceleration - a model-level lever for the slow-mo character.
+    # Inserted after the distill+detailer LoRAs; the director (and everything downstream) runs on
+    # the VBVR-patched model. vbvr_strength=0 (default) = off.
+    vbvr = float(p.get("vbvr_strength", 0) or 0)
+    if vbvr > 0:
+        g["50"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": ["3", 0], "lora_name": LTX_LORA_VBVR, "strength_model": vbvr}}
+        g["7"]["inputs"]["model"] = ["50", 0]
     if image_ref is not None:                          # i2v: imprint the keyframe as frame 0
         g["30"] = {"class_type": "LoadImage", "inputs": {"image": image_ref}}
         g["31"] = {"class_type": "LTXVPreprocess",
