@@ -803,12 +803,51 @@ def video_ltx_i2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+def _isolate_vocal_bytes(audio_path, start, win, p):
+    """Trim a [start, start+win] window of a library track and isolate the vocal for lip-sync
+    driving (RoFormer default, Demucs fallback, raw mix if both fail). Returns (bytes, engine_used).
+    Same recipe as /api/video/infinitetalk - RoFormer vocal is smeary for STEMS but fine to DRIVE
+    lips. Caller is responsible for the temp dir."""
+    work = tempfile.mkdtemp(prefix="msr_voc_")
+    iso_used = None
+    try:
+        aud_bytes = _trim_audio_window(audio_path, start, win)
+        if p.get("isolate_vocal", True):
+            clip_path = os.path.join(work, "clip.wav")
+            with open(clip_path, "wb") as f:
+                f.write(aud_bytes)
+            voc = None
+            if bool(ROFORMER_HOST) and p.get("isolate_engine") != "demucs":
+                try:
+                    stems = _separate(clip_path, work, engine="roformer", stems="all")
+                    voc = next((pp for (name, pp) in stems if name == "vocals"), None)
+                    if voc:
+                        iso_used = "roformer"
+                except Exception:
+                    voc = None
+            if not voc:
+                try:
+                    files = stems_mod.separate(clip_path, work, mode="vocals")
+                    voc = next((f for f in files if os.path.basename(f).startswith("vocals")), None)
+                    if voc:
+                        iso_used = "demucs"
+                except Exception:
+                    voc = None
+            if voc and os.path.isfile(voc):
+                with open(voc, "rb") as f:
+                    aud_bytes = f.read()
+        return aud_bytes, iso_used
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 @app.post("/api/video/ltx_msr")
 def video_ltx_msr(p: dict):
     """LTX-2.3 Multiple-Subject-Reference: identity from reference image(s) (no keyframe anchor),
     motion prompt-driven. p: {subject_ids: [1-4 library still ids of the character], background_id
     (a scene still), prompt (reference description + action), seed?, width?, height?, frames?, fps?,
-    msr_strength?, guide_strength?, ref_frames?}."""
+    msr_strength?, guide_strength?, ref_frames?, audio_id? (drive NATIVE single-pass lip-sync from a
+    library track's isolated vocal - walk AND sing in one LTX pass), audio_start?, isolate_vocal?}."""
     subs = [_lib_image_path(x) for x in (p.get("subject_ids") or [])]
     subs = [s for s in subs if s]
     if not subs:
@@ -816,6 +855,9 @@ def video_ltx_msr(p: dict):
     bg = _lib_image_path(p.get("background_id"))
     if not bg:
         raise HTTPException(400, "background_id must reference a generated still (scene/background)")
+    audio = _lib_source_path(p.get("audio_id")) if p.get("audio_id") else None
+    start = max(0.0, float(p.get("audio_start") or 0))
+    iso_used = None
     try:
         up_subs = []
         for s in subs[:4]:
@@ -823,11 +865,24 @@ def video_ltx_msr(p: dict):
                 up_subs.append(C.upload_audio(f.read(), os.path.basename(s)))
         with open(bg, "rb") as f:
             up_bg = C.upload_audio(f.read(), os.path.basename(bg))
-        graph, resolved = video_mod.build_ltx_msr(p, up_subs, up_bg)
+        vocal_ref = None
+        if audio:
+            fps = int(p.get("fps", 24))
+            frames = video_mod._ltx_frames(p.get("frames", 145), fps)
+            win = frames / fps                # EXACT clip duration: an over-long vocal misaligns the
+                                              # AV latent and leaks uncropped MSR reference frames
+            aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, win, p)
+            vocal_ref = C.upload_audio(aud_bytes, "msr_vocal.wav")
+        graph, resolved = video_mod.build_ltx_msr(p, up_subs, up_bg, vocal_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     resolved["subject_ids"] = [os.path.basename(x) for x in (p.get("subject_ids") or [])][:4]
     resolved["background_id"] = os.path.basename(p.get("background_id"))
+    if audio:
+        resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+        resolved["audio_start"] = start
+        resolved["vocal_isolated"] = bool(iso_used)
+        resolved["isolate_engine"] = iso_used
     return _submit_video(graph, resolved, "videoclip")
 
 

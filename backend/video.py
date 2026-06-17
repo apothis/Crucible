@@ -846,16 +846,20 @@ def build_ltx_lipsync(p, image_ref, audio_ref):
     return _build_ltx(p, image_ref=image_ref, lipsync_audio=audio_ref)
 
 
-def build_ltx_msr(p, subject_refs, background_ref):
+def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     """LTX-2.3 Multiple-Subject-Reference (Licon MSR): hold a character's identity from REFERENCE
     images instead of a keyframe imprint - so there's no keyframe anchor and the motion is fully
     prompt-driven (the fix for the identity-vs-motion tradeoff). subject_refs = 1-4 uploaded
     character-reference image names; background_ref = a scene image name (REQUIRED). Identity comes
     from the references via the MSR IC-LoRA; the walk comes from the prompt. Graph traced from
     ComfyUI-Licon-MSR's LTX-2.3_MSR_sample_workflow_V2.json, grafted onto our fp8-transformer +
-    DualCLIP loaders (the sample's full checkpoint won't fit 32GB RAM). p: {prompt (reference
-    description + action), negative?, seed?, width?, height?, frames?, fps?, steps?, cfg?,
-    msr_strength?, guide_strength?, ref_frames? (17/25/33/41), distill_lora?, distill_strength?}."""
+    DualCLIP loaders (the sample's full checkpoint won't fit 32GB RAM).
+    vocal_ref (optional uploaded vocal name) = NATIVE single-pass lip-sync: instead of the EMPTY
+    audio latent, encode the real vocal (LTXVAudioVAEEncode) into the AV latent so LTX drives the
+    lips to the song IN THE SAME PASS as the MSR walk (no keyframe anchor, no second video model,
+    no LatentSync). p: {prompt (reference description + action), negative?, seed?, width?, height?,
+    frames?, fps?, steps?, cfg?, msr_strength?, guide_strength?, ref_frames? (17/25/33/41),
+    distill_lora?, distill_strength?}."""
     seed = _seed(p)
     w = int(p.get("width", 832))
     h = int(p.get("height", 480))
@@ -936,10 +940,28 @@ def build_ltx_msr(p, subject_refs, background_ref):
         nid = str(30 + i)
         g[nid] = {"class_type": "LoadImage", "inputs": {"image": r}}
         g["13"]["inputs"][str(i + 1)] = [nid, 0]
+    if vocal_ref:                                          # native single-pass lip-sync: real vocal
+        # encode the supplied vocal and feed it as the AV audio latent instead of the empty one, so
+        # the sampler denoises video CONDITIONED on the song -> lips track the singing in one pass.
+        # NOTE: the vocal must be trimmed to EXACTLY the clip duration upstream - an over-long audio
+        # latent misaligns LTXVConcat/SeparateAVLatent and leaks uncropped MSR reference frames.
+        g["27"] = {"class_type": "LoadAudio", "inputs": {"audio": vocal_ref}}
+        g["28"] = {"class_type": "LTXVAudioVAEEncode",
+                   "inputs": {"audio": ["27", 0], "audio_vae": ["7", 0]}}
+        # CRITICAL (from the official LTX ia2v workflow): mask the audio latent with a SolidMask of
+        # value 0 -> a noise mask of all zeros = "preserve, do NOT denoise". This holds the vocal
+        # FIXED through sampling so the video is generated to MATCH it (real lip-sync). Without this
+        # the sampler denoises the audio away -> mouth moves but does not track the words.
+        g["36"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": 1024, "height": 1024}}
+        g["37"] = {"class_type": "SetLatentNoiseMask",
+                   "inputs": {"samples": ["28", 0], "mask": ["36", 0]}}
+        g["16"]["inputs"]["audio_latent"] = ["37", 0]     # masked vocal latent (was empty node 15)
+        del g["15"]                                        # empty audio no longer used
+        g["25"]["inputs"]["audio"] = ["27", 0]            # mux the driving vocal into the output
     return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                "seconds": round(frames / fps, 2), "steps": steps, "cfg": cfg, "msr_strength": msr_str,
                "guide_strength": guide_str, "ref_frames": ref_frames, "subjects": len(subs),
-               "prompt": prompt, "kind": "video"}
+               "prompt": prompt, "lipsync": bool(vocal_ref), "kind": "video"}
 
 
 # ------------------------------------------------ SeedVR2 video upscale (post-process)
