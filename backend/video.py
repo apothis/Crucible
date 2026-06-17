@@ -104,6 +104,7 @@ LTX_VAE_AUDIO = "LTX23_audio_vae_bf16.safetensors"   # VAELoaderKJ cpu/bf16
 LTX_LORA_DISTILL = "ltx-2.3-22b-distilled-lora-fro90_ceil72.safetensors"  # few-step distill (req'd for 8-step)
 LTX_LORA_DETAILER = "ltx-2-19b-ic-lora-detailer.safetensors"         # texture/detail
 LTX_LORA_VBVR = "VBVR-official-comfyui.safetensors"                  # LiconStudio motion-dynamics LoRA
+LTX_LORA_MSR = "LTX-2.3\\LTX-2.3-Licon-MSR-V1.safetensors"          # Multiple-Subject-Reference (IC-loader subfolder)
 # 8-step distilled sigma schedule (9 values = 8 steps), verbatim from the ULTRA base pass.
 LTX_SIGMAS_BASE = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 
@@ -840,6 +841,102 @@ def build_ltx_lipsync(p, image_ref, audio_ref):
     model). image_ref/audio_ref = uploaded names on ComfyUI. p as build_ltx_i2v plus
     {lips_expression?, inference_steps?}. Output: SaveVideo -> videogen/ltx."""
     return _build_ltx(p, image_ref=image_ref, lipsync_audio=audio_ref)
+
+
+def build_ltx_msr(p, subject_refs, background_ref):
+    """LTX-2.3 Multiple-Subject-Reference (Licon MSR): hold a character's identity from REFERENCE
+    images instead of a keyframe imprint - so there's no keyframe anchor and the motion is fully
+    prompt-driven (the fix for the identity-vs-motion tradeoff). subject_refs = 1-4 uploaded
+    character-reference image names; background_ref = a scene image name (REQUIRED). Identity comes
+    from the references via the MSR IC-LoRA; the walk comes from the prompt. Graph traced from
+    ComfyUI-Licon-MSR's LTX-2.3_MSR_sample_workflow_V2.json, grafted onto our fp8-transformer +
+    DualCLIP loaders (the sample's full checkpoint won't fit 32GB RAM). p: {prompt (reference
+    description + action), negative?, seed?, width?, height?, frames?, fps?, steps?, cfg?,
+    msr_strength?, guide_strength?, ref_frames? (17/25/33/41), distill_lora?, distill_strength?}."""
+    seed = _seed(p)
+    w = int(p.get("width", 832))
+    h = int(p.get("height", 480))
+    fps = int(p.get("fps", 24))
+    frames = _ltx_frames(p.get("frames", 145), fps)
+    steps = int(p.get("steps", 8))
+    cfg = float(p.get("cfg", 1.0))
+    distill = float(p.get("distill_strength", 0.5))
+    detailer = float(p.get("detailer_strength", 0.2))
+    msr_str = float(p.get("msr_strength", 1.0))
+    guide_str = float(p.get("guide_strength", 1.0))
+    ref_frames = int(p.get("ref_frames", 17))            # LiconMSR combo: 17/25/33/41
+    if ref_frames not in (17, 25, 33, 41):
+        ref_frames = 17
+    prompt = (p.get("prompt") or "").strip()
+    neg = (p.get("negative") or "subtitles, watermark, worst quality, blurry, jittery, distorted, "
+           "inconsistent appearance, slow motion")
+    subs = [r for r in (subject_refs or []) if r][:4]
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL),
+                         "strength_model": distill}},
+        "3": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["2", 0], "lora_name": LTX_LORA_DETAILER, "strength_model": detailer}},
+        "4": {"class_type": "LTXICLoRALoaderModelOnly",
+              "inputs": {"model": ["3", 0], "lora_name": LTX_LORA_MSR, "strength_model": msr_str}},
+        "5": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": LTX_CLIP1, "clip_name2": LTX_CLIP2, "type": "ltxv", "device": "default"}},
+        "6": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_VIDEO, "device": "main_device", "weight_dtype": "bf16"}},
+        "7": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
+        "8": {"class_type": "EmptyLTXVLatentVideo",
+              "inputs": {"width": w, "height": h, "length": frames, "batch_size": 1}},
+        "9": {"class_type": "PromptRelayEncode",
+              "inputs": {"model": ["4", 0], "clip": ["5", 0], "latent": ["8", 0], "global_prompt": "",
+                         "local_prompts": prompt, "segment_lengths": "", "epsilon": 0.001}},
+        "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
+        "11": {"class_type": "LTXVConditioning",
+               "inputs": {"positive": ["9", 1], "negative": ["10", 0], "frame_rate": float(fps)}},
+        "12": {"class_type": "LTX2_NAG",
+               "inputs": {"model": ["9", 0], "nag_scale": 11.0, "nag_alpha": 0.25, "nag_tau": 2.5}},
+        "13": {"class_type": "LiconMSR",
+               "inputs": {"width": w, "height": h, "frame_count": ref_frames, "background": ["35", 0]}},
+        "14": {"class_type": "LTXAddVideoICLoRAGuide",
+               "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
+                          "latent": ["8", 0], "image": ["13", 0], "frame_idx": 0,
+                          "strength": guide_str, "latent_downscale_factor": 1.0, "crop": "center",
+                          "use_tiled_encode": False, "tile_size": 256, "tile_overlap": 64}},
+        "15": {"class_type": "LTXVEmptyLatentAudio",
+               "inputs": {"frames_number": frames, "frame_rate": fps, "batch_size": 1, "audio_vae": ["7", 0]}},
+        "16": {"class_type": "LTXVConcatAVLatent",
+               "inputs": {"video_latent": ["14", 2], "audio_latent": ["15", 0]}},
+        "17": {"class_type": "CFGGuider",
+               "inputs": {"model": ["12", 0], "positive": ["14", 0], "negative": ["14", 1], "cfg": cfg}},
+        "18": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "19": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "20": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},
+        "21": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["18", 0], "guider": ["17", 0], "sampler": ["19", 0],
+                          "sigmas": ["20", 0], "latent_image": ["16", 0]}},
+        "22": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["21", 0]}},
+        "23": {"class_type": "LTXVCropGuides",
+               "inputs": {"positive": ["14", 0], "negative": ["14", 1], "latent": ["22", 0]}},
+        "24": {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+               "inputs": {"vae": ["6", 0], "latents": ["23", 2], "spatial_tiles": 4,
+                          "spatial_overlap": 4, "temporal_tile_length": 48, "temporal_overlap": 8,
+                          "last_frame_fix": False, "working_device": "auto", "working_dtype": "auto"}},
+        "25": {"class_type": "CreateVideo", "inputs": {"images": ["24", 0], "fps": fps}},
+        "26": {"class_type": "SaveVideo",
+               "inputs": {"video": ["25", 0], "filename_prefix": "videogen/ltxmsr",
+                          "format": "auto", "codec": "auto"}},
+        # background LoadImage (required) + subject LoadImages wired into LiconMSR
+        "35": {"class_type": "LoadImage", "inputs": {"image": background_ref}},
+    }
+    for i, r in enumerate(subs):                          # subjects -> LiconMSR inputs "1".."4"
+        nid = str(30 + i)
+        g[nid] = {"class_type": "LoadImage", "inputs": {"image": r}}
+        g["13"]["inputs"][str(i + 1)] = [nid, 0]
+    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+               "seconds": round(frames / fps, 2), "steps": steps, "cfg": cfg, "msr_strength": msr_str,
+               "guide_strength": guide_str, "ref_frames": ref_frames, "subjects": len(subs),
+               "prompt": prompt, "kind": "video"}
 
 
 # ------------------------------------------------ SeedVR2 video upscale (post-process)

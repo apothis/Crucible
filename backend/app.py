@@ -803,6 +803,34 @@ def video_ltx_i2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/ltx_msr")
+def video_ltx_msr(p: dict):
+    """LTX-2.3 Multiple-Subject-Reference: identity from reference image(s) (no keyframe anchor),
+    motion prompt-driven. p: {subject_ids: [1-4 library still ids of the character], background_id
+    (a scene still), prompt (reference description + action), seed?, width?, height?, frames?, fps?,
+    msr_strength?, guide_strength?, ref_frames?}."""
+    subs = [_lib_image_path(x) for x in (p.get("subject_ids") or [])]
+    subs = [s for s in subs if s]
+    if not subs:
+        raise HTTPException(400, "subject_ids must reference 1-4 generated stills (the character)")
+    bg = _lib_image_path(p.get("background_id"))
+    if not bg:
+        raise HTTPException(400, "background_id must reference a generated still (scene/background)")
+    try:
+        up_subs = []
+        for s in subs[:4]:
+            with open(s, "rb") as f:
+                up_subs.append(C.upload_audio(f.read(), os.path.basename(s)))
+        with open(bg, "rb") as f:
+            up_bg = C.upload_audio(f.read(), os.path.basename(bg))
+        graph, resolved = video_mod.build_ltx_msr(p, up_subs, up_bg)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["subject_ids"] = [os.path.basename(x) for x in (p.get("subject_ids") or [])][:4]
+    resolved["background_id"] = os.path.basename(p.get("background_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/svi_i2v")
 def video_svi_i2v(p: dict):
     """SVI2 Pro long-form Wan 2.2 A14B i2v: animate a library still into a long continuous clip
