@@ -661,6 +661,13 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
     fps = int(p.get("fps", 25 if lipsync_audio else 24))   # LatentSync wants 25fps input
     frames = _ltx_frames(p.get("frames", 97), fps)     # default ~4s; valid 8k+1
     secs = round(frames / fps, 3)
+    # motion_fps DECOUPLES the rate the model is CONDITIONED on from the playback rate. LTX bakes
+    # "how fast time passes" into generation via frame_rate: telling it a LOWER fps than we play
+    # back makes it generate more motion per frame, so at the real fps everything moves FASTER -
+    # the direct fix for the slow-motion temporal character (independent of distill/cfg/img_strength,
+    # which only affect WHAT she does, not the motion RATE). Default = fps (no change).
+    motion_fps = float(p.get("motion_fps") or fps)
+    motion_secs = round(frames / motion_fps, 3)
     cfg = float(p.get("cfg", 1.0))                     # distilled LoRA -> CFG 1 (negative ignored)
     distill = float(p.get("distill_strength", 0.5))
     detailer = float(p.get("detailer_strength", 0.2))
@@ -695,11 +702,11 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
         # the LTXDirector node's _encode_relay (WhatDreamsCost-ComfyUI/ltx_director.py).
         "7": {"class_type": "LTXDirector",
               "inputs": {"model": ["3", 0], "clip": ["4", 0], "global_prompt": "",
-                         "duration_frames": frames, "duration_seconds": secs,
+                         "duration_frames": frames, "duration_seconds": motion_secs,
                          "timeline_data": "{\"segments\":[],\"audioSegments\":[]}",
                          "local_prompts": prompt, "segment_lengths": "", "epsilon": 0.001,
                          "guide_strength": "", "audio_vae": ["6", 0],
-                         "use_custom_audio": False, "frame_rate": float(fps),
+                         "use_custom_audio": False, "frame_rate": motion_fps,
                          "display_mode": "frames", "custom_width": w, "custom_height": h,
                          "resize_method": "maintain aspect ratio", "divisible_by": 32,
                          "img_compression": 18}},
