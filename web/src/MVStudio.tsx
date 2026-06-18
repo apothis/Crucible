@@ -4,12 +4,10 @@ import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } fro
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
 import {
-  type Block, type Character, type RenderMode, type Seg,
-  makeBlock, hydrateBlock, ltxFrames, resolveSubjects, charRefIds, msrPayload,
+  type Block, type Character, type Identity, type Wardrobe, type RenderMode, type Seg,
+  makeBlock, ltxFrames, resolveSubjects, charRefIds, msrPayload,
   blockSeconds, MSR_REF_COMBOS,
 } from "./mvmodel";
-
-type Project = { id: string; name: string };
 
 // ---- small UI helpers ---------------------------------------------------
 
@@ -72,22 +70,23 @@ const stillLabel = (id: string, stills: LibItem[]) => {
 
 export function MVStudioForm({ cfg, busy, library, ...ctx }:
   { cfg: Config; busy: boolean; library: LibItem[] } & RunCtx) {
+  // The MV Studio timeline lives in this tab's drafts namespace ("mvstudio"), so it saves +
+  // loads with the standard project Save/Open (top bar) exactly like every other tab - no
+  // separate persistence. Characters are global (the shared /api/characters library).
   const d = useDrafts("mvstudio");
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = d.use("projectId", "");
   const [audioId, setAudioId] = d.use("audioId", "");          // the song (drives lip-sync windows + assembly mux)
   const [grade, setGrade] = d.use("grade", "none");
   const [grades, setGrades] = useState<string[]>(["none"]);
   const [blocks, setBlocks] = d.use<Block[]>("blocks", []);
   const [selId, setSelId] = d.use("selId", "");
   const [libChars, setLibChars] = useState<Character[]>([]);
+  const reloadChars = () => api.characters().then((r) => setLibChars(r as Character[])).catch(() => {});
   // which inspector sub-sections are expanded (per selected block is overkill; keep global)
   const [open, setOpen] = d.use<Record<string, boolean>>("openSecs", { refs: true, prompt: true });
   const toggle = (k: string) => setOpen({ ...open, [k]: !open[k] });
 
-  useEffect(() => { api.projects().then(setProjects).catch(() => {}); }, []);
   useEffect(() => { api.mvGrades().then((r) => setGrades((r as { grades: string[] }).grades)).catch(() => {}); }, []);
-  useEffect(() => { api.characters().then((r) => setLibChars(r as Character[])).catch(() => {}); }, []);
+  useEffect(() => { reloadChars(); }, []);
 
   const stills = library.filter((i) => i.mode === "videostill" && i.media_url);
   const audios = library.filter((i) => i.audio_url);
@@ -119,25 +118,6 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
     const i = blocks.findIndex((b) => b.id === id); const j = i + dir;
     if (j < 0 || j >= blocks.length) return;
     const next = blocks.slice(); [next[i], next[j]] = [next[j], next[i]]; setAll(next);
-  }
-
-  // ---- persistence ----
-  async function loadFromProject() {
-    if (!projectId) return;
-    try {
-      const r = await api.projectVideoGet(projectId) as { video: { blocks?: Partial<Block>[]; audioId?: string; grade?: string } };
-      const v = r.video;
-      if (v.blocks?.length) { const hb = v.blocks.map(hydrateBlock); setAll(hb); setSelId(hb[0].id); }
-      if (v.audioId) setAudioId(v.audioId);
-      if (v.grade) setGrade(v.grade);
-    } catch (e) { ctx.setResults([{ id: rid(), title: "Load failed", status: "error", pct: 0, err: (e as Error).message }]); }
-  }
-  async function saveToProject() {
-    if (!projectId) { ctx.setResults([{ id: rid(), title: "Pick a project first", status: "error", pct: 0, err: "Select a song project to save the timeline into." }]); return; }
-    try {
-      await api.projectVideoSave(projectId, { blocks, audioId, grade });
-      ctx.setResults([{ id: rid(), title: "Saved timeline to project", status: "done", pct: 100 }]);
-    } catch (e) { ctx.setResults([{ id: rid(), title: "Save failed", status: "error", pct: 0, err: (e as Error).message }]); }
   }
 
   // ---- render one block ----
@@ -181,7 +161,7 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
     ctx.setResults([card]);
     try {
       const r = await api.mvAssemble({ shots: ready.map((b) => ({ clip_id: b.clipId, start: b.start, end: b.end })),
-        audio_id: audioId, grade, title: projects.find((p) => p.id === projectId)?.name || "music video" }) as { media_url: string };
+        audio_id: audioId, grade, title: "music video" }) as { media_url: string };
       ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
       ctx.onDone();
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -201,28 +181,23 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
       <p className="text-[11px] text-[var(--color-muted)]">
         Build a music video as a timeline of <span className="text-[var(--color-ink)]">LTX MSR blocks</span> -
         each block holds a character's identity from reference stills and is fully prompt-driven (walk, sing,
-        camera moves), with native single-pass lip-sync. Pick a block to edit it below.
+        camera moves), with native single-pass lip-sync. This timeline is part of your project: it saves +
+        loads with <span className="text-[var(--color-ink)]">Save</span> / <span className="text-[var(--color-ink)]">Open</span> in the project bar above.
       </p>
 
-      {/* project + audio + grade */}
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Song project" hint="where the timeline is saved">
-          <select className={inp} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">- pick a project -</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Song audio" hint="drives lip-sync windows + final mux">
-          <select className={inp} value={audioId} onChange={(e) => setAudioId(e.target.value)}>
-            <option value="">- pick a track -</option>
-            {audios.map((a) => <option key={a.id} value={a.id}>{(a.params?.title || a.params?.tags || a.mode || a.id).toString().slice(0, 40)}</option>)}
-          </select>
-        </Field>
-      </div>
+      {/* song audio (a library track ref - persists in the project drafts) */}
+      <Field label="Song audio" hint="drives lip-sync windows + the final mux">
+        <select className={inp} value={audioId} onChange={(e) => setAudioId(e.target.value)}>
+          <option value="">- pick a track -</option>
+          {audios.map((a) => <option key={a.id} value={a.id}>{(a.params?.title || a.params?.tags || a.mode || a.id).toString().slice(0, 40)}</option>)}
+        </select>
+      </Field>
+
+      {/* character library (global, reusable across projects) */}
+      <CharacterLibrary chars={libChars} setChars={setLibChars} reload={reloadChars}
+        stills={stills} busy={busy} {...ctx} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <GhostButton onClick={loadFromProject}>Load saved</GhostButton>
-        <GhostButton onClick={saveToProject}>Save to project</GhostButton>
         <GhostButton onClick={addBlock}>+ Block</GhostButton>
         <span className="ml-auto text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
       </div>
@@ -273,6 +248,121 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
         </div>
       )}
     </div>
+  );
+}
+
+// ---- character library (identity core + per-video wardrobe) ------------
+
+function CharacterLibrary({ chars, setChars, reload, stills, busy, ...ctx }:
+  { chars: Character[]; setChars: (c: Character[]) => void; reload: () => void; stills: LibItem[]; busy: boolean } & RunCtx) {
+  const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState("");
+
+  function persist(c: Character) { api.characterSave(c).catch(() => {}); }
+  function patch(c: Character, p: Partial<Character>) {
+    const next = { ...c, ...p };
+    setChars(chars.map((x) => x.id === c.id ? next : x));     // optimistic (keeps input focus)
+    persist(next);
+  }
+  async function add() {
+    const r = await api.characterSave({ name: "New character", kind: "musician", method: "auto" }) as Character;
+    await reload(); setEditId(r.id);
+  }
+  async function del(id: string) { await api.characterDelete(id); await reload(); if (editId === id) setEditId(""); }
+
+  const setIdentity = (c: Character, p: Partial<Identity>) => patch(c, { identity: { ...(c.identity || {}), ...p } });
+  const setWardrobe = (c: Character, wid: string, p: Partial<Wardrobe>) =>
+    patch(c, { wardrobes: (c.wardrobes || []).map((w) => w.id === wid ? { ...w, ...p } : w) });
+  const addWardrobe = (c: Character) =>
+    patch(c, { wardrobes: [...(c.wardrobes || []), { id: rid(), name: "New look", outfitPrompt: "" }] });
+  const delWardrobe = (c: Character, wid: string) =>
+    patch(c, { wardrobes: (c.wardrobes || []).filter((w) => w.id !== wid) });
+
+  // generate a dressed reference (Qwen char_still) from the identity core + the wardrobe's outfit text
+  async function genRef(c: Character, w: Wardrobe, slot: "face" | "body") {
+    const baseRef = slot === "face"
+      ? (c.identity?.faceRefId || c.identity?.bodyRefId)
+      : (c.identity?.bodyRefId || c.identity?.faceRefId);
+    if (!baseRef) { ctx.setResults([{ id: rid(), title: "Set an identity reference first", status: "error", pct: 0, err: "Pick a face/body still for the identity core, then generate the dressed look from it." }]); return; }
+    const framing = slot === "face" ? "head-and-shoulders close-up portrait" : "full-body shot from head to toe";
+    const prompt = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, photoreal, sharp focus`;
+    const card = { id: rid(), title: `${c.name}: ${w.name} ${slot} ref`, status: "pending" as const, pct: 0 };
+    ctx.setResults([card]);
+    try {
+      const { job_id } = await api.videoCharStill({ ref_ids: [baseRef], prompt }) as { job_id: string };
+      setWardrobe(c, w.id, slot === "face" ? { faceRefId: job_id } : { bodyRefId: job_id });   // lock the produced still in
+      ctx.patch(card.id, { status: "running", pct: 5 });
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  return (
+    <Collapse title={`Character library (${chars.length})`} open={open} onToggle={() => setOpen(!open)} accent>
+      <p className="text-[10px] text-[var(--color-muted)]">
+        Reusable across every video. A character = a clothing-agnostic <span className="text-[var(--color-ink)]">identity core</span> (face + body)
+        plus one or more <span className="text-[var(--color-ink)]">wardrobes</span> - a per-video outfit that generates a dressed face + body pair (the 2-image MSR unit).
+      </p>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">{chars.length} character{chars.length === 1 ? "" : "s"}</span>
+        <button onClick={add} className="text-[10px] text-[var(--color-accent2)]">+ character</button>
+      </div>
+      {chars.map((c) => {
+        const editing = editId === c.id;
+        return (
+          <div key={c.id} className="rounded border border-[var(--color-line)] bg-[var(--color-bg)] p-2 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setEditId(editing ? "" : c.id)} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="expand">{editing ? "▾" : "▸"}</button>
+              <input className={inp} value={c.name} onChange={(e) => patch(c, { name: e.target.value })} placeholder="name" />
+              <select className={`${inp} w-28`} value={c.kind || "musician"} onChange={(e) => patch(c, { kind: e.target.value })} title="kind">
+                <option value="musician">musician</option>
+                <option value="actor">actor</option>
+              </select>
+              <span className="w-16 shrink-0 text-[9px] text-[var(--color-muted)]">{(c.wardrobes || []).length} look{(c.wardrobes || []).length === 1 ? "" : "s"}</span>
+              <button onClick={() => del(c.id)} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="delete character">{"×"}</button>
+            </div>
+            {editing && (
+              <div className="space-y-2 border-t border-[var(--color-line)] pt-2">
+                {/* identity core */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Identity core (clothing-agnostic)</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="text-[9px] text-[var(--color-muted)]">face<StillPick value={c.identity?.faceRefId || ""} stills={stills} set={(id) => setIdentity(c, { faceRefId: id })} placeholder="- face still -" /></label>
+                    <label className="text-[9px] text-[var(--color-muted)]">body<StillPick value={c.identity?.bodyRefId || ""} stills={stills} set={(id) => setIdentity(c, { bodyRefId: id })} placeholder="- body still -" /></label>
+                  </div>
+                </div>
+                {/* wardrobes */}
+                <div className="space-y-1.5 border-t border-[var(--color-line)] pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Wardrobes</span>
+                    <button onClick={() => addWardrobe(c)} className="text-[10px] text-[var(--color-accent2)]">+ wardrobe</button>
+                  </div>
+                  {(c.wardrobes || []).length === 0 && <p className="text-[9px] text-[var(--color-muted)]">No wardrobes yet. Add one, describe the outfit, then generate the dressed face + body refs from the identity core.</p>}
+                  {(c.wardrobes || []).map((w) => (
+                    <div key={w.id} className="rounded border border-[var(--color-line)] p-1.5 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <input className={inp} value={w.name} onChange={(e) => setWardrobe(c, w.id, { name: e.target.value })} placeholder="look name" />
+                        <button onClick={() => delWardrobe(c, w.id)} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="delete look">{"×"}</button>
+                      </div>
+                      <textarea className={inp} rows={2} value={w.outfitPrompt || ""} placeholder="outfit description (e.g. covered-shoulder feathered black lace gown)" onChange={(e) => setWardrobe(c, w.id, { outfitPrompt: e.target.value })} />
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div className="space-y-1">
+                          <StillPick value={w.faceRefId || ""} stills={stills} set={(id) => setWardrobe(c, w.id, { faceRefId: id })} placeholder="- face ref -" />
+                          <button onClick={() => genRef(c, w, "face")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate face</button>
+                        </div>
+                        <div className="space-y-1">
+                          <StillPick value={w.bodyRefId || ""} stills={stills} set={(id) => setWardrobe(c, w.id, { bodyRefId: id })} placeholder="- body ref -" />
+                          <button onClick={() => genRef(c, w, "body")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate body</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </Collapse>
   );
 }
 
