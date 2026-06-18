@@ -3,6 +3,7 @@ import { api, type Config, type LibItem } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
+import { MVTimeline } from "./MVTimeline";
 import {
   type Block, type Character, type Identity, type Wardrobe, type RenderMode, type Seg,
   makeBlock, ltxFrames, resolveSubjects, charRefIds, msrPayload,
@@ -85,39 +86,41 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
   const [open, setOpen] = d.use<Record<string, boolean>>("openSecs", { refs: true, prompt: true });
   const toggle = (k: string) => setOpen({ ...open, [k]: !open[k] });
 
+  const [beats, setBeats] = useState<number[]>([]);              // song beat times (for snap-to-beat)
   useEffect(() => { api.mvGrades().then((r) => setGrades((r as { grades: string[] }).grades)).catch(() => {}); }, []);
   useEffect(() => { reloadChars(); }, []);
+  useEffect(() => {
+    if (!audioId) { setBeats([]); return; }
+    api.beats(audioId).then((r) => setBeats(((r as { beats?: number[] }).beats) || [])).catch(() => setBeats([]));
+  }, [audioId]);
 
   const stills = library.filter((i) => i.mode === "videostill" && i.media_url);
   const audios = library.filter((i) => i.audio_url);
+  const audioUrl = library.find((i) => i.id === audioId)?.audio_url || "";
   const sel = blocks.find((b) => b.id === selId);
 
-  // ---- block ops ----
-  function reindex(list: Block[]): Block[] { return list.map((b, i) => ({ ...b, idx: i })); }
-  function setAll(list: Block[]) { setBlocks(reindex(list)); }
-  function patch(id: string, p: Partial<Block>) { setBlocks(blocks.map((b) => b.id === id ? { ...b, ...p } : b)); }
+  // ---- block ops (blocks are kept sorted by start time = the timeline + assembly order) ----
+  function commit(list: Block[]) {
+    const sorted = [...list].sort((a, b) => (a.start - b.start) || (a.end - b.end)).map((b, i) => ({ ...b, idx: i }));
+    setBlocks(sorted);
+  }
+  function patch(id: string, p: Partial<Block>) { commit(blocks.map((b) => b.id === id ? { ...b, ...p } : b)); }
   function patchSel(p: Partial<Block>) { if (sel) patch(sel.id, p); }
   function addBlock() {
-    const last = blocks[blocks.length - 1];
+    const last = [...blocks].sort((a, b) => a.end - b.end)[blocks.length - 1];
     const start = last ? last.end : 0;
     const b = makeBlock(start);
     b.audioId = audioId;
-    setAll([...blocks, b]); setSelId(b.id);
+    commit([...blocks, b]); setSelId(b.id);
   }
   function dupBlock(b: Block) {
     const copy: Block = { ...b, id: rid(), clipId: undefined, start: b.end, end: b.end + (b.end - b.start),
       segs: b.segs.map((s) => ({ ...s })), chars: b.chars.map((c) => ({ ...c })), subjectIds: [...b.subjectIds] };
-    const at = blocks.findIndex((x) => x.id === b.id);
-    const next = blocks.slice(); next.splice(at + 1, 0, copy); setAll(next); setSelId(copy.id);
+    commit([...blocks, copy]); setSelId(copy.id);
   }
   function delBlock(id: string) {
-    const next = blocks.filter((b) => b.id !== id); setAll(next);
+    const next = blocks.filter((b) => b.id !== id); commit(next);
     if (selId === id) setSelId(next[0]?.id || "");
-  }
-  function moveBlock(id: string, dir: -1 | 1) {
-    const i = blocks.findIndex((b) => b.id === id); const j = i + dir;
-    if (j < 0 || j >= blocks.length) return;
-    const next = blocks.slice(); [next[i], next[j]] = [next[j], next[i]]; setAll(next);
   }
 
   // ---- render one block ----
@@ -202,8 +205,13 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
         <span className="ml-auto text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
       </div>
 
-      {/* timeline overview (Phase 1: proportional, click-to-select; draggable ruler comes in Phase 3) */}
-      {blocks.length > 0 && (
+      {/* the visual timeline: waveform + draggable blocks when a song is set; else a
+          proportional click-to-select bar (no audio to scrub against) */}
+      {blocks.length > 0 && audioUrl && (
+        <MVTimeline url={audioUrl} beats={beats} blocks={blocks} selId={selId}
+          onSelect={setSelId} onChange={(id, s, e) => patch(id, { start: s, end: e })} />
+      )}
+      {blocks.length > 0 && !audioUrl && (
         <div className="relative h-16 w-full overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-bg)]">
           {blocks.map((b) => {
             const left = (b.start / span) * 100, width = Math.max(2, ((b.end - b.start) / span) * 100);
@@ -227,11 +235,11 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
       )}
 
       {/* inspector for the selected block */}
-      {sel && <Inspector key={sel.id} b={sel} idx={sel.idx} count={blocks.length}
+      {sel && <Inspector key={sel.id} b={sel} idx={sel.idx}
         cfg={cfg} busy={busy} stills={stills} audios={audios} libChars={libChars} songAudioId={audioId}
         open={open} toggle={toggle}
         patch={patchSel} gen={() => genBlock(sel)} dup={() => dupBlock(sel)}
-        del={() => delBlock(sel.id)} move={(dir) => moveBlock(sel.id, dir)} />}
+        del={() => delBlock(sel.id)} />}
 
       {/* assemble */}
       {blocks.length > 0 && (
@@ -368,11 +376,11 @@ function CharacterLibrary({ chars, setChars, reload, stills, busy, ...ctx }:
 
 // ---- the per-block inspector -------------------------------------------
 
-function Inspector({ b, idx, count, cfg, busy, stills, audios, libChars, songAudioId, open, toggle, patch, gen, dup, del, move }: {
-  b: Block; idx: number; count: number; cfg: Config; busy: boolean;
+function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, open, toggle, patch, gen, dup, del }: {
+  b: Block; idx: number; cfg: Config; busy: boolean;
   stills: LibItem[]; audios: LibItem[]; libChars: Character[]; songAudioId: string;
   open: Record<string, boolean>; toggle: (k: string) => void;
-  patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void; move: (dir: -1 | 1) => void;
+  patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void;
 }) {
   const subjects = resolveSubjects(b, libChars);
   const clip = stills.find((s) => s.id === b.clipId);    // (clip is a videoclip, not a still; thumb best-effort)
@@ -404,8 +412,6 @@ function Inspector({ b, idx, count, cfg, busy, stills, audios, libChars, songAud
         </label>
         {b.clipId && <span className="text-[10px] text-green-400" title="rendered">rendered</span>}
         <span className="ml-auto flex items-center gap-1">
-          <button onClick={() => move(-1)} disabled={idx === 0} className="px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-30" title="Move earlier">{"‹"}</button>
-          <button onClick={() => move(1)} disabled={idx === count - 1} className="px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-30" title="Move later">{"›"}</button>
           <button onClick={dup} className="px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="Duplicate">{"⧉"}</button>
           <button onClick={del} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="Delete">{"×"}</button>
           <button onClick={gen} disabled={busy} className="rounded bg-[var(--color-accent)] px-3 py-1 text-[11px] font-semibold text-white disabled:opacity-50">{b.clipId ? "Re-render" : "Render"}</button>
