@@ -874,7 +874,24 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     ref_frames = int(p.get("ref_frames", 17))            # LiconMSR combo: 17/25/33/41
     if ref_frames not in (17, 25, 33, 41):
         ref_frames = 17
+    # LiconMSR reference-frame resolution, DECOUPLED from the output (node 8). Default = output res.
+    # Test lever: set higher (same aspect, /32) to give multi-view char sheets more detail without
+    # paying the full output-resolution cost. (LiconMSR resizes each ref to THIS w/h; whether the IC-
+    # LoRA guide concat tolerates ref res != output res is exactly what we're testing.)
+    ref_w = int(p.get("ref_width") or w)
+    ref_h = int(p.get("ref_height") or h)
     prompt = (p.get("prompt") or "").strip()
+    # PromptRelayEncode TIMELINE: a global_prompt held across the whole clip + ordered per-segment
+    # local_prompts (a "|"-separated string, or a list) placed at segment_lengths (comma-separated
+    # frame counts; empty = auto even split). epsilon controls boundary softness (0.001 sharp, ~0.5
+    # smooth - use high for a continuous camera move). Falls back to the single prompt = one segment.
+    global_prompt = (p.get("global_prompt") or "").strip()
+    local_prompts = p.get("local_prompts")
+    if isinstance(local_prompts, (list, tuple)):
+        local_prompts = "|".join(str(s).strip() for s in local_prompts if str(s).strip())
+    local_prompts = (local_prompts or "").strip() or prompt
+    segment_lengths = str(p.get("segment_lengths") or "").strip()
+    epsilon = float(p.get("epsilon", 0.001))
     neg = (p.get("negative") or "subtitles, watermark, worst quality, blurry, jittery, distorted, "
            "inconsistent appearance, slow motion")
     subs = [r for r in (subject_refs or []) if r][:4]
@@ -896,15 +913,16 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         "8": {"class_type": "EmptyLTXVLatentVideo",
               "inputs": {"width": w, "height": h, "length": frames, "batch_size": 1}},
         "9": {"class_type": "PromptRelayEncode",
-              "inputs": {"model": ["4", 0], "clip": ["5", 0], "latent": ["8", 0], "global_prompt": "",
-                         "local_prompts": prompt, "segment_lengths": "", "epsilon": 0.001}},
+              "inputs": {"model": ["4", 0], "clip": ["5", 0], "latent": ["8", 0],
+                         "global_prompt": global_prompt, "local_prompts": local_prompts,
+                         "segment_lengths": segment_lengths, "epsilon": epsilon}},
         "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
         "11": {"class_type": "LTXVConditioning",
                "inputs": {"positive": ["9", 1], "negative": ["10", 0], "frame_rate": float(fps)}},
         "12": {"class_type": "LTX2_NAG",
                "inputs": {"model": ["9", 0], "nag_scale": 11.0, "nag_alpha": 0.25, "nag_tau": 2.5}},
         "13": {"class_type": "LiconMSR",
-               "inputs": {"width": w, "height": h, "frame_count": ref_frames, "background": ["35", 0]}},
+               "inputs": {"width": ref_w, "height": ref_h, "frame_count": ref_frames, "background": ["35", 0]}},
         "14": {"class_type": "LTXAddVideoICLoRAGuide",
                "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
                           "latent": ["8", 0], "image": ["13", 0], "frame_idx": 0,
@@ -958,10 +976,15 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         g["16"]["inputs"]["audio_latent"] = ["37", 0]     # masked vocal latent (was empty node 15)
         del g["15"]                                        # empty audio no longer used
         g["25"]["inputs"]["audio"] = ["27", 0]            # mux the driving vocal into the output
-    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
-               "seconds": round(frames / fps, 2), "steps": steps, "cfg": cfg, "msr_strength": msr_str,
-               "guide_strength": guide_str, "ref_frames": ref_frames, "subjects": len(subs),
-               "prompt": prompt, "lipsync": bool(vocal_ref), "kind": "video"}
+    resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+                "seconds": round(frames / fps, 2), "steps": steps, "cfg": cfg, "msr_strength": msr_str,
+                "guide_strength": guide_str, "ref_frames": ref_frames, "subjects": len(subs),
+                "prompt": local_prompts, "lipsync": bool(vocal_ref), "kind": "video"}
+    if global_prompt or "|" in local_prompts:                 # timeline prompter was used
+        resolved["global_prompt"] = global_prompt
+        resolved["segment_lengths"] = segment_lengths or "(even)"
+        resolved["epsilon"] = epsilon
+    return g, resolved
 
 
 # ------------------------------------------------ SeedVR2 video upscale (post-process)

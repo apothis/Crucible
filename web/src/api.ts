@@ -50,6 +50,8 @@ export const api = {
   videoVace: (p: unknown) => jpost("/api/video/vace", p),
   videoLtxI2V: (p: unknown) => jpost("/api/video/ltx_i2v", p),
   videoLtxT2V: (p: unknown) => jpost("/api/video/ltx_t2v", p),
+  videoLtxMsr: (p: unknown) => jpost("/api/video/ltx_msr", p),   // Multiple-Subject-Reference (the MV Studio spine)
+  videoUpscale: (p: unknown) => jpost("/api/video/upscale", p),  // SeedVR2 diffusion upscale of a finished clip
   videoSviI2V: (p: unknown) => jpost("/api/video/svi_i2v", p),   // long-form Wan2.2 (SVI2 Pro)
   videoRetime: (p: unknown) => jpost("/api/video/retime", p),    // GPU-free speed-up (fixes SVI slow-mo)
   videoInfinitetalk: (p: unknown) => jpost("/api/video/infinitetalk", p),  // v2v lip-sync (keep clip motion, redrive lips)
@@ -185,7 +187,7 @@ export type LoraTrack = { name: string; bpm: number; keyscale: string; has_lyric
 
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };
-export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; analyze?: boolean; lora_train?: boolean; lora_upload?: boolean; video?: boolean; video_qwen?: boolean; video_vace?: boolean; video_ltx?: boolean; video_ltx_quants?: string[]; genres: Genre[] };
+export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; analyze?: boolean; lora_train?: boolean; lora_upload?: boolean; video?: boolean; video_qwen?: boolean; video_vace?: boolean; video_ltx?: boolean; video_ltx_quants?: string[]; video_msr?: boolean; genres: Genre[] };
 export type LibItem = { id: string; created: number; mode: string; params: Record<string, any>; audio_url: string; media_url?: string | null; bucket?: string };
 // Arrangement shared from the Song Constructor to the Vocal Builder.
 export type SongDraft = { blocks: { type: string; seconds: number; lyrics: string }[]; key: string; bpm: number; tags: string };

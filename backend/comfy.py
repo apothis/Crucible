@@ -57,6 +57,15 @@ class Comfy:
         except Exception:
             return []
 
+    def has_node(self, class_type):
+        """True when a node class (e.g. a custom node) is registered on the box - the
+        authoritative presence check for custom nodes via /object_info."""
+        try:
+            r = requests.get(f"{self.base}/object_info/{class_type}", timeout=8).json()
+            return class_type in r
+        except Exception:
+            return False
+
     def available_variants(self):
         have = set(self.models("diffusion_models"))
         out = []

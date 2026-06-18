@@ -432,7 +432,17 @@ def config():
             "video_vace": _vace_available(),        # Wan VACE GGUF present (reference-to-video)
             "video_ltx": _ltx_available(),          # LTX-2.3 GGUF present (fast video backbone)
             "video_ltx_quants": _ltx_quants_present(),  # which LTX quants are on the box
+            "video_msr": _msr_available(),          # LTX MSR renderable (Licon-MSR + PromptRelay nodes)
             "genres": genres}
+
+
+def _msr_available():
+    """True when LTX MSR is renderable: the LTX backbone + the Licon-MSR + PromptRelay
+    custom nodes are both registered on the box (the MV Studio spine)."""
+    try:
+        return _ltx_available() and C.has_node("LiconMSR") and C.has_node("PromptRelayEncode")
+    except Exception:
+        return False
 
 
 def _video_available():
@@ -2233,10 +2243,32 @@ def _normalize_shots(shots):
     return out
 
 
+def _normalize_blocks(blocks):
+    """Normalize MSR timeline blocks (the LTX-MSR-native editor unit). Permissive: coerces
+    timing, keeps the ref/timeline/audio/render structures verbatim (the editor owns the
+    block schema, so unknown fields are preserved for forward-compat)."""
+    out = []
+    for b in blocks or []:
+        if not isinstance(b, dict):
+            continue
+        item = dict(b)
+        item["start"] = float(b.get("start") or 0)
+        item["end"] = float(b.get("end") or 0)
+        item["kind"] = str(b.get("kind") or "msr")
+        if not item.get("id"):
+            item["id"] = uuid.uuid4().hex
+        out.append(item)
+    out.sort(key=lambda x: (x["start"], x["end"]))
+    for i, b in enumerate(out):
+        b["idx"] = i
+    return out
+
+
 def _project_video_view(data: dict) -> dict:
     mv = (data.get("drafts") or {}).get("musicvideo") or {}
     return {"cast": mv.get("cast") or [], "castIds": mv.get("castIds") or [],
-            "shots": mv.get("shots") or [], "audioId": mv.get("audioId"),
+            "shots": mv.get("shots") or [], "blocks": mv.get("blocks") or [],
+            "audioId": mv.get("audioId"), "grade": mv.get("grade") or "none",
             "method": mv.get("method") or "auto"}
 
 
@@ -2255,13 +2287,16 @@ def characters_list():
 
 @app.post("/api/characters")
 def characters_upsert(body: dict):
-    """Create or update a character. Body: {id?, name, role?, refStillId?, refStillIds?,
-    loraName?, method?, notes?}. Returns the saved record."""
+    """Create or update a character. Body: {id?, name, role?, kind?, refStillId?, refStillIds?,
+    loraName?, method?, notes?, identity?, wardrobes?}. identity = the clothing-agnostic core
+    {faceRefId?, bodyRefId?, notes?}; wardrobes = per-video looks [{id,name,outfitPrompt,
+    faceRefId,bodyRefId,sheetId?}] (each = an MSR ref pair). Returns the saved record."""
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "character name required")
     cid = os.path.basename(str(body.get("id") or "")) or uuid.uuid4().hex
-    data = {k: body.get(k) for k in ("kind", "role", "refStillId", "refStillIds", "loraName", "method", "notes")
+    data = {k: body.get(k) for k in ("kind", "role", "refStillId", "refStillIds", "loraName",
+            "method", "notes", "identity", "wardrobes")
             if body.get(k) is not None}
     now = time.time()
     with db() as conn:
@@ -2291,18 +2326,20 @@ def project_video_get(key: str):
 
 @app.post("/api/projects/{key}/video")
 def project_video_patch(key: str, body: dict):
-    """Write/inject a project's Music Video script. Body (all optional): cast, audioId, method,
-    shots (REPLACE the list), add_shots (APPEND new shots, each {start,end,scene,type,motion?,
-    characters?,lipsync?,section?}). Shots are normalized + sorted by start time. The change
-    loads when the user opens the project."""
+    """Write/inject a project's Music Video script. Body (all optional): cast, castIds, audioId,
+    method, grade, blocks (REPLACE the MSR-block timeline - the LTX-MSR-native editor unit),
+    shots (REPLACE the legacy shot list), add_shots (APPEND new shots). Blocks + shots are
+    normalized + sorted by start time. The change loads when the user opens the project."""
     r = _resolve_project(key)
     if not r:
         raise HTTPException(404, "project not found")
     data = json.loads(r["data"] or "{}")
     mv = data.setdefault("drafts", {}).setdefault("musicvideo", {})
-    for k in ("cast", "castIds", "audioId", "method"):
+    for k in ("cast", "castIds", "audioId", "method", "grade"):
         if k in body:
             mv[k] = body[k]
+    if "blocks" in body:
+        mv["blocks"] = _normalize_blocks(body["blocks"])
     shots = body["shots"] if "shots" in body else (mv.get("shots") or [])
     if body.get("add_shots"):
         shots = list(shots) + list(body["add_shots"])
