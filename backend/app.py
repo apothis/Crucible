@@ -1195,13 +1195,14 @@ def mv_assemble(body: dict):
     grade = str(body.get("grade") or "none")
     width = int(body.get("width") or 1280)
     height = int(body.get("height") or 720)
+    transition = float(body.get("transition") or 0)
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:
-        musicvideo_mod.assemble(segs, audio, out, width=width, height=height, grade=grade)
+        musicvideo_mod.assemble(segs, audio, out, width=width, height=height, grade=grade, transition=transition)
     except Exception as e:
         raise HTTPException(500, f"assembly failed: {e}")
-    save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade}, out)
+    save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade, "transition": transition}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
 
 

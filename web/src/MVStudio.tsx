@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { api, type Config, type LibItem } from "./api";
+import { api, type Config, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
 import { MVTimeline } from "./MVTimeline";
 import {
-  type Block, type Character, type Identity, type Wardrobe, type RenderMode, type Seg,
-  makeBlock, ltxFrames, resolveSubjects, charRefIds, msrPayload,
+  type Block, type Character, type Identity, type Wardrobe, type RenderMode, type Seg, type ScriptShot,
+  makeBlock, ltxFrames, resolveSubjects, charRefIds, msrPayload, shotToBlock,
   blockSeconds, MSR_REF_COMBOS,
 } from "./mvmodel";
 
@@ -69,15 +69,17 @@ const stillLabel = (id: string, stills: LibItem[]) => {
 
 // ---- the editor ---------------------------------------------------------
 
-export function MVStudioForm({ cfg, busy, library, ...ctx }:
-  { cfg: Config; busy: boolean; library: LibItem[] } & RunCtx) {
+export function MVStudioForm({ cfg, busy, library, song, ...ctx }:
+  { cfg: Config; busy: boolean; library: LibItem[]; song: SongDraft | null } & RunCtx) {
   // The MV Studio timeline lives in this tab's drafts namespace ("mvstudio"), so it saves +
   // loads with the standard project Save/Open (top bar) exactly like every other tab - no
   // separate persistence. Characters are global (the shared /api/characters library).
   const d = useDrafts("mvstudio");
   const [audioId, setAudioId] = d.use("audioId", "");          // the song (drives lip-sync windows + assembly mux)
   const [grade, setGrade] = d.use("grade", "none");
+  const [transition, setTransition] = d.use("transition", 0);  // crossfade seconds between blocks (0 = hard cut)
   const [grades, setGrades] = useState<string[]>(["none"]);
+  const [scripting, setScripting] = useState(false);
   const [blocks, setBlocks] = d.use<Block[]>("blocks", []);
   const [selId, setSelId] = d.use("selId", "");
   const [libChars, setLibChars] = useState<Character[]>([]);
@@ -123,6 +125,36 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
     if (selId === id) setSelId(next[0]?.id || "");
   }
 
+  // ---- generate a starting timeline from the project's song arrangement ----
+  const songTitle = library.find((i) => i.id === audioId)?.params?.title || "";
+  const canScript = !!(song && song.blocks && song.blocks.length);
+  async function generateScript() {
+    if (!canScript || !song) { ctx.setResults([{ id: rid(), title: "No song arrangement", status: "error", pct: 0, err: "Open a project with a Song arrangement (the Song tab) to script from it." }]); return; }
+    if (blocks.length && !window.confirm(`Replace the current ${blocks.length} blocks with a generated timeline?`)) return;
+    setScripting(true);
+    try {
+      const payload = { title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
+        sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })) };
+      const r = await api.mvScript({ song: payload, cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician" })) }) as { shots: ScriptShot[] };
+      const next = (r.shots || []).map((s) => shotToBlock(s, libChars, audioId));
+      commit(next); setSelId(next[0]?.id || "");
+    } catch (e) {
+      ctx.setResults([{ id: rid(), title: "Script generation failed", status: "error", pct: 0, err: (e as Error).message }]);
+    } finally { setScripting(false); }
+  }
+
+  // ---- per-block SeedVR2 upscale of a rendered clip ----
+  async function upscaleBlock(b: Block) {
+    if (!b.clipId) return;
+    const card = { id: rid(), title: `block ${b.idx + 1}: upscaling...`, status: "running" as const, pct: 5 };
+    ctx.setResults([card]);
+    try {
+      const { job_id } = await api.videoUpscale({ video_id: b.clipId, resolution: 1440 }) as { job_id: string };
+      patch(b.id, { upscaledId: job_id });
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
   // ---- render one block ----
   async function genBlock(b: Block) {
     const subjectIds = resolveSubjects(b, libChars);
@@ -163,8 +195,8 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
     const card = { id: rid(), title: `assembling ${ready.length} blocks...`, status: "running" as const, pct: 30 };
     ctx.setResults([card]);
     try {
-      const r = await api.mvAssemble({ shots: ready.map((b) => ({ clip_id: b.clipId, start: b.start, end: b.end })),
-        audio_id: audioId, grade, title: "music video" }) as { media_url: string };
+      const r = await api.mvAssemble({ shots: ready.map((b) => ({ clip_id: b.upscaledId || b.clipId, start: b.start, end: b.end })),
+        audio_id: audioId, grade, transition, title: "music video" }) as { media_url: string };
       ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
       ctx.onDone();
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -202,6 +234,10 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
 
       <div className="flex flex-wrap items-center gap-2">
         <GhostButton onClick={addBlock}>+ Block</GhostButton>
+        <GhostButton onClick={generateScript} disabled={scripting || !canScript}>
+          {scripting ? "Scripting..." : "Generate from song"}
+        </GhostButton>
+        {!canScript && <span className="text-[9px] text-[var(--color-muted)]">(open a project with a Song arrangement to script)</span>}
         <span className="ml-auto text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
       </div>
 
@@ -239,7 +275,7 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
         cfg={cfg} busy={busy} stills={stills} audios={audios} libChars={libChars} songAudioId={audioId}
         open={open} toggle={toggle}
         patch={patchSel} gen={() => genBlock(sel)} dup={() => dupBlock(sel)}
-        del={() => delBlock(sel.id)} />}
+        del={() => delBlock(sel.id)} upscale={() => upscaleBlock(sel)} />}
 
       {/* assemble */}
       {blocks.length > 0 && (
@@ -247,7 +283,16 @@ export function MVStudioForm({ cfg, busy, library, ...ctx }:
           <PrimaryButton onClick={assemble} disabled={busy || ready === 0}>
             {`Assemble video (${ready}/${blocks.length} blocks)`}
           </PrimaryButton>
-          <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Color grade applied to every block for a consistent look (GPU-free)">
+          <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Crossfade duration blended between consecutive blocks (0 = hard cut)">
+            Transition
+            <select className={inp} style={{ width: "auto" }} value={transition} onChange={(e) => setTransition(Number(e.target.value))}>
+              <option value={0}>hard cut</option>
+              <option value={0.3}>crossfade 0.3s</option>
+              <option value={0.5}>crossfade 0.5s</option>
+              <option value={1}>crossfade 1.0s</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Color grade applied to every block for a consistent look (GPU-free)">
             Grade
             <select className={inp} style={{ width: "auto" }} value={grade} onChange={(e) => setGrade(e.target.value)}>
               {grades.map((g) => <option key={g} value={g}>{g.replace(/_/g, " ")}</option>)}
@@ -376,11 +421,11 @@ function CharacterLibrary({ chars, setChars, reload, stills, busy, ...ctx }:
 
 // ---- the per-block inspector -------------------------------------------
 
-function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, open, toggle, patch, gen, dup, del }: {
+function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, open, toggle, patch, gen, dup, del, upscale }: {
   b: Block; idx: number; cfg: Config; busy: boolean;
   stills: LibItem[]; audios: LibItem[]; libChars: Character[]; songAudioId: string;
   open: Record<string, boolean>; toggle: (k: string) => void;
-  patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void;
+  patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void; upscale: () => void;
 }) {
   const subjects = resolveSubjects(b, libChars);
   const clip = stills.find((s) => s.id === b.clipId);    // (clip is a videoclip, not a still; thumb best-effort)
@@ -411,7 +456,9 @@ function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, o
           <input type="checkbox" checked={b.lipsync} onChange={(e) => patch({ lipsync: e.target.checked })} /> lip-sync
         </label>
         {b.clipId && <span className="text-[10px] text-green-400" title="rendered">rendered</span>}
+        {b.upscaledId && <span className="text-[10px] text-[var(--color-accent2)]" title="upscaled to 1440p">↑1440</span>}
         <span className="ml-auto flex items-center gap-1">
+          {b.clipId && <button onClick={upscale} disabled={busy} className="rounded border border-[var(--color-line)] px-2 py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50" title="SeedVR2 upscale this clip to 1440p">{b.upscaledId ? "Re-upscale" : "Upscale"}</button>}
           <button onClick={dup} className="px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="Duplicate">{"⧉"}</button>
           <button onClick={del} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="Delete">{"×"}</button>
           <button onClick={gen} disabled={busy} className="rounded bg-[var(--color-accent)] px-3 py-1 text-[11px] font-semibold text-white disabled:opacity-50">{b.clipId ? "Re-render" : "Render"}</button>

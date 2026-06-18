@@ -40,7 +40,7 @@ export type Block = {
   width: number; height: number; frames: number; fps: number; seed: number;
   refFrames: number; msrStrength: number; guideStrength: number; steps: number; cfg: number;
   // result
-  clipId?: string;
+  clipId?: string; upscaledId?: string;
 };
 
 export const MSR_REF_COMBOS = [17, 25, 33, 41];   // LiconMSR frame_count combo
@@ -118,3 +118,25 @@ export function msrPayload(b: Block, subjectIds: string[], songAudioId: string):
 }
 
 export const blockSeconds = (b: Block) => +(b.frames / b.fps).toFixed(2);
+
+// a shot from /api/mv/script (the LLM shot list) - the source for "generate from song"
+export type ScriptShot = {
+  start?: number; end?: number; type?: string; scene?: string; action?: string;
+  costume?: string; characters?: string[]; lipsync?: boolean; section?: string;
+};
+
+// map an LLM shot into an MSR block: scene + costume + action -> prompt, names -> hero
+// characters (matched against the library, capped at 2), timing + lip-sync carried over.
+export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: string): Block {
+  const start = s.start || 0;
+  const end = (s.end && s.end > start) ? s.end : start + 6;
+  const base = makeBlock(start);
+  const chars: BlockChar[] = (s.characters || [])
+    .map((name) => libChars.find((c) => c.name.toLowerCase() === String(name).toLowerCase()))
+    .filter((c): c is Character => !!c)
+    .slice(0, 2)
+    .map((c) => ({ charId: c.id, wardrobeId: c.wardrobes?.[0]?.id }));
+  const prompt = [s.scene, s.costume ? `wearing ${s.costume}` : "", s.action].filter(Boolean).join(". ");
+  return { ...base, id: rid(), start, end, frames: ltxFrames(Math.max(2, end - start) * base.fps),
+    prompt, lipsync: !!s.lipsync, chars, audioId, audioStart: start };
+}

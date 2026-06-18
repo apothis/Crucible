@@ -256,7 +256,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "mix": return <MixForm {...p} />;
     case "video": return <VideoForm {...p} library={library} />;
     case "musicvideo": return <MusicVideoForm {...p} library={library} />;
-    case "mvstudio": return <MVStudioForm {...p} library={library} />;
+    case "mvstudio": return <MVStudioForm {...p} library={library} song={song} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;

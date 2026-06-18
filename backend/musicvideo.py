@@ -64,16 +64,20 @@ def grade_names():
     return ["none"] + [k for k in GRADES if k != "none"]
 
 
-def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, grade="none"):
+def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, grade="none",
+             transition=0.0):
     """Stitch shot clips into one MP4 (GPU-free, ffmpeg). segments = [{path, dur}]: each clip
     is scaled+padded to width x height, set to a common fps, and fitted to exactly `dur`
     seconds (long clips trimmed; short clips hold their last frame). Concatenated in order,
     then the full song audio is muxed over the result (replacing per-clip audio). `grade` =
-    a key in GRADES, applied identically to every segment for a consistent look."""
+    a key in GRADES, applied identically to every segment for a consistent look. `transition`
+    (seconds, 0 = hard cut) = crossfade duration blended between consecutive clips (ffmpeg
+    xfade); opt-in, default 0 keeps the original hard-cut concat path verbatim."""
     ff = _ffmpeg()
     grade_chain = GRADES.get(grade or "none", "")
     work = tempfile.mkdtemp(prefix="mvasm_")
     try:
+        durs = [max(0.1, s["dur"]) for s in segments]
         norm = []
         for i, seg in enumerate(segments):
             o = os.path.join(work, f"seg{i:03d}.mp4")
@@ -83,17 +87,38 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
             if grade_chain:
                 vf += "," + grade_chain
             subprocess.run([ff, "-y", "-loglevel", "error", "-i", seg["path"], "-vf", vf,
-                            "-t", f"{max(0.1, seg['dur']):.3f}", "-an", "-c:v", "libx264",
+                            "-t", f"{durs[i]:.3f}", "-an", "-c:v", "libx264",
                             "-pix_fmt", "yuv420p", "-r", str(fps), o], check=True)
             norm.append(o)
-        listf = os.path.join(work, "list.txt")
-        with open(listf, "w") as f:
-            for o in norm:
-                f.write("file '%s'\n" % o)
         concat = os.path.join(work, "concat.mp4")
-        subprocess.run([ff, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
-                        "-i", listf, "-c", "copy", concat], check=True)
-        total = sum(max(0.1, s["dur"]) for s in segments)
+        # crossfade chain (xfade) when a transition is requested AND there are >= 2 clips;
+        # else the original lossless concat-demuxer path. xfade offset for each join = the
+        # accumulated duration so far minus the overlap; total shrinks by `t` per join.
+        t = float(transition or 0)
+        if t > 0 and len(norm) > 1:
+            t = max(0.05, min(t, min(durs) - 0.1))       # overlap must fit the shortest clip
+            inputs = []
+            for o in norm:
+                inputs += ["-i", o]
+            acc, label, parts = durs[0], "[0:v]", []
+            for i in range(1, len(norm)):
+                off = max(0.0, acc - t)
+                out = f"[v{i}]"
+                parts.append(f"{label}[{i}:v]xfade=transition=fade:duration={t:.3f}:offset={off:.3f}{out}")
+                acc = acc + durs[i] - t
+                label = out
+            subprocess.run([ff, "-y", "-loglevel", "error"] + inputs +
+                           ["-filter_complex", ";".join(parts), "-map", label,
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), concat], check=True)
+            total = acc
+        else:
+            listf = os.path.join(work, "list.txt")
+            with open(listf, "w") as f:
+                for o in norm:
+                    f.write("file '%s'\n" % o)
+            subprocess.run([ff, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+                            "-i", listf, "-c", "copy", concat], check=True)
+            total = sum(durs)
         if audio_path:
             subprocess.run([ff, "-y", "-loglevel", "error", "-i", concat, "-i", audio_path,
                             "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
