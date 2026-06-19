@@ -86,6 +86,15 @@ export function charRefIds(c: Character | undefined, wardrobeId?: string): strin
   return [];
 }
 
+// the single still that best represents a character when composited into a SCENE (full-body
+// preferred - e.g. a band member holding their instrument; falls back to face / legacy refs)
+export function sceneRefOf(c: Character | undefined): string {
+  if (!c) return "";
+  const w = (c.wardrobes || [])[0];
+  return c.identity?.bodyRefId || w?.bodyRefId || c.identity?.faceRefId || w?.faceRefId
+    || (c.refStillIds && c.refStillIds[0]) || c.refStillId || "";
+}
+
 // final ordered subject_ids for a block: hero characters first, then manual extras, capped at 4
 export function resolveSubjects(b: Block, libChars: Character[]): string[] {
   const fromChars = b.chars.flatMap((bc) =>

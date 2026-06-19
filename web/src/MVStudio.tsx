@@ -7,7 +7,7 @@ import { Collapse, Num, StillPick, stillLabel } from "./mvui";
 import { CharacterLibrary } from "./Characters";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
-  makeBlock, ltxFrames, resolveSubjects, charRefIds, msrPayload, shotToBlock,
+  makeBlock, ltxFrames, resolveSubjects, charRefIds, sceneRefOf, msrPayload, shotToBlock,
   blockSeconds, MSR_REF_COMBOS,
 } from "./mvmodel";
 
@@ -95,6 +95,24 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     try {
       const { job_id } = await api.videoUpscale({ video_id: b.clipId, resolution: 1440 }) as { job_id: string };
       patch(b.id, { upscaledId: job_id });
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  // ---- compose a block's background by placing characters into a scene (Qwen char_still) ----
+  // the band-member pipeline: composite 1-3 distant characters (e.g. guitarist/bassist holding
+  // their instruments) into a backdrop, used as the MSR background while the singer drives MSR.
+  async function composeBackground(blockId: string, charIds: string[], prompt: string) {
+    const refs = charIds.map((id) => sceneRefOf(libChars.find((c) => c.id === id))).filter(Boolean).slice(0, 3);
+    const fail = (err: string) => ctx.setResults([{ id: rid(), title: "Compose scene", status: "error", pct: 0, err }]);
+    if (!refs.length) return fail("Pick at least one character that has a reference still.");
+    if (!prompt.trim()) return fail("Describe the scene (where each character stands, the setting, the lighting).");
+    const card = { id: rid(), title: "composing scene background...", status: "pending" as const, pct: 0 };
+    ctx.setResults([card]);
+    try {
+      const { job_id } = await api.videoCharStill({ ref_ids: refs, prompt }) as { job_id: string };
+      patch(blockId, { backgroundId: job_id });     // set as this block's background (thumbnail appears after refresh)
+      ctx.patch(card.id, { status: "running", pct: 5 });
       pollJob(job_id, card.id, ctx);
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
@@ -222,7 +240,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         cfg={cfg} busy={busy} stills={stills} audios={audios} libChars={libChars} songAudioId={audioId}
         open={open} toggle={toggle}
         patch={patchSel} gen={() => genBlock(sel)} dup={() => dupBlock(sel)}
-        del={() => delBlock(sel.id)} upscale={() => upscaleBlock(sel)} />}
+        del={() => delBlock(sel.id)} upscale={() => upscaleBlock(sel)}
+        compose={(charIds, prompt) => composeBackground(sel.id, charIds, prompt)} />}
 
       {/* assemble */}
       {blocks.length > 0 && (
@@ -253,12 +272,18 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
 // ---- the per-block inspector -------------------------------------------
 
-function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, open, toggle, patch, gen, dup, del, upscale }: {
+function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, open, toggle, patch, gen, dup, del, upscale, compose }: {
   b: Block; idx: number; cfg: Config; busy: boolean;
   stills: LibItem[]; audios: LibItem[]; libChars: Character[]; songAudioId: string;
   open: Record<string, boolean>; toggle: (k: string) => void;
   patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void; upscale: () => void;
+  compose: (charIds: string[], prompt: string) => void;
 }) {
+  const [sceneOpen, setSceneOpen] = useState(false);
+  const [sceneChars, setSceneChars] = useState<string[]>([]);
+  const [scenePrompt, setScenePrompt] = useState("");
+  const toggleSceneChar = (id: string) => setSceneChars(
+    sceneChars.includes(id) ? sceneChars.filter((x) => x !== id) : sceneChars.length < 3 ? [...sceneChars, id] : sceneChars);
   const subjects = resolveSubjects(b, libChars);
   const clip = stills.find((s) => s.id === b.clipId);    // (clip is a videoclip, not a still; thumb best-effort)
   const heroCount = b.chars.length;
@@ -355,6 +380,33 @@ function Inspector({ b, idx, cfg, busy, stills, audios, libChars, songAudioId, o
             <div className="mb-1 text-[10px] text-[var(--color-muted)]">Active subject slots: {subjects.length ? subjects.map((id) => stillLabel(id, stills)).join(", ") : "none"} {subjects.length > 4 && "(capped at 4)"}</div>
             <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Background (scene)</span>
             <StillPick value={b.backgroundId} stills={stills} set={(id) => patch({ backgroundId: id })} placeholder="- background still -" />
+            {/* compose a backdrop by placing characters into a scene (the band-member pipeline) */}
+            <button onClick={() => setSceneOpen(!sceneOpen)} className="mt-1 text-[10px] text-[var(--color-accent2)]">
+              {sceneOpen ? "−" : "+"} compose background from characters
+            </button>
+            {sceneOpen && (
+              <div className="mt-1 space-y-1.5 rounded border border-[var(--color-line)] p-2">
+                <p className="text-[9px] text-[var(--color-muted)]">Place 1-3 characters into a scene (Qwen-Edit) and use it as this block's background - e.g. a band on stage behind the singer. Best for distant/secondary characters; the singer stays an MSR subject (not picked here).</p>
+                {libChars.length === 0 && <p className="text-[9px] text-[var(--color-muted)]">No characters yet - build some in the Characters tab.</p>}
+                <div className="flex flex-wrap gap-1">
+                  {libChars.map((c) => {
+                    const on = sceneChars.includes(c.id);
+                    return (
+                      <button key={c.id} onClick={() => toggleSceneChar(c.id)}
+                        className={`rounded px-1.5 py-0.5 text-[10px] ${on ? "bg-[var(--color-accent)] text-white" : "border border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                <textarea className={inp} rows={2} value={scenePrompt} placeholder="scene: where each character stands + setting + lighting (e.g. two musicians on a dark concert stage, guitarist left, bassist right, dramatic side light, haze)"
+                  onChange={(e) => setScenePrompt(e.target.value)} />
+                <button onClick={() => compose(sceneChars, scenePrompt)} disabled={busy || !sceneChars.length}
+                  className="w-full rounded border border-[var(--color-line)] py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
+                  Generate background ({sceneChars.length}/3 characters)
+                </button>
+              </div>
+            )}
           </div>
         </Collapse>
       )}
