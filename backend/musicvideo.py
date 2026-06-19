@@ -216,10 +216,11 @@ Write about {target} shots covering the whole song IN ORDER, 0 to {total}s with 
 Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
-  "scene": "<SCENE description = the static look of the frame: setting/environment, subject, lighting, framing and lens. Photoreal, grounded in the lyrics at this time + the title theme>",
-  "action": "<ACTION description = what happens over the shot's duration: what the subject DOES and how the camera moves>",
+  "scene": "<SCENE = the look of the frame: setting/environment, subject, lighting, and FRAMING (close-up / medium / wide). Photoreal, grounded in the lyrics at this time + the title theme>",
+  "action": "<what the SUBJECT does over the shot - performance, gesture, expression, movement. Describe the PERSON, not the camera>",
+  "camera": "static" | "slow push-in" | "slow pull-back",
   "costume": "<what the named characters WEAR in this shot - lets the same person change outfits between scenes; '' if not notable or on-stage performance wear>",
-  "characters": [<names of any named characters present; [] if none>],
+  "characters": [<names of any named characters present; prefer ONE per shot; [] if none>],
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
 
 DURATIONS (important): CHOOSE each shot's length to fit its content - do NOT make them all the same
@@ -228,12 +229,45 @@ performance, emotional, or atmospheric shot 8-20s). Set start/end so durations V
 the music and lyrics. Never exceed 20s for a single shot. Cut more often through busy sections, hold
 longer through sparse ones.
 
+CAMERA (this engine is finicky - obey exactly): set "camera" to ONLY one of "static", "slow push-in"
+(gentle zoom toward the subject) or "slow pull-back" (gentle zoom out). Those are the only moves that
+render cleanly. NEVER call for pans, trucks, tracking, dolly left/right, orbits, handheld, or any
+sideways/rotating motion - they either do nothing or warp the image. One move per shot; never combine
+moves or jump framing mid-shot (it morphs the picture). Default most shots to "static"; use a slow
+push-in for an emotional build, a slow pull-back for a reveal. Keep camera language OUT of scene/action.
+
+CASTING & FRAMING (keeps identity stable - obey exactly): prefer ONE named character per shot - solo
+shots hold a face and outfit, while crowded frames make secondary people drift and SWAP attributes (hair,
+clothing, tattoos bleed between characters). Give each important character at least one MEDIUM or CLOSE
+solo shot. Use multi-character frames sparingly: at most ONE wide "whole band/group" establishing shot in
+the whole video, and never frame two strongly-contrasting looks (e.g. bare tattooed arms vs fully covered)
+tightly together. Favor CLOSE and MEDIUM framings; lip-sync looks wrong and wides read empty when the
+singer's face is small.
+
 Rules: performance/lipsync shots only on SUNG sections and feature the BAND/MUSICIANS (the lead
 singer lip-syncs); NARRATIVE shots tell the title's story and feature the ACTORS; scenic/broll on
-instrumental sections. Put the right people in each shot's "characters" by name. Vary shot types and
-framing (close-up, wide, tracking); photoreal live-action metal video (not animation). Every scene
-must connect to BOTH the title theme AND the specific lyrics in its window."""
+instrumental sections. Put the right people in each shot's "characters" by name. Photoreal live-action
+metal video (not animation). Every scene must connect to BOTH the title theme AND the specific lyrics
+in its window."""
     return system, prompt
+
+
+# The ONLY camera moves that render cleanly on our LTX-2.3 MSR pipeline (proven 2026-06-19): a locked
+# frame, a gentle prompt-driven zoom in, or a gentle prompt-driven zoom out. Lateral/orbit/tracking moves
+# do nothing or warp the frame, and the camera-control LoRAs morph when stacked on the MSR IC-LoRA - so the
+# move is carried as PROMPT TEXT, never a LoRA. CAMERA_PHRASE maps each to the cue appended to the render
+# prompt. See memory project_ltx-camera-lora.
+CAMERA_MOVES = ("static", "slow push-in", "slow pull-back")
+CAMERA_PHRASE = {
+    "static": "the camera is locked off and still",
+    "slow push-in": "the camera slowly and smoothly zooms in toward the subject",
+    "slow pull-back": "the camera slowly and smoothly pulls back from the subject",
+}
+
+
+def _camera(v):
+    v = str(v or "").strip().lower()
+    return v if v in CAMERA_MOVES else "static"
 
 
 def parse_shots(text):
@@ -257,6 +291,7 @@ def parse_shots(text):
             "characters": [str(x).strip() for x in (s.get("characters") or [])
                            if x and str(x).strip() not in ("[]", "none", "None", "-", "")],
             "lipsync": bool(s.get("lipsync")),
+            "camera": _camera(s.get("camera")),
         })
     return out
 

@@ -880,6 +880,15 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     # LoRA guide concat tolerates ref res != output res is exactly what we're testing.)
     ref_w = int(p.get("ref_width") or w)
     ref_h = int(p.get("ref_height") or h)
+    # Opt-in CAMERA-CONTROL LoRA (Lightricks LTX-2 camera pack: dolly in/out/left/right, jib up/down,
+    # static). A plain additive LoRA that OWNS the camera move - the official guidance is to drive the
+    # camera with the LoRA and let the PROMPT describe only the scene (prompt-only camera cues give
+    # orbit-or-nothing + stepped framing). These are 19B-trained but load on our 22B transformer the
+    # same way the 19B ic-lora-detailer already does. strength 0.7-0.8 subtle, 0.8-1.0 standard,
+    # 1.0-1.2 dramatic. Inserted between the MSR IC-LoRA (node 4) and PromptRelayEncode (node 9), so
+    # the relay/NAG/sampler all run on the camera-patched model. camera_lora="" (default) = off.
+    cam_lora = (p.get("camera_lora") or "").strip()
+    cam_str = float(p.get("camera_strength", 0.8))
     prompt = (p.get("prompt") or "").strip()
     # PromptRelayEncode TIMELINE: a global_prompt held across the whole clip + ordered per-segment
     # local_prompts (a "|"-separated string, or a list) placed at segment_lengths (comma-separated
@@ -958,6 +967,10 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         nid = str(30 + i)
         g[nid] = {"class_type": "LoadImage", "inputs": {"image": r}}
         g["13"]["inputs"][str(i + 1)] = [nid, 0]
+    if cam_lora:                                           # camera-control LoRA owns the move
+        g["60"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": ["4", 0], "lora_name": cam_lora, "strength_model": cam_str}}
+        g["9"]["inputs"]["model"] = ["60", 0]              # relay (+NAG+sampler) run camera-patched
     if vocal_ref:                                          # native single-pass lip-sync: real vocal
         # encode the supplied vocal and feed it as the AV audio latent instead of the empty one, so
         # the sampler denoises video CONDITIONED on the song -> lips track the singing in one pass.
@@ -976,6 +989,20 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         g["16"]["inputs"]["audio_latent"] = ["37", 0]     # masked vocal latent (was empty node 15)
         del g["15"]                                        # empty audio no longer used
         g["25"]["inputs"]["audio"] = ["27", 0]            # mux the driving vocal into the output
+    nondistilled = bool(p.get("full") or p.get("nondistilled"))
+    if nondistilled:
+        # Opt-in NON-DISTILLED "Dev" path for FINAL renders of a locked shot (LTX's own artifact guide
+        # recommends Dev over the distilled pipeline for finals - cleaner motion, fewer warble/morph
+        # artifacts). Mirrors the plain-LTX builder's full path: drop most of the distill LoRA, swap the
+        # fixed 8-step ManualSigmas for the real LTXVScheduler with more steps, and raise CFG>1 so the
+        # negative (node 10) actually engages. Heavier (CFG>1 = 2x forward passes/step) but fits 481f/24fps
+        # without tiling. Drafts stay on the fast 8-step distill; only re-render keepers with this.
+        nd_steps = int(p.get("steps") or 25)
+        g["2"]["inputs"]["strength_model"] = float(p.get("distill_strength", 0.2))
+        g["20"] = {"class_type": "LTXVScheduler",
+                   "inputs": {"steps": nd_steps, "max_shift": 2.05, "base_shift": 0.95,
+                              "stretch": True, "terminal": 0.1, "latent": ["16", 0]}}
+        g["17"]["inputs"]["cfg"] = float(p.get("cfg", 3.0))
     resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                 "seconds": round(frames / fps, 2), "steps": steps, "cfg": cfg, "msr_strength": msr_str,
                 "guide_strength": guide_str, "ref_frames": ref_frames, "subjects": len(subs),
@@ -984,6 +1011,14 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         resolved["global_prompt"] = global_prompt
         resolved["segment_lengths"] = segment_lengths or "(even)"
         resolved["epsilon"] = epsilon
+    if cam_lora:
+        resolved["camera_lora"] = cam_lora
+        resolved["camera_strength"] = cam_str
+    if nondistilled:
+        resolved["nondistilled"] = True
+        resolved["steps"] = int(p.get("steps") or 25)
+        resolved["cfg"] = float(p.get("cfg", 3.0))
+        resolved["distill_strength"] = float(p.get("distill_strength", 0.2))
     return g, resolved
 
 

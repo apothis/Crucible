@@ -132,7 +132,15 @@ export const blockSeconds = (b: Block) => +(b.frames / b.fps).toFixed(2);
 // a shot from /api/mv/script (the LLM shot list) - the source for "generate from song"
 export type ScriptShot = {
   start?: number; end?: number; type?: string; scene?: string; action?: string;
-  costume?: string; characters?: string[]; lipsync?: boolean; section?: string;
+  costume?: string; characters?: string[]; lipsync?: boolean; section?: string; camera?: string;
+};
+
+// the ONLY camera moves that render cleanly on our LTX MSR pipeline, carried as PROMPT TEXT (never a
+// camera LoRA - those morph when stacked on the MSR IC-LoRA). Mirrors backend musicvideo.CAMERA_PHRASE.
+const CAMERA_PHRASE: Record<string, string> = {
+  "static": "the camera is locked off and still",
+  "slow push-in": "the camera slowly and smoothly zooms in toward the subject",
+  "slow pull-back": "the camera slowly and smoothly pulls back from the subject",
 };
 
 // map an LLM shot into an MSR block: scene + costume + action -> prompt, names -> hero
@@ -150,7 +158,9 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
     .filter((c): c is Character => !!c)
     .slice(0, 2)
     .map((c) => ({ charId: c.id, wardrobeId: c.wardrobes?.[0]?.id }));
-  const prompt = [s.scene, s.costume ? `wearing ${s.costume}` : "", s.action].filter(Boolean).join(". ");
+  const cam = CAMERA_PHRASE[s.camera || "static"] || CAMERA_PHRASE["static"];
+  const prompt = [s.scene, s.costume ? `wearing ${s.costume}` : "", s.action, cam]
+    .filter(Boolean).join(". ");
   return { ...base, id: rid(), start, end, frames: ltxFrames(dur * base.fps),
     prompt, lipsync: !!s.lipsync, chars, audioId, audioStart: start };
 }
