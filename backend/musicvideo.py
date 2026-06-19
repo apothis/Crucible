@@ -223,9 +223,9 @@ Return ONLY a JSON array. Each element is an object:
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
 
 DURATIONS (important): CHOOSE each shot's length to fit its content - do NOT make them all the same
-length. Each shot must be between 2 and 12 seconds (a fast/energetic or punchy cut can be 2-4s; a held
-performance, emotional, or atmospheric shot 6-12s). Set start/end so durations VARY with the pacing of
-the music and lyrics. Never exceed 12s for a single shot. Cut more often through busy sections, hold
+length. Each shot must be between 2 and 20 seconds (a fast/energetic or punchy cut can be 2-4s; a held
+performance, emotional, or atmospheric shot 8-20s). Set start/end so durations VARY with the pacing of
+the music and lyrics. Never exceed 20s for a single shot. Cut more often through busy sections, hold
 longer through sparse ones.
 
 Rules: performance/lipsync shots only on SUNG sections and feature the BAND/MUSICIANS (the lead
