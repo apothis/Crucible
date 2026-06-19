@@ -13,8 +13,11 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState("");
   const [enhancing, setEnhancing] = useState("");
-  const [claude, setClaude] = useState(false);
-  useEffect(() => { api.llmProviders().then((p) => setClaude(!!(p as { claude?: boolean }).claude)).catch(() => {}); }, []);
+  const [llmProvider, setLlmProvider] = useState("ollama");   // prefer subscription -> API key -> local
+  useEffect(() => { api.llmProviders().then((p) => {
+    const q = p as { claude?: boolean; claude_sub?: boolean };
+    setLlmProvider(q.claude_sub ? "claude_sub" : q.claude ? "claude" : "ollama");
+  }).catch(() => {}); }, []);
 
   function persist(c: Character) { api.characterSave(c).catch(() => {}); }
   function patch(c: Character, p: Partial<Character>) {
@@ -77,7 +80,7 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     if (!appearance) { ctx.setResults([{ id: rid(), title: "Type a description first", status: "error", pct: 0, err: "Write a few words about the character, then Enhance expands them into a full prompt." }]); return; }
     setEnhancing(c.id);
     try {
-      const r = await api.llm({ provider: claude ? "claude" : "ollama", model: "", task: "char_desc", input: appearance }) as { text?: string };
+      const r = await api.llm({ provider: llmProvider, model: "", task: "char_desc", input: appearance }) as { text?: string };
       if (r.text) patch(c, { appearance: r.text.trim() });
     } catch (e) { ctx.setResults([{ id: rid(), title: "Enhance failed", status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setEnhancing(""); }

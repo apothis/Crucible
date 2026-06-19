@@ -13,6 +13,7 @@ export function Assistant() {
   const [open, setOpen] = useState(false);
   const [ollama, setOllama] = useState<string[]>([]);
   const [claude, setClaude] = useState(false);
+  const [claudeSub, setClaudeSub] = useState(false);
   const [provider, setProvider] = useState("ollama");
   const [model, setModel] = useState("");
   const [task, setTask] = useState("ideas");
@@ -26,6 +27,8 @@ export function Assistant() {
     api.llmProviders().then((p: any) => {
       setOllama(p.ollama || []);
       setClaude(!!p.claude);
+      setClaudeSub(!!p.claude_sub);
+      if (p.claude_sub) setProvider("claude_sub");           // prefer the no-per-token subscription
       if (p.ollama?.length) setModel(p.ollama[0]);
     }).catch(() => {});
   }, [open]);
@@ -45,7 +48,7 @@ export function Assistant() {
       <button onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2 px-5 py-2.5 text-left text-sm">
         <span className="bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent2)] bg-clip-text font-semibold text-transparent">✦ Assistant</span>
-        <span className="text-xs text-[var(--color-muted)]">lyrics · style tags · ideas {claude ? "· Gemma/Claude" : "· Gemma"}</span>
+        <span className="text-xs text-[var(--color-muted)]">lyrics · style tags · ideas {claudeSub ? "· Gemma/Claude" : claude ? "· Gemma/Claude" : "· Gemma"}</span>
         <span className="ml-auto text-[var(--color-muted)]">{open ? "▾" : "▴"}</span>
       </button>
 
@@ -58,7 +61,8 @@ export function Assistant() {
               </select>
               <select className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-2 text-xs" value={provider} onChange={(e) => setProvider(e.target.value)}>
                 <option value="ollama">Local (Gemma)</option>
-                <option value="claude" disabled={!claude}>Claude {claude ? "" : "(no key)"}</option>
+                <option value="claude_sub" disabled={!claudeSub}>Claude (subscription){claudeSub ? "" : " (n/a)"}</option>
+                <option value="claude" disabled={!claude}>Claude (API key){claude ? "" : " (no key)"}</option>
               </select>
               {provider === "ollama" && (
                 <select className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-2 text-xs" value={model} onChange={(e) => setModel(e.target.value)}>

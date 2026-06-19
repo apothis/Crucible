@@ -1163,7 +1163,7 @@ def mv_script(body: dict):
         raise HTTPException(400, "provide a song with sections, or a project key with a Song arrangement")
     try:
         shots = musicvideo_mod.generate_script(
-            song, body.get("cast") or [], body.get("provider") or "", body.get("model") or "",
+            song, body.get("cast") or [], body.get("provider") or llm_mod.best_provider(), body.get("model") or "",
             CFG.get("claude_model", "claude-3-5-sonnet-latest"), int(body.get("shots") or 0))
     except Exception as e:
         raise HTTPException(500, f"script generation failed: {e}")
@@ -3561,7 +3561,9 @@ async def import_extract(file: UploadFile = File(None), import_id: str = Form(No
 
 @app.get("/api/llm/providers")
 def llm_providers():
-    return {"ollama": llm_mod.ollama_models(), "claude": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+    return {"ollama": llm_mod.ollama_models(),
+            "claude": bool(os.environ.get("ANTHROPIC_API_KEY")),   # API key (per-token)
+            "claude_sub": llm_mod.claude_code_available()}          # Claude subscription via the CLI
 
 
 @app.post("/api/llm")

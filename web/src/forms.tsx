@@ -17,13 +17,18 @@ const fail = (ctx: RunCtx, msg: string) =>
   ctx.setResults([{ id: rid(), title: "Can’t run", status: "error", pct: 0, err: msg }]);
 
 // Is the Claude provider available (API key configured)? Used to offer it for AI lyrics.
+let _claudeSubAvail = false;   // module-level so lyrProvOf (pure) can route to the subscription
 function useClaudeAvail() {
   const [claude, setClaude] = useState(false);
-  useEffect(() => { api.llmProviders().then((p: any) => setClaude(!!p.claude)).catch(() => {}); }, []);
+  useEffect(() => { api.llmProviders().then((p: any) => {
+    _claudeSubAvail = !!p.claude_sub;
+    setClaude(!!p.claude || !!p.claude_sub);   // "Claude" enabled if an API key OR a subscription is present
+  }).catch(() => {}); }, []);
   return claude;
 }
 
-const lyrProvOf = (v: string) => (v === "claude" ? "claude" : "ollama");
+// route the "Claude" choice to the subscription (no per-token) when available, else the API key
+const lyrProvOf = (v: string) => (v === "claude" ? (_claudeSubAvail ? "claude_sub" : "claude") : "ollama");
 
 // shared tuning controls for Generate + Restyle. `expert` reveals the full grid;
 // otherwise only Duration shows and the rest use presets/defaults.

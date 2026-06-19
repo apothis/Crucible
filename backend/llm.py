@@ -1,12 +1,59 @@
 """LLM provider abstraction for the creative-assist features (D4).
 
 Supports the user's LOCAL Ollama (gemma4_* @ localhost:11434, private/offline,
-default) and their Claude account (set ANTHROPIC_API_KEY; model via config).
+default), their Claude API account (set ANTHROPIC_API_KEY; model via config), and
+their Claude SUBSCRIPTION (provider "claude_sub") via the installed `claude` CLI -
+no per-token billing, drawn on the Max plan's Agent-SDK credit. The CLI is a
+standalone Node binary, so it works under the 3.9 backend that the Python
+claude-agent-sdk (needs 3.10+) cannot.
 """
 import os
+import shutil
+import subprocess
+import tempfile
+
 import requests
 
 OLLAMA = "http://localhost:11434"
+
+# Tools disabled for the subscription one-shot completion path - we want a plain
+# text answer, never an agentic file/exec/web action.
+_CC_NO_TOOLS = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch",
+                "WebSearch", "Task", "NotebookEdit", "TodoWrite"]
+
+
+def _claude_cli():
+    return shutil.which("claude") or (
+        os.path.expanduser("~/.local/bin/claude")
+        if os.path.exists(os.path.expanduser("~/.local/bin/claude")) else None)
+
+
+def claude_code_available():
+    """True when the `claude` CLI is installed (the subscription completion path)."""
+    return bool(_claude_cli())
+
+
+def claude_code_chat(system: str, prompt: str, model: str = "") -> str:
+    """One-shot completion through the Claude Code CLI, drawing on the user's Claude
+    SUBSCRIPTION (OAuth) instead of a per-token API key. Runs `claude -p` as a
+    subprocess. ANTHROPIC_API_KEY is stripped from the child env so the CLI uses the
+    subscription, not the key (a set key silently shadows the OAuth login). Runs in a
+    neutral temp cwd so the project's CLAUDE.md / memory is not pulled into context;
+    `--system-prompt` replaces the default agent prompt for a clean completion."""
+    cli = _claude_cli()
+    if not cli:
+        raise RuntimeError("claude CLI not found - install Claude Code, then run `claude setup-token`")
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    cmd = [cli, "-p", prompt, "--system-prompt", system, "--output-format", "text",
+           "--disallowed-tools", *_CC_NO_TOOLS]
+    if model:
+        cmd += ["--model", model]
+    with tempfile.TemporaryDirectory() as cwd:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, timeout=180)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "").strip()[:300]
+        raise RuntimeError(f"claude CLI failed (is it logged in? `claude setup-token`): {msg}")
+    return (r.stdout or "").strip()
 
 SYSTEM = {
     "lyrics": (
@@ -86,9 +133,16 @@ def complete(provider: str, model: str, system: str, prompt: str, claude_model: 
     prompt — used by the melody composer and other structured-output features)."""
     if provider == "claude":
         return claude_chat(model or claude_model, system, prompt)
+    if provider in ("claude_sub", "claude_code"):
+        return claude_code_chat(system, prompt, model or "")   # subscription via CLI, no per-token billing
     return ollama_chat(model or "gemma4_4b:latest", system, prompt)
 
 
 def best_provider() -> str:
-    """Hybrid default: Claude when a key is configured, else local Ollama."""
-    return "claude" if os.environ.get("ANTHROPIC_API_KEY") else "ollama"
+    """Hybrid default: the Claude SUBSCRIPTION (no per-token) when the CLI is present,
+    else the Claude API key when configured, else local Ollama."""
+    if claude_code_available():
+        return "claude_sub"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "claude"
+    return "ollama"
