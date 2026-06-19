@@ -217,10 +217,16 @@ Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
   "scene": "<SCENE description = the static look of the frame: setting/environment, subject, lighting, framing and lens. Photoreal, grounded in the lyrics at this time + the title theme>",
-  "action": "<ACTION description = what happens over ~5s: what the subject DOES and how the camera moves>",
+  "action": "<ACTION description = what happens over the shot's duration: what the subject DOES and how the camera moves>",
   "costume": "<what the named characters WEAR in this shot - lets the same person change outfits between scenes; '' if not notable or on-stage performance wear>",
   "characters": [<names of any named characters present; [] if none>],
   "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
+
+DURATIONS (important): CHOOSE each shot's length to fit its content - do NOT make them all the same
+length. Each shot must be between 2 and 12 seconds (a fast/energetic or punchy cut can be 2-4s; a held
+performance, emotional, or atmospheric shot 6-12s). Set start/end so durations VARY with the pacing of
+the music and lyrics. Never exceed 12s for a single shot. Cut more often through busy sections, hold
+longer through sparse ones.
 
 Rules: performance/lipsync shots only on SUNG sections and feature the BAND/MUSICIANS (the lead
 singer lip-syncs); NARRATIVE shots tell the title's story and feature the ACTORS; scenic/broll on

@@ -127,9 +127,13 @@ export type ScriptShot = {
 
 // map an LLM shot into an MSR block: scene + costume + action -> prompt, names -> hero
 // characters (matched against the library, capped at 2), timing + lip-sync carried over.
+export const LTX_MAX_SECONDS = 20;   // practical single-clip ceiling on the 3090
+
 export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: string): Block {
   const start = s.start || 0;
-  const end = (s.end && s.end > start) ? s.end : start + 6;
+  const rawEnd = (s.end && s.end > start) ? s.end : start + 6;
+  const dur = Math.min(LTX_MAX_SECONDS, Math.max(2, rawEnd - start));   // honor the script's length, clamped LTX-sane
+  const end = start + dur;
   const base = makeBlock(start);
   const chars: BlockChar[] = (s.characters || [])
     .map((name) => libChars.find((c) => c.name.toLowerCase() === String(name).toLowerCase()))
@@ -137,6 +141,6 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
     .slice(0, 2)
     .map((c) => ({ charId: c.id, wardrobeId: c.wardrobes?.[0]?.id }));
   const prompt = [s.scene, s.costume ? `wearing ${s.costume}` : "", s.action].filter(Boolean).join(". ");
-  return { ...base, id: rid(), start, end, frames: ltxFrames(Math.max(2, end - start) * base.fps),
+  return { ...base, id: rid(), start, end, frames: ltxFrames(dur * base.fps),
     prompt, lipsync: !!s.lipsync, chars, audioId, audioStart: start };
 }
