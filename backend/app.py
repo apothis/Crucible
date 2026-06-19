@@ -2288,8 +2288,9 @@ def characters_list():
 
 @app.post("/api/characters")
 def characters_upsert(body: dict):
-    """Create or update a character. Body: {id?, name, role?, kind?, refStillId?, refStillIds?,
-    loraName?, method?, notes?, identity?, wardrobes?}. identity = the clothing-agnostic core
+    """Create or update a character. Body: {id?, name, role?, kind?, appearance?, refStillId?,
+    refStillIds?, loraName?, method?, notes?, identity?, wardrobes?}. appearance = the free-text
+    look description (drives still generation). identity = the clothing-agnostic core
     {faceRefId?, bodyRefId?, notes?}; wardrobes = per-video looks [{id,name,outfitPrompt,
     faceRefId,bodyRefId,sheetId?}] (each = an MSR ref pair). Returns the saved record."""
     name = (body.get("name") or "").strip()
@@ -2297,7 +2298,7 @@ def characters_upsert(body: dict):
         raise HTTPException(400, "character name required")
     cid = os.path.basename(str(body.get("id") or "")) or uuid.uuid4().hex
     data = {k: body.get(k) for k in ("kind", "role", "refStillId", "refStillIds", "loraName",
-            "method", "notes", "identity", "wardrobes")
+            "method", "notes", "identity", "wardrobes", "appearance")
             if body.get(k) is not None}
     now = time.time()
     with db() as conn:

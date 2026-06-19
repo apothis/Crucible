@@ -14,6 +14,7 @@ export type Wardrobe = {
 };
 export type Character = {
   id: string; name: string; role?: string; kind?: string;
+  appearance?: string;          // free-text look description (drives still generation + LLM enhance)
   identity?: Identity; wardrobes?: Wardrobe[];
   // legacy single-ref fields (pre-v2 characters); still resolved as a fallback
   refStillId?: string; refStillIds?: string[]; loraName?: string; method?: string; notes?: string;

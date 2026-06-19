@@ -12,6 +12,9 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     busy: boolean; collapsible?: boolean } & RunCtx) {
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState("");
+  const [enhancing, setEnhancing] = useState("");
+  const [claude, setClaude] = useState(false);
+  useEffect(() => { api.llmProviders().then((p) => setClaude(!!(p as { claude?: boolean }).claude)).catch(() => {}); }, []);
 
   function persist(c: Character) { api.characterSave(c).catch(() => {}); }
   function patch(c: Character, p: Partial<Character>) {
@@ -51,6 +54,35 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
+  // generate a reference still for the character from its appearance text (Z-Image t2i)
+  async function genIdentity(c: Character, slot: "face" | "body") {
+    const appearance = (c.appearance || "").trim();
+    if (!appearance) { ctx.setResults([{ id: rid(), title: "Describe the character first", status: "error", pct: 0, err: "Write an appearance description (optionally Enhance it), then generate the still from it." }]); return; }
+    const framing = slot === "face"
+      ? "head and shoulders close-up portrait, facing camera, neutral mid-grey studio backdrop, 85mm"
+      : "full body shot from head to toe, standing, neutral mid-grey studio backdrop";
+    const card = { id: rid(), title: `${c.name}: ${slot} still`, status: "pending" as const, pct: 0 };
+    ctx.setResults([card]);
+    try {
+      const { job_id } = await api.videoStill({ prompt: `${appearance}, ${framing}, photoreal, sharp focus` }) as { job_id: string };
+      setIdentity(c, slot === "face" ? { faceRefId: job_id } : { bodyRefId: job_id });
+      ctx.patch(card.id, { status: "running", pct: 5 });
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  // expand the user's short appearance text into a full photoreal prompt via the LLM
+  async function enhance(c: Character) {
+    const appearance = (c.appearance || "").trim();
+    if (!appearance) { ctx.setResults([{ id: rid(), title: "Type a description first", status: "error", pct: 0, err: "Write a few words about the character, then Enhance expands them into a full prompt." }]); return; }
+    setEnhancing(c.id);
+    try {
+      const r = await api.llm({ provider: claude ? "claude" : "ollama", model: "", task: "char_desc", input: appearance }) as { text?: string };
+      if (r.text) patch(c, { appearance: r.text.trim() });
+    } catch (e) { ctx.setResults([{ id: rid(), title: "Enhance failed", status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setEnhancing(""); }
+  }
+
   const body = (
     <>
       <p className="text-[10px] text-[var(--color-muted)]">
@@ -77,12 +109,38 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
             </div>
             {editing && (
               <div className="space-y-2 border-t border-[var(--color-line)] pt-2">
-                {/* identity core */}
+                {/* appearance description (+ LLM enhance + example) */}
                 <div className="space-y-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Identity core (clothing-agnostic)</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Appearance</span>
+                    <button onClick={() => enhance(c)} disabled={enhancing === c.id} className="text-[10px] text-[var(--color-accent2)] disabled:opacity-50"
+                      title="expand what you typed into a full photoreal prompt with the LLM">
+                      {enhancing === c.id ? "enhancing..." : "✨ enhance"}
+                    </button>
+                  </div>
+                  <textarea className={inp} rows={3} value={c.appearance || ""} placeholder="describe the character's look: age, build, face shape, hair, eyes, skin, distinctive features"
+                    onChange={(e) => patch(c, { appearance: e.target.value })} />
+                  <details className="text-[9px] text-[var(--color-muted)]">
+                    <summary className="cursor-pointer hover:text-[var(--color-ink)]">example of a good description</summary>
+                    <p className="mt-1 italic text-[var(--color-muted)]">"woman in her late 20s, slender athletic build, oval face with sharp cheekbones, fair porcelain skin, long straight jet-black hair with a centre part, intense pale-green eyes, small silver nose stud, detailed skin texture"</p>
+                    <p className="mt-1">Name concrete, visible traits (age, build, face shape, hair, eyes, skin, marks) - not mood or backstory. For a background/distant character you can include their outfit + instrument here and generate just ONE full-body still.</p>
+                  </details>
+                </div>
+                {/* reference stills - generate from the appearance, or pick from the library */}
+                <div className="space-y-1.5 border-t border-[var(--color-line)] pt-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Reference stills</span>
+                  <p className="text-[9px] text-[var(--color-muted)]">One still is enough for a background/distant character; a hero seen in close-ups wants both a face and a full body.</p>
                   <div className="grid grid-cols-2 gap-1.5">
-                    <label className="text-[9px] text-[var(--color-muted)]">face<StillPick value={c.identity?.faceRefId || ""} stills={stills} set={(id) => setIdentity(c, { faceRefId: id })} placeholder="- face still -" /></label>
-                    <label className="text-[9px] text-[var(--color-muted)]">body<StillPick value={c.identity?.bodyRefId || ""} stills={stills} set={(id) => setIdentity(c, { bodyRefId: id })} placeholder="- body still -" /></label>
+                    <div className="space-y-1">
+                      <span className="text-[9px] text-[var(--color-muted)]">face (close-up)</span>
+                      <StillPick value={c.identity?.faceRefId || ""} stills={stills} set={(id) => setIdentity(c, { faceRefId: id })} placeholder="- face still -" />
+                      <button onClick={() => genIdentity(c, "face")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate face</button>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[9px] text-[var(--color-muted)]">body (full-length)</span>
+                      <StillPick value={c.identity?.bodyRefId || ""} stills={stills} set={(id) => setIdentity(c, { bodyRefId: id })} placeholder="- body still -" />
+                      <button onClick={() => genIdentity(c, "body")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate body</button>
+                    </div>
                   </div>
                 </div>
                 {/* wardrobes */}
@@ -134,9 +192,10 @@ export function CharactersForm({ busy, library, ...ctx }: { busy: boolean; libra
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-[var(--color-muted)]">
-        Your reusable cast - shared across every project and the MV Studio timeline. Define each character's
-        clothing-agnostic identity once, then add a wardrobe per song to dress them. Build face/body stills in
-        the Video tab; pick them here as the identity core.
+        Your reusable cast - shared across every project and the MV Studio timeline. Describe a character,
+        optionally let the LLM enhance it, then generate their reference stills right here (or pick existing
+        ones). One still is enough for a background/distant character; add wardrobes for a hero who changes
+        outfits per song.
       </p>
       <CharacterLibrary chars={chars} setChars={setChars} reload={reload} stills={stills} busy={busy} {...ctx} />
     </div>

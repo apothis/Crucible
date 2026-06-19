@@ -30,6 +30,15 @@ SYSTEM = {
         "or lyrics, output a short list of evocative, fitting titles (up to 8), one per line, "
         "with no numbering, quotes, or commentary."
     ),
+    "char_desc": (
+        "You write photoreal CHARACTER reference prompts for an image generator (Z-Image Turbo). "
+        "Given the user's short description, expand it into ONE vivid, concrete prompt for a single "
+        "person: approximate age, build/height, face shape, skin, hair (color, length, style), eyes, "
+        "and any distinctive features; include wardrobe/props only if the user mentioned them; finish "
+        "with photoreal cues (studio lighting, sharp focus, detailed skin texture). Do NOT specify the "
+        "shot framing (close-up vs full-body) - that is added separately. Keep it a single flowing "
+        "phrase-list, no sentences, no line breaks, no commentary. Output ONLY the prompt."
+    ),
 }
 
 
