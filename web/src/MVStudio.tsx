@@ -115,6 +115,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [transition, setTransition] = d.use("transition", 0);  // crossfade seconds between blocks (0 = hard cut)
   const [introDur, setIntroDur] = d.use("introDur", 0);        // intro pre-roll: seconds the opening clip's own audio plays before the song (0 = off)
   const [introXfade, setIntroXfade] = d.use("introXfade", 1.5);// intro -> song crossfade seconds
+  const [resolution, setResolution] = d.use("resolution", "832x480"); // PROJECT render resolution (all shots + assembly)
+  const [resW, resH] = resolution.split("x").map(Number);
   const [grades, setGrades] = useState<string[]>(["none"]);
   const [scripting, setScripting] = useState(false);
   const [blocks, setBlocks] = d.use<Block[]>("blocks", []);
@@ -237,7 +239,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     try {
       let job_id: string;
       if (b.renderMode === "msr") {
-        ({ job_id } = await api.videoLtxMsr(msrPayload(b, subjectIds, audioId)) as { job_id: string });
+        ({ job_id } = await api.videoLtxMsr({ ...msrPayload(b, subjectIds, audioId), width: resW, height: resH }) as { job_id: string });
       } else if (b.renderMode === "s2v") {
         const still = subjectIds[0] || b.backgroundId;
         if (!still) return fail("S2V needs a reference still.");
@@ -248,7 +250,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         if (!still) return fail("i2v needs a still to animate.");
         const frames = ltxFrames(Math.max(2, b.end - b.start) * b.fps);
         ({ job_id } = await (cfg.video_ltx
-          ? api.videoLtxI2V({ still_id: still, prompt: b.prompt, frames })
+          ? api.videoLtxI2V({ still_id: still, prompt: b.prompt, frames, width: resW, height: resH })
           : api.videoI2V({ still_id: still, prompt: b.prompt, length: frames })) as { job_id: string });
       }
       patch(b.id, { clipId: job_id, clipVariants: [...(b.clipVariants || []), job_id] });
@@ -279,7 +281,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     ctx.setResults([card]);
     try {
       const neg = b.renderMode === "msr" ? "people, person, human, figure, crowd, " + (b.negative || "") : (b.negative || undefined);
-      const { job_id } = await api.videoStill({ prompt: scene, negative: neg, width: 1280, height: 720 }) as { job_id: string };
+      const { job_id } = await api.videoStill({ prompt: scene, negative: neg, width: resW, height: resH }) as { job_id: string };
       const blk = blocks.find((x) => x.id === b.id);
       patch(b.id, { backgroundId: job_id, bgVariants: [...(blk?.bgVariants || []), job_id] });
       ctx.patch(card.id, { status: "running", pct: 5 });
@@ -301,7 +303,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     try {
       const introClip = blocks[0]?.upscaledId || blocks[0]?.clipId;   // the opening shot's render = the wind pre-roll
       const r = await api.mvAssemble({ shots: ready.map((b) => ({ clip_id: b.upscaledId || b.clipId, start: b.start, end: b.end })),
-        audio_id: audioId, grade, transition, title: "music video",
+        audio_id: audioId, grade, transition, title: "music video", width: resW, height: resH,
         ...(introDur > 0 && introClip ? { intro_clip_id: introClip, intro_dur: introDur, intro_xfade: introXfade } : {}) }) as { media_url: string };
       ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
       ctx.onDone();
@@ -357,7 +359,15 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
             Render all videos
           </GhostButton>
         )}
-        <span className="ml-auto text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
+        <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Render resolution for ALL shots + the final video (project-wide)">
+          Resolution
+          <select className={inp} style={{ width: "auto" }} value={resolution} onChange={(e) => setResolution(e.target.value)}>
+            <option value="832x480">832×480 (draft, fast)</option>
+            <option value="1280x720">1280×720 (HD)</option>
+            <option value="1920x1080">1920×1080 (full HD, slow)</option>
+          </select>
+        </label>
+        <span className="text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
       </div>
 
       {/* the visual timeline: waveform + draggable blocks when a song is set; else a
