@@ -268,6 +268,30 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     for (const b of todo) await genBlock(b);   // genBlock submits + polls; the box processes them in order
   }
 
+  // ---- generate a block's BACKGROUND scene still (Z-Image) from its prompt. For MSR blocks the
+  // character is an MSR subject (added separately), so bias the still to an empty scene. ----
+  async function genStill(b: Block) {
+    const scene = b.renderMode === "msr"
+      ? `${b.prompt} The setting only, an empty scene with no people.`
+      : (b.prompt || "");
+    if (!scene.trim()) return;
+    const card = { id: rid(), title: `block ${b.idx + 1}: background still...`, status: "pending" as const, pct: 0 };
+    ctx.setResults([card]);
+    try {
+      const neg = b.renderMode === "msr" ? "people, person, human, figure, crowd, " + (b.negative || "") : (b.negative || undefined);
+      const { job_id } = await api.videoStill({ prompt: scene, negative: neg, width: 1280, height: 720 }) as { job_id: string };
+      const blk = blocks.find((x) => x.id === b.id);
+      patch(b.id, { backgroundId: job_id, bgVariants: [...(blk?.bgVariants || []), job_id] });
+      ctx.patch(card.id, { status: "running", pct: 5 });
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+  async function renderAllStills(onlyMissing: boolean) {
+    const todo = blocks.filter((b) => (b.prompt || "").trim() && (!onlyMissing || !b.backgroundId));
+    if (!todo.length) { ctx.setResults([{ id: rid(), title: "Render stills", status: "error", pct: 0, err: "Every block already has a background still." }]); return; }
+    for (const b of todo) await genStill(b);   // submits + polls each; the box processes them in order
+  }
+
   // ---- assemble ----
   async function assemble() {
     const ready = blocks.filter((b) => b.clipId);
@@ -324,8 +348,13 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         </GhostButton>
         {!canScript && <span className="text-[9px] text-[var(--color-muted)]">(open a project with a Song arrangement to script)</span>}
         {blocks.length > 0 && (
+          <GhostButton onClick={() => renderAllStills(true)} disabled={busy}>
+            Render all stills
+          </GhostButton>
+        )}
+        {blocks.length > 0 && (
           <GhostButton onClick={() => renderAll(true)} disabled={busy}>
-            Render all missing
+            Render all videos
           </GhostButton>
         )}
         <span className="ml-auto text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
