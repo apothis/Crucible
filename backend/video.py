@@ -1162,6 +1162,90 @@ def build_seedvr2_upscale(p, video_ref, fps):
                "tiled": tiled, "tile_size": tile, "fps": fps, "kind": "video"}
 
 
+def build_flashvsr_upscale(p, video_ref, fps):
+    """Upscale a finished clip with FlashVSR (naxci1 "Stable" node, diffusion VSR). Alternative to
+    SeedVR2. video_ref = uploaded video name on ComfyUI; fps = source fps. The single FlashVSRNode
+    takes IMAGE frames -> upscaled IMAGE; scale is an INTEGER factor (2x/4x), NOT a target short-side.
+    OOM safety nets (tiled_vae/tiled_dit/keep_models_on_cpu) stay ON so it degrades instead of
+    crashing. p: {model?, mode? (tiny|tiny-long|full), vae_model?, scale? (2/4), tiled_vae?,
+    tiled_dit?, unload_dit?, keep_models_on_cpu?, attention_mode?, frame_chunk_size?, resize_factor?,
+    frame_cap?, seed?}. Models live in models/FlashVSR-v1.1 (see download_flashvsr_models.bat)."""
+    seed = _seed(p)
+    model = p.get("model") or "FlashVSR-v1.1"
+    mode = p.get("mode") or "full"                         # tiny=fast/low-vram, full=best quality
+    vae_model = p.get("vae_model") or "Wan2.1"
+    scale = int(p.get("scale", 2))                         # integer factor: 2x (1280x704 -> 2560x1408)
+    tiled_vae = bool(p.get("tiled_vae", True))            # OOM nets ON by default (24GB)
+    tiled_dit = bool(p.get("tiled_dit", True))
+    unload_dit = bool(p.get("unload_dit", True))
+    keep_cpu = bool(p.get("keep_models_on_cpu", True))
+    # sdpa is the always-available attention; sparse_sage_attention is faster but needs the bundled
+    # sparse-sage kernels to build on the box - default to sdpa for reliability, override to try sage.
+    attention = p.get("attention_mode") or "sdpa"
+    chunk = int(p.get("frame_chunk_size", 0))              # 0 = all frames in one pass
+    resize_factor = float(p.get("resize_factor", 1.0))
+    cap = int(p.get("frame_cap", 0))                       # 0 = all frames
+    load = {"1": {"class_type": "VHS_LoadVideo",
+                  "inputs": {"video": video_ref, "force_rate": 0.0, "custom_width": 0,
+                             "custom_height": 0, "frame_load_cap": cap, "skip_first_frames": 0,
+                             "select_every_nth": 1}}}
+    # VHS_LoadVideo outputs: images=[1,0], frame_count=[1,1], audio=[1,2], video_info=[1,3]
+    # ADVANCED path is the DEFAULT (set simple=true to force the basic node): FlashVSRInitPipe ->
+    # FlashVSRNodeAdv exposes tile_size/tile_overlap so we control how big each tile is. tile_size=512
+    # is the measured sweet spot on the 24GB 3090 (peak ~14.4GB, ~164s/145f, 6 tiles): faster + fewer
+    # seams than 256, while 768 OOM'd. Untiled OOMs at 2x/145f so tiling stays ON, but we keep models
+    # resident (force_offload/keep_models_on_cpu False) for speed - a proven free win. Long clips eat
+    # the same VRAM budget as big tiles, so set frame_chunk_size for >~10s shots (see endpoint).
+    if not p.get("simple"):
+        tile_size = int(p.get("tile_size", 512))           # measured sweet spot; 768 OOMs at 145f
+        tile_overlap = int(p.get("tile_overlap", 32))
+        color_fix = bool(p.get("color_fix", True))
+        force_offload = bool(p.get("force_offload", False))   # False = model resident on GPU (faster)
+        precision = p.get("precision") or "fp16"
+        sparse_ratio = float(p.get("sparse_ratio", 2.0))
+        kv_ratio = float(p.get("kv_ratio", 3.0))
+        local_range = int(p.get("local_range", 11))
+        adv_keep_cpu = bool(p.get("keep_models_on_cpu", False))  # resident by default in adv (speed)
+        adv_unload = bool(p.get("unload_dit", False))
+        g = dict(load)
+        g["2"] = {"class_type": "FlashVSRInitPipe",
+                  "inputs": {"model": model, "mode": mode, "vae_model": vae_model,
+                             "force_offload": force_offload, "precision": precision,
+                             "device": "auto", "attention_mode": attention}}
+        g["3"] = {"class_type": "FlashVSRNodeAdv",
+                  "inputs": {"pipe": ["2", 0], "frames": ["1", 0], "scale": scale,
+                             "color_fix": color_fix, "tiled_vae": tiled_vae, "tiled_dit": tiled_dit,
+                             "tile_size": tile_size, "tile_overlap": tile_overlap,
+                             "unload_dit": adv_unload, "sparse_ratio": sparse_ratio,
+                             "kv_ratio": kv_ratio, "local_range": local_range, "seed": seed,
+                             "frame_chunk_size": chunk, "enable_debug": False,
+                             "keep_models_on_cpu": adv_keep_cpu, "resize_factor": resize_factor}}
+        g["4"] = {"class_type": "CreateVideo",
+                  "inputs": {"images": ["3", 0], "fps": float(fps), "audio": ["1", 2]}}
+        g["5"] = {"class_type": "SaveVideo",
+                  "inputs": {"video": ["4", 0], "filename_prefix": "videogen/flashvsr",
+                             "format": "auto", "codec": "auto"}}
+        return g, {"seed": seed, "model": model, "mode": mode, "vae_model": vae_model, "scale": scale,
+                   "advanced": True, "tile_size": tile_size, "tile_overlap": tile_overlap,
+                   "tiled_vae": tiled_vae, "tiled_dit": tiled_dit, "force_offload": force_offload,
+                   "attention_mode": attention, "fps": fps, "kind": "video"}
+    g = dict(load)
+    g["2"] = {"class_type": "FlashVSRNode",
+              "inputs": {"frames": ["1", 0], "model": model, "mode": mode, "vae_model": vae_model,
+                         "scale": scale, "tiled_vae": tiled_vae, "tiled_dit": tiled_dit,
+                         "unload_dit": unload_dit, "seed": seed, "frame_chunk_size": chunk,
+                         "attention_mode": attention, "enable_debug": False,
+                         "keep_models_on_cpu": keep_cpu, "resize_factor": resize_factor}}
+    g["3"] = {"class_type": "CreateVideo",
+              "inputs": {"images": ["2", 0], "fps": float(fps), "audio": ["1", 2]}}
+    g["4"] = {"class_type": "SaveVideo",
+              "inputs": {"video": ["3", 0], "filename_prefix": "videogen/flashvsr",
+                         "format": "auto", "codec": "auto"}}
+    return g, {"seed": seed, "model": model, "mode": mode, "vae_model": vae_model, "scale": scale,
+               "tiled_vae": tiled_vae, "tiled_dit": tiled_dit, "attention_mode": attention,
+               "fps": fps, "kind": "video"}
+
+
 # ------------------------------------------------ SVI2 Pro: long-form Wan 2.2 A14B i2v
 # Two-expert (high/low noise) Wan 2.2 i2v, 4-step lightx2v, extended to long video via the
 # Wan22FMLF SVI nodes: each 81-frame segment chains off the previous segment's latent (motion

@@ -1021,6 +1021,43 @@ def video_upscale(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/flashvsr")
+def video_flashvsr(p: dict):
+    """FlashVSR diffusion upscale (naxci1 Stable node) of a finished library clip - alternative to
+    SeedVR2. p: {video_id, scale? (2/4, default 2), mode? (tiny|tiny-long|full), vae_model?,
+    tiled_vae?, tiled_dit?, attention_mode?, frame_chunk_size?, seed?}. Models in
+    models/FlashVSR-v1.1 (download_flashvsr_models.bat); node installed via Manager."""
+    vid = _lib_video_path(p.get("video_id"))
+    if not vid:
+        raise HTTPException(400, "video_id must reference a generated clip/video in the library")
+    fps = _probe_fps(vid)
+    # AUTO-CHUNK long clips: a whole upscaled clip is accumulated in system RAM before encode, so a
+    # ~20s shot (480f @720p) OOMs the box's 32GB RAM in one pass while 6s (145f) clips are fine.
+    # frame_chunk_size caps the working buffer. Only apply it ABOVE a threshold so short clips stay
+    # unchunked (no temporal seam at chunk boundaries). User can override by passing frame_chunk_size.
+    if "frame_chunk_size" not in p:
+        try:
+            import subprocess
+            n = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                                "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", vid],
+                               capture_output=True, text=True, timeout=30).stdout.strip()
+            nframes = int(n) if n.isdigit() else 0
+        except Exception:
+            nframes = 0
+        cap = int(p.get("frame_cap") or 0)
+        eff = min(nframes, cap) if cap else nframes
+        if eff > 200:                                       # ~8s+ -> chunk; below that, clean unchunked
+            p["frame_chunk_size"] = 48
+    try:
+        with open(vid, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(vid))
+        graph, resolved = video_mod.build_flashvsr_upscale(p, ref, fps)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["video_id"] = os.path.basename(p.get("video_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/ltx_lipsync")
 def video_ltx_lipsync(p: dict):
     """LTX-2.3 i2v + LatentSync lip-sync: animate a keyframe still, then sync its mouth to a

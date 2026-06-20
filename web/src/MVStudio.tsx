@@ -201,7 +201,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     const card = { id: rid(), title: `block ${b.idx + 1}: upscaling...`, status: "running" as const, pct: 5 };
     ctx.setResults([card]);
     try {
-      const { job_id } = await api.videoUpscale({ video_id: b.clipId, resolution: 1440 }) as { job_id: string };
+      const { job_id } = await api.videoFlashvsr({ video_id: b.clipId, scale: 2 }) as { job_id: string };
       patch(b.id, { upscaledId: job_id });
       pollJob(job_id, card.id, ctx);
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -500,9 +500,9 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
           <input type="checkbox" checked={b.lipsync} onChange={(e) => patch({ lipsync: e.target.checked })} /> lip-sync
         </label>
         {b.clipId && <span className="text-[10px] text-green-400" title="rendered">rendered</span>}
-        {b.upscaledId && <span className="text-[10px] text-[var(--color-accent2)]" title="upscaled to 1440p">↑1440</span>}
+        {b.upscaledId && <span className="text-[10px] text-[var(--color-accent2)]" title="FlashVSR 2x upscaled">↑2x</span>}
         <span className="ml-auto flex items-center gap-1">
-          {b.clipId && <button onClick={upscale} disabled={busy} className="rounded border border-[var(--color-line)] px-2 py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50" title="SeedVR2 upscale this clip to 1440p">{b.upscaledId ? "Re-upscale" : "Upscale"}</button>}
+          {b.clipId && <button onClick={upscale} disabled={busy} className="rounded border border-[var(--color-line)] px-2 py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50" title="FlashVSR 2x upscale (auto-chunks long clips)">{b.upscaledId ? "Re-upscale" : "Upscale"}</button>}
           <button onClick={dup} className="px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="Duplicate">{"⧉"}</button>
           <button onClick={del} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="Delete">{"×"}</button>
           <button onClick={gen} disabled={busy} className="rounded bg-[var(--color-accent)] px-3 py-1 text-[11px] font-semibold text-white disabled:opacity-50">{b.clipId ? "Re-render" : "Render"}</button>
