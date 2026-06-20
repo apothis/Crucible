@@ -38,6 +38,7 @@ export function MVTimeline({ url, beats, blocks, selId, onSelect, onChange, heig
   const [dur, setDur] = useState(0);
   const [cur, setCur] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [zoom, setZoom] = useState(14);   // px/sec - wide enough to read blocks; the waveform scrolls horizontally
 
   useEffect(() => { snapRef.current = snap; }, [snap]);
   useEffect(() => { beatsRef.current = beats; }, [beats]);
@@ -88,6 +89,7 @@ export function MVTimeline({ url, beats, blocks, selId, onSelect, onChange, heig
     regPlugin.current = reg;
     const w = WaveSurfer.create({
       container: ref.current, media: audio, height,
+      minPxPerSec: zoom, autoScroll: true, hideScrollbar: false,
       waveColor: "#3a404e", progressColor: "#7a4030", cursorColor: "#f7b733",
       cursorWidth: 2, barWidth: 2, barGap: 1, barRadius: 2,
       plugins: [reg, TimelinePlugin.create({ height: 14, insertPosition: "beforebegin", style: { fontSize: "9px", color: "#8b909a" } })],
@@ -127,6 +129,9 @@ export function MVTimeline({ url, beats, blocks, selId, onSelect, onChange, heig
     }
   }, [blocks, selId, ready]);
 
+  // apply zoom (px/sec) when it changes - widens the waveform; the container scrolls horizontally
+  useEffect(() => { if (ready && ws.current) try { ws.current.zoom(zoom); } catch { /* */ } }, [zoom, ready]);
+
   const pbtn = "flex h-7 w-7 flex-none items-center justify-center rounded-full bg-gradient-to-br from-[var(--color-accent)] to-[var(--color-accent2)] text-white text-[11px] shadow disabled:opacity-40";
   return (
     <div className="space-y-1.5 rounded-lg border border-[var(--color-line)] bg-[#0e1015] p-2">
@@ -135,7 +140,11 @@ export function MVTimeline({ url, beats, blocks, selId, onSelect, onChange, heig
         <button onClick={() => ws.current?.playPause()} disabled={!ready} className={pbtn}>{playing ? "❚❚" : "▶"}</button>
         <span className="tabular-nums">{fmt(cur)} / {fmt(dur)}</span>
         <span className="opacity-70">drag a block to move {"·"} drag an edge to resize {"·"} click to edit</span>
-        <label className="ml-auto flex items-center gap-1 whitespace-nowrap">
+        <label className="ml-auto flex items-center gap-1 whitespace-nowrap" title="timeline zoom (px / second)">
+          zoom
+          <input type="range" min={4} max={60} step={1} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="w-24" />
+        </label>
+        <label className="flex items-center gap-1 whitespace-nowrap">
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> snap to beat{beats.length ? ` (${beats.length})` : ""}
         </label>
       </div>

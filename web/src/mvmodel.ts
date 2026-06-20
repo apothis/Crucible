@@ -40,8 +40,10 @@ export type Block = {
   // render params
   width: number; height: number; frames: number; fps: number; seed: number;
   refFrames: number; msrStrength: number; guideStrength: number; steps: number; cfg: number;
-  // result
+  // result (clipId/backgroundId = the SELECTED take; *Variants = every take rendered, to pick between)
   clipId?: string; upscaledId?: string;
+  clipVariants?: string[];        // all rendered clip job-ids for this block
+  bgVariants?: string[];          // all composed/generated background still-ids for this block
 };
 
 export const MSR_REF_COMBOS = [17, 25, 33, 41];   // LiconMSR frame_count combo
