@@ -1239,6 +1239,14 @@ def mv_assemble(body: dict):
     ipath = os.path.join(LIBRARY, f"{icid}.mp4")
     if icid and os.path.exists(ipath) and float(body.get("intro_dur") or 0) > 0:
         intro = {"path": ipath, "dur": float(body["intro_dur"]), "xfade": float(body.get("intro_xfade") or 1.5)}
+        # pre-roll SOUND: an explicit library audio (intro_audio_id), else the bundled wind clip; the
+        # assemble step level-matches it to the song before the crossfade.
+        wind = _lib_source_path(body.get("intro_audio_id")) if body.get("intro_audio_id") else None
+        if not wind:
+            cand = os.path.join(LIBRARY, "wind_howling_ccby.mp3")
+            wind = cand if os.path.exists(cand) else None
+        if wind:
+            intro["audio"] = wind
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:

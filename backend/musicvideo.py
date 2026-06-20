@@ -126,6 +126,8 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
         if intro and intro.get("path") and os.path.isfile(intro["path"]):
             P = max(0.1, float(intro.get("dur") or 3))
             X = max(0.1, min(float(intro.get("xfade") or 1.5), P))
+            # pre-roll VIDEO = the opening clip (its own audio is dropped; the wind comes from a
+            # dedicated track if given, else the clip's audio).
             introf = os.path.join(work, "intro.mp4")
             ivf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},"
@@ -133,18 +135,31 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
             if grade_chain:
                 ivf += "," + grade_chain
             subprocess.run([ff, "-y", "-loglevel", "error", "-i", intro["path"], "-vf", ivf,
-                            "-t", f"{P:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                            "-c:a", "aac", "-r", str(fps), introf], check=True)
+                            "-t", f"{P:.3f}", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-r", str(fps), introf], check=True)
             full = os.path.join(work, "full.mp4")
             subprocess.run([ff, "-y", "-loglevel", "error", "-i", introf, "-i", concat,
                             "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
                             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), full], check=True)
             ftotal = P + total
+            wind_src = intro["audio"] if (intro.get("audio") and os.path.isfile(intro["audio"])) else intro["path"]
             if audio_path:
-                af = (f"[1:a]atrim=0:{P:.3f},afade=t=out:st={max(0.0, P - X):.3f}:d={X:.3f}[wind];"
+                # level-match the wind to the SONG's opening so the crossfade has no jump (the user
+                # asked for this) - measure both mean volumes, scale the wind by the difference.
+                def _mean_db(path, dur):
+                    try:
+                        out = subprocess.run([ff, "-hide_banner", "-t", f"{dur:.2f}", "-i", path,
+                                              "-af", "volumedetect", "-f", "null", "-"],
+                                             capture_output=True, text=True).stderr
+                        m = re.search(r"mean_volume:\s*(-?\d+\.?\d*) dB", out)
+                        return float(m.group(1)) if m else -20.0
+                    except Exception:
+                        return -20.0
+                gain = max(-30.0, min(6.0, _mean_db(audio_path, P + X) - _mean_db(wind_src, P)))
+                af = (f"[1:a]atrim=0:{P:.3f},volume={gain:.1f}dB,afade=t=out:st={max(0.0, P - X):.3f}:d={X:.3f}[wind];"
                       f"[2:a]adelay={int(P * 1000)}|{int(P * 1000)},afade=t=in:st={P:.3f}:d={X:.3f}[song];"
                       f"[wind][song]amix=inputs=2:duration=longest:dropout_transition=0[a]")
-                subprocess.run([ff, "-y", "-loglevel", "error", "-i", full, "-i", introf,
+                subprocess.run([ff, "-y", "-loglevel", "error", "-i", full, "-i", wind_src,
                                 "-i", audio_path, "-filter_complex", af, "-map", "0:v", "-map", "[a]",
                                 "-c:v", "copy", "-c:a", "aac", "-t", f"{ftotal:.3f}", out_path], check=True)
             else:
