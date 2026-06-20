@@ -178,7 +178,7 @@ function AppInner() {
 
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          <div className={mode === "compare" ? "w-full" : "max-w-2xl"}>
+          <div className={mode === "compare" || mode === "mvstudio" ? "w-full" : "max-w-2xl"}>
             {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
