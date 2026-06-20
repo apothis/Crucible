@@ -13,6 +13,9 @@ import {
 
 // ---- readable block list: every shot at a glance (type / time / scene / needs / status) ----
 const _fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(Math.max(0, t) % 60)).padStart(2, "0")}`;
+// a <video muted preload="metadata"> won't paint a frame on its own; a #t= media-fragment makes the
+// browser seek to and render that frame, so the clip shows a real poster thumbnail instead of black.
+const posterFrag = (url: string) => (url.includes("#") ? url : `${url}#t=0.5`);
 
 function BlockList({ blocks, selId, onSelect, onRender, onPatch, onMove, libChars, library, busy }: {
   blocks: Block[]; selId: string; onSelect: (id: string) => void;
@@ -73,7 +76,7 @@ function BlockList({ blocks, selId, onSelect, onRender, onPatch, onMove, libChar
                   <td className="px-2 py-1.5">
                     <div className="h-10 w-16 overflow-hidden rounded border border-[var(--color-line)] bg-[var(--color-bg)]">
                       {th ? (th.kind === "video"
-                        ? <video src={th.url} muted preload="metadata" className="h-full w-full object-cover" />
+                        ? <video src={posterFrag(th.url)} muted playsInline preload="metadata" className="h-full w-full object-cover" />
                         : <img src={th.url} className="h-full w-full object-cover" alt="" />)
                         : <span className="flex h-full w-full items-center justify-center text-[8px] text-[var(--color-muted)]">—</span>}
                     </div>
@@ -547,7 +550,7 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
                   const it = library.find((s) => s.id === id); const on = b.clipId === id;
                   return <button key={id} onClick={() => patch({ clipId: id })} title={on ? "kept" : "keep this take"}
                     className={`h-16 w-28 flex-none overflow-hidden rounded border ${on ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]" : "border-[var(--color-line)] opacity-60 hover:opacity-100"}`}>
-                    {it?.media_url ? <video src={it.media_url} muted preload="metadata" className="h-full w-full object-cover" /> : <span className="text-[8px] text-[var(--color-muted)]">{id.slice(0, 6)}</span>}
+                    {it?.media_url ? <video src={posterFrag(it.media_url)} muted playsInline preload="metadata" className="h-full w-full object-cover" /> : <span className="text-[8px] text-[var(--color-muted)]">{id.slice(0, 6)}</span>}
                   </button>;
                 })}
               </div>
