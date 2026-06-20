@@ -1232,10 +1232,18 @@ def mv_assemble(body: dict):
     width = int(body.get("width") or 1280)
     height = int(body.get("height") or 720)
     transition = float(body.get("transition") or 0)
+    # optional intro pre-roll: a clip (the opening shot, rendered with LTX-native wind audio) plays
+    # first with the song silent, then the song enters and the intro audio crossfades out.
+    intro = None
+    icid = os.path.basename(str(body.get("intro_clip_id") or ""))
+    ipath = os.path.join(LIBRARY, f"{icid}.mp4")
+    if icid and os.path.exists(ipath) and float(body.get("intro_dur") or 0) > 0:
+        intro = {"path": ipath, "dur": float(body["intro_dur"]), "xfade": float(body.get("intro_xfade") or 1.5)}
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:
-        musicvideo_mod.assemble(segs, audio, out, width=width, height=height, grade=grade, transition=transition)
+        musicvideo_mod.assemble(segs, audio, out, width=width, height=height, grade=grade,
+                                transition=transition, intro=intro)
     except Exception as e:
         raise HTTPException(500, f"assembly failed: {e}")
     save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade, "transition": transition}, out)

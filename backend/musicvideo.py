@@ -65,7 +65,7 @@ def grade_names():
 
 
 def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, grade="none",
-             transition=0.0):
+             transition=0.0, intro=None):
     """Stitch shot clips into one MP4 (GPU-free, ffmpeg). segments = [{path, dur}]: each clip
     is scaled+padded to width x height, set to a common fps, and fitted to exactly `dur`
     seconds (long clips trimmed; short clips hold their last frame). Concatenated in order,
@@ -119,7 +119,37 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
             subprocess.run([ff, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
                             "-i", listf, "-c", "copy", concat], check=True)
             total = sum(durs)
-        if audio_path:
+        # optional INTRO PRE-ROLL: a clip (e.g. the opening shot rendered with LTX-native wind audio)
+        # plays first with the song SILENT, then the song enters and the intro's own audio crossfades
+        # out. Lip-sync stays intact - the song still aligns to the body's t=0, just offset by `dur` in
+        # the final. intro = {"path", "dur" (pre-roll seconds), "xfade" (intro->song crossfade seconds)}.
+        if intro and intro.get("path") and os.path.isfile(intro["path"]):
+            P = max(0.1, float(intro.get("dur") or 3))
+            X = max(0.1, min(float(intro.get("xfade") or 1.5), P))
+            introf = os.path.join(work, "intro.mp4")
+            ivf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                   f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},"
+                   f"tpad=stop_mode=clone:stop_duration=3600")
+            if grade_chain:
+                ivf += "," + grade_chain
+            subprocess.run([ff, "-y", "-loglevel", "error", "-i", intro["path"], "-vf", ivf,
+                            "-t", f"{P:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-c:a", "aac", "-r", str(fps), introf], check=True)
+            full = os.path.join(work, "full.mp4")
+            subprocess.run([ff, "-y", "-loglevel", "error", "-i", introf, "-i", concat,
+                            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), full], check=True)
+            ftotal = P + total
+            if audio_path:
+                af = (f"[1:a]atrim=0:{P:.3f},afade=t=out:st={max(0.0, P - X):.3f}:d={X:.3f}[wind];"
+                      f"[2:a]adelay={int(P * 1000)}|{int(P * 1000)},afade=t=in:st={P:.3f}:d={X:.3f}[song];"
+                      f"[wind][song]amix=inputs=2:duration=longest:dropout_transition=0[a]")
+                subprocess.run([ff, "-y", "-loglevel", "error", "-i", full, "-i", introf,
+                                "-i", audio_path, "-filter_complex", af, "-map", "0:v", "-map", "[a]",
+                                "-c:v", "copy", "-c:a", "aac", "-t", f"{ftotal:.3f}", out_path], check=True)
+            else:
+                shutil.move(full, out_path)
+        elif audio_path:
             subprocess.run([ff, "-y", "-loglevel", "error", "-i", concat, "-i", audio_path,
                             "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
                             "-t", f"{total:.3f}", out_path], check=True)

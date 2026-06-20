@@ -113,6 +113,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [audioId, setAudioId] = d.use("audioId", "");          // the song (drives lip-sync windows + assembly mux)
   const [grade, setGrade] = d.use("grade", "none");
   const [transition, setTransition] = d.use("transition", 0);  // crossfade seconds between blocks (0 = hard cut)
+  const [introDur, setIntroDur] = d.use("introDur", 0);        // intro pre-roll: seconds the opening clip's own audio plays before the song (0 = off)
+  const [introXfade, setIntroXfade] = d.use("introXfade", 1.5);// intro -> song crossfade seconds
   const [grades, setGrades] = useState<string[]>(["none"]);
   const [scripting, setScripting] = useState(false);
   const [blocks, setBlocks] = d.use<Block[]>("blocks", []);
@@ -273,8 +275,10 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     const card = { id: rid(), title: `assembling ${ready.length} blocks...`, status: "running" as const, pct: 30 };
     ctx.setResults([card]);
     try {
+      const introClip = blocks[0]?.upscaledId || blocks[0]?.clipId;   // the opening shot's render = the wind pre-roll
       const r = await api.mvAssemble({ shots: ready.map((b) => ({ clip_id: b.upscaledId || b.clipId, start: b.start, end: b.end })),
-        audio_id: audioId, grade, transition, title: "music video" }) as { media_url: string };
+        audio_id: audioId, grade, transition, title: "music video",
+        ...(introDur > 0 && introClip ? { intro_clip_id: introClip, intro_dur: introDur, intro_xfade: introXfade } : {}) }) as { media_url: string };
       ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
       ctx.onDone();
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
@@ -369,6 +373,23 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         patch={patchSel} gen={() => genBlock(sel)} dup={() => dupBlock(sel)}
         del={() => delBlock(sel.id)} upscale={() => upscaleBlock(sel)}
         compose={(charIds, prompt) => composeBackground(sel.id, charIds, prompt)} />}
+
+      {/* intro pre-roll: the opening shot's own (LTX-generated) audio plays before the song, then crossfades out */}
+      {blocks.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-bg)] p-2 text-[11px] text-[var(--color-muted)]">
+          <span className="font-semibold text-[var(--color-ink)]">Intro pre-roll</span>
+          <span className="opacity-80">opening shot's wind plays before the song, then crossfades out</span>
+          <label className="ml-auto flex items-center gap-1" title="seconds the opening clip's own audio plays before the song starts (0 = off)">
+            pre-roll
+            <input type="number" min={0} max={10} step={0.5} value={introDur} onChange={(e) => setIntroDur(Number(e.target.value))} className={`${inp} w-16`} />s
+          </label>
+          <label className="flex items-center gap-1" title="wind -> song crossfade seconds">
+            crossfade
+            <input type="number" min={0.2} max={5} step={0.1} value={introXfade} onChange={(e) => setIntroXfade(Number(e.target.value))} className={`${inp} w-16`} />s
+          </label>
+          {introDur > 0 && !(blocks[0]?.clipId) && <span className="text-amber-400">render the opening shot first</span>}
+        </div>
+      )}
 
       {/* assemble */}
       {blocks.length > 0 && (
