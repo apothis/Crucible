@@ -14,9 +14,11 @@ import {
 // ---- readable block list: every shot at a glance (type / time / scene / needs / status) ----
 const _fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(Math.max(0, t) % 60)).padStart(2, "0")}`;
 
-function BlockList({ blocks, selId, onSelect, onRender, libChars, busy }: {
+function BlockList({ blocks, selId, onSelect, onRender, onPatch, onMove, libChars, library, busy }: {
   blocks: Block[]; selId: string; onSelect: (id: string) => void;
-  onRender: (b: Block) => void; libChars: Character[]; busy: boolean;
+  onRender: (b: Block) => void; onPatch: (id: string, p: Partial<Block>) => void;
+  onMove: (id: string, dir: -1 | 1) => void;
+  libChars: Character[]; library: LibItem[]; busy: boolean;
 }) {
   const typeOf = (b: Block) => {
     if (b.renderMode === "i2v") return { label: "B-roll", cls: "bg-slate-700/60 text-slate-300" };
@@ -34,29 +36,56 @@ function BlockList({ blocks, selId, onSelect, onRender, libChars, busy }: {
     if (b.renderMode === "i2v" && !b.backgroundId && !b.subjectIds.length) return { txt: "needs still", warn: true };
     return { txt: "ready", warn: false };
   };
+  const thumbOf = (b: Block) => {
+    const clip = b.clipId ? library.find((i) => i.id === b.clipId) : undefined;
+    if (clip?.media_url) return { url: clip.media_url, kind: "video" as const };
+    const bg = b.backgroundId ? library.find((i) => i.id === b.backgroundId) : undefined;
+    if (bg?.media_url) return { url: bg.media_url, kind: "img" as const };
+    return null;
+  };
   return (
     <div className="overflow-hidden rounded-lg border border-[var(--color-line)]">
-      <div className="max-h-[440px] overflow-y-auto">
+      <div className="max-h-[460px] overflow-y-auto">
         <table className="w-full border-collapse text-left text-[11px]">
           <thead className="sticky top-0 z-10 bg-[var(--color-panel2)] text-[9px] uppercase tracking-wide text-[var(--color-muted)]">
             <tr>
-              <th className="w-8 px-2 py-1.5">#</th><th className="w-32 px-2 py-1.5">time</th>
-              <th className="w-32 px-2 py-1.5">shot</th><th className="px-2 py-1.5">scene</th>
+              <th className="w-6 px-1 py-1.5"></th><th className="w-7 px-1 py-1.5">#</th>
+              <th className="w-20 px-2 py-1.5">thumb</th><th className="w-28 px-2 py-1.5">time</th>
+              <th className="w-32 px-2 py-1.5">shot</th><th className="px-2 py-1.5">scene (click to edit)</th>
               <th className="w-28 px-2 py-1.5">needs</th><th className="w-20 px-2 py-1.5">status</th><th className="w-16 px-2 py-1.5"></th>
             </tr>
           </thead>
           <tbody>
-            {blocks.map((b) => {
-              const t = typeOf(b); const n = needsOf(b);
+            {blocks.map((b, i) => {
+              const t = typeOf(b); const n = needsOf(b); const th = thumbOf(b);
               const takes = b.clipVariants?.length || (b.clipId ? 1 : 0);
               const sel = b.id === selId;
               return (
                 <tr key={b.id} onClick={() => onSelect(b.id)}
                   className={`cursor-pointer border-t border-[var(--color-line)] align-top ${sel ? "bg-[var(--color-accent)]/15" : "hover:bg-[var(--color-panel2)]"}`}>
-                  <td className="px-2 py-1.5 font-semibold text-[var(--color-muted)]">{b.idx + 1}</td>
+                  <td className="px-0.5 py-1.5">
+                    <div className="flex flex-col leading-none text-[var(--color-muted)]">
+                      <button onClick={(e) => { e.stopPropagation(); onMove(b.id, -1); }} disabled={i === 0} title="move earlier" className="px-1 hover:text-[var(--color-ink)] disabled:opacity-25">▲</button>
+                      <button onClick={(e) => { e.stopPropagation(); onMove(b.id, 1); }} disabled={i === blocks.length - 1} title="move later" className="px-1 hover:text-[var(--color-ink)] disabled:opacity-25">▼</button>
+                    </div>
+                  </td>
+                  <td className="px-1 py-1.5 font-semibold text-[var(--color-muted)]">{b.idx + 1}</td>
+                  <td className="px-2 py-1.5">
+                    <div className="h-10 w-16 overflow-hidden rounded border border-[var(--color-line)] bg-[var(--color-bg)]">
+                      {th ? (th.kind === "video"
+                        ? <video src={th.url} muted preload="metadata" className="h-full w-full object-cover" />
+                        : <img src={th.url} className="h-full w-full object-cover" alt="" />)
+                        : <span className="flex h-full w-full items-center justify-center text-[8px] text-[var(--color-muted)]">—</span>}
+                    </div>
+                  </td>
                   <td className="px-2 py-1.5 tabular-nums text-[var(--color-muted)]">{_fmt(b.start)}–{_fmt(b.end)}<span className="ml-1 opacity-60">{Math.round(b.end - b.start)}s</span></td>
                   <td className="px-2 py-1.5"><span className={`rounded px-1.5 py-0.5 ${t.cls}`}>{t.label}</span>{b.lipsync && <span title="lip-sync" className="ml-1 text-[var(--color-accent2)]">♪</span>}</td>
-                  <td className="px-2 py-1.5 text-[var(--color-ink)]/80"><div className="line-clamp-2 max-w-[460px]">{b.prompt || <span className="text-[var(--color-muted)]">(no prompt)</span>}</div></td>
+                  <td className="px-2 py-1.5">
+                    <textarea value={b.prompt} rows={2} onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onPatch(b.id, { prompt: e.target.value })}
+                      placeholder="(no prompt)"
+                      className="w-full min-w-[280px] resize-y rounded border border-transparent bg-transparent px-1 py-0.5 text-[11px] text-[var(--color-ink)]/85 hover:border-[var(--color-line)] focus:border-[var(--color-accent)] focus:bg-[var(--color-bg)] focus:outline-none" />
+                  </td>
                   <td className="px-2 py-1.5"><span className={n.warn ? "text-amber-400" : "text-green-500"}>{n.txt}</span></td>
                   <td className="px-2 py-1.5">{takes ? <span className="text-green-400">{takes > 1 ? `${takes} takes` : "rendered"}</span> : <span className="text-[var(--color-muted)]">—</span>}</td>
                   <td className="px-2 py-1.5 text-right">
@@ -129,6 +158,19 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   function delBlock(id: string) {
     const next = blocks.filter((b) => b.id !== id); commit(next);
     if (selId === id) setSelId(next[0]?.id || "");
+  }
+  // reorder: swap this block's CONTENT with its neighbour, keeping each time slot (the timeline is
+  // time-locked to the song, so "reorder" = which shot plays in which window). Frames re-fit per slot.
+  function move(id: string, dir: -1 | 1) {
+    const i = blocks.findIndex((b) => b.id === id); const j = i + dir;
+    if (i < 0 || j < 0 || j >= blocks.length) return;
+    const a = blocks[i], b = blocks[j];
+    // content (incl. any rendered clip) swaps slots; the time window + audioStart stay with the slot,
+    // frames re-fit to the new slot. A lip-sync clip moved to a new window may need re-rendering.
+    const slot = (x: Block) => ({ id: x.id, start: x.start, end: x.end, audioStart: x.start,
+      frames: ltxFrames(Math.max(2, x.end - x.start) * x.fps) });
+    const newA = { ...b, ...slot(a) }, newB = { ...a, ...slot(b) };
+    commit(blocks.map((x) => x.id === a.id ? newA : x.id === b.id ? newB : x));
   }
 
   // ---- generate a starting timeline from the project's song arrangement ----
@@ -213,6 +255,17 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
+  // ---- bulk render: fire every renderable block (the box queues them). onlyMissing skips rendered. ----
+  function blockReady(b: Block) {
+    const subj = resolveSubjects(b, libChars).length;
+    return b.renderMode === "i2v" ? !!(b.backgroundId || b.subjectIds.length) : !!(b.backgroundId && subj);
+  }
+  async function renderAll(onlyMissing: boolean) {
+    const todo = blocks.filter((b) => blockReady(b) && (!onlyMissing || !b.clipId));
+    if (!todo.length) { ctx.setResults([{ id: rid(), title: "Bulk render", status: "error", pct: 0, err: "No renderable blocks (generate the backgrounds/refs they need first)." }]); return; }
+    for (const b of todo) await genBlock(b);   // genBlock submits + polls; the box processes them in order
+  }
+
   // ---- assemble ----
   async function assemble() {
     const ready = blocks.filter((b) => b.clipId);
@@ -266,6 +319,11 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
           {scripting ? "Scripting..." : "Generate from song"}
         </GhostButton>
         {!canScript && <span className="text-[9px] text-[var(--color-muted)]">(open a project with a Song arrangement to script)</span>}
+        {blocks.length > 0 && (
+          <GhostButton onClick={() => renderAll(true)} disabled={busy}>
+            Render all missing
+          </GhostButton>
+        )}
         <span className="ml-auto text-[10px] text-[var(--color-muted)]">{blocks.length} blocks {"·"} {ready} rendered</span>
       </div>
 
@@ -294,7 +352,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
       {/* readable shot list - every block at a glance, click a row to edit it below */}
       {blocks.length > 0 && (
-        <BlockList blocks={blocks} selId={selId} onSelect={setSelId} onRender={genBlock} libChars={libChars} busy={busy} />
+        <BlockList blocks={blocks} selId={selId} onSelect={setSelId} onRender={genBlock}
+          onPatch={patch} onMove={move} libChars={libChars} library={library} busy={busy} />
       )}
 
       {blocks.length === 0 && (
