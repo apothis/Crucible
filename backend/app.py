@@ -896,6 +896,42 @@ def video_ltx_msr(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/ltx_flf")
+def video_ltx_flf(p: dict):
+    """LTX-2.3 First-Last-Frame: pin the clip's first/last frame to keyframe stills, model interpolates
+    between (no IC-LoRA guide -> no head-leak; camera move = the framing difference of the two stills).
+    p: {first_id (library still), last_id? (defaults to first_id = STATIC shot), prompt, negative?, seed?,
+    width?, height?, frames?, fps?, cfg?, first_strength?, last_strength?, audio_id?, audio_start?,
+    isolate_vocal?}."""
+    first = _lib_image_path(p.get("first_id"))
+    if not first:
+        raise HTTPException(400, "first_id must reference a generated still (the opening keyframe)")
+    last = _lib_image_path(p.get("last_id")) if p.get("last_id") else first   # default static (first==last)
+    audio = _lib_source_path(p.get("audio_id")) if p.get("audio_id") else None
+    start = max(0.0, float(p.get("audio_start") or 0))
+    iso_used = None
+    try:
+        with open(first, "rb") as f:
+            up_first = C.upload_audio(f.read(), os.path.basename(first))
+        up_last = up_first if last == first else C.upload_audio(open(last, "rb").read(), os.path.basename(last))
+        vocal_ref = None
+        if audio:
+            fps = int(p.get("fps", 24))
+            frames = video_mod._ltx_frames(p.get("frames", 121), fps)
+            aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, frames / fps, p)
+            vocal_ref = C.upload_audio(aud_bytes, "flf_vocal.wav")
+        graph, resolved = video_mod.build_ltx_flf(p, up_first, up_last, vocal_ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["first_id"] = os.path.basename(p.get("first_id"))
+    resolved["last_id"] = os.path.basename(p.get("last_id") or p.get("first_id"))
+    if audio:
+        resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+        resolved["audio_start"] = start
+        resolved["vocal_isolated"] = bool(iso_used)
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/svi_i2v")
 def video_svi_i2v(p: dict):
     """SVI2 Pro long-form Wan 2.2 A14B i2v: animate a library still into a long continuous clip

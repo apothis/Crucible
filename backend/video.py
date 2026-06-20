@@ -1022,6 +1022,85 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     return g, resolved
 
 
+def build_ltx_flf(p, first_image, last_image, vocal_ref=None):
+    """LTX-2.3 First-Last-Frame: pin the clip's FIRST and LAST frame to keyframe stills and let the model
+    interpolate the in-between. Unlike MSR's IC-LoRA reference VIDEO (which prepends guide frames that can
+    leak at the head), the keyframes ARE the content's first/last frames - no guide-crop, no head-leak.
+    Precise camera control comes from the framing of the two stills: same still both ends = STATIC; a wider
+    first + closer last = a clean DOLLY-IN; closer first + wider last = pull-back. Identity comes from the
+    keyframe stills (not MSR refs). first_image/last_image = uploaded still names. vocal_ref optional (native
+    lip-sync, same masked-audio path as MSR). Keyframe embedding via the TTP LTXVFirstLastFrameControl node.
+    p: {prompt, negative?, seed?, width?, height?, frames?, fps?, cfg?, first_strength?, last_strength?,
+    distill_strength?, distill_lora?}."""
+    seed = _seed(p)
+    w = int(p.get("width", 1280))
+    h = int(p.get("height", 720))
+    fps = int(p.get("fps", 24))
+    frames = _ltx_frames(p.get("frames", 121), fps)
+    cfg = float(p.get("cfg", 1.0))
+    distill = float(p.get("distill_strength", 0.5))
+    fstr = float(p.get("first_strength", 1.0))
+    lstr = float(p.get("last_strength", 1.0))
+    prompt = (p.get("prompt") or "").strip()
+    neg = (p.get("negative") or "worst quality, blurry, distorted, watermark, subtitles, deformed")
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL_STOCK),
+                         "strength_model": distill}},
+        "5": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": LTX_CLIP1, "clip_name2": LTX_CLIP2, "type": "ltxv", "device": "default"}},
+        "6": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_VIDEO, "device": "main_device", "weight_dtype": "bf16"}},
+        "7": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
+        "8": {"class_type": "EmptyLTXVLatentVideo",
+              "inputs": {"width": w, "height": h, "length": frames, "batch_size": 1}},
+        "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": prompt}},
+        "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
+        "11": {"class_type": "LTXVConditioning",
+               "inputs": {"positive": ["9", 0], "negative": ["10", 0], "frame_rate": float(fps)}},
+        "30": {"class_type": "LoadImage", "inputs": {"image": first_image}},
+        "31": {"class_type": "LoadImage", "inputs": {"image": last_image}},
+        "12": {"class_type": "LTXVFirstLastFrameControl_TTP",
+               "inputs": {"vae": ["6", 0], "latent": ["8", 0], "first_image": ["30", 0],
+                          "last_image": ["31", 0], "first_strength": fstr, "last_strength": lstr}},
+        "15": {"class_type": "LTXVEmptyLatentAudio",
+               "inputs": {"frames_number": frames, "frame_rate": fps, "batch_size": 1, "audio_vae": ["7", 0]}},
+        "16": {"class_type": "LTXVConcatAVLatent", "inputs": {"video_latent": ["12", 0], "audio_latent": ["15", 0]}},
+        "17": {"class_type": "CFGGuider",
+               "inputs": {"model": ["2", 0], "positive": ["11", 0], "negative": ["11", 1], "cfg": cfg}},
+        "18": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "19": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "20": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},
+        "21": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["18", 0], "guider": ["17", 0], "sampler": ["19", 0],
+                          "sigmas": ["20", 0], "latent_image": ["16", 0]}},
+        "22": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["21", 0]}},
+        "24": {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+               "inputs": {"vae": ["6", 0], "latents": ["22", 0], "spatial_tiles": 4, "spatial_overlap": 4,
+                          "temporal_tile_length": 48, "temporal_overlap": 8, "last_frame_fix": False,
+                          "working_device": "auto", "working_dtype": "auto"}},
+        "25": {"class_type": "CreateVideo", "inputs": {"images": ["24", 0], "fps": fps}},
+        "26": {"class_type": "SaveVideo",
+               "inputs": {"video": ["25", 0], "filename_prefix": "videogen/ltxflf",
+                          "format": "auto", "codec": "auto"}},
+    }
+    if vocal_ref:                                          # native lip-sync (masked-audio, same as MSR)
+        g["27"] = {"class_type": "LoadAudio", "inputs": {"audio": vocal_ref}}
+        g["28"] = {"class_type": "LTXVAudioVAEEncode", "inputs": {"audio": ["27", 0], "audio_vae": ["7", 0]}}
+        g["36"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": 1024, "height": 1024}}
+        g["37"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["28", 0], "mask": ["36", 0]}}
+        g["16"]["inputs"]["audio_latent"] = ["37", 0]
+        del g["15"]
+        g["29"] = {"class_type": "LTXVAudioVAEDecode", "inputs": {"samples": ["22", 1], "audio_vae": ["7", 0]}}
+        g["25"]["inputs"]["audio"] = ["27", 0]
+    resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+                "seconds": round(frames / fps, 2), "cfg": cfg, "first_strength": fstr, "last_strength": lstr,
+                "prompt": prompt, "lipsync": bool(vocal_ref), "kind": "video", "method": "flf"}
+    return g, resolved
+
+
 # ------------------------------------------------ SeedVR2 video upscale (post-process)
 def build_seedvr2_upscale(p, video_ref, fps):
     """Upscale a finished clip/video with SeedVR2 (diffusion video upscaler, temporal-aware).
