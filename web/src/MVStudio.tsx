@@ -289,6 +289,28 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
 
+  // Retake a [start, start+length] second slice of this block's rendered clip (LTXDirectorGuide
+  // retake_mode). Result is added as a new render take. For lip-sync blocks the clip's vocal window is
+  // sent so the slice regenerates against the song. NOTE (known limits): the node re-decodes the whole
+  // clip, and the slice can pop at the seam - kept for when a quick local fix is good enough.
+  async function retakeRegion(b: Block, startS: number, lengthS: number, prompt: string, strength: number) {
+    const fail = (err: string) => ctx.setResults([{ id: rid(), title: `block ${b.idx + 1} retake`, status: "error", pct: 0, err }]);
+    if (!b.clipId) return fail("Render the block first - retake works on an existing clip.");
+    if (!prompt.trim()) return fail("Describe what the retaken slice should show.");
+    const card = { id: rid(), title: `block ${b.idx + 1} retake ${startS}-${startS + lengthS}s`, status: "pending" as const, pct: 0 };
+    ctx.setResults([card]);
+    try {
+      const payload: Record<string, unknown> = {
+        clip_id: b.clipId, retake_start: startS, retake_length: lengthS, prompt: prompt.trim(), retake_strength: strength,
+      };
+      if (b.lipsync) { payload.audio_id = b.audioId || audioId; payload.audio_start = b.audioStart; payload.isolate_vocal = b.isolateVocal; }
+      const { job_id } = await api.videoLtxRetake(payload) as { job_id: string };
+      patch(b.id, { clipId: job_id, clipVariants: [...(b.clipVariants || []), job_id] });
+      ctx.patch(card.id, { status: "running", pct: 5 });
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
   // ---- bulk render: fire every renderable block (the box queues them). onlyMissing skips rendered. ----
   function blockReady(b: Block) {
     const subj = resolveSubjects(b, libChars).length;
@@ -454,6 +476,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         open={open} toggle={toggle}
         patch={patchSel} gen={() => genBlock(sel)} dup={() => dupBlock(sel)}
         del={() => delBlock(sel.id)} upscale={() => upscaleBlock(sel)}
+        retake={(s, l, p, st) => retakeRegion(sel, s, l, p, st)}
         compose={(charIds, prompt) => composeBackground(sel.id, charIds, prompt)} />}
 
       {/* intro pre-roll: the opening shot's own (LTX-generated) audio plays before the song, then crossfades out */}
@@ -502,16 +525,21 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
 // ---- the per-block inspector -------------------------------------------
 
-function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songAudioId, url, beats, patch, gen, dup, del, upscale, compose }: {
+function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songAudioId, url, beats, patch, gen, dup, del, upscale, retake, compose }: {
   b: Block; idx: number; cfg: Config; busy: boolean;
   stills: LibItem[]; audios: LibItem[]; library: LibItem[]; libChars: Character[]; songAudioId: string;
   url: string; beats: number[];
   open: Record<string, boolean>; toggle: (k: string) => void;
   patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void; upscale: () => void;
+  retake: (startS: number, lengthS: number, prompt: string, strength: number) => void;
   compose: (charIds: string[], prompt: string) => void;
 }) {
   const [sceneOpen, setSceneOpen] = useState(false);
   const [selSeg, setSelSeg] = useState(0);
+  const [rStart, setRStart] = useState(0);
+  const [rLen, setRLen] = useState(1);
+  const [rStrength, setRStrength] = useState(1);
+  const [rPrompt, setRPrompt] = useState("");
   const [sceneChars, setSceneChars] = useState<string[]>([]);
   const [scenePrompt, setScenePrompt] = useState("");
   const toggleSceneChar = (id: string) => setSceneChars(
@@ -809,6 +837,24 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
         </div>
       )}
       </div>
+
+      {/* retake region (re-render a slice of the rendered clip) */}
+      {b.clipId && (
+        <div className="mvi-card">
+          <div className="mvi-h">Retake region <span className="sub">re-render a slice of the rendered clip{b.lipsync ? " (keeps lip-sync)" : ""}</span></div>
+          <div className="mvi-row">
+            <Num label="start (s)" value={rStart} set={setRStart} step={0.5} w="w-24" />
+            <Num label="length (s)" value={rLen} set={setRLen} step={0.5} w="w-24" />
+            <Num label="strength" value={rStrength} set={setRStrength} step={0.05} w="w-20" title="0-1; lower stays closer to the original" />
+          </div>
+          <textarea className={inp} rows={2} value={rPrompt} placeholder="what the retaken slice should show" style={{ width: "100%", marginTop: 8 }}
+            onChange={(e) => setRPrompt(e.target.value)} />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+            <button className="mvi-btn" onClick={() => retake(rStart, rLen, rPrompt, rStrength)} disabled={busy || !rPrompt.trim()}>Retake region</button>
+            <span className="mvi-muted">re-decodes the whole clip and the slice can pop at the seam; result lands as a new render take</span>
+          </div>
+        </div>
+      )}
 
       {/* rendered preview */}
       {clip?.media_url && (
