@@ -44,12 +44,15 @@ def claude_code_chat(system: str, prompt: str, model: str = "") -> str:
     if not cli:
         raise RuntimeError("claude CLI not found - install Claude Code, then run `claude setup-token`")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # --effort low: these are one-shot text/JSON completions, NOT agentic coding. The Claude Code CLI
+    # defaults to high/xhigh effort (deep extended thinking), which made a single script generation take
+    # ~15 MINUTES. Low effort drops it to under a minute with no quality loss for generation tasks.
     cmd = [cli, "-p", prompt, "--system-prompt", system, "--output-format", "text",
-           "--disallowed-tools", *_CC_NO_TOOLS]
+           "--effort", "low", "--disallowed-tools", *_CC_NO_TOOLS]
     if model:
         cmd += ["--model", model]
     with tempfile.TemporaryDirectory() as cwd:
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, timeout=180)
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, timeout=240)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip()[:300]
         raise RuntimeError(f"claude CLI failed (is it logged in? `claude setup-token`): {msg}")

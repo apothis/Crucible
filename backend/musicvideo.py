@@ -266,7 +266,8 @@ Return ONLY a JSON array. Each element is an object:
   "camera": "static" | "slow push-in" | "slow pull-back",
   "costume": "<what the named characters WEAR in this shot - lets the same person change outfits between scenes; '' if not notable or on-stage performance wear>",
   "characters": [<names of any named characters present; prefer ONE per shot; [] if none>],
-  "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>}}
+  "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>,
+  "segments": [<OPTIONAL per-shot timeline; each {{"seconds": <number>, "action": "<the subject's motion / gesture / expression during this slice>"}}; [] for one continuous action>]}}
 
 DURATIONS (important): CHOOSE each shot's length to fit its content - do NOT make them all the same
 length. Each shot must be between 2 and 20 seconds (a fast/energetic or punchy cut can be 2-4s; a held
@@ -288,6 +289,16 @@ solo shot. Use multi-character frames sparingly: at most ONE wide "whole band/gr
 the whole video, and never frame two strongly-contrasting looks (e.g. bare tattooed arms vs fully covered)
 tightly together. Favor CLOSE and MEDIUM framings; lip-sync looks wrong and wides read empty when the
 singer's face is small.
+
+TIMELINE (per-shot micro-direction): a single shot can carry an ORDERED timeline of sub-actions via
+"segments" - use it when the subject's action, expression, or energy CHANGES across the shot, or to hit
+successive lyric lines within one held shot. Each segment is {{"seconds": <duration>, "action": "<the
+subject's motion / gesture / expression during that slice>"}}. Keep the SCENE and FRAMING constant across
+the shot (segments change only what the PERSON does, never the camera or setting). Use 2-4 segments, each
+at least ~1.5s, roughly summing to the shot's length. Example for an 8s held close-up over a rising chorus
+line: [{{"seconds":4,"action":"eyes down, swaying gently, holding back"}},{{"seconds":4,"action":"lifts her
+head and belts the line, both arms rising"}}]. Leave "segments" empty ([]) for shots with one continuous
+action. This is the single most powerful tool for making a shot feel alive - use it on most held shots.
 
 Rules: performance/lipsync shots only on SUNG sections and feature the BAND/MUSICIANS (the lead
 singer lip-syncs); NARRATIVE shots tell the title's story and feature the ACTORS; scenic/broll on
@@ -324,6 +335,19 @@ def parse_shots(text):
         if not isinstance(s, dict):
             continue
         t = s.get("type")
+        # OPTIONAL per-shot timeline: ordered {seconds, action} slices -> Block.segs (relay timeline)
+        segs = []
+        for sg in (s.get("segments") or []):
+            if not isinstance(sg, dict):
+                continue
+            act = str(sg.get("action") or sg.get("prompt") or "").strip()
+            if not act:
+                continue
+            try:
+                secs = float(sg.get("seconds") or sg.get("len") or 0)
+            except (TypeError, ValueError):
+                secs = 0.0
+            segs.append({"seconds": round(secs, 2), "action": act})
         out.append({
             "idx": i,
             "section": str(s.get("section") or ""),
@@ -337,6 +361,7 @@ def parse_shots(text):
                            if x and str(x).strip() not in ("[]", "none", "None", "-", "")],
             "lipsync": bool(s.get("lipsync")),
             "camera": _camera(s.get("camera")),
+            "segments": segs,
         })
     return out
 

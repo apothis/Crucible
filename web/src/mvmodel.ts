@@ -57,7 +57,7 @@ export function makeBlock(start: number, fps = DEFAULT_FPS): Block {
     prompt: "", negative: "",
     chars: [], subjectIds: [], backgroundId: "",
     tlOn: false, global: "", segs: [], epsilon: 0.001,
-    lipsync: false, audioId: "", audioStart: start, isolateVocal: true,
+    lipsync: false, audioId: "", audioStart: start, isolateVocal: false,
     width: DEFAULT_W, height: DEFAULT_H, frames: 145, fps, seed: 0,
     refFrames: 17, msrStrength: 1.0, guideStrength: 1.0, steps: 8, cfg: 1.0,
   };
@@ -135,6 +135,7 @@ export const blockSeconds = (b: Block) => +(b.frames / b.fps).toFixed(2);
 export type ScriptShot = {
   start?: number; end?: number; type?: string; scene?: string; action?: string;
   costume?: string; characters?: string[]; lipsync?: boolean; section?: string; camera?: string;
+  segments?: { seconds?: number; action?: string }[];   // per-shot prompt timeline (relay)
 };
 
 // the ONLY camera moves that render cleanly on our LTX MSR pipeline, carried as PROMPT TEXT (never a
@@ -163,6 +164,18 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
   const cam = CAMERA_PHRASE[s.camera || "static"] || CAMERA_PHRASE["static"];
   const prompt = [s.scene, s.costume ? `wearing ${s.costume}` : "", s.action, cam]
     .filter(Boolean).join(". ");
+  // per-shot timeline: the constant look -> global, each slice's action -> a segment prompt. Lengths
+  // are all-or-nothing (every segment timed, or all blank for an even split) so the relay's
+  // local_prompts and segment_lengths stay aligned. Needs >=2 segments to be worth scheduling.
+  const rawSegs = (s.segments || []).filter((sg) => sg && String(sg.action || "").trim());
+  const allTimed = rawSegs.length > 0 && rawSegs.every((sg) => (sg.seconds || 0) > 0);
+  const segs: Seg[] = rawSegs.map((sg) => ({
+    len: allTimed ? String(Math.round((sg.seconds as number) * base.fps)) : "",
+    prompt: String(sg.action).trim(),
+  }));
+  const tlOn = segs.length > 1;
+  const look = [s.scene, s.costume ? `wearing ${s.costume}` : "", cam].filter(Boolean).join(". ");
   return { ...base, id: rid(), start, end, frames: ltxFrames(dur * base.fps),
-    prompt, lipsync: !!s.lipsync, chars, audioId, audioStart: start };
+    prompt, global: tlOn ? look : "", segs, tlOn,
+    lipsync: !!s.lipsync, chars, audioId, audioStart: start };
 }
