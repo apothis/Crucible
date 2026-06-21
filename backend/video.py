@@ -712,16 +712,18 @@ def _build_ltx(p, image_ref=None, lipsync_audio=None):
         "7": {"class_type": "LTXDirector",
               "inputs": {"model": ["3", 0], "clip": ["4", 0], "global_prompt": "",
                          "duration_frames": frames, "duration_seconds": motion_secs,
+                         "start_frame": 0, "end_frame": frames,
+                         "start_second": 0.0, "end_second": motion_secs,
                          "timeline_data": "{\"segments\":[],\"audioSegments\":[]}",
                          "local_prompts": prompt, "segment_lengths": "", "epsilon": 0.001,
                          "guide_strength": "", "audio_vae": ["6", 0],
-                         "use_custom_audio": False, "frame_rate": motion_fps,
+                         "use_custom_audio": False, "use_custom_motion": False, "frame_rate": motion_fps,
                          "display_mode": "frames", "custom_width": w, "custom_height": h,
                          "resize_method": "maintain aspect ratio", "divisible_by": 32,
                          "img_compression": 18}},
         "8": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["7", 1]}},
         "9": {"class_type": "LTXVConditioning",
-              "inputs": {"positive": ["7", 1], "negative": ["8", 0], "frame_rate": ["7", 5]}},
+              "inputs": {"positive": ["7", 1], "negative": ["8", 0], "frame_rate": ["7", 6]}},
         "10": {"class_type": "LTXVConcatAVLatent",
                "inputs": {"video_latent": ["7", 2], "audio_latent": ["7", 3]}},
         "11": {"class_type": "CFGGuider",
@@ -921,10 +923,23 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
               "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
         "8": {"class_type": "EmptyLTXVLatentVideo",
               "inputs": {"width": w, "height": h, "length": frames, "batch_size": 1}},
-        "9": {"class_type": "PromptRelayEncode",
-              "inputs": {"model": ["4", 0], "clip": ["5", 0], "latent": ["8", 0],
+        # LTXDirector = the maintained relay engine (replaces the standalone PromptRelayEncode so MSR
+        # shares ONE relay path with i2v). optional_latent gives it our frame layout for the temporal
+        # token->frame mapping; we only consume its model [9,0] + positive [9,1]. motion/audio off
+        # (the MSR graph has its own IC-LoRA guide + audio latent). Outputs: model,positive,video_latent,
+        # audio_latent,guide_data,motion_guide_data,frame_rate,combined_audio.
+        "9": {"class_type": "LTXDirector",
+              "inputs": {"model": ["4", 0], "clip": ["5", 0], "optional_latent": ["8", 0],
                          "global_prompt": global_prompt, "local_prompts": local_prompts,
-                         "segment_lengths": segment_lengths, "epsilon": epsilon}},
+                         "segment_lengths": segment_lengths, "epsilon": epsilon,
+                         "guide_strength": "", "timeline_data": "{}",
+                         "duration_frames": frames, "duration_seconds": frames / float(fps),
+                         "start_frame": 0, "end_frame": frames,
+                         "start_second": 0.0, "end_second": frames / float(fps),
+                         "use_custom_audio": False, "use_custom_motion": False,
+                         "frame_rate": float(fps), "display_mode": "frames",
+                         "custom_width": w, "custom_height": h,
+                         "resize_method": "maintain aspect ratio", "divisible_by": 32}},
         "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
         "11": {"class_type": "LTXVConditioning",
                "inputs": {"positive": ["9", 1], "negative": ["10", 0], "frame_rate": float(fps)}},
@@ -1220,8 +1235,10 @@ def build_flashvsr_upscale(p, video_ref, fps):
                              "kv_ratio": kv_ratio, "local_range": local_range, "seed": seed,
                              "frame_chunk_size": chunk, "enable_debug": False,
                              "keep_models_on_cpu": adv_keep_cpu, "resize_factor": resize_factor}}
+        # no audio passthrough: some source clips (no-lipsync MSR) have no audio track and VHS audio
+        # extraction then fails; the final mux uses the song anyway, so upscaled clips stay silent.
         g["4"] = {"class_type": "CreateVideo",
-                  "inputs": {"images": ["3", 0], "fps": float(fps), "audio": ["1", 2]}}
+                  "inputs": {"images": ["3", 0], "fps": float(fps)}}
         g["5"] = {"class_type": "SaveVideo",
                   "inputs": {"video": ["4", 0], "filename_prefix": "videogen/flashvsr",
                              "format": "auto", "codec": "auto"}}
@@ -1237,7 +1254,7 @@ def build_flashvsr_upscale(p, video_ref, fps):
                          "attention_mode": attention, "enable_debug": False,
                          "keep_models_on_cpu": keep_cpu, "resize_factor": resize_factor}}
     g["3"] = {"class_type": "CreateVideo",
-              "inputs": {"images": ["2", 0], "fps": float(fps), "audio": ["1", 2]}}
+              "inputs": {"images": ["2", 0], "fps": float(fps)}}   # no audio passthrough (final mux uses the song)
     g["4"] = {"class_type": "SaveVideo",
               "inputs": {"video": ["3", 0], "filename_prefix": "videogen/flashvsr",
                          "format": "auto", "codec": "auto"}}

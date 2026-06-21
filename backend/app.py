@@ -440,7 +440,7 @@ def _msr_available():
     """True when LTX MSR is renderable: the LTX backbone + the Licon-MSR + PromptRelay
     custom nodes are both registered on the box (the MV Studio spine)."""
     try:
-        return _ltx_available() and C.has_node("LiconMSR") and C.has_node("PromptRelayEncode")
+        return _ltx_available() and C.has_node("LiconMSR") and C.has_node("LTXDirector")
     except Exception:
         return False
 
