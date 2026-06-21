@@ -7,7 +7,7 @@ import { Collapse, Num, StillPick, stillLabel } from "./mvui";
 import { CharacterLibrary } from "./Characters";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
-  makeBlock, ltxFrames, resolveSubjects, charRefIds, sceneRefOf, msrPayload, shotToBlock,
+  makeBlock, hydrateBlock, ltxFrames, resolveSubjects, charRefIds, sceneRefOf, msrPayload, shotToBlock,
   blockSeconds, MSR_REF_COMBOS,
 } from "./mvmodel";
 
@@ -161,6 +161,24 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     const copy: Block = { ...b, id: rid(), clipId: undefined, start: b.end, end: b.end + (b.end - b.start),
       segs: b.segs.map((s) => ({ ...s })), chars: b.chars.map((c) => ({ ...c })), subjectIds: [...b.subjectIds] };
     commit([...blocks, copy]); setSelId(copy.id);
+  }
+  // ---- export / import the timeline as a portable JSON shot list (move a timeline between projects) ----
+  function exportTimeline() {
+    const blob = new Blob([JSON.stringify({ version: 1, blocks }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `mv-timeline-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
+  }
+  function importTimeline(file: File) {
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(String(r.result));
+        const arr = Array.isArray(parsed) ? parsed : parsed.blocks;
+        if (!Array.isArray(arr)) throw new Error("no blocks array in file");
+        commit(arr.map((b: Partial<Block>, i: number) => ({ ...hydrateBlock(b, i), id: rid() })));
+      } catch (e) { alert("Import failed: " + (e as Error).message); }
+    };
+    r.readAsText(file);
   }
   function delBlock(id: string) {
     const next = blocks.filter((b) => b.id !== id); commit(next);
@@ -362,6 +380,11 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
             Render all videos
           </GhostButton>
         )}
+        {blocks.length > 0 && <GhostButton onClick={exportTimeline}>Export</GhostButton>}
+        <label className="cursor-pointer rounded-md border border-[var(--color-line)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="Import a timeline JSON shot list">
+          Import
+          <input type="file" accept="application/json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importTimeline(f); e.currentTarget.value = ""; }} />
+        </label>
         <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Render resolution for ALL shots + the final video (project-wide)">
           Resolution
           <select className={inp} style={{ width: "auto" }} value={resolution} onChange={(e) => setResolution(e.target.value)}>
