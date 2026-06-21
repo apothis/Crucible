@@ -3,7 +3,8 @@ import { api, type Config, type LibItem, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { MVTimeline } from "./MVTimeline";
-import { Collapse, Num, StillPick, stillLabel } from "./mvui";
+import { ShotTimeline } from "./ShotTimeline";
+import { Num, StillPick, stillLabel } from "./mvui";
 import { CharacterLibrary } from "./Characters";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
@@ -449,6 +450,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       {/* inspector for the selected block */}
       {sel && <Inspector key={sel.id} b={sel} idx={sel.idx}
         cfg={cfg} busy={busy} stills={stills} audios={audios} library={library} libChars={libChars} songAudioId={audioId}
+        url={audioUrl} beats={beats}
         open={open} toggle={toggle}
         patch={patchSel} gen={() => genBlock(sel)} dup={() => dupBlock(sel)}
         del={() => delBlock(sel.id)} upscale={() => upscaleBlock(sel)}
@@ -500,14 +502,16 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
 // ---- the per-block inspector -------------------------------------------
 
-function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songAudioId, open, toggle, patch, gen, dup, del, upscale, compose }: {
+function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songAudioId, url, beats, patch, gen, dup, del, upscale, compose }: {
   b: Block; idx: number; cfg: Config; busy: boolean;
   stills: LibItem[]; audios: LibItem[]; library: LibItem[]; libChars: Character[]; songAudioId: string;
+  url: string; beats: number[];
   open: Record<string, boolean>; toggle: (k: string) => void;
   patch: (p: Partial<Block>) => void; gen: () => void; dup: () => void; del: () => void; upscale: () => void;
   compose: (charIds: string[], prompt: string) => void;
 }) {
   const [sceneOpen, setSceneOpen] = useState(false);
+  const [selSeg, setSelSeg] = useState(0);
   const [sceneChars, setSceneChars] = useState<string[]>([]);
   const [scenePrompt, setScenePrompt] = useState("");
   const toggleSceneChar = (id: string) => setSceneChars(
@@ -526,70 +530,107 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
   const addChar = () => { if (heroCount < 2) patch({ chars: [...b.chars, { charId: "" }] }); };
   const delChar = (i: number) => patch({ chars: b.chars.filter((_, j) => j !== i) });
 
+  const modes: { v: RenderMode; label: string }[] = [
+    { v: "msr", label: "Performance (MSR)" },
+    { v: "keyframe", label: "B-roll (keyframe)" },
+    { v: "i2v", label: cfg.video_ltx ? "i2v" : "i2v - Wan" },
+    { v: "s2v", label: "S2V" },
+  ];
   return (
-    <div className="space-y-2 rounded-xl border border-[var(--color-accent)] bg-[var(--color-panel)] p-3">
+    <div className="mvi mvi-root">
+      <style>{`
+        .mvi.mvi-root{background:#0c0e13;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px;}
+        .mvi-hdr{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+        .mvi-title{font-size:16px;font-weight:500;color:#eef0f4;}
+        .mvi-card{background:#16191f;border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:14px;}
+        .mvi-h{font-size:13px;font-weight:500;color:#e9ebef;margin:0 0 10px;display:flex;align-items:center;gap:8px;}
+        .mvi-h .sub{font-weight:400;color:#9aa1ad;font-size:12px;}
+        .mvi-sub{font-size:11px;font-weight:500;color:#8b92a0;letter-spacing:.04em;text-transform:uppercase;margin:0 0 6px;}
+        .mvi-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;}
+        .mvi select,.mvi input:not([type=range]):not([type=checkbox]),.mvi textarea{background:#0c0e13;border:1px solid rgba(255,255,255,.10);border-radius:8px;color:#e7e8ec;font-size:13px;padding:8px 10px;}
+        .mvi textarea:focus,.mvi select:focus,.mvi input:focus{outline:none;border-color:#EF9F27;}
+        .mvi-tog{display:inline-flex;border:1px solid rgba(255,255,255,.12);border-radius:9px;overflow:hidden;}
+        .mvi-tog button{border:0;padding:6px 12px;font-size:12px;background:transparent;color:#9aa1ad;cursor:pointer;}
+        .mvi-tog button.on{background:#EF9F27;color:#3a2402;font-weight:500;}
+        .mvi-row input[type=number]{width:104px;flex:0 0 auto;}
+        .mvi-row select{flex:0 0 auto;}
+        .mvi-row > label{flex:0 0 auto;}
+        .mvi-btn{border:1px solid rgba(255,255,255,.14);background:transparent;color:#9aa1ad;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;}
+        .mvi-btn:hover:not(:disabled){color:#e7e8ec;background:#1d212a;}
+        .mvi-btn:disabled{opacity:.45;}
+        .mvi-render{border:0;background:#D85A30;color:#fff;border-radius:8px;padding:7px 16px;font-size:13px;font-weight:500;cursor:pointer;}
+        .mvi-render:disabled{opacity:.5;}
+        .mvi-ok{font-size:11px;color:#5dca8b;}
+        .mvi-acc{font-size:11px;color:#EF9F27;}
+        .mvi-link{background:none;border:0;color:#EF9F27;font-size:11px;cursor:pointer;padding:0;}
+        .mvi-muted{font-size:11px;color:#8b92a0;}
+        .mvi-thumb{height:56px;width:96px;flex:none;overflow:hidden;border-radius:8px;border:1px solid rgba(255,255,255,.12);}
+        .mvi-thumb.on{border-color:#EF9F27;box-shadow:0 0 0 1px #EF9F27;}
+        .mvi-thumb img,.mvi-thumb video{height:100%;width:100%;object-fit:cover;}
+        .mvi-divide{border-top:1px solid rgba(255,255,255,.07);margin-top:12px;padding-top:12px;}
+      `}</style>
+
       {/* header */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-[#2a1c19] px-2 py-0.5 text-xs font-semibold text-[var(--color-accent2)]">Block {idx + 1}</span>
-        <select className={`${inp} w-auto text-[11px]`} value={b.renderMode} title="render mode"
-          onChange={(e) => patch({ renderMode: e.target.value as RenderMode })}>
-          <option value="msr">MSR (identity + free motion)</option>
-          <option value="keyframe">Keyframe (still-to-still interp)</option>
-          <option value="i2v">i2v (animate a still){cfg.video_ltx ? "" : " - Wan"}</option>
-          <option value="s2v">S2V (anchor lip-sync)</option>
-        </select>
-        <label className="flex items-center gap-1 text-[10px] text-[var(--color-muted)]" title="native single-pass lip-sync to the song vocal">
+      <div className="mvi-hdr">
+        <span className="mvi-title">Shot {idx + 1}</span>
+        <div className="mvi-tog" title="render mode">
+          {modes.map((m) => (
+            <button key={m.v} className={b.renderMode === m.v ? "on" : ""}
+              onClick={() => patch({ renderMode: m.v })}>{m.label}</button>
+          ))}
+        </div>
+        <label className="mvi-muted" style={{ display: "flex", alignItems: "center", gap: 5 }} title="native single-pass lip-sync to the song vocal">
           <input type="checkbox" checked={b.lipsync} onChange={(e) => patch({ lipsync: e.target.checked })} /> lip-sync
         </label>
-        {b.clipId && <span className="text-[10px] text-green-400" title="rendered">rendered</span>}
-        {b.upscaledId && <span className="text-[10px] text-[var(--color-accent2)]" title="FlashVSR 2x upscaled">↑2x</span>}
-        <span className="ml-auto flex items-center gap-1">
-          {b.clipId && <button onClick={upscale} disabled={busy} className="rounded border border-[var(--color-line)] px-2 py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50" title="FlashVSR 2x upscale (auto-chunks long clips)">{b.upscaledId ? "Re-upscale" : "Upscale"}</button>}
-          <button onClick={dup} className="px-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="Duplicate">{"⧉"}</button>
-          <button onClick={del} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="Delete">{"×"}</button>
-          <button onClick={gen} disabled={busy} className="rounded bg-[var(--color-accent)] px-3 py-1 text-[11px] font-semibold text-white disabled:opacity-50">{b.clipId ? "Re-render" : "Render"}</button>
+        {b.clipId && <span className="mvi-ok" title="rendered">rendered</span>}
+        {b.upscaledId && <span className="mvi-acc" title="FlashVSR 2x upscaled">{"↑"}2x</span>}
+        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          {b.clipId && <button className="mvi-btn" onClick={upscale} disabled={busy} title="FlashVSR 2x upscale (auto-chunks long clips)">{b.upscaledId ? "Re-upscale" : "Upscale"}</button>}
+          <button className="mvi-btn" onClick={dup} title="Duplicate">{"⧉"}</button>
+          <button className="mvi-btn" onClick={del} title="Delete">{"×"}</button>
+          <button className="mvi-render" onClick={gen} disabled={busy}>{b.clipId ? "Re-render" : "Render"}</button>
         </span>
       </div>
 
       {/* timing */}
-      <div className="flex flex-wrap items-end gap-2">
+      <div className="mvi-card mvi-row">
         <Num label="start (s)" value={b.start} set={(n) => patch({ start: n })} />
         <Num label="end (s)" value={b.end} set={(n) => patch({ end: n })} />
         <Num label="frames" value={b.frames} set={(n) => patch({ frames: n })} w="w-24" title="LTX coerces to 8k+1" />
         <Num label="fps" value={b.fps} set={(n) => patch({ fps: n })} w="w-16" />
-        <span className="pb-1.5 text-[10px] text-[var(--color-muted)]">
+        <span className="mvi-muted" style={{ paddingBottom: 6 }}>
           {"≈"} {blockSeconds(b)}s render
-          <button className="ml-1 underline hover:text-[var(--color-ink)]" title="set frames from the block length"
+          <button className="mvi-link" style={{ marginLeft: 6, textDecoration: "underline" }} title="set frames from the block length"
             onClick={() => patch({ frames: ltxFrames(Math.max(2, b.end - b.start) * b.fps) })}>fit to {Math.max(0, b.end - b.start)}s</button>
         </span>
       </div>
 
-      {/* variant takes: every background + every render, click to select which one is used */}
+      {/* variant takes */}
       {(!!b.bgVariants?.length || !!b.clipVariants?.length) && (
-        <div className="space-y-2 rounded border border-[var(--color-line)] bg-[var(--color-bg)] p-2">
+        <div className="mvi-card">
           {!!b.bgVariants?.length && (
             <div>
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Background takes ({b.bgVariants.length}) {"·"} click to use</div>
-              <div className="flex flex-wrap gap-1.5">
+              <p className="mvi-sub">Background takes ({b.bgVariants.length}) {"·"} click to use</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {b.bgVariants.map((id) => {
                   const it = stills.find((s) => s.id === id); const on = b.backgroundId === id;
                   return <button key={id} onClick={() => patch({ backgroundId: id })} title={on ? "in use" : "use this background"}
-                    className={`h-14 w-24 flex-none overflow-hidden rounded border ${on ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]" : "border-[var(--color-line)] opacity-60 hover:opacity-100"}`}>
-                    {it?.media_url ? <img src={it.media_url} className="h-full w-full object-cover" alt="" /> : <span className="text-[8px] text-[var(--color-muted)]">{id.slice(0, 6)}</span>}
+                    className={`mvi-thumb ${on ? "on" : ""}`} style={{ opacity: on ? 1 : 0.7 }}>
+                    {it?.media_url ? <img src={it.media_url} alt="" /> : <span className="mvi-muted">{id.slice(0, 6)}</span>}
                   </button>;
                 })}
               </div>
             </div>
           )}
           {!!b.clipVariants?.length && (
-            <div>
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Render takes ({b.clipVariants.length}) {"·"} click to keep</div>
-              <div className="flex flex-wrap gap-1.5">
+            <div className={b.bgVariants?.length ? "mvi-divide" : ""}>
+              <p className="mvi-sub">Render takes ({b.clipVariants.length}) {"·"} click to keep</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {b.clipVariants.map((id) => {
                   const it = library.find((s) => s.id === id); const on = b.clipId === id;
                   return <button key={id} onClick={() => patch({ clipId: id })} title={on ? "kept" : "keep this take"}
-                    className={`h-16 w-28 flex-none overflow-hidden rounded border ${on ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]" : "border-[var(--color-line)] opacity-60 hover:opacity-100"}`}>
-                    {it?.media_url ? <video src={posterFrag(it.media_url)} muted playsInline preload="metadata" className="h-full w-full object-cover" /> : <span className="text-[8px] text-[var(--color-muted)]">{id.slice(0, 6)}</span>}
+                    className={`mvi-thumb ${on ? "on" : ""}`} style={{ opacity: on ? 1 : 0.7 }}>
+                    {it?.media_url ? <video src={posterFrag(it.media_url)} muted playsInline preload="metadata" /> : <span className="mvi-muted">{id.slice(0, 6)}</span>}
                   </button>;
                 })}
               </div>
@@ -598,19 +639,20 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
         </div>
       )}
 
+      {/* references + prompt row (horizontal cards; prompt goes full-width when no references) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, alignItems: "start" }}>
       {b.renderMode === "msr" && (
-        <Collapse title={`References (${subjects.length}/4 slots)`} open={!!open.refs} onToggle={() => toggle("refs")} accent>
-          {/* hero characters */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Hero characters ({heroCount}/2)</span>
-              <button onClick={addChar} disabled={heroCount >= 2} className="text-[10px] text-[var(--color-accent2)] disabled:opacity-40">+ character</button>
-            </div>
+        <div className="mvi-card">
+          <div className="mvi-h">References <span className="sub">{subjects.length} / 4 slots</span>
+            <button className="mvi-link" style={{ marginLeft: "auto" }} onClick={addChar} disabled={heroCount >= 2}>+ character</button>
+          </div>
+          <p className="mvi-sub">Hero characters ({heroCount}/2)</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {b.chars.map((bc, i) => {
               const c = libChars.find((x) => x.id === bc.charId);
               const refs = charRefIds(c, bc.wardrobeId);
               return (
-                <div key={i} className="flex items-center gap-1.5">
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <select className={inp} value={bc.charId} onChange={(e) => setChar(i, { charId: e.target.value, wardrobeId: undefined })}>
                     <option value="">- character -</option>
                     {libChars.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
@@ -620,43 +662,42 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
                     <option value="">{c?.wardrobes?.length ? "default look" : "(no wardrobes)"}</option>
                     {(c?.wardrobes || []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
-                  <span className="w-12 shrink-0 text-[9px] text-[var(--color-muted)]" title="reference stills this character contributes">{refs.length} ref{refs.length === 1 ? "" : "s"}</span>
-                  <button onClick={() => delChar(i)} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="remove">{"×"}</button>
+                  <span className="mvi-muted" style={{ width: 48, flexShrink: 0 }} title="reference stills this character contributes">{refs.length} ref{refs.length === 1 ? "" : "s"}</span>
+                  <button className="mvi-btn" onClick={() => delChar(i)} title="remove">{"×"}</button>
                 </div>
               );
             })}
-            {heroCount === 0 && <p className="text-[10px] text-[var(--color-muted)]">No characters set. Add a character (resolves its face + body refs), or pick subject stills manually below. Build characters in the Character library (coming in Phase 2) or the Music Video tab.</p>}
+            {heroCount === 0 && <p className="mvi-muted">No characters set. Add a character (resolves its face + body refs), or pick subject stills manually below.</p>}
           </div>
 
-          {/* manual subject stills */}
-          <div className="space-y-1.5 border-t border-[var(--color-line)] pt-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Subject stills (manual / extra)</span>
-            {[0, 1, 2, 3].map((i) => (
-              <StillPick key={i} value={b.subjectIds[i] || ""} stills={stills}
-                placeholder={`- subject ${i + 1} -`}
-                set={(id) => { const a = [...b.subjectIds]; if (id) a[i] = id; else a.splice(i, 1); patch({ subjectIds: a.filter(Boolean) }); }} />
-            ))}
+          <div className="mvi-divide">
+            <p className="mvi-sub">Subject stills (manual / extra)</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {[0, 1, 2, 3].map((i) => (
+                <StillPick key={i} value={b.subjectIds[i] || ""} stills={stills}
+                  placeholder={`- subject ${i + 1} -`}
+                  set={(id) => { const a = [...b.subjectIds]; if (id) a[i] = id; else a.splice(i, 1); patch({ subjectIds: a.filter(Boolean) }); }} />
+              ))}
+            </div>
           </div>
 
-          {/* resolved slots + background */}
-          <div className="border-t border-[var(--color-line)] pt-2">
-            <div className="mb-1 text-[10px] text-[var(--color-muted)]">Active subject slots: {subjects.length ? subjects.map((id) => stillLabel(id, stills)).join(", ") : "none"} {subjects.length > 4 && "(capped at 4)"}</div>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Background (scene)</span>
+          <div className="mvi-divide">
+            <p className="mvi-muted" style={{ marginBottom: 6 }}>Active subject slots: {subjects.length ? subjects.map((id) => stillLabel(id, stills)).join(", ") : "none"} {subjects.length > 4 && "(capped at 4)"}</p>
+            <p className="mvi-sub">Background (scene)</p>
             <StillPick value={b.backgroundId} stills={stills} set={(id) => patch({ backgroundId: id })} placeholder="- background still -" />
-            {/* compose a backdrop by placing characters into a scene (the band-member pipeline) */}
-            <button onClick={() => setSceneOpen(!sceneOpen)} className="mt-1 text-[10px] text-[var(--color-accent2)]">
+            <button className="mvi-link" style={{ marginTop: 6, display: "block" }} onClick={() => setSceneOpen(!sceneOpen)}>
               {sceneOpen ? "−" : "+"} compose background from characters
             </button>
             {sceneOpen && (
-              <div className="mt-1 space-y-1.5 rounded border border-[var(--color-line)] p-2">
-                <p className="text-[9px] text-[var(--color-muted)]">Place 1-3 characters into a scene (Qwen-Edit) and use it as this block's background - e.g. a band on stage behind the singer. Best for distant/secondary characters; the singer stays an MSR subject (not picked here).</p>
-                {libChars.length === 0 && <p className="text-[9px] text-[var(--color-muted)]">No characters yet - build some in the Characters tab.</p>}
-                <div className="flex flex-wrap gap-1">
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6, border: "1px solid rgba(255,255,255,.08)", borderRadius: 10, padding: 10 }}>
+                <p className="mvi-muted">Place 1-3 characters into a scene (Qwen-Edit) and use it as this block's background - e.g. a band on stage behind the singer. Best for distant/secondary characters; the singer stays an MSR subject (not picked here).</p>
+                {libChars.length === 0 && <p className="mvi-muted">No characters yet - build some in the Characters tab.</p>}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                   {libChars.map((c) => {
                     const on = sceneChars.includes(c.id);
                     return (
                       <button key={c.id} onClick={() => toggleSceneChar(c.id)}
-                        className={`rounded px-1.5 py-0.5 text-[10px] ${on ? "bg-[var(--color-accent)] text-white" : "border border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                        className="mvi-btn" style={on ? { background: "#EF9F27", color: "#3a2402", borderColor: "#EF9F27" } : undefined}>
                         {c.name}
                       </button>
                     );
@@ -664,94 +705,94 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
                 </div>
                 <textarea className={inp} rows={2} value={scenePrompt} placeholder="scene: where each character stands + setting + lighting (e.g. two musicians on a dark concert stage, guitarist left, bassist right, dramatic side light, haze)"
                   onChange={(e) => setScenePrompt(e.target.value)} />
-                <button onClick={() => compose(sceneChars, scenePrompt)} disabled={busy || !sceneChars.length}
-                  className="w-full rounded border border-[var(--color-line)] py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
+                <button className="mvi-btn" onClick={() => compose(sceneChars, scenePrompt)} disabled={busy || !sceneChars.length} style={{ width: "100%" }}>
                   Generate background ({sceneChars.length}/3 characters)
                 </button>
               </div>
             )}
           </div>
-        </Collapse>
+        </div>
       )}
 
       {/* prompt */}
-      <Collapse title="Prompt" open={!!open.prompt} onToggle={() => toggle("prompt")} accent>
-        <textarea className={inp} rows={3} value={b.prompt} placeholder="describe each reference's appearance + the action/camera move"
+      <div className="mvi-card">
+        <div className="mvi-h">Prompt</div>
+        <textarea className={inp} rows={3} value={b.prompt} placeholder="describe each reference's appearance + the action/camera move" style={{ width: "100%" }}
           onChange={(e) => patch({ prompt: e.target.value })} />
-        <details>
-          <summary className="cursor-pointer text-[10px] text-[var(--color-muted)]">negative prompt</summary>
-          <textarea className={`${inp} mt-1`} rows={2} value={b.negative} placeholder="(default: subtitles, watermark, worst quality, blurry, slow motion...)"
+        <details style={{ marginTop: 8 }}>
+          <summary className="mvi-muted" style={{ cursor: "pointer" }}>negative prompt</summary>
+          <textarea className={inp} rows={2} value={b.negative} placeholder="(default: subtitles, watermark, worst quality, blurry, slow motion...)" style={{ width: "100%", marginTop: 6 }}
             onChange={(e) => patch({ negative: e.target.value })} />
         </details>
-      </Collapse>
+      </div>
+      </div>
 
-      {/* timeline prompter (MSR + keyframe). In keyframe mode each segment can also pin a still. */}
+      {/* shot timeline (MSR + keyframe) */}
       {(b.renderMode === "msr" || b.renderMode === "keyframe") && (
-        <Collapse open={!!open.tl} onToggle={() => toggle("tl")}
-          title={<label className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <input type="checkbox" checked={b.tlOn} onChange={(e) => patch({ tlOn: e.target.checked })} />
-            {b.renderMode === "keyframe" ? "Segments & keyframes" : "Timeline prompter"} {b.tlOn && <span className="text-[9px] text-[var(--color-accent2)]">prompts on</span>}
-          </label>}>
-          <p className="text-[10px] text-[var(--color-muted)]">{b.renderMode === "keyframe"
-            ? "Each segment is a time window. Pin a keyframe still to place it at the window start (or its end), and the model interpolates between pinned stills. Tick the box above to ALSO schedule per-segment prompts. Empty lengths = even split."
-            : "A global prompt held across the whole clip, plus ordered per-segment prompts placed along the frames. Empty segment lengths = even split. Epsilon sets boundary softness (0.001 sharp cut, 0.5+ smooth for a continuous move)."}</p>
-          <Field label="Global prompt" hint="held across the whole block">
-            <textarea className={inp} rows={2} value={b.global} placeholder="constant scene/identity description" onChange={(e) => patch({ global: e.target.value })} />
-          </Field>
-          <div className="space-y-1.5">
-            {b.segs.map((s, i) => (
-              <div key={i} className="space-y-1 rounded border border-[var(--color-line)]/60 p-1">
-                <div className="flex items-start gap-1.5">
-                  <input className={`${inp} w-20`} value={s.len} placeholder="frames" title="segment length in frames (empty = even)" onChange={(e) => setSeg(i, { len: e.target.value })} />
-                  <textarea className={inp} rows={1} value={s.prompt} placeholder={`segment ${i + 1} prompt`} onChange={(e) => setSeg(i, { prompt: e.target.value })} />
-                  <button onClick={() => delSeg(i)} className="px-1 pt-1.5 text-[var(--color-muted)] hover:text-red-400" title="remove">{"×"}</button>
-                </div>
-                {b.renderMode === "keyframe" && (
-                  <div className="flex items-center gap-1.5 pl-0.5">
-                    <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)]">keyframe</span>
-                    <div className="flex-1"><StillPick value={s.keyframeStillId || ""} stills={stills} set={(id) => setSeg(i, { keyframeStillId: id || undefined })} placeholder="- no still -" /></div>
-                    <label className="flex items-center gap-1 text-[9px] text-[var(--color-muted)]" title="place the still at the END of this segment window instead of the start">
-                      <input type="checkbox" checked={!!s.isEndFrame} onChange={(e) => setSeg(i, { isEndFrame: e.target.checked || undefined })} /> end
-                    </label>
-                  </div>
-                )}
-              </div>
-            ))}
-            <button onClick={addSeg} className="text-[10px] text-[var(--color-accent2)]">+ segment</button>
+        <div className="mvi-card">
+          <div className="mvi-h">
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={b.tlOn} onChange={(e) => patch({ tlOn: e.target.checked })} />
+              {b.renderMode === "keyframe" ? "Segments & keyframes" : "Shot timeline"}
+            </label>
+            {b.tlOn && <span className="mvi-acc" style={{ fontSize: 11 }}>prompts on</span>}
           </div>
-          <label className="flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
+          <p className="mvi-muted" style={{ marginBottom: 8 }}>{b.renderMode === "keyframe"
+            ? "Each segment is a time window. Pin a keyframe still to place it at the window start (or its end), and the model interpolates between pinned stills. Tick the box to ALSO schedule per-segment prompts."
+            : "A global prompt held across the whole clip, plus ordered per-segment prompts placed along the frames. Tick the box to schedule per-segment prompts."}</p>
+          <p className="mvi-sub">Global prompt</p>
+          <textarea className={inp} rows={2} value={b.global} placeholder="constant scene/identity description held across the whole block" style={{ width: "100%" }} onChange={(e) => patch({ global: e.target.value })} />
+          <div style={{ marginTop: 10 }}>
+            {url ? (
+              <ShotTimeline block={b} url={url} beats={beats} stills={stills} libChars={libChars}
+                selSeg={selSeg} onSelSeg={setSelSeg} onPatch={patch} />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <p className="mvi-muted">Pick a song track above to open the waveform shot editor. Editing lengths/prompts directly below.</p>
+                {b.segs.map((s, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                    <input className={`${inp} w-20`} value={s.len} placeholder="frames" onChange={(e) => setSeg(i, { len: e.target.value })} />
+                    <textarea className={inp} rows={1} value={s.prompt} placeholder={`segment ${i + 1} prompt`} style={{ flex: 1 }} onChange={(e) => setSeg(i, { prompt: e.target.value })} />
+                    <button className="mvi-btn" onClick={() => delSeg(i)} title="remove">{"×"}</button>
+                  </div>
+                ))}
+                <button className="mvi-link" onClick={addSeg}>+ segment</button>
+              </div>
+            )}
+          </div>
+          <label className="mvi-muted" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
             epsilon
-            <input type="range" min={0.001} max={0.6} step={0.001} value={b.epsilon} onChange={(e) => patch({ epsilon: Number(e.target.value) })} className="flex-1" />
-            <span className="w-12 text-right">{b.epsilon.toFixed(3)}</span>
+            <input type="range" min={0.001} max={0.6} step={0.001} value={b.epsilon} onChange={(e) => patch({ epsilon: Number(e.target.value) })} style={{ flex: 1 }} />
+            <span style={{ width: 48, textAlign: "right" }}>{b.epsilon.toFixed(3)}</span>
           </label>
-        </Collapse>
+        </div>
       )}
 
-      {/* audio / lip-sync */}
+      {/* audio + advanced row (horizontal cards) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, alignItems: "start" }}>
       {(b.lipsync || b.renderMode === "s2v") && (
-        <Collapse title="Audio / lip-sync" open={!!open.audio} onToggle={() => toggle("audio")}>
-          <Field label="Vocal source" hint="defaults to the song track above; isolated to drive the lips">
-            <select className={inp} value={b.audioId || ""} onChange={(e) => patch({ audioId: e.target.value })}>
-              <option value="">{songAudioId ? "use the song track" : "- pick a track -"}</option>
-              {audios.map((a) => <option key={a.id} value={a.id}>{(a.params?.title || a.params?.tags || a.id).toString().slice(0, 40)}</option>)}
-            </select>
-          </Field>
-          <div className="flex items-end gap-3">
+        <div className="mvi-card">
+          <div className="mvi-h">Audio / lip-sync</div>
+          <p className="mvi-sub">Vocal source</p>
+          <select className={inp} value={b.audioId || ""} style={{ width: "100%" }} onChange={(e) => patch({ audioId: e.target.value })}>
+            <option value="">{songAudioId ? "use the song track" : "- pick a track -"}</option>
+            {audios.map((a) => <option key={a.id} value={a.id}>{(a.params?.title || a.params?.tags || a.id).toString().slice(0, 40)}</option>)}
+          </select>
+          <div className="mvi-row" style={{ marginTop: 10 }}>
             <Num label="audio start (s)" value={b.audioStart} set={(n) => patch({ audioStart: n })} step={0.1} w="w-24" title="offset into the track where this block's vocal begins" />
-            <label className="flex items-center gap-1.5 pb-1.5 text-[10px] text-[var(--color-muted)]" title="isolate the vocal from the mix (RoFormer) before driving lips">
+            <label className="mvi-muted" style={{ display: "flex", alignItems: "center", gap: 6, paddingBottom: 6 }} title="isolate the vocal from the mix (RoFormer) before driving lips">
               <input type="checkbox" checked={b.isolateVocal} onChange={(e) => patch({ isolateVocal: e.target.checked })} /> isolate vocal
             </label>
           </div>
-        </Collapse>
+        </div>
       )}
 
       {/* advanced render params */}
       {b.renderMode === "msr" && (
-        <Collapse title="Advanced render params" open={!!open.adv} onToggle={() => toggle("adv")}>
-          <div className="flex flex-wrap items-end gap-3">
-            <Num label="width" value={b.width} set={(n) => patch({ width: n })} step={32} w="w-20" />
-            <Num label="height" value={b.height} set={(n) => patch({ height: n })} step={32} w="w-20" />
-            <label className="flex flex-col gap-0.5 text-[10px] text-[var(--color-muted)]" title="LiconMSR reference frame_count">
+        <div className="mvi-card">
+          <div className="mvi-h">Advanced render params <span className="sub">resolution is set by the project Resolution picker above</span></div>
+          <div className="mvi-row">
+            <label className="mvi-muted" style={{ display: "flex", flexDirection: "column", gap: 4 }} title="LiconMSR reference frame_count">
               ref frames
               <select className={`${inp} w-20`} value={b.refFrames} onChange={(e) => patch({ refFrames: Number(e.target.value) })}>
                 {MSR_REF_COMBOS.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -759,18 +800,19 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
             </label>
             <Num label="seed" value={b.seed} set={(n) => patch({ seed: n })} w="w-28" title="0 = random" />
           </div>
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="mvi-row" style={{ marginTop: 10 }}>
             <Num label="MSR strength" value={b.msrStrength} set={(n) => patch({ msrStrength: n })} step={0.05} w="w-24" title="identity IC-LoRA strength" />
             <Num label="guide strength" value={b.guideStrength} set={(n) => patch({ guideStrength: n })} step={0.05} w="w-24" />
             <Num label="steps" value={b.steps} set={(n) => patch({ steps: n })} w="w-16" />
             <Num label="cfg" value={b.cfg} set={(n) => patch({ cfg: n })} step={0.1} w="w-16" />
           </div>
-        </Collapse>
+        </div>
       )}
+      </div>
 
       {/* rendered preview */}
       {clip?.media_url && (
-        <video src={clip.media_url} controls loop className="w-full rounded-lg" />
+        <video src={clip.media_url} controls loop style={{ width: "100%", borderRadius: 12 }} />
       )}
     </div>
   );
