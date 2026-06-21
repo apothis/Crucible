@@ -52,6 +52,7 @@ export const api = {
   videoLtxT2V: (p: unknown) => jpost("/api/video/ltx_t2v", p),
   videoLtxMsr: (p: unknown) => jpost("/api/video/ltx_msr", p),   // Multiple-Subject-Reference (the MV Studio spine)
   videoLtxKeyframe: (p: unknown) => jpost("/api/video/ltx_keyframe", p),  // LTXDirector keyframe interp (still-to-still)
+  videoLtxRetake: (p: unknown) => jpost("/api/video/ltx_retake", p),      // re-render a time slice of an existing clip (retake_mode)
   videoUpscale: (p: unknown) => jpost("/api/video/upscale", p),  // SeedVR2 diffusion upscale of a finished clip
   videoFlashvsr: (p: unknown) => jpost("/api/video/flashvsr", p), // FlashVSR upscale (default; auto-chunks long clips)
   videoSviI2V: (p: unknown) => jpost("/api/video/svi_i2v", p),   // long-form Wan2.2 (SVI2 Pro)

@@ -1309,6 +1309,126 @@ def build_ltx_keyframe(p, keyframes):
     return g, resolved
 
 
+def build_ltx_retake(p, base_video, vocal_ref=None):
+    """LTX-2.3 RETAKE: re-render only a [retake_start, retake_start+retake_length] frame slice of an
+    EXISTING clip, keeping the rest of the footage frozen. Drives LTXDirectorGuide's retake_mode: the
+    base clip is VAE-encoded into the latent and a temporal noise mask freezes every frame except the
+    retake region (set to retake_strength), so the sampler regenerates ONLY that slice to the prompt and
+    blends it back. Source-verified against ltx_director_guide.py (the retake branch reads retakeStart/
+    retakeLength/retakeStrength/retakeVideo from timeline_data, which LTXDirector forwards into guide_data
+    along with start_frame). Fixes a glitchy second or two without re-rolling the whole shot.
+
+    vocal_ref (REQUIRED for SINGING shots - this is a music-video app) = the uploaded vocal aligned to the
+    whole clip window. When set, the empty audio latent is replaced by the same masked-audio path the
+    original lip-sync render used (LTXVAudioVAEEncode + zero SetLatentNoiseMask), so the regenerated slice's
+    lips track the song instead of going out of sync. Without it, a retaken slice of a singing clip would
+    desync. The vocal must be aligned to the SAME audio_start as the original render and cover the full clip.
+
+    base_video = the uploaded name of the existing clip on ComfyUI. p MUST describe the SAME clip so the
+    latent matches it exactly: {prompt, width, height, frames (the clip's full length), fps, retake_start
+    (frame), retake_length (frames), retake_strength? (0-1, default 1.0), negative?, seed?, cfg?,
+    distill_strength?, detailer_strength?, distill_lora?}."""
+    seed = _seed(p)
+    w = int(p.get("width", 1280))
+    h = int(p.get("height", 720))
+    fps = int(p.get("fps", 24))
+    frames = _ltx_frames(p.get("frames", 145), fps)
+    secs = round(frames / float(fps), 3)
+    cfg = float(p.get("cfg", 1.0))
+    distill = float(p.get("distill_strength", 0.5))
+    detailer = float(p.get("detailer_strength", 0.2))
+    rs = max(0, int(p.get("retake_start", 0)))
+    rl = max(1, int(p.get("retake_length", fps)))           # default ~1s slice
+    rl = min(rl, max(1, frames - rs))                        # clamp inside the clip
+    rst = float(p.get("retake_strength", 1.0))
+    prompt = (p.get("prompt") or "").strip()
+    neg = (p.get("negative") or "worst quality, blurry, distorted, watermark, subtitles, deformed")
+    timeline = {"retakeMode": True, "retakeStart": rs, "retakeLength": rl, "retakeStrength": rst,
+                "retakeVideo": {"imageFile": base_video}, "segments": [], "audioSegments": []}
+    timeline_data = json.dumps(timeline)
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL),
+                         "strength_model": distill}},
+        "3": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["2", 0], "lora_name": LTX_LORA_DETAILER, "strength_model": detailer}},
+        "5": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": LTX_CLIP1, "clip_name2": LTX_CLIP2, "type": "ltxv", "device": "default"}},
+        "6": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_VIDEO, "device": "main_device", "weight_dtype": "bf16"}},
+        "7": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
+        # LTXDirector forwards timeline_data + start_frame into guide_data so the guide's retake branch
+        # can load the base clip and mask the region. No optional_latent -> sized to custom_width/height
+        # (which the caller sets to the clip's exact resolution so preserved frames line up).
+        "9": {"class_type": "LTXDirector",
+              "inputs": {"model": ["3", 0], "clip": ["5", 0], "audio_vae": ["7", 0],
+                         "global_prompt": "", "local_prompts": prompt, "segment_lengths": "",
+                         "epsilon": 0.001, "guide_strength": "", "timeline_data": timeline_data,
+                         "duration_frames": frames, "duration_seconds": secs,
+                         "start_frame": 0, "end_frame": frames,
+                         "start_second": 0.0, "end_second": secs,
+                         "use_custom_audio": False, "use_custom_motion": False,
+                         "frame_rate": float(fps), "display_mode": "frames",
+                         "custom_width": w, "custom_height": h,
+                         "resize_method": "maintain aspect ratio", "divisible_by": 32,
+                         "img_compression": 18}},
+        "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
+        "11": {"class_type": "LTXVConditioning",
+               "inputs": {"positive": ["9", 1], "negative": ["10", 0], "frame_rate": ["9", 6]}},
+        # retake_mode: load the base clip, encode it, freeze everything except [retakeStart,+Length]
+        "12": {"class_type": "LTXDirectorGuide",
+               "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
+                          "latent": ["9", 2], "guide_data": ["9", 4], "ic_lora_name": "None",
+                          "ic_lora_strength": 1.0, "scale_by": 1.0, "upscale_method": "bicubic",
+                          "image_attention_strength": 1.0, "crop": "center", "auto_snap_ic_grid": True,
+                          "use_tiled_encode": False, "tile_size": 256, "tile_overlap": 64,
+                          "retake_mode": True}},
+        "15": {"class_type": "LTXVEmptyLatentAudio",
+               "inputs": {"frames_number": frames, "frame_rate": fps, "batch_size": 1, "audio_vae": ["7", 0]}},
+        "16": {"class_type": "LTXVConcatAVLatent",
+               "inputs": {"video_latent": ["12", 2], "audio_latent": ["15", 0]}},
+        "17": {"class_type": "CFGGuider",
+               "inputs": {"model": ["9", 0], "positive": ["12", 0], "negative": ["12", 1], "cfg": cfg}},
+        "18": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "19": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "20": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},
+        "21": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["18", 0], "guider": ["17", 0], "sampler": ["19", 0],
+                          "sigmas": ["20", 0], "latent_image": ["16", 0]}},
+        "22": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["21", 0]}},
+        "23": {"class_type": "LTXDirectorCropGuides",
+               "inputs": {"positive": ["12", 0], "negative": ["12", 1], "latent": ["22", 0]}},
+        "24": {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+               "inputs": {"vae": ["6", 0], "latents": ["23", 2], "spatial_tiles": 4, "spatial_overlap": 4,
+                          "temporal_tile_length": 48, "temporal_overlap": 8, "last_frame_fix": False,
+                          "working_device": "auto", "working_dtype": "auto"}},
+        "25": {"class_type": "CreateVideo", "inputs": {"images": ["24", 0], "fps": fps}},
+        "26": {"class_type": "SaveVideo",
+               "inputs": {"video": ["25", 0], "filename_prefix": "videogen/ltxretake",
+                          "format": "auto", "codec": "auto"}},
+    }
+    if vocal_ref:
+        # SINGING retake: drive the regenerated slice with the real vocal (same masked-audio path as
+        # build_ltx_msr) so the lips stay in sync. Encode the vocal, freeze it with a zero noise mask
+        # (preserve, do NOT denoise), and feed it as the AV audio latent instead of the empty one; mux
+        # the vocal into the output. The vocal MUST be aligned to this clip's window upstream.
+        g["27"] = {"class_type": "LoadAudio", "inputs": {"audio": vocal_ref}}
+        g["28"] = {"class_type": "LTXVAudioVAEEncode", "inputs": {"audio": ["27", 0], "audio_vae": ["7", 0]}}
+        g["36"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": 1024, "height": 1024}}
+        g["37"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["28", 0], "mask": ["36", 0]}}
+        g["16"]["inputs"]["audio_latent"] = ["37", 0]
+        del g["15"]
+        g["25"]["inputs"]["audio"] = ["27", 0]
+    resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+                "seconds": round(frames / fps, 2), "cfg": cfg,
+                "retake_start": rs, "retake_length": rl, "retake_strength": rst,
+                "retake_seconds": [round(rs / fps, 2), round((rs + rl) / fps, 2)],
+                "lipsync": bool(vocal_ref),
+                "prompt": prompt, "kind": "video", "method": "retake"}
+    return g, resolved
+
 
 # ------------------------------------------------ SeedVR2 video upscale (post-process)
 def build_seedvr2_upscale(p, video_ref, fps):

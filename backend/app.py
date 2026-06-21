@@ -973,6 +973,65 @@ def video_ltx_keyframe(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/ltx_retake")
+def video_ltx_retake(p: dict):
+    """LTX-2.3 RETAKE: re-render only a time slice of an EXISTING clip (LTXDirectorGuide retake_mode),
+    freezing the rest. For fixing a glitchy second or two without re-rolling the whole shot. The clip's
+    own resolution/length/fps are probed so the rebuilt latent lines up frame-for-frame with the source.
+    SINGING clips: pass audio_id + audio_start (the SAME ones the clip was rendered with) so the retaken
+    slice is regenerated against the real vocal and the lips stay in sync; without it the slice desyncs.
+    p: {clip_id (a rendered library clip), retake_start (seconds), retake_length (seconds), prompt
+    (what the slice should be), retake_strength? (0-1, default 1.0; lower = stay closer to the original),
+    audio_id? (the track the clip lip-syncs to), audio_start? (offset into that track for this clip),
+    isolate_vocal?, negative?, seed?, cfg?}."""
+    vid = _lib_video_path(p.get("clip_id") or p.get("video_id"))
+    if not vid:
+        raise HTTPException(400, "clip_id must reference a generated clip in the library")
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required (what the retaken slice should show)")
+    fps = _probe_fps(vid) or 24.0
+    try:
+        import subprocess
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                              "-show_entries", "stream=width,height,nb_read_frames", "-of", "csv=p=0", vid],
+                             capture_output=True, text=True, timeout=120).stdout.strip().split(",")
+        w = int(out[0]); h = int(out[1]); frames = int(out[2]) if len(out) > 2 and out[2].isdigit() else 0
+    except Exception as e:
+        raise HTTPException(500, f"could not probe the clip: {e}")
+    if not (w and h and frames):
+        raise HTTPException(500, "could not read the clip's dimensions/length")
+    rs = max(0.0, float(p.get("retake_start") or 0))
+    rl = max(0.1, float(p.get("retake_length") or 1))
+    fps_i = int(round(fps))
+    bp = dict(p)
+    bp.update({"width": w, "height": h, "frames": frames, "fps": fps_i,
+               "retake_start": int(round(rs * fps)), "retake_length": int(round(rl * fps))})
+    # SINGING retake: isolate the SAME vocal window the clip was rendered with so the regenerated slice
+    # lip-syncs (a music video is mostly singing - this is the default for any clip that has audio).
+    audio = _lib_source_path(p.get("audio_id")) if p.get("audio_id") else None
+    astart = max(0.0, float(p.get("audio_start") or 0))
+    iso_used = None
+    try:
+        vocal_ref = None
+        if audio:
+            win = frames / float(fps_i)                  # full clip duration, aligned at audio_start
+            aud_bytes, iso_used = _isolate_vocal_bytes(audio, astart, win, p)
+            vocal_ref = C.upload_audio(aud_bytes, "retake_vocal.wav")
+        with open(vid, "rb") as f:
+            base = C.upload_audio(f.read(), os.path.basename(vid))
+        graph, resolved = video_mod.build_ltx_retake(bp, base, vocal_ref)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["clip_id"] = os.path.basename(p.get("clip_id") or p.get("video_id"))
+    if audio:
+        resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+        resolved["audio_start"] = astart
+        resolved["vocal_isolated"] = bool(iso_used)
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/svi_i2v")
 def video_svi_i2v(p: dict):
     """SVI2 Pro long-form Wan 2.2 A14B i2v: animate a library still into a long continuous clip
