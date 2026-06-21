@@ -289,6 +289,13 @@ RENDER MODE (set "render" per shot - this picks the engine):
 HARD RULE: if "lipsync" is true, or "type" is "performance", or any band member is playing/singing in the
 shot, then "render" MUST be "msr". Only scenic/atmospheric shots with no people performing may be "keyframe".
 
+CUT ON THE SONG STRUCTURE (important): the bracketed [start-end s] markers above are the song's actual
+sections (intro, verse, chorus, bridge, etc.). START A NEW SHOT exactly at each section boundary - a single
+shot must NEVER span a section change (e.g. never let one shot run from the verse into the chorus). At every
+big musical transition - verse->chorus, a drop, the bridge, the final chorus - cut to a fresh shot and a
+new look. Within a long section, place additional cuts on the lyric lines / phrase boundaries. Make each
+shot's start and end line up with these section boundaries and lyric lines, not arbitrary times.
+
 CAMERA (this engine is finicky - obey exactly): set "camera" to ONLY one of "static", "slow push-in"
 (gentle zoom toward the subject) or "slow pull-back" (gentle zoom out). Those are the only moves that
 render cleanly. NEVER call for pans, trucks, tracking, dolly left/right, orbits, handheld, or any
@@ -397,3 +404,40 @@ def generate_script(song, cast, provider, model, claude_model, n_shots=0):
     system, prompt = build_prompt(song, cast, n_shots)
     text = llm_mod.complete(provider, model, system, prompt, claude_model)
     return parse_shots(text)
+
+
+def snap_shots_to_structure(shots, seg_bounds, downbeats):
+    """Align shot cuts to the song's ACTUAL audio structure. seg_bounds + downbeats are second-times
+    detected from the rendered audio by allin1 (NOT the planned arrangement, which drifts). Each cut
+    between consecutive shots is nudged to the nearest segment boundary (structural, wider tolerance)
+    else the nearest downbeat (musical, tight), keeping shots contiguous and a sane minimum length.
+    Only the boundaries are used - allin1's section labels are not trusted. The first start and last
+    end are left as-is. Returns the shots with start/end adjusted (idempotent if already aligned)."""
+    if len(shots) < 2:
+        return shots
+    SEG_TOL, DB_TOL, MIN = 2.0, 0.4, 1.5
+    segs = sorted(float(x) for x in (seg_bounds or []))
+    dbs = sorted(float(x) for x in (downbeats or []))
+
+    def nearest(v, arr):
+        if not arr:
+            return None
+        best = min(arr, key=lambda x: abs(x - v))
+        return best, abs(best - v)
+
+    bounds = [float(shots[0].get("start", 0))] + [float(s.get("end", 0)) for s in shots]
+    for i in range(1, len(bounds) - 1):
+        v = bounds[i]
+        seg = nearest(v, segs)
+        db = nearest(v, dbs)
+        nv = v
+        if seg and seg[1] <= SEG_TOL:
+            nv = seg[0]
+        elif db and db[1] <= DB_TOL:
+            nv = db[0]
+        if bounds[i - 1] + MIN < nv < bounds[i + 1] - MIN:
+            bounds[i] = round(nv, 2)
+    for i, s in enumerate(shots):
+        s["start"] = bounds[i]
+        s["end"] = bounds[i + 1]
+    return shots

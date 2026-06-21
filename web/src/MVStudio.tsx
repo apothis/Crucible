@@ -212,7 +212,9 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     try {
       const payload = { title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
         sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })) };
-      const r = await api.mvScript({ song: payload, model: scriptModel,
+      // audio_id lets the backend snap the cuts onto the song's ACTUAL structure (allin1 segments +
+      // downbeats from the rendered audio) - more accurate than the planned arrangement.
+      const r = await api.mvScript({ song: payload, model: scriptModel, audio_id: audioId,
         cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician" })) }) as { shots: ScriptShot[] };
       const next = (r.shots || []).map((s) => shotToBlock(s, libChars, audioId));
       commit(next); setSelId(next[0]?.id || "");

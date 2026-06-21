@@ -243,3 +243,41 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
     prompt, global: tlOn ? look : "", segs, tlOn,
     lipsync: !!s.lipsync && renderMode !== "keyframe", chars, audioId, audioStart: start };
 }
+
+// cumulative section-boundary times (seconds) from a song's ordered sections (each {seconds}).
+export function sectionBoundaries(sections: { seconds?: number }[]): number[] {
+  const out = [0]; let acc = 0;
+  for (const s of sections || []) { acc += Math.max(0, s.seconds || 0); out.push(+acc.toFixed(2)); }
+  return out;
+}
+
+// Snap shot cuts onto the song's structure: nudge each boundary between consecutive blocks to the
+// nearest SECTION boundary (priority, so cuts land on verse/chorus changes), else the nearest BEAT
+// (so they're musically tight). Keeps blocks contiguous, monotonic, and a sane minimum length;
+// recomputes each block's frames + audioStart from its new window. The first start and last end are
+// left as-is. Deterministic - more reliable than asking the LLM to hit beats by eye.
+export function snapBlocksToStructure(blocks: Block[], beats: number[], sectionBounds: number[]): Block[] {
+  if (blocks.length < 2) return blocks;
+  const fps = blocks[0].fps || DEFAULT_FPS;
+  const SECT_TOL = 1.5, BEAT_TOL = 0.35, MIN = 1.5;
+  const nearest = (v: number, arr: number[]): { val: number; d: number } | null => {
+    if (!arr.length) return null;
+    let best = arr[0], bd = Math.abs(arr[0] - v);
+    for (const x of arr) { const d = Math.abs(x - v); if (d < bd) { bd = d; best = x; } }
+    return { val: best, d: bd };
+  };
+  const bounds = [blocks[0].start, ...blocks.map((b) => b.end)];
+  for (let i = 1; i < bounds.length - 1; i++) {
+    const v = bounds[i];
+    const sec = nearest(v, sectionBounds);
+    const beat = nearest(v, beats);
+    let nv = v;
+    if (sec && sec.d <= SECT_TOL) nv = sec.val;
+    else if (beat && beat.d <= BEAT_TOL) nv = beat.val;
+    if (nv > bounds[i - 1] + MIN && nv < bounds[i + 1] - MIN) bounds[i] = +nv.toFixed(2);
+  }
+  return blocks.map((b, i) => {
+    const start = bounds[i], end = bounds[i + 1];
+    return { ...b, start, end, audioStart: start, frames: ltxFrames(Math.max(2, end - start) * fps) };
+  });
+}

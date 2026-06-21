@@ -1346,7 +1346,28 @@ def mv_script(body: dict):
             CFG.get("claude_model", "claude-3-5-sonnet-latest"), int(body.get("shots") or 0))
     except Exception as e:
         raise HTTPException(500, f"script generation failed: {e}")
+    # Snap the cuts onto the song's ACTUAL audio structure (allin1 on the box): segment boundaries +
+    # downbeats from the rendered audio, NOT the planned arrangement (which drifts). Best-effort - any
+    # failure (no audio, analyze down, allin1 missing) just leaves the LLM's timing untouched.
+    snapped = False
+    seg_count = 0
+    audio_id = body.get("audio_id")
+    if ANALYZE_HOST and audio_id:
+        ap = _lib_source_path(audio_id)
+        if ap:
+            try:
+                a = analyze_py.analyze(ANALYZE_HOST, ap, with_tags=False, with_key=False)
+                segs = a.get("segments") or []
+                seg_bounds = [s.get("start") for s in segs] + [s.get("end") for s in segs]
+                downbeats = a.get("downbeats") or []
+                if seg_bounds or downbeats:
+                    shots = musicvideo_mod.snap_shots_to_structure(shots, seg_bounds, downbeats)
+                    snapped = True
+                    seg_count = len(segs)
+            except Exception as e:
+                print(f"[mv/script] structure snap skipped: {e}")
     return {"shots": shots, "song_title": song.get("title"),
+            "snapped_to_audio": snapped, "audio_segments": seg_count,
             "duration": sum(int(s.get("seconds") or 0) for s in song.get("sections", []))}
 
 
