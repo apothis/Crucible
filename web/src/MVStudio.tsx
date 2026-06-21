@@ -120,6 +120,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [introXfade, setIntroXfade] = d.use("introXfade", 1.5);// intro -> song crossfade seconds
   const [resolution, setResolution] = d.use("resolution", "832x480"); // PROJECT render resolution (all shots + assembly)
   const [resW, resH] = resolution.split("x").map(Number);
+  const [scriptModel, setScriptModel] = d.use("scriptModel", "claude-sonnet-4-6"); // LLM for the script writer
   const [grades, setGrades] = useState<string[]>(["none"]);
   const [scripting, setScripting] = useState(false);
   const [blocks, setBlocks] = d.use<Block[]>("blocks", []);
@@ -208,7 +209,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     try {
       const payload = { title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
         sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })) };
-      const r = await api.mvScript({ song: payload, cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician" })) }) as { shots: ScriptShot[] };
+      const r = await api.mvScript({ song: payload, model: scriptModel,
+        cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician" })) }) as { shots: ScriptShot[] };
       const next = (r.shots || []).map((s) => shotToBlock(s, libChars, audioId));
       commit(next); setSelId(next[0]?.id || "");
     } catch (e) {
@@ -369,6 +371,11 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         <GhostButton onClick={generateScript} disabled={scripting || !canScript}>
           {scripting ? "Scripting..." : "Generate from song"}
         </GhostButton>
+        <select className={inp} style={{ width: "auto" }} value={scriptModel} onChange={(e) => setScriptModel(e.target.value)}
+          title="Which Claude model writes the shot list" disabled={scripting}>
+          <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+          <option value="opus">Opus</option>
+        </select>
         {!canScript && <span className="text-[9px] text-[var(--color-muted)]">(open a project with a Song arrangement to script)</span>}
         {blocks.length > 0 && (
           <GhostButton onClick={() => renderAllStills(true)} disabled={busy}>

@@ -1234,9 +1234,15 @@ def mv_script(body: dict):
         song = _project_song_view(json.loads(r["data"] or "{}"))
     if not song or not song.get("sections"):
         raise HTTPException(400, "provide a song with sections, or a project key with a Song arrangement")
+    provider = body.get("provider") or llm_mod.best_provider()
+    # Default the script model to Sonnet 4.6 on the Claude paths: at --effort low it matches Opus on
+    # speed but gives more varied, lyric-literal shot direction, and is cheaper. Overridable per-call.
+    model = body.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-4-6"
     try:
         shots = musicvideo_mod.generate_script(
-            song, body.get("cast") or [], body.get("provider") or llm_mod.best_provider(), body.get("model") or "",
+            song, body.get("cast") or [], provider, model,
             CFG.get("claude_model", "claude-3-5-sonnet-latest"), int(body.get("shots") or 0))
     except Exception as e:
         raise HTTPException(500, f"script generation failed: {e}")
