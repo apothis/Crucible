@@ -376,8 +376,9 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       {/* the visual timeline: waveform + draggable blocks when a song is set; else a
           proportional click-to-select bar (no audio to scrub against) */}
       {blocks.length > 0 && audioUrl && (
-        <MVTimeline url={audioUrl} beats={beats} blocks={blocks} selId={selId}
-          onSelect={setSelId} onChange={(id, s, e) => patch(id, { start: s, end: e })} />
+        <MVTimeline url={audioUrl} beats={beats} blocks={blocks} selId={selId} fps={blocks[0]?.fps || 24}
+          onSelect={setSelId} onChange={(id, s, e) => patch(id, { start: s, end: e })}
+          onDelete={delBlock} onDuplicate={(id) => { const b = blocks.find((x) => x.id === id); if (b) dupBlock(b); }} />
       )}
       {blocks.length > 0 && !audioUrl && (
         <div className="relative h-16 w-full overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-bg)]">
