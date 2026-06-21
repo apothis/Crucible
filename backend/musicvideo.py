@@ -267,7 +267,7 @@ Return ONLY a JSON array. Each element is an object:
   "camera": "static" | "slow push-in" | "slow pull-back",
   "costume": "<what the named characters WEAR in this shot - lets the same person change outfits between scenes; '' if not notable or on-stage performance wear>",
   "characters": [<names of any named characters present; prefer ONE per shot; [] if none>],
-  "lipsync": <true ONLY for close performance shots where a named singer sings these lyrics>,
+  "lipsync": <true for ANY shot where a singer is singing the lyrics ON CAMERA - close OR wide, alone OR with the band, standing OR moving through the scene. This is a music video: if the lead singer is visible while words are being sung, her lips must sync, so set true. Set false ONLY when no one is singing on screen: instrumental sections, pure scenic B-roll with no people, or a shot of non-singing actors>,
   "segments": [<OPTIONAL per-shot timeline; each {{"seconds": <number>, "action": "<the subject's motion / gesture / expression during this slice>"}}; [] for one continuous action>]}}
 
 DURATIONS (important): CHOOSE each shot's length to fit its content - do NOT make them all the same
@@ -323,7 +323,10 @@ action. This is the single most powerful tool for making a shot feel alive - use
 
 Rules: performance/lipsync shots only on SUNG sections and feature the BAND/MUSICIANS (the lead
 singer lip-syncs); NARRATIVE shots tell the title's story and feature the ACTORS; scenic/broll on
-instrumental sections. Put the right people in each shot's "characters" by name. Photoreal live-action
+instrumental sections. LIP-SYNC RULE: during any SUNG section, EVERY shot that shows the lead singer -
+wide, close, walking, or on stage with the band - must set "lipsync": true (she is singing those words
+on camera). Do not reserve lip-sync for close-ups. Put the right people in each shot's "characters" by
+name. Photoreal live-action
 metal video (not animation). Every scene must connect to BOTH the title theme AND the specific lyrics
 in its window."""
     return system, prompt
@@ -406,6 +409,128 @@ def generate_script(song, cast, provider, model, claude_model, n_shots=0):
     return parse_shots(text)
 
 
+def build_shot_grid(segments, downbeats, total, target=7.0, min_shot=3.0):
+    """Build a deterministic shot grid from the song's ACTUAL audio structure (allin1). Every section
+    boundary is a cut; long sections are subdivided into ~`target`s shots placed on DOWNBEATS (bar
+    lines) so every cut lands on a real structural or musical boundary - not nudged, placed there.
+    segments=[{start,end,label}], downbeats=[sec]. Returns [{start,end,section}] in order, gapless.
+    The LLM later fills CONTENT per window; it never chooses timing (the thing it does badly)."""
+    dbs = sorted(float(d) for d in (downbeats or []))
+    grid = []
+    for seg in segments or []:
+        s, e = float(seg.get("start", 0)), float(seg.get("end", 0))
+        label = seg.get("label") or "section"
+        dur = e - s
+        if dur <= target * 1.4:
+            grid.append({"start": round(s, 2), "end": round(e, 2), "section": label})
+            continue
+        n = max(2, int(round(dur / target)))
+        inner = [d for d in dbs if s + min_shot < d < e - min_shot]
+        cuts = [s]
+        for k in range(1, n):
+            ideal = s + dur * k / n
+            nd = min(inner, key=lambda d: abs(d - ideal)) if inner else ideal
+            if cuts[-1] + min_shot < nd < e - min_shot:   # else fall back to the even-split time
+                cuts.append(round(nd, 2))
+            elif cuts[-1] + min_shot < ideal < e - min_shot:
+                cuts.append(round(ideal, 2))
+        cuts.append(e)
+        cuts = sorted(set(round(c, 2) for c in cuts))
+        for i in range(len(cuts) - 1):
+            grid.append({"start": cuts[i], "end": cuts[i + 1], "section": label})
+    return grid
+
+
+def build_grid_prompt(song, cast, grid):
+    """Prompt variant for the structure-driven path: the shots are ALREADY cut to the audio structure;
+    the LLM only fills each fixed window's CONTENT (no timing)."""
+    summary, total = _song_summary(song)
+    title = song.get("title") or "Untitled"
+    named = [c for c in cast if c.get("name")]
+    musicians = [c for c in named if c.get("kind") != "actor"]
+    actors = [c for c in named if c.get("kind") == "actor"]
+
+    def _fmt(lst):
+        return "\n".join(f"  - {c['name']} ({c.get('role') or 'character'})" for c in lst)
+    cast_parts = []
+    if musicians:
+        cast_parts.append("Band / musicians (PERFORMANCE shots playing/singing - the lead singer "
+                          "lip-syncs; may also act in NARRATIVE scenes):\n" + _fmt(musicians))
+    if actors:
+        cast_parts.append("Actors (NARRATIVE / story shots, not performing music):\n" + _fmt(actors))
+    cast_txt = "\n\n".join(cast_parts) or "  (no fixed cast - lean scenic/atmospheric)"
+
+    windows = "\n".join(f"  Shot {i + 1}: [{g['start']}-{g['end']}s]  ({g['section']})"
+                        for i, g in enumerate(grid))
+    system = ("You are a music video director. The video is ALREADY cut into shots on the song's actual "
+              "structure (section changes + downbeats). Your job is to fill in the CONTENT of each shot - "
+              "NOT the timing. Output STRICT JSON ONLY (no prose, no markdown).")
+    prompt = f"""{summary}
+
+DIRECTION:
+- The song is titled "{title}". Make the TITLE the central visual theme of the whole video.
+- For each shot, read the lyric lines sung in its time window above and make the scene VISUALLY
+  ILLUSTRATE those exact words. Instrumental windows: advance the story or show atmosphere.
+
+Characters (keep each visually consistent wherever they appear):
+{cast_txt}
+
+The video is cut into {len(grid)} shots, IN ORDER, already aligned to the song structure:
+{windows}
+
+Return ONLY a JSON array of EXACTLY {len(grid)} objects, one per shot above, IN THE SAME ORDER.
+Do NOT include start/end - the timing is fixed by the list above. Each object:
+{{"type": "performance" | "narrative" | "broll",
+  "render": "msr" | "keyframe",
+  "scene": "<the look of the frame: setting, subject, lighting, FRAMING (close/medium/wide), photoreal>",
+  "action": "<what the SUBJECT does - performance, gesture, expression, movement; describe the PERSON>",
+  "camera": "static" | "slow push-in" | "slow pull-back",
+  "costume": "<what the named characters WEAR; '' if on-stage performance wear or not notable>",
+  "characters": [<names of any named characters present; prefer ONE per shot; [] if none>],
+  "lipsync": <true for ANY shot where a singer is singing the lyrics ON CAMERA - close OR wide, alone OR
+    with the band, standing OR moving. If the lead singer is visible while words are sung, set true.
+    false ONLY when no one is singing on screen (instrumental, scenic B-roll, non-singing actor)>,
+  "segments": [<OPTIONAL within-shot timeline; each {{"seconds": <num>, "action": "<motion/expression>"}}; [] if one continuous action>]}}
+
+RENDER MODE: "msr" = the DEFAULT, the only mode that animates a person and lip-syncs - use for every
+performance / singing / playing shot and any shot with a character. "keyframe" = ONLY pure scenic
+B-roll with NO performer and nothing synced to the music. If "lipsync" is true or the lead singer is
+present, "render" MUST be "msr".
+
+CAMERA: only "static", "slow push-in", or "slow pull-back". No pans/tracking/orbits. Keep camera
+language OUT of scene/action.
+
+CASTING: prefer ONE named character per shot (crowded frames make people drift/swap attributes). Give
+each character solo MEDIUM/CLOSE shots. At most ONE wide whole-band shot in the video.
+
+LIP-SYNC RULE: during any SUNG section, EVERY shot showing the lead singer - wide, close, walking, or on
+stage with the band - must set "lipsync": true. Do not reserve lip-sync for close-ups.
+
+Photoreal live-action metal video. Every shot connects to BOTH the title theme and the lyrics in its window."""
+    return system, prompt
+
+
+def generate_script_grid(song, cast, provider, model, claude_model, grid):
+    """Structure-driven script: the LLM fills CONTENT for each fixed grid window; we attach the locked
+    audio-aligned times (the LLM never sets timing). Returns the parsed shot list, gapless on-structure."""
+    system, prompt = build_grid_prompt(song, cast, grid)
+    text = llm_mod.complete(provider, model, system, prompt, claude_model)
+    content = parse_shots(text)                       # parsed content (its start/end are ignored)
+    out = []
+    for i, g in enumerate(grid):
+        c = dict(content[i]) if i < len(content) else {}
+        c["idx"] = i
+        c["start"] = g["start"]
+        c["end"] = g["end"]
+        c["section"] = c.get("section") or g.get("section") or ""
+        if not c.get("scene") and not c.get("action"):
+            c.setdefault("type", "broll")
+            c.setdefault("render", "keyframe")
+            c["scene"] = f"{g.get('section', 'scene')} - atmospheric shot consistent with the song"
+        out.append(c)
+    return out
+
+
 def snap_shots_to_structure(shots, seg_bounds, downbeats):
     """Align shot cuts to the song's ACTUAL audio structure. seg_bounds + downbeats are second-times
     detected from the rendered audio by allin1 (NOT the planned arrangement, which drifts). Each cut
@@ -415,7 +540,7 @@ def snap_shots_to_structure(shots, seg_bounds, downbeats):
     end are left as-is. Returns the shots with start/end adjusted (idempotent if already aligned)."""
     if len(shots) < 2:
         return shots
-    SEG_TOL, DB_TOL, MIN = 2.0, 0.4, 1.5
+    SEG_TOL, DB_TOL, MIN = 3.5, 0.4, 1.5
     segs = sorted(float(x) for x in (seg_bounds or []))
     dbs = sorted(float(x) for x in (downbeats or []))
 

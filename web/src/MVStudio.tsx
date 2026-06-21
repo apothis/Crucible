@@ -148,11 +148,15 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const sel = blocks.find((b) => b.id === selId);
 
   // ---- block ops (blocks are kept sorted by start time = the timeline + assembly order) ----
-  function commit(list: Block[]) {
-    const sorted = [...list].sort((a, b) => (a.start - b.start) || (a.end - b.end)).map((b, i) => ({ ...b, idx: i }));
-    setBlocks(sorted);
+  const sortBlocks = (list: Block[]) =>
+    [...list].sort((a, b) => (a.start - b.start) || (a.end - b.end)).map((b, i) => ({ ...b, idx: i }));
+  function commit(list: Block[]) { setBlocks(sortBlocks(list)); }
+  // FUNCTIONAL update: patch must read the LATEST blocks, not a stale render-closure snapshot - otherwise
+  // rapid concurrent patches (e.g. "Render all stills" assigning 30 backgrounds in a loop) clobber each
+  // other and only the last sticks. Using the updater form makes them compose.
+  function patch(id: string, p: Partial<Block>) {
+    setBlocks((prev) => sortBlocks(prev.map((b) => b.id === id ? { ...b, ...p } : b)));
   }
-  function patch(id: string, p: Partial<Block>) { commit(blocks.map((b) => b.id === id ? { ...b, ...p } : b)); }
   function patchSel(p: Partial<Block>) { if (sel) patch(sel.id, p); }
   function addBlock() {
     const last = [...blocks].sort((a, b) => a.end - b.end)[blocks.length - 1];

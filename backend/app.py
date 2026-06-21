@@ -1340,16 +1340,14 @@ def mv_script(body: dict):
     model = body.get("model") or ""
     if not model and provider in ("claude_sub", "claude_code", "claude"):
         model = "claude-sonnet-4-6"
-    try:
-        shots = musicvideo_mod.generate_script(
-            song, body.get("cast") or [], provider, model,
-            CFG.get("claude_model", "claude-3-5-sonnet-latest"), int(body.get("shots") or 0))
-    except Exception as e:
-        raise HTTPException(500, f"script generation failed: {e}")
-    # Snap the cuts onto the song's ACTUAL audio structure (allin1 on the box): segment boundaries +
-    # downbeats from the rendered audio, NOT the planned arrangement (which drifts). Best-effort - any
-    # failure (no audio, analyze down, allin1 missing) just leaves the LLM's timing untouched.
-    snapped = False
+    claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
+    cast = body.get("cast") or []
+    n_shots = int(body.get("shots") or 0)
+    # STRUCTURE-DRIVEN: analyze the actual audio (allin1 on the box) and build a deterministic shot grid
+    # from the real segment boundaries + downbeats, so every cut lands ON the song structure. The LLM
+    # then only fills each fixed window's content (it never chooses timing). Falls back to free-timing
+    # generation if there's no audio / analyze is down.
+    grid = None
     seg_count = 0
     audio_id = body.get("audio_id")
     if ANALYZE_HOST and audio_id:
@@ -1358,16 +1356,21 @@ def mv_script(body: dict):
             try:
                 a = analyze_py.analyze(ANALYZE_HOST, ap, with_tags=False, with_key=False)
                 segs = a.get("segments") or []
-                seg_bounds = [s.get("start") for s in segs] + [s.get("end") for s in segs]
-                downbeats = a.get("downbeats") or []
-                if seg_bounds or downbeats:
-                    shots = musicvideo_mod.snap_shots_to_structure(shots, seg_bounds, downbeats)
-                    snapped = True
+                if segs:
+                    total = max((float(s.get("end") or 0) for s in segs), default=0.0)
+                    grid = musicvideo_mod.build_shot_grid(segs, a.get("downbeats") or [], total)
                     seg_count = len(segs)
             except Exception as e:
-                print(f"[mv/script] structure snap skipped: {e}")
+                print(f"[mv/script] structure analyze failed, falling back to free timing: {e}")
+    try:
+        if grid:
+            shots = musicvideo_mod.generate_script_grid(song, cast, provider, model, claude_model, grid)
+        else:
+            shots = musicvideo_mod.generate_script(song, cast, provider, model, claude_model, n_shots)
+    except Exception as e:
+        raise HTTPException(500, f"script generation failed: {e}")
     return {"shots": shots, "song_title": song.get("title"),
-            "snapped_to_audio": snapped, "audio_segments": seg_count,
+            "structure_driven": bool(grid), "audio_segments": seg_count, "shots_count": len(shots),
             "duration": sum(int(s.get("seconds") or 0) for s in song.get("sections", []))}
 
 
