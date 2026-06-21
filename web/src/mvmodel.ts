@@ -22,9 +22,11 @@ export type Character = {
 
 // the up-to-2 hero characters a block features (each contributes its wardrobe's face+body refs)
 export type BlockChar = { charId: string; wardrobeId?: string };
-// one timeline-prompter segment: a frame count + the prompt active over it
-export type Seg = { len: string; prompt: string };
-export type RenderMode = "msr" | "i2v" | "s2v";
+// one timeline-prompter segment: a frame count + the prompt active over it. In KEYFRAME mode a
+// segment may also pin a keyframe still: keyframeStillId places that library still at the segment's
+// START (or its END when isEndFrame), and the model interpolates between the pinned keyframes.
+export type Seg = { len: string; prompt: string; keyframeStillId?: string; isEndFrame?: boolean };
+export type RenderMode = "msr" | "i2v" | "s2v" | "keyframe";
 
 export type Block = {
   id: string; idx: number; start: number; end: number; kind: "msr";
@@ -67,7 +69,9 @@ export function makeBlock(start: number, fps = DEFAULT_FPS): Block {
 export function hydrateBlock(b: Partial<Block>, i: number): Block {
   const base = makeBlock(b.start ?? 0);
   return { ...base, ...b, idx: i, id: b.id || base.id,
-           segs: (b.segs || []).map((s) => ({ len: String(s.len ?? ""), prompt: s.prompt ?? "" })) };
+           segs: (b.segs || []).map((s) => ({ len: String(s.len ?? ""), prompt: s.prompt ?? "",
+             ...(s.keyframeStillId ? { keyframeStillId: s.keyframeStillId } : {}),
+             ...(s.isEndFrame ? { isEndFrame: true } : {}) })) };
 }
 
 // coerce a frame count to LTX's 8k+1 grid (mirrors backend _ltx_frames)
@@ -112,6 +116,63 @@ export function msrPayload(b: Block, subjectIds: string[], songAudioId: string):
     width: b.width, height: b.height, frames: b.frames, fps: b.fps,
     ref_frames: b.refFrames, msr_strength: b.msrStrength, guide_strength: b.guideStrength,
     steps: b.steps, cfg: b.cfg,
+  };
+  if (b.seed) p.seed = b.seed;
+  if (b.negative.trim()) p.negative = b.negative.trim();
+  if (b.tlOn) {
+    p.global_prompt = b.global;
+    p.local_prompts = b.segs.map((s) => s.prompt);
+    p.segment_lengths = b.segs.map((s) => s.len.trim()).filter(Boolean).join(",");
+    p.epsilon = b.epsilon;
+  }
+  if (b.lipsync) {
+    p.audio_id = b.audioId || songAudioId;
+    p.audio_start = b.audioStart;
+    p.isolate_vocal = b.isolateVocal;
+  }
+  return p;
+}
+
+// the per-segment frame windows of a block: timed lengths if every segment is timed, else an even
+// split across b.frames (last window absorbs the remainder). Mirrors how the relay slices the clip.
+export function segWindows(b: Block): { start: number; len: number }[] {
+  const n = b.segs.length;
+  if (!n) return [{ start: 0, len: b.frames }];
+  const lens = b.segs.map((s) => parseInt(s.len, 10) || 0);
+  const allTimed = lens.every((L) => L > 0);
+  const out: { start: number; len: number }[] = [];
+  if (allTimed) {
+    let acc = 0;
+    for (const L of lens) { out.push({ start: acc, len: L }); acc += L; }
+  } else {
+    const each = Math.max(1, Math.floor(b.frames / n));
+    let acc = 0;
+    b.segs.forEach((_, i) => {
+      const L = i === n - 1 ? Math.max(1, b.frames - acc) : each;
+      out.push({ start: acc, len: L }); acc += L;
+    });
+  }
+  return out;
+}
+
+// the keyframe stills a KEYFRAME-mode block pins, in render order: every segment carrying a
+// keyframeStillId becomes one keyframe placed at its segment window (start, or end if isEndFrame).
+export function blockKeyframes(b: Block): { still_id: string; start: number; length: number; isEndFrame: boolean }[] {
+  const win = segWindows(b);
+  return b.segs
+    .map((s, i) => ({ s, w: win[i] }))
+    .filter((x) => x.s.keyframeStillId)
+    .map((x) => ({ still_id: x.s.keyframeStillId as string, start: x.w.start, length: x.w.len,
+                   isEndFrame: !!x.s.isEndFrame }));
+}
+
+// build the /api/video/ltx_keyframe payload from a KEYFRAME-mode block (LTXDirector keyframe guide).
+// Keyframe stills come from the segments (blockKeyframes); the per-segment PROMPT timeline is sent
+// exactly like MSR so a shot can both interpolate between stills AND schedule prompts.
+export function keyframePayload(b: Block, songAudioId: string): Record<string, unknown> {
+  const p: Record<string, unknown> = {
+    keyframes: blockKeyframes(b).map((k) => ({ ...k, guide_strength: b.guideStrength })),
+    prompt: b.prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps, cfg: b.cfg,
   };
   if (b.seed) p.seed = b.seed;
   if (b.negative.trim()) p.negative = b.negative.trim();

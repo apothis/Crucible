@@ -932,6 +932,59 @@ def video_ltx_flf(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/ltx_keyframe")
+def video_ltx_keyframe(p: dict):
+    """LTX-2.3 KEYFRAME mode (LTXDirector -> LTXDirectorGuide, no MSR IC-LoRA): place 1-N library
+    stills at absolute frame positions and interpolate, with an optional per-segment PROMPT timeline.
+    The LTXDirector-native successor to /api/video/ltx_flf (N keyframes instead of just first+last).
+    p: {keyframes: [{still_id (library still), start? (frame), length? (frames), isEndFrame? (place at
+    the END of its window), guide_strength? (0-1)}], prompt, negative?, global_prompt?, local_prompts?,
+    segment_lengths?, epsilon?, seed?, width?, height?, frames?, fps?, cfg?, distill_strength?,
+    detailer_strength?, full?, steps?, audio_id? (native single-pass lip-sync from a library track's
+    isolated vocal), audio_start?, isolate_vocal?}."""
+    raw_kfs = p.get("keyframes")
+    if not raw_kfs and p.get("keyframe_ids"):              # convenience: bare id list -> keyframes
+        raw_kfs = [{"still_id": x} for x in p.get("keyframe_ids")]
+    if not isinstance(raw_kfs, list) or not raw_kfs:
+        raise HTTPException(400, "keyframes must be a non-empty list of {still_id, ...}")
+    resolved_kfs = []
+    for k in raw_kfs:
+        if not isinstance(k, dict):
+            raise HTTPException(400, "each keyframe must be an object with a still_id")
+        path = _lib_image_path(k.get("still_id"))
+        if not path:
+            raise HTTPException(400, f"keyframe still_id {k.get('still_id')!r} must reference a generated still")
+        resolved_kfs.append({"_path": path, "_still_id": os.path.basename(k.get("still_id")),
+                             "start": k.get("start"), "length": k.get("length", 1),
+                             "isEndFrame": bool(k.get("isEndFrame", False)),
+                             "guide_strength": float(k.get("guide_strength", 1.0))})
+    audio = _lib_source_path(p.get("audio_id")) if p.get("audio_id") else None
+    start = max(0.0, float(p.get("audio_start") or 0))
+    iso_used = None
+    try:
+        for k in resolved_kfs:                              # upload each still to ComfyUI input
+            with open(k["_path"], "rb") as f:
+                k["imageFile"] = C.upload_audio(f.read(), os.path.basename(k["_path"]))
+        vocal_ref = None
+        if audio:
+            fps = int(p.get("fps", 24))
+            frames = video_mod._ltx_frames(p.get("frames", 121), fps)
+            aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, frames / fps, p)
+            vocal_ref = C.upload_audio(aud_bytes, "kf_vocal.wav")
+        graph, resolved = video_mod.build_ltx_keyframe(p, resolved_kfs, vocal_ref)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["keyframe_ids"] = [k["_still_id"] for k in resolved_kfs]
+    if audio:
+        resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+        resolved["audio_start"] = start
+        resolved["vocal_isolated"] = bool(iso_used)
+        resolved["isolate_engine"] = iso_used
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/svi_i2v")
 def video_svi_i2v(p: dict):
     """SVI2 Pro long-form Wan 2.2 A14B i2v: animate a library still into a long continuous clip

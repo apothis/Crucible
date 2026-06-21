@@ -8,7 +8,7 @@ import { CharacterLibrary } from "./Characters";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
   makeBlock, hydrateBlock, ltxFrames, resolveSubjects, charRefIds, sceneRefOf, msrPayload, shotToBlock,
-  blockSeconds, MSR_REF_COMBOS,
+  keyframePayload, blockKeyframes, blockSeconds, MSR_REF_COMBOS,
 } from "./mvmodel";
 
 // ---- readable block list: every shot at a glance (type / time / scene / needs / status) ----
@@ -24,6 +24,7 @@ function BlockList({ blocks, selId, onSelect, onRender, onPatch, onMove, libChar
   libChars: Character[]; library: LibItem[]; busy: boolean;
 }) {
   const typeOf = (b: Block) => {
+    if (b.renderMode === "keyframe") return { label: "Keyframe", cls: "bg-sky-900/50 text-sky-200" };
     if (b.renderMode === "i2v") return { label: "B-roll", cls: "bg-slate-700/60 text-slate-300" };
     const names = b.chars.map((bc) => libChars.find((c) => c.id === bc.charId)?.name).filter(Boolean) as string[];
     const subj = resolveSubjects(b, libChars).length;
@@ -37,6 +38,7 @@ function BlockList({ blocks, selId, onSelect, onRender, onPatch, onMove, libChar
     if (b.renderMode === "msr" && !b.backgroundId) return { txt: "needs background", warn: true };
     if (b.renderMode === "msr" && !subj) return { txt: "needs refs", warn: true };
     if (b.renderMode === "i2v" && !b.backgroundId && !b.subjectIds.length) return { txt: "needs still", warn: true };
+    if (b.renderMode === "keyframe" && !blockKeyframes(b).length) return { txt: "needs keyframes", warn: true };
     return { txt: "ready", warn: false };
   };
   const thumbOf = (b: Block) => {
@@ -257,12 +259,16 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       if (!subjectIds.length) return fail("Pick at least one subject reference (a character with refs, or a still).");
       if (!b.backgroundId) return fail("Pick a background still for the MSR scene.");
     }
+    if (b.renderMode === "keyframe" && !blockKeyframes(b).length)
+      return fail("Keyframe mode needs at least one segment with a keyframe still (set a still on a segment).");
     const card = { id: rid(), title: `block ${b.idx + 1} (${b.renderMode})`, status: "pending" as const, pct: 0 };
     ctx.setResults([card]);
     try {
       let job_id: string;
       if (b.renderMode === "msr") {
         ({ job_id } = await api.videoLtxMsr({ ...msrPayload(b, subjectIds, audioId), width: resW, height: resH }) as { job_id: string });
+      } else if (b.renderMode === "keyframe") {
+        ({ job_id } = await api.videoLtxKeyframe({ ...keyframePayload(b, audioId), width: resW, height: resH }) as { job_id: string });
       } else if (b.renderMode === "s2v") {
         const still = subjectIds[0] || b.backgroundId;
         if (!still) return fail("S2V needs a reference still.");
@@ -285,6 +291,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   // ---- bulk render: fire every renderable block (the box queues them). onlyMissing skips rendered. ----
   function blockReady(b: Block) {
     const subj = resolveSubjects(b, libChars).length;
+    if (b.renderMode === "keyframe") return !!blockKeyframes(b).length;
     return b.renderMode === "i2v" ? !!(b.backgroundId || b.subjectIds.length) : !!(b.backgroundId && subj);
   }
   async function renderAll(onlyMissing: boolean) {
@@ -527,6 +534,7 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
         <select className={`${inp} w-auto text-[11px]`} value={b.renderMode} title="render mode"
           onChange={(e) => patch({ renderMode: e.target.value as RenderMode })}>
           <option value="msr">MSR (identity + free motion)</option>
+          <option value="keyframe">Keyframe (still-to-still interp)</option>
           <option value="i2v">i2v (animate a still){cfg.video_ltx ? "" : " - Wan"}</option>
           <option value="s2v">S2V (anchor lip-sync)</option>
         </select>
@@ -677,23 +685,36 @@ function Inspector({ b, idx, cfg, busy, stills, audios, library, libChars, songA
         </details>
       </Collapse>
 
-      {/* timeline prompter */}
-      {b.renderMode === "msr" && (
+      {/* timeline prompter (MSR + keyframe). In keyframe mode each segment can also pin a still. */}
+      {(b.renderMode === "msr" || b.renderMode === "keyframe") && (
         <Collapse open={!!open.tl} onToggle={() => toggle("tl")}
           title={<label className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
             <input type="checkbox" checked={b.tlOn} onChange={(e) => patch({ tlOn: e.target.checked })} />
-            Timeline prompter {b.tlOn && <span className="text-[9px] text-[var(--color-accent2)]">on</span>}
+            {b.renderMode === "keyframe" ? "Segments & keyframes" : "Timeline prompter"} {b.tlOn && <span className="text-[9px] text-[var(--color-accent2)]">prompts on</span>}
           </label>}>
-          <p className="text-[10px] text-[var(--color-muted)]">A global prompt held across the whole clip, plus ordered per-segment prompts placed along the frames. Empty segment lengths = even split. Epsilon sets boundary softness (0.001 sharp cut, 0.5+ smooth for a continuous move).</p>
+          <p className="text-[10px] text-[var(--color-muted)]">{b.renderMode === "keyframe"
+            ? "Each segment is a time window. Pin a keyframe still to place it at the window start (or its end), and the model interpolates between pinned stills. Tick the box above to ALSO schedule per-segment prompts. Empty lengths = even split."
+            : "A global prompt held across the whole clip, plus ordered per-segment prompts placed along the frames. Empty segment lengths = even split. Epsilon sets boundary softness (0.001 sharp cut, 0.5+ smooth for a continuous move)."}</p>
           <Field label="Global prompt" hint="held across the whole block">
             <textarea className={inp} rows={2} value={b.global} placeholder="constant scene/identity description" onChange={(e) => patch({ global: e.target.value })} />
           </Field>
           <div className="space-y-1.5">
             {b.segs.map((s, i) => (
-              <div key={i} className="flex items-start gap-1.5">
-                <input className={`${inp} w-20`} value={s.len} placeholder="frames" title="segment length in frames (empty = even)" onChange={(e) => setSeg(i, { len: e.target.value })} />
-                <textarea className={inp} rows={1} value={s.prompt} placeholder={`segment ${i + 1} prompt`} onChange={(e) => setSeg(i, { prompt: e.target.value })} />
-                <button onClick={() => delSeg(i)} className="px-1 pt-1.5 text-[var(--color-muted)] hover:text-red-400" title="remove">{"×"}</button>
+              <div key={i} className="space-y-1 rounded border border-[var(--color-line)]/60 p-1">
+                <div className="flex items-start gap-1.5">
+                  <input className={`${inp} w-20`} value={s.len} placeholder="frames" title="segment length in frames (empty = even)" onChange={(e) => setSeg(i, { len: e.target.value })} />
+                  <textarea className={inp} rows={1} value={s.prompt} placeholder={`segment ${i + 1} prompt`} onChange={(e) => setSeg(i, { prompt: e.target.value })} />
+                  <button onClick={() => delSeg(i)} className="px-1 pt-1.5 text-[var(--color-muted)] hover:text-red-400" title="remove">{"×"}</button>
+                </div>
+                {b.renderMode === "keyframe" && (
+                  <div className="flex items-center gap-1.5 pl-0.5">
+                    <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)]">keyframe</span>
+                    <div className="flex-1"><StillPick value={s.keyframeStillId || ""} stills={stills} set={(id) => setSeg(i, { keyframeStillId: id || undefined })} placeholder="- no still -" /></div>
+                    <label className="flex items-center gap-1 text-[9px] text-[var(--color-muted)]" title="place the still at the END of this segment window instead of the start">
+                      <input type="checkbox" checked={!!s.isEndFrame} onChange={(e) => setSeg(i, { isEndFrame: e.target.checked || undefined })} /> end
+                    </label>
+                  </div>
+                )}
               </div>
             ))}
             <button onClick={addSeg} className="text-[10px] text-[var(--color-accent2)]">+ segment</button>

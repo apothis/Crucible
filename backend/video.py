@@ -15,6 +15,7 @@ filename_prefix routes the result into ComfyUI's output/ folder; app.on_complete
 
 Plain ASCII only.
 """
+import json
 import random
 
 # ---- model files on the box (downloaded by download_video_models.py) ----
@@ -1113,6 +1114,179 @@ def build_ltx_flf(p, first_image, last_image, vocal_ref=None):
     resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                 "seconds": round(frames / fps, 2), "cfg": cfg, "first_strength": fstr, "last_strength": lstr,
                 "prompt": prompt, "lipsync": bool(vocal_ref), "kind": "video", "method": "flf"}
+    return g, resolved
+
+
+def build_ltx_keyframe(p, keyframes, vocal_ref=None):
+    """LTX-2.3 KEYFRAME mode (N-keyframe still-to-still): place 1-N keyframe stills at absolute
+    frame positions and let the model interpolate, with an optional per-segment PROMPT timeline.
+    This is the LTXDirector-native successor to build_ltx_flf - instead of the 2-frame TTP node it
+    drives the maintained LTXDirector relay -> LTXDirectorGuide (the keyframe-image guide). NO MSR
+    IC-LoRA: keyframe guides and MSR identity cannot share a graph (LiconMSR prepends ~17 ref frames
+    and corrupts LTXDirectorGuide's absolute insert_frames), so identity here comes from the stills.
+
+    keyframes = an ordered list of {imageFile (uploaded name, REQUIRED), start? (frame), length?
+    (frames), isEndFrame? (place the still at the END of its [start,length] window instead of the
+    start), guide_strength? (0-1, default 1.0), prompt? (unused here; the prompt timeline is driven
+    by p)}. Missing start/length are auto-distributed: first still at frame 0, last at the final
+    frame, the rest spread evenly. The director computes each insert frame from start/length/
+    isEndFrame (source-verified: insert = start+length-1 if isEndFrame else start) and reads the
+    per-still strengths from its comma-separated `guide_strength` input IN START-SORTED ORDER (so we
+    sort here and emit the CSV to match). LTXDirectorGuide appends the encoded keyframes to the video
+    latent; LTXDirectorCropGuides strips the appended guide frames after sampling.
+
+    p carries the standard knobs PLUS the prompt timeline (same fields as build_ltx_msr): global_prompt,
+    local_prompts ("|"-joined or list), segment_lengths (comma frame counts), epsilon. vocal_ref
+    (optional uploaded vocal) = native single-pass lip-sync via the same masked-audio path as MSR/FLF.
+    p: {prompt, negative?, seed?, width?, height?, frames?, fps?, cfg?, distill_strength?,
+    detailer_strength?, distill_lora?, full?/nondistilled?, steps?}."""
+    seed = _seed(p)
+    w = int(p.get("width", 1280))
+    h = int(p.get("height", 720))
+    fps = int(p.get("fps", 24))
+    frames = _ltx_frames(p.get("frames", 121), fps)
+    secs = round(frames / float(fps), 3)
+    cfg = float(p.get("cfg", 1.0))
+    distill = float(p.get("distill_strength", 0.5))
+    detailer = float(p.get("detailer_strength", 0.2))
+    prompt = (p.get("prompt") or "").strip()
+    neg = (p.get("negative") or "worst quality, blurry, distorted, watermark, subtitles, deformed")
+    # PROMPT timeline (identical handling to build_ltx_msr): a held global_prompt + ordered per-segment
+    # local_prompts placed at segment_lengths; epsilon controls boundary softness. Falls back to the
+    # single prompt = one full-length segment. This is independent of the keyframe IMAGE placements.
+    global_prompt = (p.get("global_prompt") or "").strip()
+    local_prompts = p.get("local_prompts")
+    if isinstance(local_prompts, (list, tuple)):
+        local_prompts = "|".join(str(s).strip() for s in local_prompts if str(s).strip())
+    local_prompts = (local_prompts or "").strip() or prompt
+    segment_lengths = str(p.get("segment_lengths") or "").strip()
+    epsilon = float(p.get("epsilon", 0.001))
+    # Resolve each keyframe's absolute placement, then sort by start (the director sorts image
+    # segments by start and indexes the guide_strength CSV by that order - we must match it).
+    kfs = [dict(k) for k in (keyframes or []) if k and k.get("imageFile")]
+    if not kfs:
+        raise ValueError("at least one keyframe with an imageFile is required")
+    n = len(kfs)
+    for i, k in enumerate(kfs):
+        if k.get("start") is None:
+            if i == 0:
+                k["start"] = 0
+            elif i == n - 1:
+                k["start"] = max(0, frames - 1)
+            else:
+                k["start"] = int(round(i * (frames - 1) / max(1, n - 1)))
+        k["start"] = max(0, int(k["start"]))
+        k["length"] = max(1, int(k.get("length", 1)))
+        k["isEndFrame"] = bool(k.get("isEndFrame", False))
+        k["guide_strength"] = float(k.get("guide_strength", 1.0))
+    kfs.sort(key=lambda k: k["start"])
+    timeline = {"global_prompt": global_prompt,
+                "segments": [{"type": "image", "start": k["start"], "length": k["length"],
+                              "imageFile": k["imageFile"], "isEndFrame": k["isEndFrame"]} for k in kfs],
+                "audioSegments": []}
+    timeline_data = json.dumps(timeline)
+    guide_csv = ",".join(f"{k['guide_strength']:.3f}" for k in kfs)
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL_STOCK),
+                         "strength_model": distill}},
+        "3": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["2", 0], "lora_name": LTX_LORA_DETAILER, "strength_model": detailer}},
+        "5": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": LTX_CLIP1, "clip_name2": LTX_CLIP2, "type": "ltxv", "device": "default"}},
+        "6": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_VIDEO, "device": "main_device", "weight_dtype": "bf16"}},
+        "7": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
+        # LTXDirector with NO optional_latent: it builds the video latent sized to the first keyframe
+        # (derived dims) and packs the keyframe images into guide_data[4] from timeline_data. We consume
+        # model[0], positive[1], video_latent[2], guide_data[4], frame_rate[6].
+        "9": {"class_type": "LTXDirector",
+              "inputs": {"model": ["3", 0], "clip": ["5", 0],
+                         "global_prompt": global_prompt, "local_prompts": local_prompts,
+                         "segment_lengths": segment_lengths, "epsilon": epsilon,
+                         "guide_strength": guide_csv, "timeline_data": timeline_data,
+                         "duration_frames": frames, "duration_seconds": secs,
+                         "start_frame": 0, "end_frame": frames,
+                         "start_second": 0.0, "end_second": secs,
+                         "use_custom_audio": False, "use_custom_motion": False,
+                         "frame_rate": float(fps), "display_mode": "frames",
+                         "custom_width": w, "custom_height": h,
+                         "resize_method": "maintain aspect ratio", "divisible_by": 32,
+                         "audio_vae": ["7", 0]}},
+        "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
+        "11": {"class_type": "LTXVConditioning",
+               "inputs": {"positive": ["9", 1], "negative": ["10", 0], "frame_rate": float(fps)}},
+        # LTXDirectorGuide: encode each keyframe still and APPEND it to the video latent at its insert
+        # frame. ic_lora_name="None" (no motion IC-LoRA); model/motion_guide_data left unconnected.
+        # Outputs: positive[0], negative[1], latent[2] (keyframes appended), model[3], ldf[4].
+        "12": {"class_type": "LTXDirectorGuide",
+               "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
+                          "latent": ["9", 2], "guide_data": ["9", 4], "ic_lora_name": "None",
+                          "ic_lora_strength": 1.0, "scale_by": 1.0, "upscale_method": "bicubic",
+                          "image_attention_strength": 1.0, "crop": "center",
+                          "use_tiled_encode": False, "tile_size": 256, "tile_overlap": 64,
+                          "retake_mode": False}},
+        "15": {"class_type": "LTXVEmptyLatentAudio",
+               "inputs": {"frames_number": frames, "frame_rate": fps, "batch_size": 1, "audio_vae": ["7", 0]}},
+        "16": {"class_type": "LTXVConcatAVLatent",
+               "inputs": {"video_latent": ["12", 2], "audio_latent": ["15", 0]}},
+        "17": {"class_type": "CFGGuider",
+               "inputs": {"model": ["9", 0], "positive": ["12", 0], "negative": ["12", 1], "cfg": cfg}},
+        "18": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "19": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "20": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},
+        "21": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["18", 0], "guider": ["17", 0], "sampler": ["19", 0],
+                          "sigmas": ["20", 0], "latent_image": ["16", 0]}},
+        "22": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["21", 0]}},
+        # LTXDirectorCropGuides strips the appended keyframe guide frames using the crop count the
+        # guide node stamped onto the conditioning (nghtdrp_guide_crop_latent_frames). Takes the
+        # guide-node conditioning [12,0]/[12,1] + the separated video latent [22,0].
+        "23": {"class_type": "LTXDirectorCropGuides",
+               "inputs": {"positive": ["12", 0], "negative": ["12", 1], "latent": ["22", 0]}},
+        "24": {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+               "inputs": {"vae": ["6", 0], "latents": ["23", 2], "spatial_tiles": 4, "spatial_overlap": 4,
+                          "temporal_tile_length": 48, "temporal_overlap": 8, "last_frame_fix": False,
+                          "working_device": "auto", "working_dtype": "auto"}},
+        "25": {"class_type": "CreateVideo", "inputs": {"images": ["24", 0], "fps": fps}},
+        "26": {"class_type": "SaveVideo",
+               "inputs": {"video": ["25", 0], "filename_prefix": "videogen/ltxkf",
+                          "format": "auto", "codec": "auto"}},
+    }
+    if vocal_ref:                                          # native lip-sync (masked-audio, same as MSR/FLF)
+        g["27"] = {"class_type": "LoadAudio", "inputs": {"audio": vocal_ref}}
+        g["28"] = {"class_type": "LTXVAudioVAEEncode", "inputs": {"audio": ["27", 0], "audio_vae": ["7", 0]}}
+        g["36"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": 1024, "height": 1024}}
+        g["37"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["28", 0], "mask": ["36", 0]}}
+        g["16"]["inputs"]["audio_latent"] = ["37", 0]
+        del g["15"]
+        g["25"]["inputs"]["audio"] = ["27", 0]
+    nondistilled = bool(p.get("full") or p.get("nondistilled"))
+    if nondistilled:                                       # final-render Dev path (mirror MSR/FLF)
+        nd_steps = int(p.get("steps") or 25)
+        g["2"]["inputs"]["strength_model"] = float(p.get("distill_strength", 0.2))
+        g["20"] = {"class_type": "LTXVScheduler",
+                   "inputs": {"steps": nd_steps, "max_shift": 2.05, "base_shift": 0.95,
+                              "stretch": True, "terminal": 0.1, "latent": ["16", 0]}}
+        g["17"]["inputs"]["cfg"] = float(p.get("cfg", 3.0))
+    resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+                "seconds": round(frames / fps, 2), "cfg": cfg, "distill_strength": distill,
+                "detailer_strength": detailer, "keyframes": len(kfs),
+                "keyframe_inserts": [{"start": k["start"], "length": k["length"],
+                                      "isEndFrame": k["isEndFrame"], "guide_strength": k["guide_strength"]}
+                                     for k in kfs],
+                "prompt": local_prompts, "lipsync": bool(vocal_ref), "kind": "video", "method": "keyframe"}
+    if global_prompt or "|" in local_prompts:
+        resolved["global_prompt"] = global_prompt
+        resolved["segment_lengths"] = segment_lengths or "(even)"
+        resolved["epsilon"] = epsilon
+    if nondistilled:
+        resolved["nondistilled"] = True
+        resolved["steps"] = int(p.get("steps") or 25)
+        resolved["cfg"] = float(p.get("cfg", 3.0))
+        resolved["distill_strength"] = float(p.get("distill_strength", 0.2))
     return g, resolved
 
 
