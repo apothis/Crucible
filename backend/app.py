@@ -934,14 +934,16 @@ def video_ltx_flf(p: dict):
 
 @app.post("/api/video/ltx_keyframe")
 def video_ltx_keyframe(p: dict):
-    """LTX-2.3 KEYFRAME mode (LTXDirector -> LTXDirectorGuide, no MSR IC-LoRA): place 1-N library
-    stills at absolute frame positions and interpolate, with an optional per-segment PROMPT timeline.
-    The LTXDirector-native successor to /api/video/ltx_flf (N keyframes instead of just first+last).
-    p: {keyframes: [{still_id (library still), start? (frame), length? (frames), isEndFrame? (place at
-    the END of its window), guide_strength? (0-1)}], prompt, negative?, global_prompt?, local_prompts?,
-    segment_lengths?, epsilon?, seed?, width?, height?, frames?, fps?, cfg?, distill_strength?,
-    detailer_strength?, full?, steps?, audio_id? (native single-pass lip-sync from a library track's
-    isolated vocal), audio_start?, isolate_vocal?}."""
+    """LTX-2.3 KEYFRAME mode: faithful port of the WhatDreamsCost LTX Director 2-stage example workflow
+    (base sample -> spatial-x2 latent-upscale REFINE) driving LTXDirector -> LTXDirectorGuide with no MSR
+    IC-LoRA. Place 1-N library stills at absolute frame positions and interpolate, with an optional
+    per-segment PROMPT timeline. The LTXDirector-native successor to /api/video/ltx_flf. No lip-sync (the
+    keyframe/B-roll use case pins identity via the stills). p: {keyframes: [{still_id (library still),
+    start? (frame), length? (frames), isEndFrame? (place at the END of its window), guide_strength?
+    (0-1)}], prompt, negative?, global_prompt?, local_prompts?, segment_lengths?, epsilon?, seed?, width?,
+    height? (TARGET output res when base_scale=0.5), frames?, fps?, cfg?, distill_strength?, base_scale?
+    (0.5 = output==target res [default], 1.0 = output 2x via the x2 upsampler), base_steps?, refine_steps?,
+    refine_denoise?}."""
     raw_kfs = p.get("keyframes")
     if not raw_kfs and p.get("keyframe_ids"):              # convenience: bare id list -> keyframes
         raw_kfs = [{"still_id": x} for x in p.get("keyframe_ids")]
@@ -958,30 +960,16 @@ def video_ltx_keyframe(p: dict):
                              "start": k.get("start"), "length": k.get("length", 1),
                              "isEndFrame": bool(k.get("isEndFrame", False)),
                              "guide_strength": float(k.get("guide_strength", 1.0))})
-    audio = _lib_source_path(p.get("audio_id")) if p.get("audio_id") else None
-    start = max(0.0, float(p.get("audio_start") or 0))
-    iso_used = None
     try:
         for k in resolved_kfs:                              # upload each still to ComfyUI input
             with open(k["_path"], "rb") as f:
                 k["imageFile"] = C.upload_audio(f.read(), os.path.basename(k["_path"]))
-        vocal_ref = None
-        if audio:
-            fps = int(p.get("fps", 24))
-            frames = video_mod._ltx_frames(p.get("frames", 121), fps)
-            aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, frames / fps, p)
-            vocal_ref = C.upload_audio(aud_bytes, "kf_vocal.wav")
-        graph, resolved = video_mod.build_ltx_keyframe(p, resolved_kfs, vocal_ref)
+        graph, resolved = video_mod.build_ltx_keyframe(p, resolved_kfs)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     resolved["keyframe_ids"] = [k["_still_id"] for k in resolved_kfs]
-    if audio:
-        resolved["audio_id"] = os.path.basename(p.get("audio_id"))
-        resolved["audio_start"] = start
-        resolved["vocal_isolated"] = bool(iso_used)
-        resolved["isolate_engine"] = iso_used
     return _submit_video(graph, resolved, "videoclip")
 
 

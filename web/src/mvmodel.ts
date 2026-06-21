@@ -49,8 +49,8 @@ export type Block = {
 };
 
 export const MSR_REF_COMBOS = [17, 25, 33, 41];   // LiconMSR frame_count combo
-export const DEFAULT_W = 832;
-export const DEFAULT_H = 480;
+export const DEFAULT_W = 1280;
+export const DEFAULT_H = 720;
 export const DEFAULT_FPS = 24;
 
 export function makeBlock(start: number, fps = DEFAULT_FPS): Block {
@@ -166,10 +166,12 @@ export function blockKeyframes(b: Block): { still_id: string; start: number; len
                    isEndFrame: !!x.s.isEndFrame }));
 }
 
-// build the /api/video/ltx_keyframe payload from a KEYFRAME-mode block (LTXDirector keyframe guide).
-// Keyframe stills come from the segments (blockKeyframes); the per-segment PROMPT timeline is sent
-// exactly like MSR so a shot can both interpolate between stills AND schedule prompts.
-export function keyframePayload(b: Block, songAudioId: string): Record<string, unknown> {
+// build the /api/video/ltx_keyframe payload from a KEYFRAME-mode block (the LTXDirector 2-stage
+// keyframe-guide pipeline). Keyframe stills come from the segments (blockKeyframes); the per-segment
+// PROMPT timeline is sent like MSR so a shot can both interpolate between stills AND schedule prompts.
+// No lip-sync (keyframe / B-roll pins identity via the stills). Output res == width x height (the
+// stage-1 base_scale 0.5 nets back the spatial-x2 refine); the backend exposes base_scale for 2x.
+export function keyframePayload(b: Block): Record<string, unknown> {
   const p: Record<string, unknown> = {
     keyframes: blockKeyframes(b).map((k) => ({ ...k, guide_strength: b.guideStrength })),
     prompt: b.prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps, cfg: b.cfg,
@@ -182,11 +184,6 @@ export function keyframePayload(b: Block, songAudioId: string): Record<string, u
     p.segment_lengths = b.segs.map((s) => s.len.trim()).filter(Boolean).join(",");
     p.epsilon = b.epsilon;
   }
-  if (b.lipsync) {
-    p.audio_id = b.audioId || songAudioId;
-    p.audio_start = b.audioStart;
-    p.isolate_vocal = b.isolateVocal;
-  }
   return p;
 }
 
@@ -196,6 +193,7 @@ export const blockSeconds = (b: Block) => +(b.frames / b.fps).toFixed(2);
 export type ScriptShot = {
   start?: number; end?: number; type?: string; scene?: string; action?: string;
   costume?: string; characters?: string[]; lipsync?: boolean; section?: string; camera?: string;
+  render?: string;   // "msr" (default, performer / music-synced) | "keyframe" (pure scenic B-roll)
   segments?: { seconds?: number; action?: string }[];   // per-shot prompt timeline (relay)
 };
 
@@ -236,7 +234,12 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
   }));
   const tlOn = segs.length > 1;
   const look = [s.scene, s.costume ? `wearing ${s.costume}` : "", cam].filter(Boolean).join(". ");
-  return { ...base, id: rid(), start, end, frames: ltxFrames(dur * base.fps),
+  // RENDER MODE from the planner: keyframe ONLY for pure scenic B-roll (no performer / no music sync);
+  // anything with lip-sync, a performance shot, or named characters present stays MSR (the only mode that
+  // lip-syncs or syncs motion to the music). Mirrors the backend parse_shots enforcement.
+  const keyframeOk = s.render === "keyframe" && !s.lipsync && s.type !== "performance" && chars.length === 0;
+  const renderMode: RenderMode = keyframeOk ? "keyframe" : "msr";
+  return { ...base, id: rid(), start, end, frames: ltxFrames(dur * base.fps), renderMode,
     prompt, global: tlOn ? look : "", segs, tlOn,
-    lipsync: !!s.lipsync, chars, audioId, audioStart: start };
+    lipsync: !!s.lipsync && renderMode !== "keyframe", chars, audioId, audioStart: start };
 }

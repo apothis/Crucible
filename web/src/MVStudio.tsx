@@ -120,7 +120,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [transition, setTransition] = d.use("transition", 0);  // crossfade seconds between blocks (0 = hard cut)
   const [introDur, setIntroDur] = d.use("introDur", 0);        // intro pre-roll: seconds the opening clip's own audio plays before the song (0 = off)
   const [introXfade, setIntroXfade] = d.use("introXfade", 1.5);// intro -> song crossfade seconds
-  const [resolution, setResolution] = d.use("resolution", "832x480"); // PROJECT render resolution (all shots + assembly)
+  const [resolution, setResolution] = d.use("resolution", "1280x720"); // PROJECT render resolution (all shots + assembly)
   const [resW, resH] = resolution.split("x").map(Number);
   const [scriptModel, setScriptModel] = d.use("scriptModel", "claude-sonnet-4-6"); // LLM for the script writer
   const [grades, setGrades] = useState<string[]>(["none"]);
@@ -268,7 +268,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       if (b.renderMode === "msr") {
         ({ job_id } = await api.videoLtxMsr({ ...msrPayload(b, subjectIds, audioId), width: resW, height: resH }) as { job_id: string });
       } else if (b.renderMode === "keyframe") {
-        ({ job_id } = await api.videoLtxKeyframe({ ...keyframePayload(b, audioId), width: resW, height: resH }) as { job_id: string });
+        ({ job_id } = await api.videoLtxKeyframe({ ...keyframePayload(b), width: resW, height: resH }) as { job_id: string });
       } else if (b.renderMode === "s2v") {
         const still = subjectIds[0] || b.backgroundId;
         if (!still) return fail("S2V needs a reference still.");

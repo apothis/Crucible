@@ -261,6 +261,7 @@ Write about {target} shots covering the whole song IN ORDER, 0 to {total}s with 
 Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
+  "render": "msr" | "keyframe",
   "scene": "<SCENE = the look of the frame: setting/environment, subject, lighting, and FRAMING (close-up / medium / wide). Photoreal, grounded in the lyrics at this time + the title theme>",
   "action": "<what the SUBJECT does over the shot - performance, gesture, expression, movement. Describe the PERSON, not the camera>",
   "camera": "static" | "slow push-in" | "slow pull-back",
@@ -274,6 +275,19 @@ length. Each shot must be between 2 and 20 seconds (a fast/energetic or punchy c
 performance, emotional, or atmospheric shot 8-20s). Set start/end so durations VARY with the pacing of
 the music and lyrics. Never exceed 20s for a single shot. Cut more often through busy sections, hold
 longer through sparse ones.
+
+RENDER MODE (set "render" per shot - this picks the engine):
+- "msr" is the DEFAULT - use it for almost everything. It animates a PERSON with prompt-driven motion and
+  is the ONLY mode that can LIP-SYNC the singer and SYNC the band's playing to the music. Use "msr" for
+  every performance / singing / instrument-playing shot, any shot where a character moves, gestures, or
+  emotes in time with the music or lyrics, and any narrative shot with a person acting. If unsure, use "msr".
+- "keyframe" is ONLY for pure B-ROLL / scenery / establishing shots that contain NO performer and NOTHING
+  that must sync to the music, beat, or lyrics - e.g. a landscape, an empty set/stage, an object, weather,
+  a slow scenic camera move over a still environment. It interpolates between fixed still frames, so it
+  CANNOT lip-sync and CANNOT sync any motion to the music. NEVER use "keyframe" for a shot with a singing
+  or playing band member, a dancer, or any music-/beat-synced action.
+HARD RULE: if "lipsync" is true, or "type" is "performance", or any band member is playing/singing in the
+shot, then "render" MUST be "msr". Only scenic/atmospheric shots with no people performing may be "keyframe".
 
 CAMERA (this engine is finicky - obey exactly): set "camera" to ONLY one of "static", "slow push-in"
 (gentle zoom toward the subject) or "slow pull-back" (gentle zoom out). Those are the only moves that
@@ -348,18 +362,30 @@ def parse_shots(text):
             except (TypeError, ValueError):
                 secs = 0.0
             segs.append({"seconds": round(secs, 2), "action": act})
+        stype = t if t in SHOT_TYPES else "broll"
+        lipsync = bool(s.get("lipsync"))
+        chars = [str(x).strip() for x in (s.get("characters") or [])
+                 if x and str(x).strip() not in ("[]", "none", "None", "-", "")]
+        # RENDER MODE: msr (default, performer/music-synced) vs keyframe (pure scenic B-roll). Hard-enforce
+        # that lip-sync / performance / character-present shots can NEVER be keyframe (keyframe interpolates
+        # stills and cannot lip-sync or sync motion to the music). See backend/video.build_ltx_keyframe.
+        render = str(s.get("render") or "").strip().lower()
+        if render not in ("msr", "keyframe"):
+            render = "msr"
+        if render == "keyframe" and (lipsync or stype == "performance" or chars):
+            render = "msr"
         out.append({
             "idx": i,
             "section": str(s.get("section") or ""),
             "start": int(float(s.get("start") or 0)),
             "end": int(float(s.get("end") or 0)),
-            "type": t if t in SHOT_TYPES else "broll",
+            "type": stype,
+            "render": render,
             "scene": str(s.get("scene") or "").strip(),
             "action": str(s.get("action") or s.get("motion") or "").strip(),
             "costume": str(s.get("costume") or "").strip(),
-            "characters": [str(x).strip() for x in (s.get("characters") or [])
-                           if x and str(x).strip() not in ("[]", "none", "None", "-", "")],
-            "lipsync": bool(s.get("lipsync")),
+            "characters": chars,
+            "lipsync": lipsync,
             "camera": _camera(s.get("camera")),
             "segments": segs,
         })
