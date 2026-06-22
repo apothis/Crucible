@@ -32,7 +32,10 @@ export type Block = {
   id: string; idx: number; start: number; end: number; kind: "msr";
   renderMode: RenderMode;
   prompt: string; negative: string;
-  chars: BlockChar[];           // hero characters (resolve to subject refs)
+  scene: string;                // SETTING/ENVIRONMENT only (person-free) - generates the MSR background
+  framing: string;              // "close" | "medium" | "wide" - so the bg is framed to match the shot
+  chars: BlockChar[];           // featured hero character(s) - anchored via MSR (resolve to subject refs)
+  bandInScene: string[];        // other band members composited INTO the background (char ids; not MSR)
   subjectIds: string[];         // manual / extra subject stills (merged with char refs, capped 4)
   backgroundId: string;
   // PromptRelayEncode timeline prompter
@@ -56,8 +59,8 @@ export const DEFAULT_FPS = 24;
 export function makeBlock(start: number, fps = DEFAULT_FPS): Block {
   return {
     id: rid(), idx: 0, start, end: start + 6, kind: "msr", renderMode: "msr",
-    prompt: "", negative: "",
-    chars: [], subjectIds: [], backgroundId: "",
+    prompt: "", negative: "", scene: "", framing: "medium",
+    chars: [], bandInScene: [], subjectIds: [], backgroundId: "",
     tlOn: false, global: "", segs: [], epsilon: 0.001,
     lipsync: false, audioId: "", audioStart: start, isolateVocal: false,
     width: DEFAULT_W, height: DEFAULT_H, frames: 145, fps, seed: 0,
@@ -194,6 +197,8 @@ export type ScriptShot = {
   start?: number; end?: number; type?: string; scene?: string; action?: string;
   costume?: string; characters?: string[]; lipsync?: boolean; section?: string; camera?: string;
   render?: string;   // "msr" (default, performer / music-synced) | "keyframe" (pure scenic B-roll)
+  framing?: string;  // "close" | "medium" | "wide" - kept out of scene so the background stays person-free
+  band_in_scene?: string[];  // other band members composited into the background (NOT MSR-anchored)
   segments?: { seconds?: number; action?: string }[];   // per-shot prompt timeline (relay)
 };
 
@@ -220,8 +225,19 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
     .filter((c): c is Character => !!c)
     .slice(0, 2)
     .map((c) => ({ charId: c.id, wardrobeId: c.wardrobes?.[0]?.id }));
+  // band members standing in the background (composited via Qwen, NOT MSR-anchored); exclude the featured
+  const bandInScene = (s.band_in_scene || [])
+    .map((name) => libChars.find((c) => c.name.toLowerCase() === String(name).toLowerCase()))
+    .filter((c): c is Character => !!c)
+    .map((c) => c.id)
+    .filter((id) => !chars.some((bc) => bc.charId === id));
   const cam = CAMERA_PHRASE[s.camera || "static"] || CAMERA_PHRASE["static"];
-  const prompt = [s.scene, s.costume ? `wearing ${s.costume}` : "", s.action, cam]
+  // scene = the SETTING/ENVIRONMENT only (person-free) - this is what generates the MSR background, so it
+  // must NOT describe the singer. Framing is separate so the video can be close/medium without the
+  // background ever containing a person. The full render prompt = framing + scene + costume + action.
+  const scene = (s.scene || "").trim();
+  const framePhrase = ({ close: "close-up shot", medium: "medium shot", wide: "wide shot" } as Record<string, string>)[s.framing || "medium"] || "medium shot";
+  const prompt = [framePhrase, scene, s.costume ? `wearing ${s.costume}` : "", s.action, cam]
     .filter(Boolean).join(". ");
   // per-shot timeline: the constant look -> global, each slice's action -> a segment prompt. Lengths
   // are all-or-nothing (every segment timed, or all blank for an even split) so the relay's
@@ -233,15 +249,15 @@ export function shotToBlock(s: ScriptShot, libChars: Character[], audioId: strin
     prompt: String(sg.action).trim(),
   }));
   const tlOn = segs.length > 1;
-  const look = [s.scene, s.costume ? `wearing ${s.costume}` : "", cam].filter(Boolean).join(". ");
+  const look = [framePhrase, scene, s.costume ? `wearing ${s.costume}` : "", cam].filter(Boolean).join(". ");
   // RENDER MODE from the planner: keyframe ONLY for pure scenic B-roll (no performer / no music sync);
   // anything with lip-sync, a performance shot, or named characters present stays MSR (the only mode that
   // lip-syncs or syncs motion to the music). Mirrors the backend parse_shots enforcement.
   const keyframeOk = s.render === "keyframe" && !s.lipsync && s.type !== "performance" && chars.length === 0;
   const renderMode: RenderMode = keyframeOk ? "keyframe" : "msr";
   return { ...base, id: rid(), start, end, frames: ltxFrames(dur * base.fps), renderMode,
-    prompt, global: tlOn ? look : "", segs, tlOn,
-    lipsync: !!s.lipsync && renderMode !== "keyframe", chars, audioId, audioStart: start };
+    prompt, scene, framing: s.framing || "medium", global: tlOn ? look : "", segs, tlOn,
+    lipsync: !!s.lipsync && renderMode !== "keyframe", chars, bandInScene, audioId, audioStart: start };
 }
 
 // cumulative section-boundary times (seconds) from a song's ordered sections (each {seconds}).

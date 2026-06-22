@@ -262,7 +262,8 @@ Return ONLY a JSON array. Each element is an object:
 {{"section": "<section type>", "start": <sec int>, "end": <sec int>,
   "type": "performance" | "narrative" | "broll",
   "render": "msr" | "keyframe",
-  "scene": "<SCENE = the look of the frame: setting/environment, subject, lighting, and FRAMING (close-up / medium / wide). Photoreal, grounded in the lyrics at this time + the title theme>",
+  "scene": "<SETTING / ENVIRONMENT ONLY - location, backdrop, lighting, mood. NO people, NO face, NO performer, NO framing words. This generates the empty background the character is composited into, so it must contain no person. e.g. 'a ruined ashen concert stage, ember haze' NOT 'close-up on Selene'.>",
+  "framing": "close" | "medium" | "wide",
   "action": "<what the SUBJECT does over the shot - performance, gesture, expression, movement. Describe the PERSON, not the camera>",
   "camera": "static" | "slow push-in" | "slow pull-back",
   "costume": "<what the named characters WEAR in this shot - lets the same person change outfits between scenes; '' if not notable or on-stage performance wear>",
@@ -376,6 +377,9 @@ def parse_shots(text):
         lipsync = bool(s.get("lipsync"))
         chars = [str(x).strip() for x in (s.get("characters") or [])
                  if x and str(x).strip() not in ("[]", "none", "None", "-", "")]
+        band_in_scene = [str(x).strip() for x in (s.get("band_in_scene") or [])
+                         if x and str(x).strip() not in ("[]", "none", "None", "-", "")]
+        band_in_scene = [b for b in band_in_scene if b.lower() not in [c.lower() for c in chars]]
         # RENDER MODE: msr (default, performer/music-synced) vs keyframe (pure scenic B-roll). Hard-enforce
         # that lip-sync / performance / character-present shots can NEVER be keyframe (keyframe interpolates
         # stills and cannot lip-sync or sync motion to the music). See backend/video.build_ltx_keyframe.
@@ -384,6 +388,11 @@ def parse_shots(text):
             render = "msr"
         if render == "keyframe" and (lipsync or stype == "performance" or chars):
             render = "msr"
+        framing = str(s.get("framing") or "").strip().lower()
+        if framing not in ("close", "medium", "wide"):
+            framing = "medium"
+        if lipsync and framing == "wide":                 # lip-sync needs the face big enough
+            framing = "medium"
         out.append({
             "idx": i,
             "section": str(s.get("section") or ""),
@@ -391,10 +400,12 @@ def parse_shots(text):
             "end": int(float(s.get("end") or 0)),
             "type": stype,
             "render": render,
+            "framing": framing,
             "scene": str(s.get("scene") or "").strip(),
             "action": str(s.get("action") or s.get("motion") or "").strip(),
             "costume": str(s.get("costume") or "").strip(),
             "characters": chars,
+            "band_in_scene": band_in_scene,
             "lipsync": lipsync,
             "camera": _camera(s.get("camera")),
             "segments": segs,
@@ -482,29 +493,48 @@ Return ONLY a JSON array of EXACTLY {len(grid)} objects, one per shot above, IN 
 Do NOT include start/end - the timing is fixed by the list above. Each object:
 {{"type": "performance" | "narrative" | "broll",
   "render": "msr" | "keyframe",
-  "scene": "<the look of the frame: setting, subject, lighting, FRAMING (close/medium/wide), photoreal>",
+  "scene": "<the SETTING / ENVIRONMENT ONLY - the location, backdrop, lighting and mood. Describe NO people, NO face, NO performer, and NO framing words (no 'close-up', 'wide', etc.). This text generates the empty background the character is composited into, so it must contain no person. e.g. 'a ruined ashen concert stage, ember haze, dark sky' - NOT 'close-up on Selene singing'.>",
+  "framing": "close" | "medium" | "wide",
   "action": "<what the SUBJECT does - performance, gesture, expression, movement; describe the PERSON>",
   "camera": "static" | "slow push-in" | "slow pull-back",
   "costume": "<what the named characters WEAR; '' if on-stage performance wear or not notable>",
-  "characters": [<names of any named characters present; prefer ONE per shot; [] if none>],
-  "lipsync": <true for ANY shot where a singer is singing the lyrics ON CAMERA - close OR wide, alone OR
-    with the band, standing OR moving. If the lead singer is visible while words are sung, set true.
-    false ONLY when no one is singing on screen (instrumental, scenic B-roll, non-singing actor)>,
+  "characters": [<the FEATURED performer this shot is about - anchored by MSR. Prefer ONE (the singer for a singing shot, the soloist for a solo). [] if none>],
+  "band_in_scene": [<OTHER named band members visible but standing in the BACKGROUND - they are composited into the scene still, NOT MSR-anchored, so keep them deep in the background, not featured; [] if none>],
+  "lipsync": <true for ANY shot where a singer is singing the lyrics ON CAMERA (frame it CLOSE or MEDIUM
+    per FRAMING below). false ONLY when no one is singing on screen (instrumental, scenic B-roll, non-singing actor)>,
   "segments": [<OPTIONAL within-shot timeline; each {{"seconds": <num>, "action": "<motion/expression>"}}; [] if one continuous action>]}}
+
+STYLE - CRITICAL FOR IDENTITY: pick ONE consistent visual grade/palette for the WHOLE video (from the
+song's mood + title) and apply that SAME look to every shot's "scene" - one palette, one consistent soft
+light. Do NOT give individual shots their own dramatic or coloured lighting (no "deep crimson/gold light
+cutting across her face", no harsh coloured side-light on people): strong coloured directional light
+re-shades a character's face and hair and BREAKS the identity reference. Keep light on faces soft and
+even, and the palette identical shot to shot.
 
 RENDER MODE: "msr" = the DEFAULT, the only mode that animates a person and lip-syncs - use for every
 performance / singing / playing shot and any shot with a character. "keyframe" = ONLY pure scenic
 B-roll with NO performer and nothing synced to the music. If "lipsync" is true or the lead singer is
 present, "render" MUST be "msr".
 
-CAMERA: only "static", "slow push-in", or "slow pull-back". No pans/tracking/orbits. Keep camera
-language OUT of scene/action.
+BAND IN BACKGROUND: only the FEATURED performer (in "characters") is animated and identity-anchored via
+MSR. Other band members go in "band_in_scene" and are composited into the BACKGROUND still as a STATIC
+image - so keep them deeper in the frame, never featured close, and never give them their own action.
+
+CAMERA: only "static", "slow push-in", or "slow pull-back". No pans/tracking/orbits. A push-in/pull-back
+must stay GENTLE - never pull back far enough to shrink the subject. Keep camera language OUT of scene/action.
+NO-RETURN RULE: band_in_scene members are a static background composite - if a shot has band_in_scene, the
+camera must NOT move off them and then back onto them (they would look frozen/wrong). Prefer static, or a
+gentle push-in toward the featured performer (moving away from the background band), never back toward them.
+
+FRAMING (hard rule): any lip-sync shot MUST be CLOSE or MEDIUM so the singer's face is large enough to
+lip-sync - NEVER wide, full-body, or establishing, and never a pull-back that shrinks her face. Reserve
+WIDE / establishing framings for B-roll or non-singing moments only.
 
 CASTING: prefer ONE named character per shot (crowded frames make people drift/swap attributes). Give
-each character solo MEDIUM/CLOSE shots. At most ONE wide whole-band shot in the video.
+each character solo MEDIUM/CLOSE shots. At most ONE wide whole-band shot, and it must NOT be a lip-sync shot.
 
-LIP-SYNC RULE: during any SUNG section, EVERY shot showing the lead singer - wide, close, walking, or on
-stage with the band - must set "lipsync": true. Do not reserve lip-sync for close-ups.
+LIP-SYNC RULE: during any SUNG section, EVERY shot showing the lead singer must set "lipsync": true - and
+per FRAMING keep it close/medium. Do not reserve lip-sync for close-ups, but never make a singing shot wide.
 
 Photoreal live-action metal video. Every shot connects to BOTH the title theme and the lyrics in its window."""
     return system, prompt

@@ -332,19 +332,39 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   // ---- generate a block's BACKGROUND scene still (Z-Image) from its prompt. For MSR blocks the
   // character is an MSR subject (added separately), so bias the still to an empty scene. ----
   async function genStill(b: Block) {
-    const scene = b.renderMode === "msr"
-      ? `${b.prompt} The setting only, an empty scene with no people.`
-      : (b.prompt || "");
-    if (!scene.trim()) return;
+    // The MSR background must NOT contain the featured/MSR subject (a person there corrupts identity),
+    // but a BAND shot DOES need the other band members composited in. Frame the bg to MATCH the shot
+    // framing (a wide bg forces the composite wide, which breaks lip-sync close-ups).
+    const bgFrame = ({ close: "a tight, close framing of", medium: "a medium framing of", wide: "a wide establishing shot of" } as Record<string, string>)[b.framing || "medium"] || "a medium framing of";
     const card = { id: rid(), title: `block ${b.idx + 1}: background still...`, status: "pending" as const, pct: 0 };
-    ctx.setResults([card]);
-    try {
-      const neg = b.renderMode === "msr" ? "people, person, human, figure, crowd, " + (b.negative || "") : (b.negative || undefined);
-      const { job_id } = await api.videoStill({ prompt: scene, negative: neg, width: resW, height: resH }) as { job_id: string };
+    const setBg = (job_id: string) => {
       const blk = blocks.find((x) => x.id === b.id);
       patch(b.id, { backgroundId: job_id, bgVariants: [...(blk?.bgVariants || []), job_id] });
       ctx.patch(card.id, { status: "running", pct: 5 });
       pollJob(job_id, card.id, ctx);
+    };
+    try {
+      // BAND shot: composite the non-featured band members into the scene via Qwen (char_still). They are
+      // a STATIC background image (only the featured singer is MSR-anchored).
+      const bandRefs = b.renderMode === "msr"
+        ? b.bandInScene.map((id) => sceneRefOf(libChars.find((c) => c.id === id))).filter(Boolean).slice(0, 3)
+        : [];
+      if (bandRefs.length) {
+        ctx.setResults([card]);
+        const prompt = `${(b.scene || b.prompt).trim()}. The band members standing together deep in the background of the scene (${bgFrame} the setting). Photoreal, no other people, no extra figures, no crowd.`;
+        const { job_id } = await api.videoCharStill({ ref_ids: bandRefs, prompt }) as { job_id: string };
+        setBg(job_id);
+        return;
+      }
+      // SOLO / B-roll: person-free environment still.
+      const scene = b.renderMode === "msr"
+        ? `${bgFrame} the setting: ${(b.scene || b.prompt).trim()}. The empty environment only - absolutely no people, no person, no singer, no musician, no figure, no face, unpopulated.`
+        : (b.prompt || "");
+      if (!scene.trim()) return;
+      ctx.setResults([card]);
+      const neg = b.renderMode === "msr" ? "people, person, man, woman, singer, musician, performer, face, figure, silhouette, crowd, " + (b.negative || "") : (b.negative || undefined);
+      const { job_id } = await api.videoStill({ prompt: scene, negative: neg, width: resW, height: resH }) as { job_id: string };
+      setBg(job_id);
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
   async function renderAllStills(onlyMissing: boolean) {
