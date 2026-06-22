@@ -107,11 +107,22 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                 <option value="musician">musician</option>
                 <option value="actor">actor</option>
               </select>
+              <select className={`${inp} w-28`} value={c.gender || ""} onChange={(e) => patch(c, { gender: e.target.value })} title="gender (used to name the character in band/scene composites)">
+                <option value="">gender?</option>
+                <option value="female">female</option>
+                <option value="male">male</option>
+                <option value="non-binary">non-binary</option>
+              </select>
               <span className="w-16 shrink-0 text-[9px] text-[var(--color-muted)]">{(c.wardrobes || []).length} look{(c.wardrobes || []).length === 1 ? "" : "s"}</span>
               <button onClick={() => del(c.id)} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="delete character">{"×"}</button>
             </div>
             {editing && (
               <div className="space-y-2 border-t border-[var(--color-line)] pt-2">
+                {/* role (e.g. "lead singer", "lead guitarist", "bassist") - used to name the character in composites */}
+                <div className="flex items-center gap-1.5">
+                  <span className="w-16 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Role</span>
+                  <input className={inp} value={c.role || ""} onChange={(e) => patch(c, { role: e.target.value })} placeholder="e.g. lead singer, lead guitarist, bassist" />
+                </div>
                 {/* appearance description (+ LLM enhance + example) */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">

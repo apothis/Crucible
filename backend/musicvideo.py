@@ -220,6 +220,22 @@ def _song_summary(song):
     return "\n".join(lines), t
 
 
+def _fmt_cast(lst):
+    """One line per character: name (role) - appearance. The appearance carries each member's LOOK
+    incl. gender, so the LLM can name them correctly in a band tableau (e.g. 'female guitarist on the
+    left, male bassist on the right') instead of guessing."""
+    out = []
+    for c in lst:
+        look = (c.get("appearance") or "").strip().replace("\n", " ")
+        if len(look) > 160:
+            look = look[:160].rsplit(" ", 1)[0] + "..."
+        gender = (c.get("gender") or "").strip()
+        role = c.get("role") or "character"
+        tag = f"{gender} {role}".strip() if gender else role
+        out.append(f"  - {c['name']} ({tag})" + (f" - {look}" if look else ""))
+    return "\n".join(out)
+
+
 def build_prompt(song, cast, n_shots):
     summary, total = _song_summary(song)
     title = song.get("title") or "Untitled"
@@ -228,7 +244,7 @@ def build_prompt(song, cast, n_shots):
     actors = [c for c in named if c.get("kind") == "actor"]
 
     def _fmt(lst):
-        return "\n".join(f"  - {c['name']} ({c.get('role') or 'character'})" for c in lst)
+        return _fmt_cast(lst)
     cast_parts = []
     if musicians:
         cast_parts.append("Band / musicians (primarily PERFORMANCE shots playing/singing - the "
@@ -462,7 +478,7 @@ def build_grid_prompt(song, cast, grid):
     actors = [c for c in named if c.get("kind") == "actor"]
 
     def _fmt(lst):
-        return "\n".join(f"  - {c['name']} ({c.get('role') or 'character'})" for c in lst)
+        return _fmt_cast(lst)
     cast_parts = []
     if musicians:
         cast_parts.append("Band / musicians (PERFORMANCE shots playing/singing - the lead singer "
@@ -498,8 +514,8 @@ Do NOT include start/end - the timing is fixed by the list above. Each object:
   "action": "<what the SUBJECT does - performance, gesture, expression, movement; describe the PERSON>",
   "camera": "static" | "slow push-in" | "slow pull-back",
   "costume": "<what the named characters WEAR; '' if on-stage performance wear or not notable>",
-  "characters": [<the FEATURED performer this shot is about - anchored by MSR. Prefer ONE (the singer for a singing shot, the soloist for a solo). [] if none>],
-  "band_in_scene": [<OTHER named band members visible but standing in the BACKGROUND - they are composited into the scene still, NOT MSR-anchored, so keep them deep in the background, not featured; [] if none>],
+  "characters": [<the ONE MSR-anchored performer this shot is about (the lead singer for a singing shot, the soloist for a solo). NEVER list more than one - extra MSR subjects blend/swap identities. [] if none>],
+  "band_in_scene": [<OTHER named band members playing in this shot - composited into the BACKGROUND still (shown playing their instruments), NOT MSR-anchored. Name them in "action" by look + instrument + side. [] if none / not a band shot>],
   "lipsync": <true for ANY shot where a singer is singing the lyrics ON CAMERA (frame it CLOSE or MEDIUM
     per FRAMING below). false ONLY when no one is singing on screen (instrumental, scenic B-roll, non-singing actor)>,
   "segments": [<OPTIONAL within-shot timeline; each {{"seconds": <num>, "action": "<motion/expression>"}}; [] if one continuous action>]}}
@@ -516,15 +532,21 @@ performance / singing / playing shot and any shot with a character. "keyframe" =
 B-roll with NO performer and nothing synced to the music. If "lipsync" is true or the lead singer is
 present, "render" MUST be "msr".
 
-BAND IN BACKGROUND: only the FEATURED performer (in "characters") is animated and identity-anchored via
-MSR. Other band members go in "band_in_scene" and are composited into the BACKGROUND still as a STATIC
-image - so keep them deeper in the frame, never featured close, and never give them their own action.
+BAND / LIVE PERFORMANCE shots: ONLY the LEAD SINGER goes in "characters" (she is the MSR-anchored,
+animated, lip-syncing subject). The OTHER on-stage band members go in "band_in_scene" - they are
+composited into the BACKGROUND still (which DOES show them playing), NOT MSR-anchored. Do NOT put more
+than the lead singer in "characters": anchoring two+ people via MSR makes their identities blend/swap.
+For a band shot, write the "action" as the whole tableau, naming each member by their LOOK (incl. gender
+from the cast list above), instrument and a fixed side - e.g. "Selene sings centre into the mic; the
+female guitarist plays on the left; the male bassist plays on the right; a drummer at a full kit behind
+them". A live band shot ALWAYS has a drum kit with a drummer at the back (the drummer is generic - never
+named, never given a reference, mostly hidden behind the kit).
 
 CAMERA: only "static", "slow push-in", or "slow pull-back". No pans/tracking/orbits. A push-in/pull-back
 must stay GENTLE - never pull back far enough to shrink the subject. Keep camera language OUT of scene/action.
 NO-RETURN RULE: band_in_scene members are a static background composite - if a shot has band_in_scene, the
 camera must NOT move off them and then back onto them (they would look frozen/wrong). Prefer static, or a
-gentle push-in toward the featured performer (moving away from the background band), never back toward them.
+gentle push-in toward the lead singer (moving away from the background band), never back toward them.
 
 FRAMING (hard rule): any lip-sync shot MUST be CLOSE or MEDIUM so the singer's face is large enough to
 lip-sync - NEVER wide, full-body, or establishing, and never a pull-back that shrinks her face. Reserve

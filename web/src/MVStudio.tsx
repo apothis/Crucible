@@ -219,7 +219,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       // audio_id lets the backend snap the cuts onto the song's ACTUAL structure (allin1 segments +
       // downbeats from the rendered audio) - more accurate than the planned arrangement.
       const r = await api.mvScript({ song: payload, model: scriptModel, audio_id: audioId,
-        cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician" })) }) as { shots: ScriptShot[] };
+        cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician", gender: c.gender || "", appearance: c.appearance || "" })) }) as { shots: ScriptShot[] };
       const next = (r.shots || []).map((s) => shotToBlock(s, libChars, audioId));
       commit(next); setSelId(next[0]?.id || "");
     } catch (e) {
@@ -345,13 +345,31 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     };
     try {
       // BAND shot: composite the non-featured band members into the scene via Qwen (char_still). They are
-      // a STATIC background image (only the featured singer is MSR-anchored).
-      const bandRefs = b.renderMode === "msr"
-        ? b.bandInScene.map((id) => sceneRefOf(libChars.find((c) => c.id === id))).filter(Boolean).slice(0, 3)
-        : [];
+      // a STATIC background image (only the featured singer is MSR-anchored). Each member must be NAMED with
+      // their role + look so Qwen preserves each identity/gender/instrument - a generic "the band members"
+      // collapses every reference into one look (e.g. two male bassists instead of female-guitarist +
+      // male-bassist). A live band shot also gets a full drum kit with a drummer (style unspecified - he is
+      // mostly hidden behind the kit, so no drummer reference is needed).
+      const bandChars = (b.renderMode === "msr" ? b.bandInScene : [])
+        .map((id) => libChars.find((c) => c.id === id))
+        .filter(Boolean) as Character[];
+      const bandRefs = bandChars.map((c) => sceneRefOf(c)).filter(Boolean).slice(0, 3);
       if (bandRefs.length) {
         ctx.setResults([card]);
-        const prompt = `${(b.scene || b.prompt).trim()}. The band members standing together deep in the background of the scene (${bgFrame} the setting). Photoreal, no other people, no extra figures, no crowd.`;
+        // Name each member by GENDER + role + look + a fixed left/right position so Qwen holds them apart - a
+        // generic "the band members" (or a name with no gender) collapses every reference into one identity
+        // (e.g. two male bassists). The lead singer is NOT in this composite (MSR-anchored separately); the
+        // drummer is generic (no ref). Gender/look come from the character (set in the character editor).
+        const sides = ["on the left", "on the right", "in the middle"];
+        const memberDesc = (c: Character) => {
+          const gr = [(c.gender || "").trim(), (c.role || "musician").trim()].filter(Boolean).join(" ");
+          const look = (c.appearance || "").trim();
+          return `a ${gr}${look ? ` (${look})` : ""}`;
+        };
+        const who = bandChars.slice(0, bandRefs.length)
+          .map((c, i) => `${memberDesc(c)} ${bandRefs.length > 1 ? sides[i] || "in the scene" : "in the scene"}, playing their instrument`)
+          .join("; ");
+        const prompt = `A live band performing on stage, ${bgFrame} the band: ${who}; with a full drum kit at the back and a drummer seated behind it, mostly hidden behind the kit. Setting: ${(b.scene || "a stage").trim()}. Photoreal, cinematic. No lead singer, no front person, no audience, no crowd.`;
         const { job_id } = await api.videoCharStill({ ref_ids: bandRefs, prompt }) as { job_id: string };
         setBg(job_id);
         return;
