@@ -2,6 +2,7 @@
 
 Run:  python -m backend.app   (from the repo root)
 """
+import hashlib
 import json
 import math
 import os
@@ -655,6 +656,15 @@ def _trim_audio_window(path, start, dur):
     return buf.getvalue()
 
 
+def _audio_name(prefix, b):
+    """Upload filename DERIVED FROM THE AUDIO CONTENT (md5). ComfyUI's /upload/image overwrites by
+    filename and LoadAudio caches by filename, so a FIXED name makes batched renders clobber/cache-
+    collide onto ONE audio clip (the per-shot audio_start is right, but every queued render reads the
+    same file). Hashing the bytes makes the name unique per distinct audio (no collision) and identical
+    per identical audio (clean cache). NEVER use a constant audio upload filename."""
+    return f"{prefix}_{hashlib.md5(b).hexdigest()[:16]}.wav"
+
+
 def _submit_video(graph, resolved, mode):
     # Free ComfyUI's resident models first so the heavy video model loads FULLY into VRAM
     # instead of partially offloading to CPU (the offload thrash = the ~130s/step slowness;
@@ -725,7 +735,7 @@ def video_lipsync(p: dict):
         with open(still, "rb") as f:
             img_ref = C.upload_audio(f.read(), os.path.basename(still))
         aud_bytes = _trim_audio_window(audio, start, win)
-        aud_ref = C.upload_audio(aud_bytes, "s2v_clip.wav")
+        aud_ref = C.upload_audio(aud_bytes, _audio_name("s2v_clip", aud_bytes))
         graph, resolved = video_mod.build_s2v(p, img_ref, aud_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
@@ -882,7 +892,7 @@ def video_ltx_msr(p: dict):
             win = frames / fps                # EXACT clip duration: an over-long vocal misaligns the
                                               # AV latent and leaks uncropped MSR reference frames
             aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, win, p)
-            vocal_ref = C.upload_audio(aud_bytes, "msr_vocal.wav")
+            vocal_ref = C.upload_audio(aud_bytes, _audio_name("msr_vocal", aud_bytes))
         graph, resolved = video_mod.build_ltx_msr(p, up_subs, up_bg, vocal_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
@@ -919,7 +929,7 @@ def video_ltx_flf(p: dict):
             fps = int(p.get("fps", 24))
             frames = video_mod._ltx_frames(p.get("frames", 121), fps)
             aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, frames / fps, p)
-            vocal_ref = C.upload_audio(aud_bytes, "flf_vocal.wav")
+            vocal_ref = C.upload_audio(aud_bytes, _audio_name("flf_vocal", aud_bytes))
         graph, resolved = video_mod.build_ltx_flf(p, up_first, up_last, vocal_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
@@ -973,6 +983,105 @@ def video_ltx_keyframe(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/ltx_fflf")
+def video_ltx_fflf(p: dict):
+    """LTX-2.3 FFLF Seed-Hunter / Multiroll (faithful foxydits port, stock LTXVAddGuide - NOT LTXDirector).
+    Pin the clip's first + last frame and interpolate; EACH anchor is a library STILL or a library CLIP
+    (a clip's tail/head carries boundary motion -> the basis for continuous-take chaining; a still cannot
+    show a subject entering frame). Two stages with DECOUPLED seeds:
+      mode="hunt"   -> 3 HALF-RES drafts (base_seed, +1, +2) to eyeball and pick a golden seed (cheap).
+      mode="finish" -> spatial-x2 upscale REFINE of the chosen stage-1 seed; re-roll stage2_seed = multiroll.
+    Identity comes from the anchors (FFLF can't share a graph with MSR) - author on-model anchors upstream
+    (/api/video/qwen_char_still) or feed a prior MSR clip's tail as a video anchor for entrances.
+    p: {first_id (library still OR clip), last_id? (defaults to first_id = static push), first_kind?/
+    last_kind? ("image"|"video"; auto-detected from the library id if omitted), first_frames?/first_skip?,
+    last_frames?/last_skip? (video anchors: frame_load_cap / skip_first_frames), prompt, negative?, mode?
+    ("finish" [default] | "hunt"), seed?/stage1_seed?, stage2_seed?, width?, height?, frames?, fps?, cfg?,
+    first_strength?(0.7), last_strength?(0.7), nag_scale?(50), char_lora?, omni_lora?, audio_id?,
+    audio_start?, isolate_vocal? (FINISH-only masked-audio lip-sync, identity still from the anchors)}."""
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required (what happens between the anchors)")
+
+    def _anchor(idval, want_kind, frames, skip):
+        """Resolve a library id to an FFLF anchor spec (uploaded to ComfyUI). Auto-detects still vs clip
+        unless want_kind forces it. Returns (spec, label) or (None, None)."""
+        if not idval:
+            return None, None
+        img = _lib_image_path(idval)
+        vid = _lib_video_path(idval)
+        if want_kind == "video":
+            img = None
+        elif want_kind == "image":
+            vid = None
+        path = vid or img
+        if not path:
+            raise HTTPException(400, f"anchor {idval!r} must reference a generated still or clip")
+        kind = "video" if vid else "image"
+        with open(path, "rb") as f:
+            name = C.upload_audio(f.read(), os.path.basename(path))   # /upload/image helper (any file)
+        spec = {"kind": kind, "name": name}
+        if kind == "video":
+            spec["frames"] = int(frames or 9)
+            spec["skip"] = int(skip or 0)
+        return spec, os.path.basename(path)
+
+    mode = (p.get("mode") or "finish").strip().lower()
+    try:
+        first_src, first_lbl = _anchor(p.get("first_id"), (p.get("first_kind") or "").lower(),
+                                       p.get("first_frames"), p.get("first_skip"))
+        if not first_src:
+            raise HTTPException(400, "first_id must reference a generated still or clip")
+        if p.get("last_id"):
+            last_src, last_lbl = _anchor(p.get("last_id"), (p.get("last_kind") or "").lower(),
+                                         p.get("last_frames"), p.get("last_skip"))
+        else:
+            last_src, last_lbl = first_src, first_lbl    # default last == first (a slow static push)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"anchor prep failed: {e}")
+
+    # FINISH-only masked-audio lip-sync (identity stays with the anchors; drafts skip audio for speed)
+    audio = _lib_source_path(p.get("audio_id")) if p.get("audio_id") else None
+    start = max(0.0, float(p.get("audio_start") or 0))
+    iso_used = None
+    vocal_ref = None
+    if audio and mode != "hunt":
+        try:
+            fps = int(p.get("fps", 24))
+            frames = video_mod._ltx_frames(p.get("frames", 97), fps)
+            aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, frames / fps, p)
+            vocal_ref = C.upload_audio(aud_bytes, _audio_name("fflf_vocal", aud_bytes))
+        except Exception as e:
+            raise HTTPException(500, f"vocal prep failed: {e}")
+
+    if mode == "hunt":
+        base = video_mod._seed(p)                        # honour a given seed, else random base
+        drafts = []
+        for i in range(3):                               # 3 half-res drafts: base, base+1, base+2
+            bp = dict(p); bp["mode"] = "hunt"; bp["stage1_seed"] = base + i
+            try:
+                graph, resolved = video_mod.build_ltx_fflf(bp, first_src, last_src, None)
+            except Exception as e:
+                raise HTTPException(500, f"build failed: {e}")
+            resolved["first_id"] = first_lbl; resolved["last_id"] = last_lbl; resolved["hunt_index"] = i
+            drafts.append(_submit_video(graph, resolved, "videoclip"))
+        return {"mode": "hunt", "base_seed": base, "drafts": drafts}
+
+    try:
+        graph, resolved = video_mod.build_ltx_fflf(p, first_src, last_src, vocal_ref)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["first_id"] = first_lbl; resolved["last_id"] = last_lbl
+    if audio:
+        resolved["audio_id"] = os.path.basename(p.get("audio_id"))
+        resolved["audio_start"] = start
+        resolved["vocal_isolated"] = bool(iso_used)
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/ltx_retake")
 def video_ltx_retake(p: dict):
     """LTX-2.3 RETAKE: re-render only a time slice of an EXISTING clip (LTXDirectorGuide retake_mode),
@@ -1016,7 +1125,7 @@ def video_ltx_retake(p: dict):
         if audio:
             win = frames / float(fps_i)                  # full clip duration, aligned at audio_start
             aud_bytes, iso_used = _isolate_vocal_bytes(audio, astart, win, p)
-            vocal_ref = C.upload_audio(aud_bytes, "retake_vocal.wav")
+            vocal_ref = C.upload_audio(aud_bytes, _audio_name("retake_vocal", aud_bytes))
         with open(vid, "rb") as f:
             base = C.upload_audio(f.read(), os.path.basename(vid))
         graph, resolved = video_mod.build_ltx_retake(bp, base, vocal_ref)
@@ -1158,6 +1267,73 @@ def video_flashvsr(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/regrade")
+def video_regrade(p: dict):
+    """AI/colour-science grade of a finished library clip, run in ComfyUI (replaces the ffmpeg
+    looks; applied per-clip before assembly). p: {video_id, look_source: "darkroom"|"vcg"|
+    "colormatch", film_stock?, grain?, halation?, lut_id?, ref_still_id?, cm_method?}. SCAFFOLD:
+    node class names/keys are verified against /object_info after the box install (see
+    docs/MV_AI_GRADING_PLAN.md). Mirrors video_flashvsr."""
+    vid = _lib_video_path(p.get("video_id"))
+    if not vid:
+        raise HTTPException(400, "video_id must reference a generated clip/video in the library")
+    fps = _probe_fps(vid)
+    src = (p.get("look_source") or "darkroom").lower()
+    try:
+        with open(vid, "rb") as f:
+            vref = C.upload_audio(f.read(), os.path.basename(vid))
+        if src == "vcg":
+            lut = _lib_image_path(p.get("lut_id"))           # a saved VCG LUT artifact
+            if not lut:
+                raise HTTPException(400, "vcg look requires a lut_id (generate one via /api/mv/generate_lut)")
+            with open(lut, "rb") as f:
+                lref = C.upload_audio(f.read(), os.path.basename(lut))
+            graph, resolved = video_mod.build_vcg_apply(p, vref, lref, fps)
+        else:                                                # darkroom (default); colormatch TBD
+            graph, resolved = video_mod.build_darkroom_grade(p, vref, fps)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["video_id"] = os.path.basename(p.get("video_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
+@app.post("/api/mv/generate_lut")
+def mv_generate_lut(p: dict):
+    """Generate a reusable VCG 3D LUT from a reference still (the 4GB diffusion model loads only
+    here; fired ONCE per look). Body: {ref_still_id}. Returns a job whose saved output is the LUT
+    artifact, reused across all clips via /api/video/regrade look_source="vcg"."""
+    ref = _lib_image_path(p.get("ref_still_id"))
+    if not ref:
+        raise HTTPException(400, "ref_still_id must reference a still in the library")
+    try:
+        with open(ref, "rb") as f:
+            rref = C.upload_audio(f.read(), os.path.basename(ref))
+        graph, resolved = video_mod.build_vcg_lut(p, rref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    return _submit_video(graph, resolved, "videostill")
+
+
+@app.get("/api/mv/look_library")
+def mv_look_library():
+    """Look sources for the grade picker (data-driven, like /api/mv/grades). SCAFFOLD: the
+    darkroom_stocks list should be read from /object_info once Darkroom is installed; refs are the
+    curated public-domain starter stills under library/grade_refs/."""
+    refs = []
+    refdir = os.path.join(LIBRARY, "grade_refs")
+    man = os.path.join(refdir, "manifest.json")
+    if os.path.exists(man):
+        try:
+            with open(man) as f:
+                refs = json.load(f)
+        except Exception:
+            refs = []
+    return {"darkroom_stocks": [], "luts": [], "refs": refs,
+            "ffmpeg_looks": musicvideo_mod.grade_names()}   # ffmpeg looks kept as no-box fallback
+
+
 @app.post("/api/video/ltx_lipsync")
 def video_ltx_lipsync(p: dict):
     """LTX-2.3 i2v + LatentSync lip-sync: animate a keyframe still, then sync its mouth to a
@@ -1177,7 +1353,7 @@ def video_ltx_lipsync(p: dict):
         with open(still, "rb") as f:
             img_ref = C.upload_audio(f.read(), os.path.basename(still))
         aud_bytes = _trim_audio_window(audio, start, win)
-        aud_ref = C.upload_audio(aud_bytes, "ltx_vocal.wav")
+        aud_ref = C.upload_audio(aud_bytes, _audio_name("ltx_vocal", aud_bytes))
         graph, resolved = video_mod.build_ltx_lipsync(p, img_ref, aud_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
@@ -1218,7 +1394,7 @@ def video_s2v_wrapper(p: dict):
         with open(still, "rb") as f:
             img_ref = C.upload_audio(f.read(), os.path.basename(still))
         aud_bytes = _trim_audio_window(audio, start, win)
-        aud_ref = C.upload_audio(aud_bytes, "s2v_clip.wav")
+        aud_ref = C.upload_audio(aud_bytes, _audio_name("s2v_clip", aud_bytes))
         if pose_path:
             with open(pose_path, "rb") as f:
                 p["pose_video"] = C.upload_audio(f.read(), os.path.basename(pose_path))   # name on ComfyUI
@@ -1306,7 +1482,7 @@ def video_infinitetalk(p: dict):
             if voc and os.path.isfile(voc):
                 with open(voc, "rb") as f:
                     aud_bytes = f.read()
-        aud_ref = C.upload_audio(aud_bytes, "infinitetalk_clip.wav")
+        aud_ref = C.upload_audio(aud_bytes, _audio_name("infinitetalk_clip", aud_bytes))
         graph, resolved = video_mod.build_infinitetalk_v2v(p, vid_ref, aud_ref)
     except HTTPException:
         raise
@@ -1391,7 +1567,7 @@ def mv_assemble(body: dict):
         clip = os.path.join(LIBRARY, f"{cid}.mp4")
         if cid and os.path.exists(clip):
             dur = float(s.get("end") or 0) - float(s.get("start") or 0)
-            segs.append({"path": clip, "dur": dur if dur > 0 else 5.0})
+            segs.append({"path": clip, "dur": dur if dur > 0 else 5.0, "cid": cid})
     if not segs:
         raise HTTPException(400, "no rendered shot clips found - generate the shots first")
     audio = _lib_source_path(body.get("audio_id"))
@@ -1414,6 +1590,11 @@ def mv_assemble(body: dict):
             wind = cand if os.path.exists(cand) else None
         if wind:
             intro["audio"] = wind
+        # if the intro IS the opening shot's clip (rendered long for the wind head), the body's first
+        # shot must CONTINUE from where the intro stopped, not replay the head -> offset it by the
+        # intro duration. This is the fix for the restart-jump at the wind-fade.
+        if segs and segs[0].get("cid") == icid:
+            segs[0]["ss"] = float(body["intro_dur"])
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:

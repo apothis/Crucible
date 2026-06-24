@@ -344,39 +344,60 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       pollJob(job_id, card.id, ctx);
     };
     try {
-      // BAND shot: composite the non-featured band members into the scene via Qwen (char_still). They are
-      // a STATIC background image (only the featured singer is MSR-anchored). Each member must be NAMED with
-      // their role + look so Qwen preserves each identity/gender/instrument - a generic "the band members"
-      // collapses every reference into one look (e.g. two male bassists instead of female-guitarist +
-      // male-bassist). A live band shot also gets a full drum kit with a drummer (style unspecified - he is
-      // mostly hidden behind the kit, so no drummer reference is needed).
+      // BAND shot: Qwen composites the WHOLE band INCLUDING the featured lead (each from their own ref, placed
+      // where they go), then MSR anchors the lead further over it. The lead being in the composite (from her
+      // own ref) REINFORCES her MSR identity rather than corrupting it (same subject, not a stray person), and
+      // it fixes placement - without the lead in the composite the centre fills with a band member and MSR
+      // drops her. Name each member by GENDER + role + look + a fixed position so Qwen holds them apart (a
+      // generic "the band" collapses refs into one look). Drummer is generic (no ref). char_still caps at 3
+      // refs, so lead + 2 members; gender/look come from the character editor.
+      const featuredChars = b.chars
+        .map((bc) => libChars.find((c) => c.id === bc.charId))
+        .filter(Boolean) as Character[];
       const bandChars = (b.renderMode === "msr" ? b.bandInScene : [])
         .map((id) => libChars.find((c) => c.id === id))
         .filter(Boolean) as Character[];
-      const bandRefs = bandChars.map((c) => sceneRefOf(c)).filter(Boolean).slice(0, 3);
-      if (bandRefs.length) {
-        ctx.setResults([card]);
-        // Name each member by GENDER + role + look + a fixed left/right position so Qwen holds them apart - a
-        // generic "the band members" (or a name with no gender) collapses every reference into one identity
-        // (e.g. two male bassists). The lead singer is NOT in this composite (MSR-anchored separately); the
-        // drummer is generic (no ref). Gender/look come from the character (set in the character editor).
-        const sides = ["on the left", "on the right", "in the middle"];
-        const memberDesc = (c: Character) => {
-          const gr = [(c.gender || "").trim(), (c.role || "musician").trim()].filter(Boolean).join(" ");
-          const look = (c.appearance || "").trim();
-          return `a ${gr}${look ? ` (${look})` : ""}`;
-        };
-        const who = bandChars.slice(0, bandRefs.length)
-          .map((c, i) => `${memberDesc(c)} ${bandRefs.length > 1 ? sides[i] || "in the scene" : "in the scene"}, playing their instrument`)
-          .join("; ");
-        const prompt = `A live band performing on stage, ${bgFrame} the band: ${who}; with a full drum kit at the back and a drummer seated behind it, mostly hidden behind the kit. Setting: ${(b.scene || "a stage").trim()}. Photoreal, cinematic. No lead singer, no front person, no audience, no crowd.`;
-        const { job_id } = await api.videoCharStill({ ref_ids: bandRefs, prompt }) as { job_id: string };
-        setBg(job_id);
-        return;
+      if (b.renderMode === "msr" && bandChars.length) {
+        const lead = featuredChars[0];
+        const compChars = [...(lead ? [lead] : []), ...bandChars];   // lead first = centre
+        const compRefs = compChars.map((c) => sceneRefOf(c)).filter(Boolean).slice(0, 3);
+        if (compRefs.length) {
+          ctx.setResults([card]);
+          const sides = ["on the left", "on the right", "to one side"];
+          const memberDesc = (c: Character) => {
+            const gr = [(c.gender || "").trim(), (c.role || "musician").trim()].filter(Boolean).join(" ");
+            const look = (c.appearance || "").trim();
+            return `a ${gr}${look ? ` (${look})` : ""}`;
+          };
+          const bandShown = bandChars.slice(0, Math.max(0, compRefs.length - (lead ? 1 : 0)));
+          const bandWho = bandShown
+            .map((c, i) => `${memberDesc(c)} plays ${sides[i] || "to one side"}`)
+            .join("; ");
+          const leadPhrase = lead
+            ? `${memberDesc(lead)} stands centre at the microphone singing, the clear focus front and centre`
+            : "the lead singer stands centre at the microphone, the clear focus";
+          const prompt = `A live band performing together on a stage, ${bgFrame} the whole band: ${leadPhrase}; ${bandWho}; with a full drum kit at the back and a drummer seated behind it. Setting: ${(b.scene || "a stage").trim()}. Photoreal, cinematic. No audience, no crowd.`;
+          const { job_id } = await api.videoCharStill({ ref_ids: compRefs, prompt }) as { job_id: string };
+          setBg(job_id);
+          return;
+        }
       }
-      // SOLO / B-roll: person-free environment still.
+      // SOLO / B-roll: person-free environment still. The framing must leave room for the MSR subject at the
+      // right SCALE - a plain "wide/tight framing of the setting" has no subject to frame on, so it drifts to
+      // a vast vista (subject ends up tiny) or a macro detail (no room for the subject). Instead describe the
+      // setting as a BACKDROP behind where a person stands, at the camera distance implied by the framing, and
+      // keep the centre foreground clear for them.
+      // Control the camera DISTANCE to the setting (so the eventual subject sits at the right scale) WITHOUT
+      // referencing a person - phrasing like "room for a person to stand" makes the t2i model draw a person,
+      // which corrupts MSR identity. Keep it a person-free backdrop; the MSR render's own "close-up" framing
+      // scales the subject.
+      const backdrop = ({
+        close: "a close, soft, shallow-depth-of-field backdrop of",
+        medium: "a medium-distance view of",
+        wide: "a wide establishing shot of",
+      } as Record<string, string>)[b.framing || "medium"] || "a medium-distance view of";
       const scene = b.renderMode === "msr"
-        ? `${bgFrame} the setting: ${(b.scene || b.prompt).trim()}. The empty environment only - absolutely no people, no person, no singer, no musician, no figure, no face, unpopulated.`
+        ? `${backdrop} the setting: ${(b.scene || b.prompt).trim()}. The empty environment only - absolutely no people, no person, no singer, no musician, no figure, no face, no silhouette, unpopulated.`
         : (b.prompt || "");
       if (!scene.trim()) return;
       ctx.setResults([card]);

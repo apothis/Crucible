@@ -86,9 +86,17 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
                   f"tpad=stop_mode=clone:stop_duration=3600")
             if grade_chain:
                 vf += "," + grade_chain
-            subprocess.run([ff, "-y", "-loglevel", "error", "-i", seg["path"], "-vf", vf,
-                            "-t", f"{durs[i]:.3f}", "-an", "-c:v", "libx264",
-                            "-pix_fmt", "yuv420p", "-r", str(fps), o], check=True)
+            # optional per-segment start offset (`ss`): play the clip from `ss` seconds in, not
+            # frame 0. Used when the opening shot was rendered LONG and its head is consumed by the
+            # intro pre-roll - the body must CONTINUE from where the intro stopped, not replay the
+            # head (replaying it is the "restart jump" at the wind-fade). Input seek before -i.
+            cmd = [ff, "-y", "-loglevel", "error"]
+            ss = float(seg.get("ss") or 0)
+            if ss > 0:
+                cmd += ["-ss", f"{ss:.3f}"]
+            cmd += ["-i", seg["path"], "-vf", vf, "-t", f"{durs[i]:.3f}", "-an", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-r", str(fps), o]
+            subprocess.run(cmd, check=True)
             norm.append(o)
         concat = os.path.join(work, "concat.mp4")
         # crossfade chain (xfade) when a transition is requested AND there are >= 2 clips;
@@ -539,8 +547,33 @@ than the lead singer in "characters": anchoring two+ people via MSR makes their 
 For a band shot, write the "action" as the whole tableau, naming each member by their LOOK (incl. gender
 from the cast list above), instrument and a fixed side - e.g. "Selene sings centre into the mic; the
 female guitarist plays on the left; the male bassist plays on the right; a drummer at a full kit behind
-them". A live band shot ALWAYS has a drum kit with a drummer at the back (the drummer is generic - never
-named, never given a reference, mostly hidden behind the kit).
+them". EVERY band member present (the featured one in "characters" AND everyone in "band_in_scene") MUST
+be named in the "action" - this is what the background composite is built from AND what the video render
+keeps; a member NOT named in the action gets DROPPED by the render (it dissolves the unmentioned figure).
+So always name all of them. A live band shot ALWAYS has a drum kit with a drummer at the back (the drummer
+is generic - never named as a character / never given a reference, but always mention "a drummer at a full
+kit behind them" so the kit + drummer appear).
+
+SETTING (critical - avoids empty, repetitive shots): a CONCERT / PERFORMANCE STAGE is ONLY for FULL-BAND
+shots. If you set a shot on a stage you MUST populate "band_in_scene" with the other members - never put
+the lead singer alone on a bare stage (it looks empty and wrong, and a stage implies a band).
+- SOLO lead-singer shots (band_in_scene = []) must be set in a VARIED, evocative location from the WORLD
+  of this song - tie it to the title theme and to the lyric sung in that window (e.g. the ashen garden,
+  ruined halls, a windswept plain, a flooded crypt, an overgrown interior). Make each interesting and
+  DIFFERENT from the others; do NOT reuse the same location or default everything to one backdrop.
+- Across the whole video, vary the scenery shot to shot. Only the genuine band shots share the stage.
+- SETTING SCALE MUST MATCH FRAMING: a CLOSE or MEDIUM shot needs the subject CLOSE to camera, so the
+  setting must give her a NEAR FOREGROUND ANCHOR to stand at - a textured surface, foliage, rubble, a wall
+  / charred trunk / arch right behind her, OR a near edge she stands at (a pool's edge, a ledge, a doorway).
+  The render rescales the scene around her, so even a larger setting works IF there is a clear foreground
+  anchor. Do NOT set a close/medium shot in an OPEN VISTA with nothing in the near foreground (an overlook,
+  ridgeline, open plain to the horizon) - there she renders tiny in the landscape. Open vistas = WIDE only.
+
+LIP-SYNC ACTION (critical): on any lip-sync shot the "action" MUST be the singer PERFORMING the vocal TO
+CAMERA - facing the camera and singing, mouth visible. NEVER write a pose that hides or turns the face:
+no kneeling, no gazing away or down, no looking at a reflection, no back-to-camera, no silhouette, and do
+not compose the shot around anything other than her singing. If she isn't visibly singing to camera, the
+lip-sync has nothing to drive and the shot fails.
 
 CAMERA: only "static", "slow push-in", or "slow pull-back". No pans/tracking/orbits. A push-in/pull-back
 must stay GENTLE - never pull back far enough to shrink the subject. Keep camera language OUT of scene/action.

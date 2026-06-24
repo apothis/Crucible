@@ -109,9 +109,12 @@ LTX_LORA_DISTILL_STOCK = "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
 LTX_LORA_DETAILER = "ltx-2-19b-ic-lora-detailer.safetensors"         # texture/detail
 LTX_LORA_VBVR = "VBVR-official-comfyui.safetensors"                  # LiconStudio motion-dynamics LoRA
 LTX_LORA_MSR = "LTX-2.3\\LTX-2.3-Licon-MSR-V1.safetensors"          # Multiple-Subject-Reference (IC-loader subfolder)
+LTX_LORA_OMNI = "LTX2\\LTX-2.3-OmniNFT-RL-Lora_bf16.safetensors"    # foxydits' motion/fidelity LoRA (OPTIONAL download; opt-in via omni_lora)
 LTX_SPATIAL_UPSCALER = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"  # LatentUpscaleModelLoader (2-stage refine)
 # 8-step distilled sigma schedule (9 values = 8 steps), verbatim from the ULTRA base pass.
 LTX_SIGMAS_BASE = "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+# foxydits FFLF (Civitai 2688482 v1.6) stage-2 refine schedule: 3 steps, partial denoise from 0.85
+LTX_SIGMAS_FFLF_REFINE = "0.85, 0.725, 0.4219, 0.0"
 
 
 def _ltx_frames(n, fps):
@@ -1309,6 +1312,223 @@ def build_ltx_keyframe(p, keyframes):
     return g, resolved
 
 
+def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
+    """LTX-2.3 FFLF (First-Frame / Last-Frame) "Seed Hunter / Multiroll" - a FAITHFUL port of foxydits'
+    Civitai 2688482 v1.6 graph, built on STOCK LTXVAddGuide (NOT LTXDirector, NOT the TTP FLF node, which
+    is why the field author moved to it). Pins the clip's first and last frame and interpolates between
+    them; EACH end may be a single STILL or a short VIDEO tail/head - a video anchor carries boundary
+    MOTION (a still cannot, so a still anchor can't show a subject entering frame), which is the basis for
+    continuous-take CHAINING. Two-stage: a HALF-resolution base sample (fast SEED-HUNTing) then a
+    spatial-x2 latent-upscale REFINE whose seed is DECOUPLED from the base (re-roll = "multiroll" variants
+    without re-running the hunt).
+
+    first_src / last_src: {"kind": "image"|"video", "name": <uploaded ComfyUI input name>,
+      "frames"?: int (video frame_load_cap), "skip"?: int (video skip_first_frames)}.
+    For a video FIRST anchor pass the TAIL of the previous clip (skip = len - frames); for a video LAST
+    anchor pass the HEAD of the next clip (skip = 0). Identity comes from the anchors (FFLF cannot share a
+    graph with MSR identity) - author on-model anchors upstream (build_qwen_char_still), or feed a prior
+    MSR clip's tail as a video anchor for entrances.
+
+    vocal_ref (optional, FINISH only): native masked-audio lip-sync (same path as build_ltx_flf) - identity
+    held by the anchors, lips driven by the song, no MSR.
+
+    p: {prompt, negative?, mode? ("finish" [default] | "hunt"=stage-1 draft only), stage1_seed?/seed?,
+    stage2_seed?, width?(1280), height?(720) [TARGET; stage 1 runs at HALF, the x2 upsampler nets back -
+    note (target/2) is snapped to /32 so 720 -> 704], frames?(97), fps?(24), cfg?(1.0),
+    first_strength?(0.7), last_strength?(0.7) [foxydits: best 0.6-0.9; both high -> jump cuts],
+    last_idx?(-9) [image LAST anchor frame index; video LAST auto-uses -frames so the clip fills the tail],
+    distill_strength?(0.5), nag_scale?(50.0) [foxydits uses 50; our MSR uses 11 - tunable], img_compression?
+    (0) [foxydits' LTXVPreprocess value], char_lora?("")/char_strength?(1.0), omni_lora?(False)
+    [LTX-2.3-OmniNFT-RL motion/fidelity LoRA at strength 2], distill_lora?}."""
+    w = int(p.get("width", 1280)); h = int(p.get("height", 720))
+    fps = int(p.get("fps", 24))
+    frames = _ltx_frames(p.get("frames", 97), fps)
+    # stage 1 = half target res, snapped to /32 (the x2 upsampler nets back to ~target). Mirrors foxydits'
+    # SimpleCalculatorKJ a/2 + the "1080 -> 1024" divisibility caveat in his notes.
+    s1w = max(32, (w // 2 // 32) * 32)
+    s1h = max(32, (h // 2 // 32) * 32)
+    out_w, out_h = s1w * 2, s1h * 2
+    mode = (p.get("mode") or "finish").strip().lower()
+    hunt = (mode == "hunt")
+    s1_seed = int(p["stage1_seed"]) if p.get("stage1_seed") not in (None, "", 0, "0") else _seed(p)
+    s2_seed = (int(p["stage2_seed"]) if p.get("stage2_seed") not in (None, "", 0, "0")
+               else random.randint(0, 2**31 - 1))
+    cfg = float(p.get("cfg", 1.0))
+    distill = float(p.get("distill_strength", 0.5))
+    fstr = float(p.get("first_strength", 0.7))
+    lstr = float(p.get("last_strength", 0.7))
+    nag = float(p.get("nag_scale", 50.0))
+    imgc = int(p.get("img_compression", 0))
+    prompt = (p.get("prompt") or "").strip()
+    # split-negative intent folded into one string (suppress scene cuts/frozen frames + LTX's own music,
+    # since a music video muxes its own track). foxydits keeps these as separate CLIPTextEncode nodes.
+    neg = (p.get("negative") or "scene cut, scene transition, jump cut, no movement, still frame, frames, "
+           "blurry, low quality, watermark, overlay, titles, subtitles, music, score, instruments")
+    # LAST anchor frame index: a still sits at -9 (LTX's last addressable latent slot); a video tail of K
+    # frames sits at -K so it fills the end.
+    last_is_video = (last_src or {}).get("kind") == "video"
+    lf_frames = int((last_src or {}).get("frames") or 9)
+    last_idx = -lf_frames if last_is_video else int(p.get("last_idx", -9))
+
+    def _src_node(nid, src, default_frames):
+        """LoadImage or VHS_LoadVideo for an anchor; returns the node's IMAGE output ref [nid, 0]."""
+        if (src or {}).get("kind") == "video":
+            g[nid] = {"class_type": "VHS_LoadVideo",
+                      "inputs": {"video": src["name"], "force_rate": 0, "custom_width": 0,
+                                 "custom_height": 0, "frame_load_cap": int(src.get("frames") or default_frames),
+                                 "skip_first_frames": int(src.get("skip") or 0), "select_every_nth": 1,
+                                 "format": "None"}}
+        else:
+            g[nid] = {"class_type": "LoadImage", "inputs": {"image": src["name"]}}
+        return [nid, 0]
+
+    def _resize_pre(nid_resize, nid_pre, img_ref, tw, th):
+        """Resize an anchor (still or frame batch) to the target latent pixel size, then LTXVPreprocess."""
+        g[nid_resize] = {"class_type": "ImageResizeKJv2",
+                         "inputs": {"image": img_ref, "width": tw, "height": th,
+                                    "upscale_method": "bilinear", "keep_proportion": "stretch",
+                                    "pad_color": "0, 0, 0", "crop_position": "center", "divisible_by": 32,
+                                    "device": "cpu"}}
+        g[nid_pre] = {"class_type": "LTXVPreprocess", "inputs": {"image": [nid_resize, 0], "img_compression": imgc}}
+        return [nid_pre, 0]
+
+    g = {
+        # ---- loaders: dev fp8 transformer + distill LoRA (our stack; foxydits uses a pre-distilled model
+        #      - same family) + DualCLIP + video/audio VAEs + spatial upscaler (finish only) ----
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": LTX_UNET_FP8, "weight_dtype": "default"}},
+        "2": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": (p.get("distill_lora") or LTX_LORA_DISTILL_STOCK),
+                         "strength_model": distill}},
+        "5": {"class_type": "DualCLIPLoader",
+              "inputs": {"clip_name1": LTX_CLIP1, "clip_name2": LTX_CLIP2, "type": "ltxv", "device": "default"}},
+        "6": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_VIDEO, "device": "main_device", "weight_dtype": "bf16"}},
+        "7": {"class_type": "VAELoaderKJ",
+              "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
+        # prompt -> conditioning
+        "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": prompt}},
+        "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
+        "11": {"class_type": "LTXVConditioning",
+               "inputs": {"positive": ["9", 0], "negative": ["10", 0], "frame_rate": float(fps)}},
+        # stage-1 empty AV latent (half res)
+        "12": {"class_type": "EmptyLTXVLatentVideo",
+               "inputs": {"width": s1w, "height": s1h, "length": frames, "batch_size": 1}},
+        "13": {"class_type": "LTXVEmptyLatentAudio",
+               "inputs": {"frames_number": frames, "frame_rate": fps, "batch_size": 1, "audio_vae": ["7", 0]}},
+        # shared sampler bits
+        "34": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "35": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},          # 8-step base
+    }
+    # model chain: distill LoRA -> (optional character LoRA) -> (optional OmniNFT-RL) -> LTX2_NAG
+    model_ref = ["2", 0]
+    if (p.get("char_lora") or "").strip():
+        g["3"] = {"class_type": "LoraLoaderModelOnly",
+                  "inputs": {"model": model_ref, "lora_name": p["char_lora"].strip(),
+                             "strength_model": float(p.get("char_strength", 1.0))}}
+        model_ref = ["3", 0]
+    if p.get("omni_lora"):
+        g["4o"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": model_ref, "lora_name": LTX_LORA_OMNI,
+                              "strength_model": float(p.get("omni_strength", 2.0))}}
+        model_ref = ["4o", 0]
+    g["4"] = {"class_type": "LTX2_NAG",
+              "inputs": {"model": model_ref, "nag_scale": nag, "nag_alpha": 0.25, "nag_tau": 2.5}}
+
+    # ---- anchors (stage-1 res) + the FFLF guide chain (start @0, end @last_idx) ----
+    ff_img = _src_node("20", first_src, 17)
+    lf_img = _src_node("25", last_src, lf_frames)
+    ff_pre = _resize_pre("21", "22", ff_img, s1w, s1h)
+    lf_pre = _resize_pre("26", "27", lf_img, s1w, s1h)
+    g["30"] = {"class_type": "LTXVAddGuide",
+               "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
+                          "latent": ["12", 0], "image": ff_pre, "frame_idx": 0, "strength": fstr}}
+    g["31"] = {"class_type": "LTXVAddGuide",
+               "inputs": {"positive": ["30", 0], "negative": ["30", 1], "vae": ["6", 0],
+                          "latent": ["30", 2], "image": lf_pre, "frame_idx": last_idx, "strength": lstr}}
+    # stage-1 audio latent (masked vocal for lip-sync FINISH, else empty)
+    s1_audio = ["13", 0]
+    if vocal_ref and not hunt:
+        g["70"] = {"class_type": "LoadAudio", "inputs": {"audio": vocal_ref}}
+        g["71"] = {"class_type": "LTXVAudioVAEEncode", "inputs": {"audio": ["70", 0], "audio_vae": ["7", 0]}}
+        g["72"] = {"class_type": "SolidMask", "inputs": {"value": 0.0, "width": 1024, "height": 1024}}
+        g["73"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["71", 0], "mask": ["72", 0]}}
+        s1_audio = ["73", 0]
+    g["32"] = {"class_type": "LTXVConcatAVLatent", "inputs": {"video_latent": ["31", 2], "audio_latent": s1_audio}}
+    # ---- stage 1 sample (8 steps, denoise 1.0, cfg 1) ----
+    g["33"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": s1_seed}}
+    g["36"] = {"class_type": "CFGGuider",
+               "inputs": {"model": ["4", 0], "positive": ["31", 0], "negative": ["31", 1], "cfg": cfg}}
+    g["37"] = {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["33", 0], "guider": ["36", 0], "sampler": ["34", 0],
+                          "sigmas": ["35", 0], "latent_image": ["32", 0]}}
+    g["38"] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["37", 0]}}
+    g["39"] = {"class_type": "LTXVCropGuides",
+               "inputs": {"positive": ["31", 0], "negative": ["31", 1], "latent": ["38", 0]}}
+
+    if hunt:
+        # SEED-HUNT: decode the half-res draft directly (cheap eyeball; pick a seed -> finish it)
+        g["40"] = {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+                   "inputs": {"vae": ["6", 0], "latents": ["39", 2], "spatial_tiles": 4, "spatial_overlap": 4,
+                              "temporal_tile_length": 48, "temporal_overlap": 8, "last_frame_fix": False,
+                              "working_device": "auto", "working_dtype": "auto"}}
+        g["41"] = {"class_type": "CreateVideo", "inputs": {"images": ["40", 0], "fps": fps}}
+        g["42"] = {"class_type": "SaveVideo",
+                   "inputs": {"video": ["41", 0], "filename_prefix": "videogen/fflfdraft",
+                              "format": "auto", "codec": "auto"}}
+    else:
+        # ---- stage 2 REFINE: spatial-x2 latent upscale, re-add the anchors at full res, resample at low
+        #      denoise with a DECOUPLED seed (multiroll) ----
+        g["8"] = {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": LTX_SPATIAL_UPSCALER}}
+        g["50"] = {"class_type": "LTXVLatentUpsampler",
+                   "inputs": {"samples": ["39", 2], "upscale_model": ["8", 0], "vae": ["6", 0]}}
+        ff_pre2 = _resize_pre("51", "52", ff_img, out_w, out_h)
+        lf_pre2 = _resize_pre("53", "54", lf_img, out_w, out_h)
+        g["55"] = {"class_type": "LTXVAddGuide",
+                   "inputs": {"positive": ["39", 0], "negative": ["39", 1], "vae": ["6", 0],
+                              "latent": ["50", 0], "image": ff_pre2, "frame_idx": 0, "strength": fstr}}
+        g["56"] = {"class_type": "LTXVAddGuide",
+                   "inputs": {"positive": ["55", 0], "negative": ["55", 1], "vae": ["6", 0],
+                              "latent": ["55", 2], "image": lf_pre2, "frame_idx": last_idx, "strength": lstr}}
+        g["57"] = {"class_type": "LTXVConcatAVLatent",
+                   "inputs": {"video_latent": ["56", 2], "audio_latent": ["38", 1]}}
+        g["58"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": s2_seed}}
+        g["59"] = {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_FFLF_REFINE}}   # 3-step refine
+        g["60"] = {"class_type": "CFGGuider",
+                   "inputs": {"model": ["4", 0], "positive": ["56", 0], "negative": ["56", 1], "cfg": cfg}}
+        g["61"] = {"class_type": "SamplerCustomAdvanced",
+                   "inputs": {"noise": ["58", 0], "guider": ["60", 0], "sampler": ["34", 0],
+                              "sigmas": ["59", 0], "latent_image": ["57", 0]}}
+        g["62"] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["61", 0]}}
+        g["63"] = {"class_type": "LTXVCropGuides",
+                   "inputs": {"positive": ["31", 0], "negative": ["31", 1], "latent": ["62", 0]}}
+        g["64"] = {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
+                   "inputs": {"vae": ["6", 0], "latents": ["63", 2], "spatial_tiles": 4, "spatial_overlap": 4,
+                              "temporal_tile_length": 48, "temporal_overlap": 8, "last_frame_fix": False,
+                              "working_device": "auto", "working_dtype": "auto"}}
+        g["65"] = {"class_type": "CreateVideo", "inputs": {"images": ["64", 0], "fps": fps}}
+        if vocal_ref:
+            g["65"]["inputs"]["audio"] = ["70", 0]            # mux the driving vocal
+        g["66"] = {"class_type": "SaveVideo",
+                   "inputs": {"video": ["65", 0], "filename_prefix": "videogen/fflf",
+                              "format": "auto", "codec": "auto"}}
+
+    resolved = {"stage1_seed": s1_seed, "mode": mode, "width": w, "height": h,
+                "stage1_width": s1w, "stage1_height": s1h, "output_width": out_w, "output_height": out_h,
+                "frames": frames, "fps": fps, "seconds": round(frames / fps, 2), "cfg": cfg,
+                "first_strength": fstr, "last_strength": lstr, "last_idx": last_idx, "nag_scale": nag,
+                "first_kind": (first_src or {}).get("kind", "image"),
+                "last_kind": (last_src or {}).get("kind", "image"),
+                "prompt": prompt, "lipsync": bool(vocal_ref and not hunt), "kind": "video", "method": "fflf"}
+    if not hunt:
+        resolved["stage2_seed"] = s2_seed
+        resolved["two_stage_refine"] = True
+    if (p.get("char_lora") or "").strip():
+        resolved["char_lora"] = p["char_lora"].strip()
+    if p.get("omni_lora"):
+        resolved["omni_lora"] = True
+    return g, resolved
+
+
 def build_ltx_retake(p, base_video, vocal_ref=None):
     """LTX-2.3 RETAKE: re-render only a [retake_start, retake_start+retake_length] frame slice of an
     EXISTING clip, keeping the rest of the footage frozen. Drives LTXDirectorGuide's retake_mode: the
@@ -1575,6 +1795,104 @@ def build_flashvsr_upscale(p, video_ref, fps):
     return g, {"seed": seed, "model": model, "mode": mode, "vae_model": vae_model, "scale": scale,
                "tiled_vae": tiled_vae, "tiled_dit": tiled_dit, "attention_mode": attention,
                "fps": fps, "kind": "video"}
+
+
+# ------------------------------------------------ AI / colour-science grading (regrade)
+# Replaces the ffmpeg "look" grading (musicvideo.py GRADES) with grading that runs in ComfyUI,
+# applied PER CLIP before assembly (so assemble() runs grade="none"). Consistency across the
+# ~30 shots is by construction: the SAME film stock / SAME generated LUT on every clip.
+# Plan + rationale: docs/MV_AI_GRADING_PLAN.md.
+#
+# !!! SCAFFOLDING - the node class_types and input keys below are PLACEHOLDERS and MUST be
+# confirmed against GET /object_info on the box AFTER the custom nodes are installed (Darkroom +
+# VCG). Nothing here fires until an endpoint calls it. See the "MUST VERIFY ON BOX" section of
+# the plan doc. Per our convention: mirror each node author's own example workflow.
+#
+# Darkroom (jeremieLouvaert/ComfyUI-Darkroom, MIT, CPU, no models): ~196 named looks (161 film
+# stocks + 35 preset LUTs) + halation/grain. The DEFAULT look library; no reference needed.
+DARKROOM_FILMSTOCK_NODE = "DarkroomFilmStock"   # TODO verify class_type + input keys via /object_info
+DARKROOM_GRAIN_NODE = "DarkroomFilmGrain"       # TODO verify
+DARKROOM_HALATION_NODE = "DarkroomHalation"     # TODO verify
+# VCG (kijai/ComfyUI-VideoColorGrading, CC-BY-4.0): diffusion-generated 3D LUT from a reference
+# still (model vcg_combined_fp16.safetensors, 4.12GB, ungated). The reference-driven path.
+VCG_LOADER_NODE = "LoadVCGModel"                # TODO verify
+VCG_GENERATE_NODE = "GenerateColorLUTVCG"       # TODO verify
+VCG_APPLY_NODE = "Apply3DLUTVCG"                # TODO verify
+VCG_MODEL = "vcg_combined_fp16.safetensors"     # TODO verify the loader folder it lives in
+
+
+def build_darkroom_grade(p, video_ref, fps):
+    """DEFAULT grade: apply a named Darkroom film stock (+ optional grain/halation) to a finished
+    clip, in ComfyUI (CPU node, no model download). No reference image needed. p: {film_stock?,
+    grain?, halation?}. video_ref = uploaded video name on ComfyUI; fps = source fps. Mirrors the
+    FlashVSR per-clip pattern (VHS_LoadVideo -> process -> CreateVideo -> SaveVideo)."""
+    stock = p.get("film_stock") or "Kodak Portra 400"
+    grain = float(p.get("grain", 0.0))
+    halation = float(p.get("halation", 0.0))
+    g = {"1": {"class_type": "VHS_LoadVideo",
+               "inputs": {"video": video_ref, "force_rate": 0.0, "custom_width": 0,
+                          "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0,
+                          "select_every_nth": 1}}}
+    last = ["1", 0]                                          # VHS_LoadVideo images out
+    g["2"] = {"class_type": DARKROOM_FILMSTOCK_NODE,
+              "inputs": {"images": last, "stock": stock}}    # TODO verify input keys
+    last = ["2", 0]
+    if halation > 0:
+        g["3"] = {"class_type": DARKROOM_HALATION_NODE,
+                  "inputs": {"images": last, "strength": halation}}
+        last = ["3", 0]
+    if grain > 0:
+        g["4"] = {"class_type": DARKROOM_GRAIN_NODE,
+                  "inputs": {"images": last, "strength": grain}}
+        last = ["4", 0]
+    g["10"] = {"class_type": "CreateVideo", "inputs": {"images": last, "fps": float(fps)}}
+    g["11"] = {"class_type": "SaveVideo",
+               "inputs": {"video": ["10", 0], "filename_prefix": "videogen/regrade",
+                          "format": "auto", "codec": "auto"}}
+    return g, {"look_source": "darkroom", "film_stock": stock, "grain": grain,
+               "halation": halation, "fps": fps, "kind": "video"}
+
+
+def build_vcg_lut(p, ref_image_ref, frames_ref=None):
+    """Generate a 16^3 3D LUT from a reference still via VCG diffusion (fired ONCE per look; the
+    4GB model only loads here). The LUT is saved as an artifact to reuse across all clips via
+    build_vcg_apply. p: {steps?}. ref_image_ref = uploaded reference image name on ComfyUI.
+    NOTE: whether GenerateColorLUT needs source frames (frames_ref) or runs from the reference
+    alone must be confirmed on the box; for max cohesion we want ONE shared LUT for all clips,
+    so prefer reference-only (or a fixed one-frame-per-clip montage)."""
+    g = {"1": {"class_type": "LoadImage", "inputs": {"image": ref_image_ref}},
+         "2": {"class_type": VCG_LOADER_NODE, "inputs": {"model": VCG_MODEL}}}  # TODO verify
+    gen_inputs = {"vcg_model": ["2", 0], "reference": ["1", 0]}                 # TODO verify keys
+    if frames_ref is not None:
+        gen_inputs["source"] = ["4", 0]
+        g["4"] = {"class_type": "VHS_LoadVideo",
+                  "inputs": {"video": frames_ref, "force_rate": 0.0, "custom_width": 0,
+                             "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0,
+                             "select_every_nth": 1}}
+    g["3"] = {"class_type": VCG_GENERATE_NODE, "inputs": gen_inputs}
+    # TODO: confirm how the LUT is persisted (a Save-LUT node, a .cube exporter, or a Hald image
+    # via SaveImage) so build_vcg_apply can reload it in a separate job. Placeholder = SaveImage of
+    # a Hald CLUT representation.
+    g["5"] = {"class_type": "SaveImage",
+              "inputs": {"images": ["3", 0], "filename_prefix": "videogen/vcg_lut"}}
+    return g, {"look_source": "vcg_lut", "kind": "image"}
+
+
+def build_vcg_apply(p, video_ref, lut_ref, fps):
+    """Cheap per-clip apply of a VCG-generated LUT (no diffusion). Same fixed LUT on every clip =
+    automatic temporal + cross-clip consistency. p: {}. lut_ref = the saved LUT artifact name."""
+    g = {"1": {"class_type": "VHS_LoadVideo",
+               "inputs": {"video": video_ref, "force_rate": 0.0, "custom_width": 0,
+                          "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0,
+                          "select_every_nth": 1}},
+         "2": {"class_type": "LoadImage", "inputs": {"image": lut_ref}}}        # TODO verify LUT reload
+    g["3"] = {"class_type": VCG_APPLY_NODE,
+              "inputs": {"images": ["1", 0], "lut": ["2", 0]}}                  # TODO verify keys
+    g["10"] = {"class_type": "CreateVideo", "inputs": {"images": ["3", 0], "fps": float(fps)}}
+    g["11"] = {"class_type": "SaveVideo",
+               "inputs": {"video": ["10", 0], "filename_prefix": "videogen/regrade",
+                          "format": "auto", "codec": "auto"}}
+    return g, {"look_source": "vcg", "fps": fps, "kind": "video"}
 
 
 # ------------------------------------------------ SVI2 Pro: long-form Wan 2.2 A14B i2v
