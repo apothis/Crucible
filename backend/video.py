@@ -1214,31 +1214,41 @@ def build_ltx_keyframe(p, keyframes):
     local_prompts = (local_prompts or "").strip() or prompt
     segment_lengths = str(p.get("segment_lengths") or "").strip()
     epsilon = float(p.get("epsilon", 0.001))
-    # Resolve + sort keyframe placements (the Director sorts image segments by start and indexes the
-    # guide_strength CSV by that order, so we must match it).
-    kfs = [dict(k) for k in (keyframes or []) if k and k.get("imageFile")]
-    if not kfs:
-        raise ValueError("at least one keyframe with an imageFile is required")
-    n = len(kfs)
-    for i, k in enumerate(kfs):
-        if k.get("start") is None:
-            if i == 0:
-                k["start"] = 0
-            elif i == n - 1:
-                k["start"] = max(0, frames - 1)
-            else:
-                k["start"] = int(round(i * (frames - 1) / max(1, n - 1)))
-        k["start"] = max(0, int(k["start"]))
-        k["length"] = max(1, int(k.get("length", 1)))
-        k["isEndFrame"] = bool(k.get("isEndFrame", False))
-        k["guide_strength"] = float(k.get("guide_strength", 1.0))
-    kfs.sort(key=lambda k: k["start"])
-    timeline = {"global_prompt": global_prompt,
-                "segments": [{"type": "image", "start": k["start"], "length": k["length"],
-                              "imageFile": k["imageFile"], "isEndFrame": k["isEndFrame"]} for k in kfs],
-                "audioSegments": []}
-    timeline_data = json.dumps(timeline)
-    guide_csv = ",".join(f"{k['guide_strength']:.3f}" for k in kfs)
+    raw_tl = (p.get("timeline_data") or "").strip()
+    if raw_tl:
+        # EDITOR PASSTHROUGH: the LTXDirector timeline editor (Shot Studio) already authored the full
+        # timeline_data (image/video/audio segments, keyframes) + relay fields (local_prompts /
+        # segment_lengths / guide_strength), and uploaded its media to ComfyUI input via /api/comfy.
+        # Feed it straight to the Director node, bypassing the keyframes[] construction.
+        timeline_data = raw_tl
+        guide_csv = str(p.get("guide_strength") or "").strip()
+        kfs = []
+    else:
+        # Resolve + sort keyframe placements (the Director sorts image segments by start and indexes the
+        # guide_strength CSV by that order, so we must match it).
+        kfs = [dict(k) for k in (keyframes or []) if k and k.get("imageFile")]
+        if not kfs:
+            raise ValueError("at least one keyframe with an imageFile is required (or pass timeline_data)")
+        n = len(kfs)
+        for i, k in enumerate(kfs):
+            if k.get("start") is None:
+                if i == 0:
+                    k["start"] = 0
+                elif i == n - 1:
+                    k["start"] = max(0, frames - 1)
+                else:
+                    k["start"] = int(round(i * (frames - 1) / max(1, n - 1)))
+            k["start"] = max(0, int(k["start"]))
+            k["length"] = max(1, int(k.get("length", 1)))
+            k["isEndFrame"] = bool(k.get("isEndFrame", False))
+            k["guide_strength"] = float(k.get("guide_strength", 1.0))
+        kfs.sort(key=lambda k: k["start"])
+        timeline = {"global_prompt": global_prompt,
+                    "segments": [{"type": "image", "start": k["start"], "length": k["length"],
+                                  "imageFile": k["imageFile"], "isEndFrame": k["isEndFrame"]} for k in kfs],
+                    "audioSegments": []}
+        timeline_data = json.dumps(timeline)
+        guide_csv = ",".join(f"{k['guide_strength']:.3f}" for k in kfs)
     def _guide(node_in_pos, node_in_neg, latent_in, scale):
         return {"class_type": "LTXDirectorGuide",
                 "inputs": {"positive": node_in_pos, "negative": node_in_neg, "vae": ["6", 0],

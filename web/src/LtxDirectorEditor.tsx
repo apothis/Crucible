@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { TimelineEditor } from "./vendor/ltxdirector/ltx_director.js";
+import { type DirectorPayload } from "./mvmodel";
 
 // React wrapper that mounts the vendored (GPL-3) LTXDirector TimelineEditor standalone — no ComfyUI.
 // The editor reads/writes everything through a shim "node" (widgets by name + a properties bag) and
@@ -19,7 +20,7 @@ const WIDGETS: Record<string, unknown> = {
 };
 
 export function LtxDirectorEditor({ timelineData, frames, fps, onChange }: {
-  timelineData?: string; frames: number; fps: number; onChange: (json: string) => void;
+  timelineData?: string; frames: number; fps: number; onChange: (payload: DirectorPayload) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const edRef = useRef<TimelineEditor | null>(null);
@@ -39,7 +40,16 @@ export function LtxDirectorEditor({ timelineData, frames, fps, onChange }: {
         { name, _v: (init as Record<string, unknown>)[name], options: {} };
       Object.defineProperty(w, "value", {
         get() { return w._v; },
-        set(v: unknown) { w._v = v; if (name === "timeline_data" && typeof v === "string") onChangeRef.current(v); },
+        set(v: unknown) {
+          w._v = v;
+          if (name === "timeline_data" && typeof v === "string") {
+            const get = (n: string) => { const x = widgets.find((q) => q.name === n); return x ? String(x._v ?? "") : ""; };
+            let gp = "";
+            try { const tl = JSON.parse(v || "{}"); gp = tl.global_prompt || tl.retake_global_prompt || ""; } catch { /* partial */ }
+            onChangeRef.current({ timeline_data: v, local_prompts: get("local_prompts"),
+              segment_lengths: get("segment_lengths"), guide_strength: get("guide_strength"), global_prompt: gp });
+          }
+        },
       });
       return w;
     });

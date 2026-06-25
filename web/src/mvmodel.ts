@@ -39,6 +39,11 @@ export type Take = {
   draft?: boolean;                // true = half-res hunt draft (no lip-sync), false = finished
   label?: string;
 };
+// The LTXDirector editor's authored output — feeds /api/video/ltx_keyframe (timeline_data passthrough).
+export type DirectorPayload = {
+  timeline_data?: string; local_prompts?: string; segment_lengths?: string;
+  guide_strength?: string; global_prompt?: string;
+};
 // One piece of a continuous take. Piece 0 = the base shot; later pieces = FFLF extends off the
 // previous piece's tail. Each piece keeps every take it rolled so you can pick / multiroll.
 export type ChainPiece = {
@@ -79,6 +84,7 @@ export type Block = {
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)
   timelineData?: string;          // the LTXDirector editor's timeline_data JSON (segments/audio/keyframes)
+  director?: DirectorPayload;      // full editor output (timeline_data + relay fields) for rendering
 };
 
 export const MSR_REF_COMBOS = [17, 25, 33, 41];   // LiconMSR frame_count combo

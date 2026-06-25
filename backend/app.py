@@ -1023,7 +1023,19 @@ def video_ltx_keyframe(p: dict):
     (0-1)}], prompt, negative?, global_prompt?, local_prompts?, segment_lengths?, epsilon?, seed?, width?,
     height? (TARGET output res when base_scale=0.5), frames?, fps?, cfg?, distill_strength?, base_scale?
     (0.5 = output==target res [default], 1.0 = output 2x via the x2 upsampler), base_steps?, refine_steps?,
-    refine_denoise?}."""
+    refine_denoise?}. OR pass timeline_data (+ local_prompts/segment_lengths/guide_strength/global_prompt)
+    straight from the Shot Studio LTXDirector editor — its media is already uploaded to ComfyUI input via
+    /api/comfy, so it renders directly with no keyframes[]."""
+    if (p.get("timeline_data") or "").strip():
+        # Shot Studio editor passthrough: render the editor's authored timeline through the Director graph.
+        try:
+            graph, resolved = video_mod.build_ltx_keyframe(p, [])
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"build failed: {e}")
+        resolved["from_editor"] = True
+        return _submit_video(graph, resolved, "videoclip")
     raw_kfs = p.get("keyframes")
     if not raw_kfs and p.get("keyframe_ids"):              # convenience: bare id list -> keyframes
         raw_kfs = [{"still_id": x} for x in p.get("keyframe_ids")]
@@ -2477,9 +2489,16 @@ def cancel():
 
 @app.get("/api/library")
 def library():
+    # Return recent AUDIO and VIDEO separately so neither starves the other. A flat "LIMIT 500 over
+    # everything" let a large video library (1000s of clips/stills) crowd ALL audio tracks off the list,
+    # which broke the MV Studio song picker (the song couldn't be found -> no song -> no timeline/media).
+    vmodes = ",".join("'%s'" % m for m in VIDEO_MODES)
     with db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM jobs WHERE status='done' ORDER BY created DESC LIMIT 500").fetchall()
+        vids = conn.execute(
+            f"SELECT * FROM jobs WHERE status='done' AND mode IN ({vmodes}) ORDER BY created DESC LIMIT 600").fetchall()
+        auds = conn.execute(
+            f"SELECT * FROM jobs WHERE status='done' AND mode NOT IN ({vmodes}) ORDER BY created DESC LIMIT 600").fetchall()
+    rows = sorted([*vids, *auds], key=lambda r: r["created"], reverse=True)
     out = []
     for r in rows:
         is_vid = r["mode"] in VIDEO_MODES

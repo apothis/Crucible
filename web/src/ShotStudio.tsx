@@ -114,6 +114,21 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     finally { setBusy(false); }
   }
 
+  // ---- render the editor's authored timeline (timeline_data passthrough -> LTXDirector) ----
+  async function renderTimeline() {
+    if (!b.director?.timeline_data) { note("Build a timeline in the editor first (add a segment)."); return; }
+    setBusy(true); note("Rendering the timeline…");
+    try {
+      const r = await api.videoLtxKeyframe({ ...b.director, width: b.width, height: b.height, frames: b.frames, fps: b.fps }) as { job_id: string };
+      const clipId = await waitMedia(r.job_id, (pc) => note(`Rendering… ${pc}%`));
+      const take: Take = { id: rid(), clipId, draft: false, label: "timeline" };
+      if (pieces.length === 0) setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id }]);
+      else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
+      note("Timeline rendered — added as a take.");
+    } catch (e) { note("Render failed: " + (e as Error).message); }
+    finally { setBusy(false); }
+  }
+
   function selectTake(pieceId: string, takeId: string) {
     setPieces(pieces.map((p) => p.id === pieceId ? { ...p, selectedTakeId: takeId } : p));
   }
@@ -143,8 +158,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       {/* ===================== TIMELINE EDITOR (vendored LTXDirector, GPL-3) ===================== */}
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
         <div className="ss-card" style={{ padding: 8 }}>
-          <LtxDirectorEditor timelineData={b.timelineData} frames={b.frames} fps={b.fps}
-            onChange={(json) => patch({ timelineData: json })} />
+          <LtxDirectorEditor timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
+            onChange={(payload) => patch({ director: payload, timelineData: payload.timeline_data })} />
         </div>
       )}
 
@@ -197,6 +212,9 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           {/* action rail */}
           <div className="mt-1 flex flex-col gap-2 rounded-md border border-[var(--color-line)] p-3">
             <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Build this shot</span>
+            <PrimaryButton onClick={renderTimeline} disabled={busy || !b.director?.timeline_data}>
+              Render timeline (from editor)
+            </PrimaryButton>
             <PrimaryButton onClick={() => runHunt(false)} disabled={busy || b.renderMode !== "fflf" || !fflfReady}>
               {pieces.length ? "Re-hunt base (3 drafts)" : "Seed-hunt base (3 drafts)"}
             </PrimaryButton>
