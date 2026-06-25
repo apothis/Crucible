@@ -139,7 +139,6 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   }
 
   // ---- keyframe still: seed-hunt (half-res) -> pick -> full-res -> inject into the editor timeline ----
-  const halfDim = (n: number) => Math.max(256, Math.round(n / 2 / 32) * 32);
   const genStill = (seed: number, w: number, h: number) =>
     (kfUseChar && charRefs.length)
       ? api.videoCharStill({ ref_ids: charRefs, prompt: kfPrompt, width: w, height: h, seed })   // identity from refs
@@ -152,9 +151,9 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   }
   async function huntStills() {
     if (!kfPrompt.trim()) { setStatus("Enter a prompt for the keyframe still."); return; }
-    setKfBusy(true); setStatus("Hunting 3 half-res stills…");
+    setKfBusy(true); setStatus("Hunting 3 stills (full size)…");
     const base = Math.floor(Math.random() * 2_000_000_000);
-    const hw = halfDim(b.width), hh = halfDim(b.height);
+    const hw = b.width, hh = b.height;   // full size — half-res previews drift too much from the final
     try {
       const drafts: { jobId: string; seed: number; url?: string }[] = [];
       for (let i = 0; i < 3; i++) {
@@ -168,14 +167,12 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     } catch (e) { setStatus("Still hunt failed: " + (e as Error).message); }
     finally { setKfBusy(false); }
   }
-  async function finalizeStill(seed: number) {
-    setKfBusy(true); setStatus("Rendering full-res still + adding as keyframe…");
+  async function useDraft(url: string) {
+    setKfBusy(true); setStatus("Adding keyframe…");
     try {
-      const r = await genStill(seed, b.width, b.height) as { job_id: string };
-      const url = await waitMedia(r.job_id);
-      await injectStill(url);
+      await injectStill(url);                 // drafts are already full-res, just inject the picked one
       setKfDrafts([]); setStatus(`Keyframe still added at frame ${kfFrame}.`);
-    } catch (e) { setStatus("Finalize failed: " + (e as Error).message); }
+    } catch (e) { setStatus("Add failed: " + (e as Error).message); }
     finally { setKfBusy(false); }
   }
   async function addLibraryStill(stillId: string) {
@@ -234,7 +231,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                 placeholder="the singer on a ruined ashen stage, dramatic light…" />
             </Field>
             <Num label="At frame" value={kfFrame} set={setKfFrame} step={1} w="w-20" />
-            <PrimaryButton onClick={huntStills} disabled={kfBusy || !kfPrompt.trim()}>Seed-hunt 3 (half-res)</PrimaryButton>
+            <PrimaryButton onClick={huntStills} disabled={kfBusy || !kfPrompt.trim()}>Seed-hunt 3 stills</PrimaryButton>
           </div>
           {kfDrafts.length > 0 && (
             <div className="grid grid-cols-3 gap-3">
@@ -243,7 +240,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                   <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">rendering…</div>}</div>
                   <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                     <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
-                    <GhostButton onClick={() => finalizeStill(d.seed)} disabled={kfBusy || !d.url}>Use (full)</GhostButton>
+                    <GhostButton onClick={() => useDraft(d.url!)} disabled={kfBusy || !d.url}>Use this</GhostButton>
                   </div>
                 </div>
               ))}
