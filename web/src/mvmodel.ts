@@ -82,6 +82,7 @@ export type Block = {
   fflfLastId?: string;            // fflf base: last-frame keyframe still
   fflfFirstStrength?: number; fflfLastStrength?: number;
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
+  charStrength?: number;          // character-LoRA strength (default 1.0)
   assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)
   timelineData?: string;          // the LTXDirector editor's timeline_data JSON (segments/audio/keyframes)
   director?: DirectorPayload;      // full editor output (timeline_data + relay fields) for rendering

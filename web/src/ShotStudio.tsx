@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type LibItem } from "./api";
 import { Field, inp, GhostButton, PrimaryButton, rid } from "./ui";
 import { StillPick, Num } from "./mvui";
@@ -54,6 +54,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string }[]>([]);
   const [kfUseChar, setKfUseChar] = useState(false);   // generate from the shot's character refs (identity)
   const charRefs = (b.subjectIds || []).filter(Boolean).slice(0, 3);
+  const [loras, setLoras] = useState<string[]>([]);    // character/ID LoRAs on the box (identity instead of MSR)
+  useEffect(() => { api.videoLoras().then((l) => setLoras(Array.isArray(l) ? l as string[] : [])).catch(() => {}); }, []);
 
   const setPieces = (next: ChainPiece[]) => patch({ pieces: next });
   const selectedTakeOf = (p: ChainPiece) => p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0];
@@ -114,7 +116,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         prompt: b.prompt, width: w, height: h, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
       }) as Promise<{ job_id: string }>;
     }
-    return api.videoLtxKeyframe({ ...b.director, width: w, height: h, frames: b.frames, fps: b.fps, seed }) as Promise<{ job_id: string }>;
+    return api.videoLtxKeyframe({ ...b.director, char_lora: b.charLora, char_strength: b.charStrength, width: w, height: h, frames: b.frames, fps: b.fps, seed }) as Promise<{ job_id: string }>;
   }
   // ---- video seed-hunt off the EDITOR TIMELINE: 3 HALF-RES drafts -> pick -> finish at full ----
   async function huntVideo() {
@@ -188,7 +190,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     if (!b.director?.timeline_data) { note("Build a timeline in the editor first (add a segment)."); return; }
     setBusy(true); note("Rendering the timeline…");
     try {
-      const r = await api.videoLtxKeyframe({ ...b.director, width: b.width, height: b.height, frames: b.frames, fps: b.fps }) as { job_id: string };
+      const r = await api.videoLtxKeyframe({ ...b.director, char_lora: b.charLora, char_strength: b.charStrength, width: b.width, height: b.height, frames: b.frames, fps: b.fps }) as { job_id: string };
       const clipId = await waitMedia(r.job_id, (pc) => note(`Rendering… ${pc}%`));
       const take: Take = { id: rid(), clipId, draft: false, label: "timeline" };
       if (pieces.length === 0) setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id }]);
@@ -359,6 +361,18 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             <Num label="Frames" value={b.frames} set={(n) => patch({ frames: n })} step={8} w="w-20" />
             <Num label="FPS" value={b.fps} set={(n) => patch({ fps: n })} step={1} w="w-16" />
           </div>
+          {/* character / ID LoRA — identity from a downloadable LoRA instead of MSR */}
+          <div className="flex items-end gap-2">
+            <label className="flex-1 text-[11px] text-[var(--color-muted)]">
+              Character LoRA <span className="opacity-70">(identity — instead of MSR)</span>
+              <select className={inp} style={{ width: "100%" }} value={b.charLora || ""} onChange={(e) => patch({ charLora: e.target.value })}>
+                <option value="">— none —</option>
+                {loras.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </label>
+            <Num label="Str" value={b.charStrength ?? 1.0} set={(n) => patch({ charStrength: n })} step={0.05} w="w-16" />
+          </div>
+          {!loras.length && <span className="text-[10px] text-[var(--color-muted)]">No character LoRAs on the box — drop one in ComfyUI <code>models/loras</code> + restart ComfyUI.</span>}
           {/* action rail */}
           <div className="mt-1 flex flex-col gap-2 rounded-md border border-[var(--color-line)] p-3">
             <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Build this shot</span>

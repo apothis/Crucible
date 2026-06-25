@@ -1336,6 +1336,13 @@ def build_ltx_keyframe(p, keyframes):
                "inputs": {"video": ["31", 0], "filename_prefix": "videogen/ltxkf",
                           "format": "auto", "codec": "auto"}},
     }
+    # optional CHARACTER/ID LoRA (identity from a downloadable LoRA instead of MSR) - inserted after the
+    # distill LoRA (node 2); the Director (node 9) then runs on the character-patched model.
+    if (p.get("char_lora") or "").strip():
+        g["2c"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": ["2", 0], "lora_name": p["char_lora"].strip(),
+                              "strength_model": float(p.get("char_strength", 1.0))}}
+        g["9"]["inputs"]["model"] = ["2c", 0]
     scale_factor = 2 if base_scale >= 1.0 else 1    # final res: base_scale 0.5 -> target; 1.0 -> 2x
     resolved = {"seed": seed, "width": w, "height": h, "fps": fps, "frames": frames,
                 "seconds": round(frames / fps, 2), "cfg": cfg, "distill_strength": distill,
