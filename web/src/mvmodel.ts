@@ -27,7 +27,28 @@ export type BlockChar = { charId: string; wardrobeId?: string };
 // segment may also pin a keyframe still: keyframeStillId places that library still at the segment's
 // START (or its END when isEndFrame), and the model interpolates between the pinned keyframes.
 export type Seg = { len: string; prompt: string; keyframeStillId?: string; isEndFrame?: boolean };
-export type RenderMode = "msr" | "i2v" | "s2v" | "keyframe";
+export type RenderMode = "msr" | "i2v" | "s2v" | "keyframe" | "fflf";
+
+// ---- Shot Studio (per-segment editor) -------------------------------------------------------
+// A rendered video for a piece: a half-res hunt draft (video-only) OR a finished full-res take.
+export type Take = {
+  id: string;
+  clipId: string;                 // a job id; media at /api/media/<clipId>
+  stage1Seed?: number;            // the hunt/base seed (what you picked)
+  stage2Seed?: number;            // the refine/multiroll seed
+  draft?: boolean;                // true = half-res hunt draft (no lip-sync), false = finished
+  label?: string;
+};
+// One piece of a continuous take. Piece 0 = the base shot; later pieces = FFLF extends off the
+// previous piece's tail. Each piece keeps every take it rolled so you can pick / multiroll.
+export type ChainPiece = {
+  id: string;
+  lane: "fflf" | "msr";
+  label?: string;
+  takes: Take[];
+  selectedTakeId?: string;        // which take is this piece's chosen clip
+  lastStillId?: string;           // fflf: the last-frame keyframe still
+};
 
 export type Block = {
   id: string; idx: number; start: number; end: number; kind: "msr";
@@ -50,6 +71,14 @@ export type Block = {
   clipId?: string; upscaledId?: string;
   clipVariants?: string[];        // all rendered clip job-ids for this block
   bgVariants?: string[];          // all composed/generated background still-ids for this block
+  // ---- Shot Studio per-segment editor: a continuous take = ordered chain pieces ----
+  pieces?: ChainPiece[];          // piece 0 = base shot; later = FFLF extends off the prior tail
+  fflfFirstId?: string;           // fflf base: first-frame anchor still
+  fflfLastId?: string;            // fflf base: last-frame keyframe still
+  fflfFirstStrength?: number; fflfLastStrength?: number;
+  charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
+  assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)
+  timelineData?: string;          // the LTXDirector editor's timeline_data JSON (segments/audio/keyframes)
 };
 
 export const MSR_REF_COMBOS = [17, 25, 33, 41];   // LiconMSR frame_count combo

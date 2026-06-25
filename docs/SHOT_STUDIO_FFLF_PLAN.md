@@ -24,6 +24,40 @@ deliberate move *off* LTXDirector for 2-point shots — see §2.
 
 ---
 
+## 0. Validated this session + direction (2026-06-25)
+
+**Proven on the box (corrects several earlier ASSUMPTIONS I'd asserted as facts):**
+- **MSR identity + keyframe + lip-sync coexist in one graph** [V, user-confirmed "worked well"]. Added
+  `first_keyframe`/`last_keyframe` to `build_ltx_msr` (endpoint `keyframe_first_id`/`keyframe_last_id`) —
+  a stock `LTXVAddGuide` spliced after the MSR IC-LoRA guide. The old "MSR can't share a graph with
+  keyframes" / "FFLF can't lip-sync" lines were unfounded. See [[project_flf-vs-msr]].
+- **Two gotchas that make it "stop singing":** feed the **FULL SONG** (`isolate_vocal:false`), not an
+  isolated/smeared vocal; and a last-frame keyframe must be a **singing pose (mic to mouth)** or it
+  pulls the lips off the vocal as the shot converges.
+- **Capability gain:** MSR + a keyframe gives a more **dynamic camera swing** *without* the MSR
+  zoom-morph (the pinned endpoint tames it) — relaxes the old "keep MSR camera small/steady" rule.
+- **Long continuous SINGING take via FFLF extend** [V mechanism]: extend an existing clip by feeding
+  its **last 33 frames** (foxydits' value) as the FFLF first video-anchor; identity + motion carry
+  from the tail, lip-sync from the continuation audio. Drive clip = the *result* clip you approved, not
+  the input-source clip (got this wrong once). Audio for the extension is offset back by the overlap
+  (33f) so the new content lands on the seam.
+- **Seam needs work:** the regenerated overlap frames are *almost* pixel-identical → a slight flicker +
+  an end-color pull at the join. Mitigations in play: **crossfade over the 33-frame overlap** at
+  assembly; **lower `last_strength`** (~0.5) to stop the end yanking the color back.
+- **Multiroll/seed-hunt is ESSENTIAL [user]:** going straight to single finishes wastes renders. The
+  loop = 3 half-res hunt drafts → pick the cleanest seam/motion → finish (full res + lip-sync) → reroll
+  if needed. NOTE: hunt drafts are **video-only** (no audio), so lip-sync is judged on the *finish*.
+
+**UI direction (supersedes part of §6):**
+- **Each segment in its OWN page view** (not just a panel) — the per-segment deep editor.
+- **Revisit LTXDirector for the segment editor** specifically. We rejected Director for the *overall
+  timeline* view, but its per-segment relay/timeline machinery may be the right fit for editing a
+  single segment (prompt timeline, keyframes, retake regions) — re-evaluate, don't carry the blanket
+  rejection. (FFLF stays stock-`LTXVAddGuide`; Director is for the editor scaffolding, not the 2-point
+  shot graph.)
+
+---
+
 ## 1. Why FFLF, and why a new page
 
 - **FFLF teardown [V].** foxydits' v1.6 graph contains **zero `LTXDirector`/`LTXDirectorGuide`
@@ -297,3 +331,81 @@ which also needs "Nodes 2.0" disabled — irrelevant to our headless graphs.)
 - **NAG 50 vs our 11:** adopt his hotter NAG for FFLF? Test, don't assume.
 - **Universal migration risk:** moving MSR/keyframe editing out of the Inspector touches working
   flows — stage carefully (phase 5 last), keep the timeline functional throughout.
+
+---
+
+## 11. Per-segment page design + LTXDirector-as-editor (2026-06-25)
+
+This supersedes the panel sketch in §6: each segment gets its **own full-page view**, not an inline
+panel. Reached from the timeline by **Open** on a shot row → `goTo("segment")` with that block
+selected; **← Timeline** returns. The timeline page slims to overview + sequencing.
+
+### 11.1 LTXDirector revisit — verdict: ADOPT it for the editor scaffolding (not the FFLF graph) [V from box I/O]
+
+We rejected LTXDirector for the *overall timeline*, but its node I/O makes it the right backend for a
+*single-segment* editor. `LTXDirector` exposes (verified via `/object_info`):
+- **prompt timeline** — `global_prompt` + `local_prompts` (`|`-sep) + `segment_lengths` + `epsilon`
+  (boundary softness).
+- **keyframes** — `timeline_data` JSON (segments: type/start/length/imageFile/isEndFrame) +
+  `guide_strength` CSV.
+- **duration / framing** — start/end frame+second, `duration_*`, `frame_rate`, `display_mode`
+  (seconds|frames), `custom_width/height`, `img_compression`.
+- **audio** — `use_custom_audio` / `inpaint_audio` / `override_audio` (+ `audio_vae`, `combined_audio` out).
+- `LTXDirectorGuide` adds **`retake_mode`** (re-render a region), **`ic_lora_name`/`ic_lora_strength`**
+  (an identity/control IC-LoRA on the guide), and **`scale_by`** (the 2-stage refine).
+
+So a single segment maps cleanly onto one Director graph: a prompt timeline + absolute keyframes +
+retake regions + audio handling, optionally an IC-LoRA. **The editor's controls are essentially a UI
+over Director's fields** — we already plumb most of them in `build_ltx_keyframe`/`build_ltx_msr`.
+
+**Boundary:** LTXDirector backs **MSR / keyframe / timeline** segments. **FFLF (2-point + extend)
+stays stock `LTXVAddGuide`** — proven better for 2-point and the only path we've validated for the
+video-tail extend/chain. The editor hosts *both* backends; the segment's `renderMode` picks which
+controls show.
+
+### 11.2 Page layout (one segment in focus)
+
+- **Header:** Shot N, `renderMode` selector (msr | keyframe | fflf | i2v), timing (from the timeline),
+  ← Timeline.
+- **Left — source & prompt (method-specific):**
+  - *Director segments (msr/keyframe):* the **prompt timeline** (global + per-segment local prompts at
+    segment_lengths, epsilon slider), keyframe list (still + start/length/isEndFrame/guide_strength),
+    MSR refs + background, optional IC-LoRA / char-LoRA slot.
+  - *FFLF:* First / Last anchors — each a **library still OR a clip tail/head** (video anchor =
+    `frames`/`skip`, default **33**), strengths (0.6–0.9), prompt, split video/audio negatives.
+  - **Lip-sync (any method):** vocal source + window, **full-song toggle (`isolate_vocal:false` default
+    — decided)**; a singing keyframe pose if a last keyframe is used.
+- **Center — preview + takes strip:** current take + every **multiroll** variant (each labelled with
+  its seeds), click to select → becomes the block's clip. Variants live here, never on the timeline.
+- **Right — action rail:**
+  - **Seed-hunt** → 3 half-res drafts → contact strip → pick (drafts are **video-only**; lip-sync is
+    judged on finish).
+  - **Finish / Multiroll** → finish the picked draft at full res + lip-sync; reroll stage-2 seed → new
+    variant.
+  - **Extend** → append a continuous segment driven by **this clip's last 33 frames** (FFLF video
+    anchor); supports the **crossfade-over-overlap** assembly (smooths the seam) + a `last_strength`
+    control (≤0.5 to stop end-color pull). "Lengthen this render" stays as the simple secondary.
+  - **Retake region** → Director `retake_mode` (or the existing retake lane) for a glitchy slice.
+- **Chain view:** the ordered pieces of a continuous take (each with its own lane/anchor/seeds),
+  assembled with crossfades; per-piece re-hunt/multiroll.
+
+### 11.3 What's already built vs new
+
+- **Built & proven:** `build_ltx_fflf` (hunt/finish, image+video anchors, lip-sync), `build_ltx_msr`
+  (+ keyframe splice), `build_ltx_keyframe` (Director 2-stage), retake, `videoFreeModels` + auto-free,
+  the seed-hunt→finish→crossfade-assemble loop (manual via curl this session).
+- **New for the page:** the `ShotStudio.tsx` page + nav; the takes/multiroll strip with stored seeds;
+  the extend **chain orchestrator** + **crossfade assemble** as a backend endpoint (we did it by hand
+  with ffmpeg — needs an `/api/mv/assemble_chain` or extend-to-`Seg[]` flow); the audio-window math
+  (continuation start, 33-frame overlap offset) done server-side so the UI never hand-computes it
+  (note: got the overlap offset + a 15.0-vs-15.375 audio length wrong by hand this session — bake it in).
+- **Data model:** `RenderMode += "fflf"`; `Take[]` with `stage1Seed`/`stage2Seed`; FFLF anchors;
+  chain `Seg[]` pieces carrying lane + anchor source (§5/§10).
+
+### 11.4 Phasing (revised)
+
+1. `ShotStudio.tsx` page + nav + takes strip, wired to existing endpoints (FFLF hunt/finish first).
+2. Server-side **chain orchestrator + crossfade assemble** (encapsulate the manual ffmpeg + audio math).
+3. Director-backed segment controls (prompt timeline, keyframes, retake) — the LTXDirector editor.
+4. Universalize: migrate MSR/keyframe editing off the Inspector into the page (§8 phase 5).
+

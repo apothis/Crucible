@@ -1039,6 +1039,38 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         resolved["steps"] = int(p.get("steps") or 25)
         resolved["cfg"] = float(p.get("cfg", 3.0))
         resolved["distill_strength"] = float(p.get("distill_strength", 0.2))
+    # ---- EXPERIMENT: optional KEYFRAME pin(s) on the MSR graph (testing whether MSR identity tolerates
+    # first/last-frame keyframe guides - long held to be incompatible but never actually verified).
+    # first_keyframe / last_keyframe = uploaded ComfyUI image names. Each is resized to the output res
+    # and injected via a stock LTXVAddGuide CHAINED AFTER the MSR IC-LoRA guide (node 14), so MSR identity
+    # + the keyframe pin + (any) lip-sync all share one pass. The final ConcatAV/CFGGuider/CropGuides are
+    # repointed to read the keyframe-augmented conditioning/latent. last_idx default -9 (LTX last frame).
+    first_kf = (p.get("first_keyframe") or "").strip()
+    last_kf = (p.get("last_keyframe") or "").strip()
+    gp, gn, gl = ["14", 0], ["14", 1], ["14", 2]
+    kid = 50
+    for kf, fidx, strv in ((first_kf, 0, float(p.get("first_strength", 1.0))),
+                           (last_kf, int(p.get("last_idx", -9)), float(p.get("last_strength", 1.0)))):
+        if not kf:
+            continue
+        g[str(kid)] = {"class_type": "LoadImage", "inputs": {"image": kf}}
+        g[str(kid + 1)] = {"class_type": "ImageResizeKJv2",
+                           "inputs": {"image": [str(kid), 0], "width": w, "height": h,
+                                      "upscale_method": "bilinear", "keep_proportion": "stretch",
+                                      "pad_color": "0, 0, 0", "crop_position": "center",
+                                      "divisible_by": 32, "device": "cpu"}}
+        g[str(kid + 2)] = {"class_type": "LTXVAddGuide",
+                           "inputs": {"positive": gp, "negative": gn, "vae": ["6", 0], "latent": gl,
+                                      "image": [str(kid + 1), 0], "frame_idx": fidx, "strength": strv}}
+        gp, gn, gl = [str(kid + 2), 0], [str(kid + 2), 1], [str(kid + 2), 2]
+        kid += 3
+    if first_kf or last_kf:
+        g["16"]["inputs"]["video_latent"] = gl       # MSR+keyframe latent into the AV concat
+        g["17"]["inputs"]["positive"] = gp           # sampler guider reads keyframe-augmented cond
+        g["17"]["inputs"]["negative"] = gn
+        g["23"]["inputs"]["positive"] = gp           # crop knows about MSR + keyframe guide frames
+        g["23"]["inputs"]["negative"] = gn
+        resolved["keyframes"] = [k for k in (("first" if first_kf else None), ("last" if last_kf else None)) if k]
     return g, resolved
 
 

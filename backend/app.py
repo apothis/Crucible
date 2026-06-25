@@ -18,7 +18,7 @@ import uuid
 import requests
 import websocket  # websocket-client
 from typing import Any, Dict
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -665,18 +665,44 @@ def _audio_name(prefix, b):
     return f"{prefix}_{hashlib.md5(b).hexdigest()[:16]}.wav"
 
 
-def _submit_video(graph, resolved, mode):
-    # Free ComfyUI's resident models first so the heavy video model loads FULLY into VRAM
-    # instead of partially offloading to CPU (the offload thrash = the ~130s/step slowness;
-    # ComfyUI keeps prior models cached, squeezing the next one - see the load log). Reload
-    # cost (~20s) is far cheaper than per-step PCIe transfers.
-    try:
-        # NOTE: do NOT run an in-graph cleanup node (easy cleanGpuUsed / LevelPixel) before GGUF
-        # jobs - forcing unload_all_models on a GGUF-patched model segfaults ComfyUI (access
-        # violation in ComfyUI-GGUF unpatch_model -> torch .to, 2026-06-15). Plain /free is safe.
-        C.free(unload_models=True, free_memory=True)
-    except Exception:
-        pass
+# Last model signature submitted to ComfyUI. We only force a model-free when the NEXT graph uses a
+# DIFFERENT big model - back-to-back renders of the same model (we're now anchored on LTX) stay warm
+# instead of reloading the 22B transformer (~170s) every shot. A manual free
+# (POST /api/video/free_models) resets this so the next render reloads cleanly.
+_LAST_MODEL_SIG = None
+
+
+def _graph_model_sig(graph):
+    """The set of model-loader filenames in a graph - identifies which big model(s) it loads."""
+    sig = []
+    for n in graph.values():
+        if not isinstance(n, dict):
+            continue
+        if n.get("class_type") in ("UNETLoader", "UnetLoaderGGUF", "CheckpointLoaderSimple"):
+            ins = n.get("inputs", {})
+            sig.append(ins.get("unet_name") or ins.get("ckpt_name") or "")
+    return tuple(sorted(s for s in sig if s))
+
+
+def _submit_video(graph, resolved, mode, free=None):
+    # ComfyUI keeps the last model resident, so consecutive renders of the SAME model are warm. Only
+    # force a /free when the model CHANGES (free=None -> auto by model signature): avoids the ~170s
+    # reload of the same 22B LTX transformer on every shot, while still clearing VRAM when we switch
+    # model families (Qwen still-gen <-> LTX video) to dodge offload thrash / OOM. free=True/False
+    # forces it; manual free: POST /api/video/free_models.
+    global _LAST_MODEL_SIG
+    sig = _graph_model_sig(graph)
+    if free is None:
+        free = (sig != _LAST_MODEL_SIG)
+    if free:
+        try:
+            # NOTE: do NOT run an in-graph cleanup node (easy cleanGpuUsed / LevelPixel) before GGUF
+            # jobs - forcing unload_all_models on a GGUF-patched model segfaults ComfyUI (access
+            # violation in ComfyUI-GGUF unpatch_model -> torch .to, 2026-06-15). Plain /free is safe.
+            C.free(unload_models=True, free_memory=True)
+        except Exception:
+            pass
+    _LAST_MODEL_SIG = sig
     res = submit_comfy(graph)
     if res.get("node_errors"):
         raise HTTPException(400, f"node errors: {res['node_errors']}")
@@ -685,6 +711,41 @@ def _submit_video(graph, resolved, mode):
         JOBS[pid] = _new_job(resolved, mode)
     save_job(pid)
     return {"job_id": pid, "seed": resolved.get("seed"), "media_url": f"/api/media/{pid}"}
+
+
+@app.api_route("/api/comfy/{path:path}", methods=["GET", "POST"])
+async def comfy_proxy(path: str, request: Request):
+    """Same-origin proxy to the box ComfyUI for the embedded LTXDirector timeline editor's file ops
+    (/view, /upload/image, /ltx_director_*). The editor runs in our React app; hitting the box directly
+    is cross-origin (CORS-blocked), so it calls /api/comfy/<path> and we forward to ComfyUI."""
+    url = f"http://{HOST}/{path}"
+    params = dict(request.query_params)
+    try:
+        if request.method == "GET":
+            r = requests.get(url, params=params, timeout=120)
+        else:
+            body = await request.body()
+            r = requests.post(url, params=params, data=body,
+                              headers={"Content-Type": request.headers.get("content-type", "application/octet-stream")},
+                              timeout=600)
+    except Exception as e:
+        raise HTTPException(502, f"comfy proxy failed: {e}")
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("Content-Type"))
+
+
+@app.post("/api/video/free_models")
+def video_free_models():
+    """Manually evict ComfyUI's resident GPU models and reset the auto-free tracker so the next render
+    reloads cleanly. We no longer free on every render (back-to-back same-model shots stay warm) - hit
+    this when switching model families or to reclaim VRAM on demand."""
+    global _LAST_MODEL_SIG
+    try:
+        C.free(unload_models=True, free_memory=True)
+    except Exception as e:
+        raise HTTPException(500, f"free failed: {e}")
+    _LAST_MODEL_SIG = None
+    return {"freed": True}
 
 
 @app.post("/api/video/still")
@@ -893,6 +954,15 @@ def video_ltx_msr(p: dict):
                                               # AV latent and leaks uncropped MSR reference frames
             aud_bytes, iso_used = _isolate_vocal_bytes(audio, start, win, p)
             vocal_ref = C.upload_audio(aud_bytes, _audio_name("msr_vocal", aud_bytes))
+        # EXPERIMENT: optional keyframe pin(s) on the MSR graph (keyframe_first_id / keyframe_last_id =
+        # library still ids). Uploaded + passed through so build_ltx_msr can splice an LTXVAddGuide.
+        for src_key, dst_key in (("keyframe_first_id", "first_keyframe"), ("keyframe_last_id", "last_keyframe")):
+            if p.get(src_key):
+                kpath = _lib_image_path(p.get(src_key))
+                if not kpath:
+                    raise HTTPException(400, f"{src_key} must reference a generated still")
+                with open(kpath, "rb") as f:
+                    p[dst_key] = C.upload_audio(f.read(), os.path.basename(kpath))
         graph, resolved = video_mod.build_ltx_msr(p, up_subs, up_bg, vocal_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
@@ -1065,7 +1135,7 @@ def video_ltx_fflf(p: dict):
             except Exception as e:
                 raise HTTPException(500, f"build failed: {e}")
             resolved["first_id"] = first_lbl; resolved["last_id"] = last_lbl; resolved["hunt_index"] = i
-            drafts.append(_submit_video(graph, resolved, "videoclip"))
+            drafts.append(_submit_video(graph, resolved, "videoclip"))  # auto-free only if the model changed
         return {"mode": "hunt", "base_seed": base, "drafts": drafts}
 
     try:

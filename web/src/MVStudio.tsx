@@ -6,6 +6,7 @@ import { MVTimeline } from "./MVTimeline";
 import { ShotTimeline } from "./ShotTimeline";
 import { Num, StillPick, stillLabel } from "./mvui";
 import { CharacterLibrary } from "./Characters";
+import { ShotStudio } from "./ShotStudio";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
   makeBlock, hydrateBlock, ltxFrames, resolveSubjects, charRefIds, sceneRefOf, msrPayload, shotToBlock,
@@ -132,6 +133,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const reloadChars = () => api.characters().then((r) => setLibChars(r as Character[])).catch(() => {});
   // which inspector sub-sections are expanded (per selected block is overkill; keep global)
   const [open, setOpen] = d.use<Record<string, boolean>>("openSecs", { refs: true, prompt: true });
+  const [editing, setEditing] = useState(false);   // Shot Studio per-segment editor open?
   const toggle = (k: string) => setOpen({ ...open, [k]: !open[k] });
 
   const [beats, setBeats] = useState<number[]>([]);              // song beat times (for snap-to-beat)
@@ -175,6 +177,16 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
     const blob = new Blob([JSON.stringify({ version: 1, blocks }, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
     a.download = `mv-timeline-${Date.now()}.json`; a.click(); URL.revokeObjectURL(a.href);
+  }
+  async function freeModels() {
+    const card = { id: rid(), title: "Free GPU models", status: "pending" as const, pct: 0 };
+    ctx.setResults([card]);
+    try {
+      await api.videoFreeModels();
+      ctx.setResults([{ ...card, title: "GPU models evicted — next render reloads fresh", status: "done", pct: 100 }]);
+    } catch (e) {
+      ctx.setResults([{ ...card, status: "error", err: (e as Error).message }]);
+    }
   }
   function importTimeline(file: File) {
     const r = new FileReader();
@@ -437,6 +449,12 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const span = Math.max(30, ...blocks.map((b) => b.end));
   const ready = blocks.filter((b) => b.clipId).length;
 
+  // Shot Studio: the selected segment opens full-page (editor + chain pieces), replacing the timeline view
+  if (editing && sel) {
+    return <ShotStudio block={sel} idx={sel.idx} patch={patchSel} stills={stills} audios={audios}
+      songAudioId={audioId} onClose={() => setEditing(false)} />;
+  }
+
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-[var(--color-muted)]">
@@ -463,6 +481,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
       <div className="flex flex-wrap items-center gap-2">
         <GhostButton onClick={addBlock}>+ Block</GhostButton>
+        {sel && <GhostButton onClick={() => setEditing(true)}>{"✎ Edit segment"}</GhostButton>}
         <GhostButton onClick={generateScript} disabled={scripting || !canScript}>
           {scripting ? "Scripting..." : "Generate from song"}
         </GhostButton>
@@ -487,6 +506,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
           Import
           <input type="file" accept="application/json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importTimeline(f); e.currentTarget.value = ""; }} />
         </label>
+        <GhostButton onClick={freeModels} disabled={busy}>Free GPU</GhostButton>
         <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted)]" title="Render resolution for ALL shots + the final video (project-wide)">
           Resolution
           <select className={inp} style={{ width: "auto" }} value={resolution} onChange={(e) => setResolution(e.target.value)}>
