@@ -1,6 +1,10 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { TimelineEditor } from "./vendor/ltxdirector/ltx_director.js";
 import { type DirectorPayload } from "./mvmodel";
+
+// Imperative handle so Shot Studio can inject a generated/library still as a keyframe via the editor's
+// own add-image path (handleImageUpload uploads to ComfyUI input + places the segment at `frame`).
+export type LtxDirectorHandle = { addImage: (file: File, frame: number) => void };
 
 // React wrapper that mounts the vendored (GPL-3) LTXDirector TimelineEditor standalone — no ComfyUI.
 // The editor reads/writes everything through a shim "node" (widgets by name + a properties bag) and
@@ -19,13 +23,19 @@ const WIDGETS: Record<string, unknown> = {
   duration_frames: 120, duration_seconds: 5, frame_rate: 24, display_mode: "frames",
 };
 
-export function LtxDirectorEditor({ timelineData, frames, fps, onChange }: {
+export const LtxDirectorEditor = forwardRef<LtxDirectorHandle, {
   timelineData?: string; frames: number; fps: number; onChange: (payload: DirectorPayload) => void;
-}) {
+}>(function LtxDirectorEditor({ timelineData, frames, fps, onChange }, fwdRef) {
   const ref = useRef<HTMLDivElement | null>(null);
   const edRef = useRef<TimelineEditor | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  useImperativeHandle(fwdRef, () => ({
+    addImage: (file: File, frame: number) => {
+      try { edRef.current?.handleImageUpload([file], frame); }
+      catch (e) { console.error("[ShotStudio] addImage failed", e); }
+    },
+  }), []);
 
   useEffect(() => {
     (window as unknown as { __LTXD_BOX__: string }).__LTXD_BOX__ = BOX;
@@ -75,4 +85,4 @@ export function LtxDirectorEditor({ timelineData, frames, fps, onChange }: {
   }, []);
 
   return <div ref={ref} className="ltxd-editor" style={{ minHeight: 380, width: "100%" }} />;
-}
+});

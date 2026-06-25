@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, type LibItem } from "./api";
 import { Field, inp, GhostButton, PrimaryButton, rid } from "./ui";
 import { StillPick, Num } from "./mvui";
-import { LtxDirectorEditor } from "./LtxDirectorEditor";
+import { LtxDirectorEditor, type LtxDirectorHandle } from "./LtxDirectorEditor";
 import { type Block, type ChainPiece, type Take, type RenderMode } from "./mvmodel";
 
 // ---------------------------------------------------------------------------------------------
@@ -45,6 +45,13 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   // transient hunt state: the 3 half-res drafts for the piece currently being hunted
   const [hunt, setHunt] = useState<{ pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string }[] } | null>(null);
   const [status, setStatus] = useState("");
+  // "Add keyframe still" panel: generate (seed-hunt half-res -> full on pick) or pick from library,
+  // then inject into the editor timeline as a keyframe via the editor's own add-image path.
+  const edRef = useRef<LtxDirectorHandle>(null);
+  const [kfPrompt, setKfPrompt] = useState("");
+  const [kfFrame, setKfFrame] = useState(0);
+  const [kfBusy, setKfBusy] = useState(false);
+  const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string }[]>([]);
 
   const setPieces = (next: ChainPiece[]) => patch({ pieces: next });
   const selectedTakeOf = (p: ChainPiece) => p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0];
@@ -129,6 +136,50 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     finally { setBusy(false); }
   }
 
+  // ---- keyframe still: seed-hunt (half-res) -> pick -> full-res -> inject into the editor timeline ----
+  const halfDim = (n: number) => Math.max(256, Math.round(n / 2 / 32) * 32);
+  async function injectStill(mediaUrl: string) {
+    const blob = await fetch(mediaUrl).then((r) => r.blob());
+    const file = new File([blob], `kf_${Date.now()}.png`, { type: blob.type || "image/png" });
+    if (!edRef.current) throw new Error("editor not ready");
+    edRef.current.addImage(file, Math.max(0, Math.round(kfFrame)));
+  }
+  async function huntStills() {
+    if (!kfPrompt.trim()) { setStatus("Enter a prompt for the keyframe still."); return; }
+    setKfBusy(true); setStatus("Hunting 3 half-res stills…");
+    const base = Math.floor(Math.random() * 2_000_000_000);
+    const hw = halfDim(b.width), hh = halfDim(b.height);
+    try {
+      const drafts: { jobId: string; seed: number; url?: string }[] = [];
+      for (let i = 0; i < 3; i++) {
+        const r = await api.videoStill({ prompt: kfPrompt, width: hw, height: hh, seed: base + i }) as { job_id: string };
+        drafts.push({ jobId: r.job_id, seed: base + i });
+      }
+      setKfDrafts(drafts);
+      drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
+        setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x))).catch(() => {}));
+      setStatus("Still drafts rendering — pick one to finalize at full res.");
+    } catch (e) { setStatus("Still hunt failed: " + (e as Error).message); }
+    finally { setKfBusy(false); }
+  }
+  async function finalizeStill(seed: number) {
+    setKfBusy(true); setStatus("Rendering full-res still + adding as keyframe…");
+    try {
+      const r = await api.videoStill({ prompt: kfPrompt, width: b.width, height: b.height, seed }) as { job_id: string };
+      const url = await waitMedia(r.job_id);
+      await injectStill(url);
+      setKfDrafts([]); setStatus(`Keyframe still added at frame ${kfFrame}.`);
+    } catch (e) { setStatus("Finalize failed: " + (e as Error).message); }
+    finally { setKfBusy(false); }
+  }
+  async function addLibraryStill(stillId: string) {
+    if (!stillId) return;
+    setKfBusy(true); setStatus("Adding library still as keyframe…");
+    try { await injectStill(`/api/media/${stillId}`); setStatus(`Library still added at frame ${kfFrame}.`); }
+    catch (e) { setStatus("Add failed: " + (e as Error).message); }
+    finally { setKfBusy(false); }
+  }
+
   function selectTake(pieceId: string, takeId: string) {
     setPieces(pieces.map((p) => p.id === pieceId ? { ...p, selectedTakeId: takeId } : p));
   }
@@ -158,8 +209,40 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       {/* ===================== TIMELINE EDITOR (vendored LTXDirector, GPL-3) ===================== */}
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
         <div className="ss-card" style={{ padding: 8 }}>
-          <LtxDirectorEditor timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
+          <LtxDirectorEditor ref={edRef} timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
             onChange={(payload) => patch({ director: payload, timelineData: payload.timeline_data })} />
+        </div>
+      )}
+
+      {/* ===================== ADD KEYFRAME STILL (generate seed-hunt / library -> inject as keyframe) ===================== */}
+      {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
+        <div className="ss-card flex flex-col gap-3">
+          <div className="text-xs font-semibold text-[var(--color-ink)]">Add keyframe still</div>
+          <div className="grid grid-cols-[1fr_auto_auto] items-end gap-3">
+            <Field label="Prompt (generate a still)">
+              <textarea className={inp} rows={2} value={kfPrompt} onChange={(e) => setKfPrompt(e.target.value)}
+                placeholder="the singer on a ruined ashen stage, dramatic light…" />
+            </Field>
+            <Num label="At frame" value={kfFrame} set={setKfFrame} step={1} w="w-20" />
+            <PrimaryButton onClick={huntStills} disabled={kfBusy || !kfPrompt.trim()}>Seed-hunt 3 (half-res)</PrimaryButton>
+          </div>
+          {kfDrafts.length > 0 && (
+            <div className="grid grid-cols-3 gap-3">
+              {kfDrafts.map((d) => (
+                <div key={d.jobId} className="ss-piece">
+                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">rendering…</div>}</div>
+                  <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                    <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
+                    <GhostButton onClick={() => finalizeStill(d.seed)} disabled={kfBusy || !d.url}>Use (full)</GhostButton>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-[var(--color-muted)]">or add an existing still:</span>
+            <div className="min-w-[220px]"><StillPick value="" set={addLibraryStill} stills={stills} placeholder="— pick from library —" /></div>
+          </div>
         </div>
       )}
 
