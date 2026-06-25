@@ -43,7 +43,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [busy, setBusy] = useState(false);
   const pieces = b.pieces || [];
   // transient hunt state: the 3 half-res drafts for the piece currently being hunted
-  const [hunt, setHunt] = useState<{ pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string }[] } | null>(null);
+  const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string }[] } | null>(null);
   const [status, setStatus] = useState("");
   // "Add keyframe still" panel: generate (seed-hunt half-res -> full on pick) or pick from library,
   // then inject into the editor timeline as a keyframe via the editor's own add-image path.
@@ -82,7 +82,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       else { p.first_id = b.fflfFirstId; }
       const r = await api.videoLtxFflf(p) as { base_seed: number; drafts: { job_id: string }[] };
       const drafts = r.drafts.map((d, i) => ({ jobId: d.job_id, seed: r.base_seed + i }));
-      setHunt({ pieceLabel: forExtend ? `extend ${pieces.length + 1}` : "base", forExtend, drafts });
+      setHunt({ kind: "fflf", pieceLabel: forExtend ? `extend ${pieces.length + 1}` : "base", forExtend, drafts });
       // resolve each draft's poster as it finishes
       drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
         setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h)).catch(() => {}));
@@ -91,9 +91,60 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     finally { setBusy(false); }
   }
 
+  // can we seed-hunt video? fflf needs an anchor; msr/keyframe need the editor timeline.
+  const canHuntVideo = b.renderMode === "fflf" ? fflfReady : !!b.director?.timeline_data;
+  // pull the first/last keyframe image filenames out of the editor's timeline_data (for MSR keyframe pins)
+  function parseKf(td?: string): { firstName?: string; lastName?: string } {
+    try {
+      const segs = ((JSON.parse(td || "{}").segments || []) as { type?: string; imageFile?: string; start?: number }[])
+        .filter((s) => s.type === "image" && s.imageFile).sort((a, c) => (a.start || 0) - (c.start || 0));
+      return { firstName: segs[0]?.imageFile, lastName: segs.length > 1 ? segs[segs.length - 1].imageFile : undefined };
+    } catch { return {}; }
+  }
+  // ---- video seed-hunt off the EDITOR TIMELINE: 3 full renders, dispatched by render mode ----
+  async function huntVideo() {
+    if (b.renderMode === "fflf") return runHunt(false);   // fflf: its own anchor hunt (half-res -> finish)
+    if (!b.director?.timeline_data) { note("Build a timeline in the editor first (add a keyframe)."); return; }
+    setBusy(true); note("Seed-hunting video (3 takes)…");
+    const base = Math.floor(Math.random() * 2_000_000_000);
+    try {
+      const drafts: { jobId: string; seed: number; url?: string }[] = [];
+      for (let i = 0; i < 3; i++) {
+        let r: { job_id: string };
+        if (b.renderMode === "msr") {
+          const kf = parseKf(b.director!.timeline_data);   // MSR identity + lip-sync + the editor's keyframe(s)
+          r = await api.videoLtxMsr({
+            subject_ids: b.subjectIds, background_id: b.backgroundId,
+            audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
+            keyframe_first_name: kf.firstName, keyframe_last_name: kf.lastName,
+            prompt: b.prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed: base + i,
+          }) as { job_id: string };
+        } else {   // keyframe: render the editor timeline through LTXDirector
+          r = await api.videoLtxKeyframe({ ...b.director, width: b.width, height: b.height, frames: b.frames, fps: b.fps, seed: base + i }) as { job_id: string };
+        }
+        drafts.push({ jobId: r.job_id, seed: base + i });
+      }
+      setHunt({ kind: "video", pieceLabel: "video", forExtend: false, drafts });
+      drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
+        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h)).catch(() => {}));
+      note("Video takes rendering — pick the best.");
+    } catch (e) { note("Video hunt failed: " + (e as Error).message); }
+    finally { setBusy(false); }
+  }
+
   // ---- finish a chosen draft at full res (+ lip-sync) -> a Take on a (new) piece ----
   async function finishDraft(stage1Seed: number) {
     if (!hunt) return;
+    if (hunt.kind === "video") {   // video drafts are already full renders -> picking just keeps it as the take
+      const d = hunt.drafts.find((x) => x.seed === stage1Seed);
+      if (!d?.url) return;
+      const lane = b.renderMode === "msr" ? "msr" : "fflf";
+      const take: Take = { id: rid(), clipId: d.jobId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
+      if (pieces.length === 0) setPieces([{ id: rid(), lane, label: "Base shot", takes: [take], selectedTakeId: take.id }]);
+      else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
+      setHunt(null); note("Added as a take.");
+      return;
+    }
     const forExtend = hunt.forExtend;
     setBusy(true); note("Finishing at full res" + (b.lipsync ? " with lip-sync" : "") + "…");
     try {
@@ -305,8 +356,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             <PrimaryButton onClick={renderTimeline} disabled={busy || !b.director?.timeline_data}>
               Render timeline (from editor)
             </PrimaryButton>
-            <PrimaryButton onClick={() => runHunt(false)} disabled={busy || b.renderMode !== "fflf" || !fflfReady}>
-              {pieces.length ? "Re-hunt base (3 drafts)" : "Seed-hunt base (3 drafts)"}
+            <PrimaryButton onClick={huntVideo} disabled={busy || !canHuntVideo}>
+              {pieces.length ? "Re-hunt video (3)" : "Seed-hunt video (3)"}
             </PrimaryButton>
             <GhostButton onClick={() => runHunt(true)} disabled={busy || !lastClip}>
               + Extend off last piece's tail (3 drafts)

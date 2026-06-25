@@ -963,6 +963,12 @@ def video_ltx_msr(p: dict):
                     raise HTTPException(400, f"{src_key} must reference a generated still")
                 with open(kpath, "rb") as f:
                     p[dst_key] = C.upload_audio(f.read(), os.path.basename(kpath))
+        # editor keyframes are ALREADY in ComfyUI input (uploaded by the timeline editor via /api/comfy);
+        # pass their raw filenames straight through so the seed-hunt can drive MSR off the editor timeline.
+        if p.get("keyframe_first_name"):
+            p["first_keyframe"] = p["keyframe_first_name"]
+        if p.get("keyframe_last_name"):
+            p["last_keyframe"] = p["keyframe_last_name"]
         graph, resolved = video_mod.build_ltx_msr(p, up_subs, up_bg, vocal_ref)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
