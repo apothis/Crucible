@@ -101,33 +101,38 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       return { firstName: segs[0]?.imageFile, lastName: segs.length > 1 ? segs[segs.length - 1].imageFile : undefined };
     } catch { return {}; }
   }
-  // ---- video seed-hunt off the EDITOR TIMELINE: 3 full renders, dispatched by render mode ----
+  const vHalf = (n: number) => Math.max(256, Math.round(n / 2 / 32) * 32);
+  // render ONE video take for this shot at (w,h)+seed, dispatched by mode — used at half-res for the
+  // hunt drafts and at full-res on pick.
+  function renderVideo(seed: number, w: number, h: number): Promise<{ job_id: string }> {
+    if (b.renderMode === "msr") {
+      const kf = parseKf(b.director!.timeline_data);   // MSR identity + lip-sync + the editor's keyframe(s)
+      return api.videoLtxMsr({
+        subject_ids: b.subjectIds, background_id: b.backgroundId,
+        audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
+        keyframe_first_name: kf.firstName, keyframe_last_name: kf.lastName,
+        prompt: b.prompt, width: w, height: h, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
+      }) as Promise<{ job_id: string }>;
+    }
+    return api.videoLtxKeyframe({ ...b.director, width: w, height: h, frames: b.frames, fps: b.fps, seed }) as Promise<{ job_id: string }>;
+  }
+  // ---- video seed-hunt off the EDITOR TIMELINE: 3 HALF-RES drafts -> pick -> finish at full ----
   async function huntVideo() {
-    if (b.renderMode === "fflf") return runHunt(false);   // fflf: its own anchor hunt (half-res -> finish)
+    if (b.renderMode === "fflf") return runHunt(false);   // fflf: its own anchor hunt
     if (!b.director?.timeline_data) { note("Build a timeline in the editor first (add a keyframe)."); return; }
-    setBusy(true); note("Seed-hunting video (3 takes)…");
+    setBusy(true); note("Seed-hunting video (3 half-res drafts)…");
     const base = Math.floor(Math.random() * 2_000_000_000);
+    const hw = vHalf(b.width), hh = vHalf(b.height);
     try {
       const drafts: { jobId: string; seed: number; url?: string }[] = [];
       for (let i = 0; i < 3; i++) {
-        let r: { job_id: string };
-        if (b.renderMode === "msr") {
-          const kf = parseKf(b.director!.timeline_data);   // MSR identity + lip-sync + the editor's keyframe(s)
-          r = await api.videoLtxMsr({
-            subject_ids: b.subjectIds, background_id: b.backgroundId,
-            audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
-            keyframe_first_name: kf.firstName, keyframe_last_name: kf.lastName,
-            prompt: b.prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed: base + i,
-          }) as { job_id: string };
-        } else {   // keyframe: render the editor timeline through LTXDirector
-          r = await api.videoLtxKeyframe({ ...b.director, width: b.width, height: b.height, frames: b.frames, fps: b.fps, seed: base + i }) as { job_id: string };
-        }
+        const r = await renderVideo(base + i, hw, hh);
         drafts.push({ jobId: r.job_id, seed: base + i });
       }
       setHunt({ kind: "video", pieceLabel: "video", forExtend: false, drafts });
       drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
         setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h)).catch(() => {}));
-      note("Video takes rendering — pick the best.");
+      note("Half-res drafts rendering — pick one to finish at full res.");
     } catch (e) { note("Video hunt failed: " + (e as Error).message); }
     finally { setBusy(false); }
   }
@@ -135,14 +140,18 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   // ---- finish a chosen draft at full res (+ lip-sync) -> a Take on a (new) piece ----
   async function finishDraft(stage1Seed: number) {
     if (!hunt) return;
-    if (hunt.kind === "video") {   // video drafts are already full renders -> picking just keeps it as the take
-      const d = hunt.drafts.find((x) => x.seed === stage1Seed);
-      if (!d?.url) return;
-      const lane = b.renderMode === "msr" ? "msr" : "fflf";
-      const take: Take = { id: rid(), clipId: d.jobId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
-      if (pieces.length === 0) setPieces([{ id: rid(), lane, label: "Base shot", takes: [take], selectedTakeId: take.id }]);
-      else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
-      setHunt(null); note("Added as a take.");
+    if (hunt.kind === "video") {   // drafts are half-res -> re-render the picked seed at full res
+      setBusy(true); note("Finishing video at full res…");
+      try {
+        const r = await renderVideo(stage1Seed, b.width, b.height);
+        const clipId = await waitMedia(r.job_id, (pc) => note(`Finishing… ${pc}%`));
+        const lane = b.renderMode === "msr" ? "msr" : "fflf";
+        const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
+        if (pieces.length === 0) setPieces([{ id: rid(), lane, label: "Base shot", takes: [take], selectedTakeId: take.id }]);
+        else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
+        setHunt(null); note("Finished — added as a take.");
+      } catch (e) { note("Finish failed: " + (e as Error).message); }
+      finally { setBusy(false); }
       return;
     }
     const forExtend = hunt.forExtend;
