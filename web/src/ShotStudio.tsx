@@ -52,6 +52,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [kfFrame, setKfFrame] = useState(0);
   const [kfBusy, setKfBusy] = useState(false);
   const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string }[]>([]);
+  const [kfUseChar, setKfUseChar] = useState(false);   // generate from the shot's character refs (identity)
+  const charRefs = (b.subjectIds || []).filter(Boolean).slice(0, 3);
 
   const setPieces = (next: ChainPiece[]) => patch({ pieces: next });
   const selectedTakeOf = (p: ChainPiece) => p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0];
@@ -138,6 +140,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
 
   // ---- keyframe still: seed-hunt (half-res) -> pick -> full-res -> inject into the editor timeline ----
   const halfDim = (n: number) => Math.max(256, Math.round(n / 2 / 32) * 32);
+  const genStill = (seed: number, w: number, h: number) =>
+    (kfUseChar && charRefs.length)
+      ? api.videoCharStill({ ref_ids: charRefs, prompt: kfPrompt, width: w, height: h, seed })   // identity from refs
+      : api.videoStill({ prompt: kfPrompt, width: w, height: h, seed });                          // prompt-only scene
   async function injectStill(mediaUrl: string) {
     const blob = await fetch(mediaUrl).then((r) => r.blob());
     const file = new File([blob], `kf_${Date.now()}.png`, { type: blob.type || "image/png" });
@@ -152,7 +158,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     try {
       const drafts: { jobId: string; seed: number; url?: string }[] = [];
       for (let i = 0; i < 3; i++) {
-        const r = await api.videoStill({ prompt: kfPrompt, width: hw, height: hh, seed: base + i }) as { job_id: string };
+        const r = await genStill(base + i, hw, hh) as { job_id: string };
         drafts.push({ jobId: r.job_id, seed: base + i });
       }
       setKfDrafts(drafts);
@@ -165,7 +171,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   async function finalizeStill(seed: number) {
     setKfBusy(true); setStatus("Rendering full-res still + adding as keyframe…");
     try {
-      const r = await api.videoStill({ prompt: kfPrompt, width: b.width, height: b.height, seed }) as { job_id: string };
+      const r = await genStill(seed, b.width, b.height) as { job_id: string };
       const url = await waitMedia(r.job_id);
       await injectStill(url);
       setKfDrafts([]); setStatus(`Keyframe still added at frame ${kfFrame}.`);
@@ -218,6 +224,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
         <div className="ss-card flex flex-col gap-3">
           <div className="text-xs font-semibold text-[var(--color-ink)]">Add keyframe still</div>
+          <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+            <input type="checkbox" checked={kfUseChar} onChange={(e) => setKfUseChar(e.target.checked)} disabled={!charRefs.length} />
+            Use this shot's character (identity){charRefs.length ? ` · ${charRefs.length} ref${charRefs.length > 1 ? "s" : ""}` : " — no refs on this shot"}
+          </label>
           <div className="grid grid-cols-[1fr_auto_auto] items-end gap-3">
             <Field label="Prompt (generate a still)">
               <textarea className={inp} rows={2} value={kfPrompt} onChange={(e) => setKfPrompt(e.target.value)}
