@@ -132,6 +132,14 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [selId, setSelId] = d.use("selId", "");
   const [libChars, setLibChars] = useState<Character[]>([]);
   const reloadChars = () => api.characters().then((r) => setLibChars(r as Character[])).catch(() => {});
+  // which characters are the cast for THIS video (persists in the project). Empty = all characters.
+  const [castIds, setCastIds] = d.use<string[]>("castIds", []);
+  const inCast = (id: string) => castIds.length === 0 || castIds.includes(id);
+  const toggleCast = (id: string) => {
+    const cur = castIds.length ? castIds : libChars.map((c) => c.id);   // materialize "all" before toggling
+    setCastIds(cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  };
+  const castChars = libChars.filter((c) => inCast(c.id));
   // which inspector sub-sections are expanded (per selected block is overkill; keep global)
   const [open, setOpen] = d.use<Record<string, boolean>>("openSecs", { refs: true, prompt: true });
   const [editing, setEditing] = useState(false);   // Shot Studio per-segment editor open?
@@ -232,7 +240,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       // audio_id lets the backend snap the cuts onto the song's ACTUAL structure (allin1 segments +
       // downbeats from the rendered audio) - more accurate than the planned arrangement.
       const r = await api.mvScript({ song: payload, model: scriptModel, audio_id: audioId,
-        cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician", gender: c.gender || "", appearance: c.appearance || "" })) }) as { shots: ScriptShot[]; structure_driven?: boolean; audio_segments?: number };
+        cast: castChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician", gender: c.gender || "", appearance: c.appearance || "" })) }) as { shots: ScriptShot[]; structure_driven?: boolean; audio_segments?: number };
       const next = (r.shots || []).map((s) => shotToBlock(s, libChars, audioId));
       commit(next); setSelId(next[0]?.id || "");
       setScriptInfo({ aligned: !!r.structure_driven, segs: r.audio_segments || 0, shots: next.length });
@@ -473,6 +481,29 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
           {audios.map((a) => <option key={a.id} value={a.id}>{(a.params?.title || a.params?.tags || a.mode || a.id).toString().slice(0, 40)}</option>)}
         </select>
       </Field>
+
+      {/* cast picker: which library characters this video uses (the script only references these) */}
+      {libChars.length > 0 && (
+        <Field label="Cast for this video" hint="only the checked characters are sent to the script writer">
+          <div className="flex flex-wrap gap-1.5">
+            {libChars.map((c) => {
+              const on = inCast(c.id);
+              const ref = c.identity?.faceRefId || c.identity?.bodyRefId;
+              return (
+                <button key={c.id} onClick={() => toggleCast(c.id)} title={on ? "in this video — click to exclude" : "excluded — click to include"}
+                  className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${on ? "border-[var(--color-accent2)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-muted)] opacity-60"}`}>
+                  {ref
+                    ? <img src={`/api/media/${ref}`} alt="" className={`h-5 w-5 rounded-full object-cover ${on ? "" : "grayscale"}`} />
+                    : <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[var(--color-line)] text-[8px]">?</span>}
+                  <span>{c.name}</span>
+                  {c.role && <span className="text-[9px] text-[var(--color-muted)]">· {c.role}</span>}
+                  <span>{on ? "✓" : "+"}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+      )}
 
       {/* quick character panel (same shared global cast as the Characters tab) */}
       <CharacterLibrary chars={libChars} setChars={setLibChars} reload={reloadChars}
