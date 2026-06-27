@@ -92,7 +92,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   // Non-distilled (dev) model = the only way to get controllable/slower LTX motion (distilled has none).
   // Works on every path now. `nd` = use the dev model; `cine` = also add B-roll slow cues (non-lip-sync).
   const nd = !!b.nonDistilled;
-  const ndSteps = nd ? (b.steps || undefined) : undefined;   // undefined -> builder default
+  // Non-distilled steps default = 35. Treat any sub-16 saved value as the default (8 is a distilled step
+  // count; older builds could leave a stale 8 here). 30-50 is the real range.
+  const stepsVal = (b.steps && b.steps >= 16) ? b.steps : 35;
+  const ndSteps = nd ? stepsVal : undefined;
   const cine = nd && !b.lipsync;
   const fflfPrompt = () => cine ? `${CALM_POS}, ${b.prompt}` : b.prompt;
   const fflfNeg = () => cine ? CALM_NEG : undefined;                                  // undefined -> builder default
@@ -450,7 +453,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             </label>
             {b.nonDistilled && (
               <div className="flex items-center gap-2">
-                <Num label="Steps" value={b.steps ?? 35} set={(n) => patch({ steps: Math.round(n) })} step={1} w="w-24" min={8} max={60} />
+                <Num label="Steps" value={stepsVal} set={(n) => patch({ steps: Math.round(n) })} step={1} w="w-24" min={16} max={60} />
                 <span className="text-[10px] text-[var(--color-muted)]">30–50 typical; more = cleaner but slower</span>
               </div>
             )}
