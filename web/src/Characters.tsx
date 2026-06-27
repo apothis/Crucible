@@ -148,17 +148,21 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     } finally { setHunting(""); }
   }
 
-  // generate a dressed reference (Qwen char_still) from the identity core + the wardrobe's outfit text
+  // generate a dressed reference (Qwen char_still) from the identity core + the wardrobe's outfit text.
+  // Face shot: anchored on the identity FACE. Body shot: anchored on the identity BODY (build, primary
+  // ref) AND the FACE (identity, secondary ref) together so the dressed body keeps both - Qwen char_still
+  // takes up to 3 refs, image1 = primary.
   function genRef(c: Character, w: Wardrobe, slot: "face" | "body") {
-    const baseRef = slot === "face"
-      ? (c.identity?.faceRefId || c.identity?.bodyRefId)
-      : (c.identity?.bodyRefId || c.identity?.faceRefId);
-    if (!baseRef) { ctx.setResults([{ id: rid(), title: "Set an identity reference first", status: "error", pct: 0, err: "Pick a face/body still for the identity core, then generate the dressed look from it." }]); return; }
+    const face = c.identity?.faceRefId, body = c.identity?.bodyRefId;
+    const refs = (slot === "face"
+      ? [face || body]
+      : [body || face, ...(body && face ? [face] : [])]).filter(Boolean) as string[];
+    if (!refs.length) { ctx.setResults([{ id: rid(), title: "Set an identity reference first", status: "error", pct: 0, err: "Pick a face/body still for the identity core, then generate the dressed look from it." }]); return; }
     const framing = slot === "face" ? "head-and-shoulders close-up portrait" : "full-body shot from head to toe";
     const base = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, ${PHOTO_POS}`;
     const vy = !!vary[c.id], vset = slot === "face" ? FACE_VARY : BODY_VARY;
     hunt(`${c.id}:w${w.id}:${slot}`, (seed, i) =>
-      api.videoCharStill({ ref_ids: [baseRef], prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: PHOTO_NEG, seed }));
+      api.videoCharStill({ ref_ids: refs, prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: PHOTO_NEG, seed }));
   }
 
   // generate identity reference candidates. Face: Z-Image t2i from the appearance text. Body: when a
