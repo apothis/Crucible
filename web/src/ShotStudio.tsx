@@ -16,6 +16,12 @@ import { type Block, type ChainPiece, type Take, type RenderMode } from "./mvmod
 
 const poster = (id: string) => `/api/media/${id}#t=0.5`;        // seek a frame so <video> paints a poster
 const FFLF_TAIL = 33;                                            // foxydits' extend anchor length
+// FFLF "calm motion" (B-roll): LTX renders water/clouds as a fast timelapse by default, and the stock
+// FFLF negative actually pushes FOR motion ("no movement, still frame"). NAG (scale 50) makes this
+// negative strong, so an explicit anti-timelapse negative + slow positive cues tame the speed.
+const CALM_NEG = "timelapse, time-lapse, hyperlapse, fast motion, sped-up footage, fast moving clouds, " +
+  "fast moving water, racing waves, flickering, strobing, blurry, low quality, watermark, subtitles, music";
+const CALM_POS = "slow gentle cinematic motion, calm, slow-moving water, slowly drifting clouds";
 
 // Poll a video job to its media url (ui.waitJob only resolves audio jobs).
 function waitMedia(jobId: string, onPct?: (p: number) => void): Promise<string> {
@@ -74,6 +80,9 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
 
   function note(s: string) { setStatus(s); }
+  // FFLF prompt/negative, calm-motion aware (B-roll slow cues + anti-timelapse negative)
+  const fflfPrompt = () => b.calmMotion ? `${CALM_POS}, ${b.prompt}` : b.prompt;
+  const fflfNeg = () => b.calmMotion ? CALM_NEG : undefined;   // undefined -> builder's default negative
 
   // ---- FFLF push-in: center-crop the timeline's OPENING image and drop the crop back into the timeline
   // as the LAST keyframe. Both anchors then come from the timeline (no side fields), and the shot dollies
@@ -118,7 +127,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "hunt",
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: b.prompt,
+        prompt: fflfPrompt(), negative: fflfNeg(),
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {                                       // extend: video tail of the last clip -> back to the opening still
@@ -209,7 +218,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "finish", stage1_seed: stage1Seed,
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: b.prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps,
+        prompt: fflfPrompt(), negative: fflfNeg(), width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {
         p.first_id = lastClip; p.first_kind = "video"; p.first_frames = FFLF_TAIL; p.first_skip = Math.max(0, b.frames - FFLF_TAIL);
@@ -401,6 +410,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />
                 <Num label="Last strength" value={b.fflfLastStrength ?? 0.5} set={(n) => patch({ fflfLastStrength: n })} step={0.05} />
               </div>
+              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]" title="LTX renders water/clouds as a fast timelapse by default. This adds slow-motion cues + a strong anti-timelapse negative (via NAG). Turn ON for scenic B-roll; leave OFF for character/action shots.">
+                <input type="checkbox" checked={!!b.calmMotion} onChange={(e) => patch({ calmMotion: e.target.checked })} />
+                Calm motion (slow B-roll — kills the timelapse look)
+              </label>
             </>
           ) : (
             <div className="rounded-md border border-dashed border-[var(--color-line)] p-3 text-[11px] text-[var(--color-muted)]">

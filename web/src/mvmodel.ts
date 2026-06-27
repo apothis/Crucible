@@ -81,6 +81,7 @@ export type Block = {
   // FFLF anchors come from the timeline editor's image keyframes (first image = opening, last = target);
   // no separate anchor fields. These two are just the AddGuide strengths.
   fflfFirstStrength?: number; fflfLastStrength?: number;
+  calmMotion?: boolean;           // FFLF B-roll: slow cues + anti-timelapse negative (kills LTX's fast water/clouds)
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   charStrength?: number;          // character-LoRA strength (default 1.0)
   assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)
