@@ -53,7 +53,6 @@ export const api = {
   videoLtxMsr: (p: unknown) => jpost("/api/video/ltx_msr", p),   // Multiple-Subject-Reference (the MV Studio spine)
   videoLtxKeyframe: (p: unknown) => jpost("/api/video/ltx_keyframe", p),  // LTXDirector keyframe interp (still-to-still)
   videoLtxFflf: (p: unknown) => jpost("/api/video/ltx_fflf", p),          // FFLF seed-hunt/multiroll (stock LTXVAddGuide; image OR video anchors); mode:"hunt"|"finish"
-  videoCropStill: (p: unknown) => jpost("/api/video/crop_still", p),      // center-crop a still -> new still (FFLF push-in 'last' anchor; no GPU)
   videoFreeModels: () => jpost("/api/video/free_models", {}),             // manually evict ComfyUI GPU models (we no longer free per-render)
   videoLtxRetake: (p: unknown) => jpost("/api/video/ltx_retake", p),      // re-render a time slice of an existing clip (retake_mode)
   videoUpscale: (p: unknown) => jpost("/api/video/upscale", p),  // SeedVR2 diffusion upscale of a finished clip

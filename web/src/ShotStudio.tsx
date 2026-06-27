@@ -71,38 +71,63 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const lastClip = lastPiece && selectedTakeOf(lastPiece)?.clipId;
 
   // base-shot anchors live on the block; extends derive their first anchor from the prior tail.
-  const fflfReady = !!b.fflfFirstId;
+  const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
 
   function note(s: string) { setStatus(s); }
 
-  // ---- FFLF push-in: crop the opening still into the LAST anchor, so the shot dollies in between two
-  // person-free pinned frames (no hallucinated figures, controlled speed). No GPU - a Pillow crop. ----
+  // ---- FFLF push-in: center-crop the timeline's OPENING image and drop the crop back into the timeline
+  // as the LAST keyframe. Both anchors then come from the timeline (no side fields), and the shot dollies
+  // in between two person-free pinned frames (no hallucinated figures, controlled speed). Crop is done in
+  // the browser from the segment's stored data URL - no GPU, nothing leaves the timeline. ----
   async function makePushIn() {
-    if (!b.fflfFirstId) { note("Pick a First anchor (the opening still) first."); return; }
+    const td = b.director?.timeline_data;
+    let firstImg: { imageB64?: string; imageFile?: string } | undefined;
+    try {
+      firstImg = ((JSON.parse(td || "{}").segments || []) as { type?: string; imageB64?: string; imageFile?: string; start?: number }[])
+        .filter((s) => s.type === "image" && (s.imageB64 || s.imageFile)).sort((a, c) => (a.start || 0) - (c.start || 0))[0];
+    } catch { /* ignore */ }
+    const src = firstImg?.imageB64 || (firstImg?.imageFile ? `/api/comfy/view?filename=${encodeURIComponent(firstImg.imageFile)}&type=input` : "");
+    if (!src) { note("Add the opening still to the timeline first."); return; }
+    if (!edRef.current) { note("Editor not ready."); return; }
     setBusy(true); note("Building push-in (cropping the opening still)…");
     try {
-      const r = await api.videoCropStill({ src_id: b.fflfFirstId, scale: pushKeep }) as { id: string };
-      patch({ fflfLastId: r.id });
-      note("Push-in built — Last anchor is now a center-crop of the opening. Seed-hunt to render the dolly-in.");
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("could not load the opening still")); img.src = src; });
+      const keep = Math.max(0.3, Math.min(0.95, pushKeep));
+      const cw = Math.round(img.naturalWidth * keep), ch = Math.round(img.naturalHeight * keep);
+      const sx = Math.round((img.naturalWidth - cw) / 2), sy = Math.round((img.naturalHeight - ch) / 2);
+      const cv = document.createElement("canvas");
+      cv.width = img.naturalWidth; cv.height = img.naturalHeight;      // back to source res (matches the first anchor)
+      cv.getContext("2d")!.drawImage(img, sx, sy, cw, ch, 0, 0, cv.width, cv.height);
+      const blob: Blob = await new Promise((res) => cv.toBlob((b2) => res(b2!), "image/png"));
+      const file = new File([blob], `pushin_${Date.now()}.png`, { type: "image/png" });
+      edRef.current.addImage(file, Math.max(0, b.frames - 1));        // place as the LAST keyframe
+      note("Push-in built — the crop is now the last keyframe in the timeline. Seed-hunt to render the dolly-in.");
     } catch (e) { note("Push-in build failed: " + (e as Error).message); }
     finally { setBusy(false); }
   }
 
   // ---- seed-hunt: 3 half-res drafts for a new piece (base, or an extend off the last tail) ----
   async function runHunt(forExtend: boolean) {
-    if (!forExtend && !b.fflfFirstId) { note("Pick a First anchor still for the base shot first."); return; }
+    const kf = parseKf(b.director?.timeline_data);   // anchors come from the timeline's image keyframes
+    if (!forExtend && !kf.firstName) { note("Add the opening still to the timeline first (Generate / Add keyframe still)."); return; }
     if (forExtend && !lastClip) { note("Render the base shot before extending."); return; }
     setBusy(true); note(forExtend ? "Hunting extension (3 drafts)…" : "Hunting base shot (3 drafts)…");
     try {
       const p: Record<string, unknown> = {
         mode: "hunt",
-        last_id: forExtend ? (b.fflfFirstId || b.fflfLastId) : b.fflfLastId,   // extend lands on the opening; base = chosen last
-        last_strength: b.fflfLastStrength ?? 0.5,
+        first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
         prompt: b.prompt,
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
-      if (forExtend) { p.first_id = lastClip; p.first_kind = "video"; p.first_frames = FFLF_TAIL; p.first_skip = Math.max(0, b.frames - FFLF_TAIL); }
-      else { p.first_id = b.fflfFirstId; }
+      if (forExtend) {                                       // extend: video tail of the last clip -> back to the opening still
+        p.first_id = lastClip; p.first_kind = "video"; p.first_frames = FFLF_TAIL; p.first_skip = Math.max(0, b.frames - FFLF_TAIL);
+        p.last_name = kf.firstName;
+      } else {                                               // base: first (+ optional last) image keyframe from the timeline
+        p.first_name = kf.firstName;
+        if (kf.lastName) p.last_name = kf.lastName;          // else FFLF defaults last==first (a slow static push)
+      }
       const r = await api.videoLtxFflf(p) as { base_seed: number; drafts: { job_id: string }[] };
       const drafts = r.drafts.map((d, i) => ({ jobId: d.job_id, seed: r.base_seed + i }));
       setHunt({ kind: "fflf", pieceLabel: forExtend ? `extend ${pieces.length + 1}` : "base", forExtend, drafts });
@@ -178,25 +203,30 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       return;
     }
     const forExtend = hunt.forExtend;
+    const kf = parseKf(b.director?.timeline_data);
     setBusy(true); note("Finishing at full res" + (b.lipsync ? " with lip-sync" : "") + "…");
     try {
       const p: Record<string, unknown> = {
         mode: "finish", stage1_seed: stage1Seed,
-        last_id: forExtend ? (b.fflfFirstId || b.fflfLastId) : b.fflfLastId,
-        last_strength: b.fflfLastStrength ?? 0.5,
+        first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
         prompt: b.prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
-      if (forExtend) { p.first_id = lastClip; p.first_kind = "video"; p.first_frames = FFLF_TAIL; p.first_skip = Math.max(0, b.frames - FFLF_TAIL); }
-      else { p.first_id = b.fflfFirstId; }
+      if (forExtend) {
+        p.first_id = lastClip; p.first_kind = "video"; p.first_frames = FFLF_TAIL; p.first_skip = Math.max(0, b.frames - FFLF_TAIL);
+        p.last_name = kf.firstName;
+      } else {
+        p.first_name = kf.firstName;
+        if (kf.lastName) p.last_name = kf.lastName;
+      }
       if (b.lipsync && b.audioId) { p.audio_id = b.audioId; p.audio_start = b.audioStart; p.isolate_vocal = false; }   // full song (decided)
       const r = await api.videoLtxFflf(p) as { job_id: string };
       const clipId = await waitMedia(r.job_id, (pc) => note(`Finishing… ${pc}%`));
       const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
       if (forExtend) {
-        const piece: ChainPiece = { id: rid(), lane: "fflf", label: `Extend ${pieces.length + 1}`, takes: [take], selectedTakeId: take.id, lastStillId: b.fflfFirstId };
+        const piece: ChainPiece = { id: rid(), lane: "fflf", label: `Extend ${pieces.length + 1}`, takes: [take], selectedTakeId: take.id, lastStillId: kf.firstName };
         setPieces([...pieces, piece]);
       } else if (pieces.length === 0) {
-        setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id, lastStillId: b.fflfLastId }]);
+        setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id, lastStillId: kf.lastName || kf.firstName }]);
       } else {
         // re-finish the base piece (multiroll) -> add a take to piece 0
         setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
@@ -258,24 +288,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     } catch (e) { setStatus("Add failed: " + (e as Error).message); }
     finally { setKfBusy(false); }
   }
-  // "Use this" on a generated draft. FFLF reads the First/Last anchor pickers (NOT the editor timeline),
-  // so in FFLF mode the picked still becomes the opening (First) anchor; otherwise it injects as a keyframe.
-  async function useKfDraft(d: { jobId: string; url?: string }) {
-    if (b.renderMode === "fflf") {
-      patch({ fflfFirstId: d.jobId });
-      setKfDrafts([]);
-      setStatus("Opening anchor set. Click 'Make push-in' for B-roll, or pick a Last frame for a sung shot.");
-      return;
-    }
-    if (d.url) await useDraft(d.url);
-  }
   async function addLibraryStill(stillId: string) {
     if (!stillId) return;
-    if (b.renderMode === "fflf") {   // FFLF: a library still becomes the opening (First) anchor
-      patch({ fflfFirstId: stillId });
-      setStatus("Opening anchor set from library. Click 'Make push-in' for B-roll, or pick a Last frame.");
-      return;
-    }
     setKfBusy(true); setStatus("Adding library still as keyframe…");
     try { await injectStill(`/api/media/${stillId}`); setStatus(`Library still added at frame ${kfFrame}.`); }
     catch (e) { setStatus("Add failed: " + (e as Error).message); }
@@ -319,7 +333,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       {/* ===================== ADD KEYFRAME STILL (generate seed-hunt / library -> inject as keyframe) ===================== */}
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
         <div className="ss-card flex flex-col gap-3">
-          <div className="text-xs font-semibold text-[var(--color-ink)]">{b.renderMode === "fflf" ? "Generate the opening still (FFLF anchor)" : "Add keyframe still"}</div>
+          <div className="text-xs font-semibold text-[var(--color-ink)]">Add keyframe still</div>
           <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
             <input type="checkbox" checked={kfUseChar} onChange={(e) => setKfUseChar(e.target.checked)} disabled={!charRefs.length} />
             Use this shot's character (identity){charRefs.length ? ` · ${charRefs.length} ref${charRefs.length > 1 ? "s" : ""}` : " — no refs on this shot"}
@@ -339,7 +353,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                   <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">rendering…</div>}</div>
                   <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                     <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
-                    <GhostButton onClick={() => useKfDraft(d)} disabled={kfBusy || !d.url}>{b.renderMode === "fflf" ? "Use as opening" : "Use this"}</GhostButton>
+                    <GhostButton onClick={() => useDraft(d.url!)} disabled={kfBusy || !d.url}>Use this</GhostButton>
                   </div>
                 </div>
               ))}
@@ -358,21 +372,30 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         <div className="flex flex-col gap-3">
           {b.renderMode === "fflf" ? (
             <>
-              <Field label="First frame (opening anchor)">
-                <StillPick value={b.fflfFirstId || ""} set={(id) => patch({ fflfFirstId: id })} stills={stills} />
-              </Field>
-              <Field label="Last frame (keyframe target — use a singing pose for sung shots)">
-                <StillPick value={b.fflfLastId || ""} set={(id) => patch({ fflfLastId: id })} stills={stills} />
-              </Field>
-              {/* B-roll push-in: derive the last anchor from the opening still (full -> center-crop). Both
-                  ends pinned + person-free = a clean dolly-in, no hallucinated people, no super-speed. */}
+              {/* Anchors come from the TIMELINE's image keyframes — first image = opening, last image =
+                  target. Author them in the editor above (Generate / Add keyframe still), not here. */}
+              {(() => {
+                const kf = parseKf(b.director?.timeline_data);
+                return (
+                  <div className="rounded-md border border-[var(--color-line)] p-2 text-[11px]">
+                    <div className="font-medium text-[var(--color-ink)]">Anchors (from the timeline)</div>
+                    <div className="mt-1 text-[var(--color-muted)]">
+                      Opening: {kf.firstName ? <span className="text-[var(--color-accent2)]">✓ set</span> : <span className="text-amber-400">— add the opening still to the timeline</span>}
+                      {"  ·  "}
+                      Last: {kf.lastName ? <span className="text-[var(--color-accent2)]">✓ set</span> : <span className="text-[var(--color-muted)]">none (slow static push) — use “Make push-in” or add a target still</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* B-roll push-in: crop the opening image into the LAST keyframe of the timeline. Both ends
+                  pinned + person-free = a clean dolly-in, no hallucinated people, no super-speed. */}
               <div className="flex items-end gap-3 rounded-md border border-dashed border-[var(--color-line)] p-2">
                 <div className="flex-1">
                   <div className="text-[11px] font-medium text-[var(--color-ink)]">Scenic push-in (B-roll)</div>
-                  <div className="text-[10px] text-[var(--color-muted)]">Crops the opening still into the Last anchor — a slow dolly-in with no stray people. Lower = stronger zoom.</div>
+                  <div className="text-[10px] text-[var(--color-muted)]">Crops the opening image into a last keyframe in the timeline — a slow dolly-in with no stray people. Lower = stronger zoom.</div>
                 </div>
                 <Num label="Keep" value={pushKeep} set={setPushKeep} step={0.05} w="w-20" />
-                <GhostButton onClick={makePushIn} disabled={busy || !b.fflfFirstId}>Make push-in</GhostButton>
+                <GhostButton onClick={makePushIn} disabled={busy || !parseKf(b.director?.timeline_data).firstName}>Make push-in</GhostButton>
               </div>
               <div className="flex gap-3">
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />

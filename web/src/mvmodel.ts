@@ -78,8 +78,8 @@ export type Block = {
   bgVariants?: string[];          // all composed/generated background still-ids for this block
   // ---- Shot Studio per-segment editor: a continuous take = ordered chain pieces ----
   pieces?: ChainPiece[];          // piece 0 = base shot; later = FFLF extends off the prior tail
-  fflfFirstId?: string;           // fflf base: first-frame anchor still
-  fflfLastId?: string;            // fflf base: last-frame keyframe still
+  // FFLF anchors come from the timeline editor's image keyframes (first image = opening, last = target);
+  // no separate anchor fields. These two are just the AddGuide strengths.
   fflfFirstStrength?: number; fflfLastStrength?: number;
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   charStrength?: number;          // character-LoRA strength (default 1.0)

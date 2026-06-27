@@ -1113,13 +1113,26 @@ def video_ltx_fflf(p: dict):
             spec["skip"] = int(skip or 0)
         return spec, os.path.basename(path)
 
+    def _named(name):
+        """An anchor already uploaded to ComfyUI input (the timeline editor's image keyframe). Used as-is,
+        no re-upload. Image-only (the timeline holds stills)."""
+        name = (name or "").strip()
+        return ({"kind": "image", "name": name}, name) if name else (None, None)
+
     mode = (p.get("mode") or "finish").strip().lower()
     try:
-        first_src, first_lbl = _anchor(p.get("first_id"), (p.get("first_kind") or "").lower(),
-                                       p.get("first_frames"), p.get("first_skip"))
+        # Anchors prefer an explicit ComfyUI image name (from the timeline editor's keyframes); fall back to
+        # a library id (still or video tail, e.g. an extend) resolved + uploaded by _anchor.
+        if p.get("first_name"):
+            first_src, first_lbl = _named(p.get("first_name"))
+        else:
+            first_src, first_lbl = _anchor(p.get("first_id"), (p.get("first_kind") or "").lower(),
+                                           p.get("first_frames"), p.get("first_skip"))
         if not first_src:
-            raise HTTPException(400, "first_id must reference a generated still or clip")
-        if p.get("last_id"):
+            raise HTTPException(400, "an opening anchor is required (timeline image keyframe or first_id)")
+        if p.get("last_name"):
+            last_src, last_lbl = _named(p.get("last_name"))
+        elif p.get("last_id"):
             last_src, last_lbl = _anchor(p.get("last_id"), (p.get("last_kind") or "").lower(),
                                          p.get("last_frames"), p.get("last_skip"))
         else:
@@ -1584,34 +1597,6 @@ def video_infinitetalk(p: dict):
     resolved["vocal_isolated"] = bool(iso_used)
     resolved["isolate_engine"] = iso_used
     return _submit_video(graph, resolved, "videolipsync")
-
-
-@app.post("/api/video/crop_still")
-def video_crop_still(p: dict):
-    """Center-crop an existing library still into a NEW still (no GPU, Pillow on the Mac). Used to build a
-    FFLF push-in: first anchor = the full still, last anchor = a center-crop of THE SAME still, so the
-    model dollies in between two person-free pinned frames (no hallucinated figures, controlled speed).
-    p: {src_id, scale? (0.30-0.95 of frame kept, default 0.72)}. Returns {id} of the new still."""
-    src = _lib_image_path(p.get("src_id"))
-    if not src:
-        raise HTTPException(404, "src_id must reference a generated still in the library")
-    scale = max(0.30, min(0.95, float(p.get("scale", 0.72))))
-    try:
-        from PIL import Image
-        img = Image.open(src).convert("RGB")
-        w, h = img.size
-        cw, ch = int(round(w * scale)), int(round(h * scale))
-        left, top = (w - cw) // 2, (h - ch) // 2
-        crop = img.crop((left, top, left + cw, top + ch)).resize((w, h), Image.LANCZOS)  # back to source res
-        nid = uuid.uuid4().hex[:12]
-        out = os.path.join(LIBRARY, f"{nid}.png")
-        crop.save(out)
-    except Exception as e:
-        raise HTTPException(500, f"crop failed: {e}")
-    save_done_row(nid, "videostill",
-                  {"kind": "image", "source": "push-in crop", "src_id": os.path.basename(str(p.get("src_id") or "")),
-                   "scale": scale, "prompt": "push-in crop (FFLF last anchor)"}, out)
-    return {"id": nid}
 
 
 @app.post("/api/mv/script")
