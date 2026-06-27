@@ -24,14 +24,23 @@ const CALM_NEG = "timelapse, time-lapse, hyperlapse, fast motion, sped-up footag
 const CALM_POS = "slow gentle cinematic motion, calm, slow-moving water, slowly drifting clouds";
 
 // Poll a video job to its media url (ui.waitJob only resolves audio jobs).
-function waitMedia(jobId: string, onPct?: (p: number) => void): Promise<string> {
+// onPct reports (pct, pass). A multi-stage render (sample -> refine/decode) emits a fresh 0->100 per
+// stage; we detect the restart (big drop) and bump `pass` so the UI shows "… · pass 2" instead of a
+// confusing reset to 0.
+function waitMedia(jobId: string, onPct?: (pct: number, pass: number) => void): Promise<string> {
+  let lastPct = 0, pass = 1;
   return new Promise((resolve, reject) => {
     const t = window.setInterval(async () => {
       const j = await api.job(jobId).catch(() => null);
       if (!j) return;
       if (j.status === "done" && j.media_url) { window.clearInterval(t); resolve(j.media_url); }
       else if (j.status === "error" || j.status === "failed") { window.clearInterval(t); reject(new Error(j.error || "render error")); }
-      else if (onPct && j.max) onPct(Math.round((100 * (j.progress || 0)) / j.max));
+      else if (onPct && j.max) {
+        const pct = Math.round((100 * (j.progress || 0)) / j.max);
+        if (pct < lastPct - 20) pass += 1;     // progress restarted -> next render pass
+        lastPct = pct;
+        onPct(pct, pass);
+      }
     }, 1500);
   });
 }
@@ -57,7 +66,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [pushKeep, setPushKeep] = useState(0.72);   // FFLF push-in: fraction of the opening still kept in the end crop
   const pieces = b.pieces || [];
   // transient hunt state: the 3 half-res drafts for the piece currently being hunted
-  const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string; pct?: number }[] } | null>(null);
+  const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string; pct?: number; pass?: number }[] } | null>(null);
   const [status, setStatus] = useState("");
   // "Add keyframe still" panel: generate (seed-hunt half-res -> full on pick) or pick from library,
   // then inject into the editor timeline as a keyframe via the editor's own add-image path.
@@ -65,7 +74,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [kfPrompt, setKfPrompt] = useState("");
   const [kfFrame, setKfFrame] = useState(0);
   const [kfBusy, setKfBusy] = useState(false);
-  const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string; pct?: number }[]>([]);
+  const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string; pct?: number; pass?: number }[]>([]);
   const [kfUseChar, setKfUseChar] = useState(false);   // generate from the shot's character refs (identity)
   const charRefs = (b.subjectIds || []).filter(Boolean).slice(0, 3);
   const [loras, setLoras] = useState<string[]>([]);    // character/ID LoRAs on the box (identity instead of MSR)
@@ -145,8 +154,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const drafts = r.drafts.map((d, i) => ({ jobId: d.job_id, seed: r.base_seed + i }));
       setHunt({ kind: "fflf", pieceLabel: forExtend ? `extend ${pieces.length + 1}` : "base", forExtend, drafts });
       // resolve each draft's poster as it finishes
-      drafts.forEach((d) => waitMedia(d.jobId, (pc) =>
-        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, pct: pc } : x) } : h))
+      drafts.forEach((d) => waitMedia(d.jobId, (pc, ps) =>
+        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, pct: pc, pass: ps } : x) } : h))
         .then((u) => setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h))
         .catch(() => {}));
       note("Drafts rendering — pick one to finish (drafts are video-only; lip-sync is added on finish).");
@@ -194,8 +203,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         drafts.push({ jobId: r.job_id, seed: base + i });
       }
       setHunt({ kind: "video", pieceLabel: "video", forExtend: false, drafts });
-      drafts.forEach((d) => waitMedia(d.jobId, (pc) =>
-        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, pct: pc } : x) } : h))
+      drafts.forEach((d) => waitMedia(d.jobId, (pc, ps) =>
+        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, pct: pc, pass: ps } : x) } : h))
         .then((u) => setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h))
         .catch(() => {}));
       note("Half-res drafts rendering — pick one to finish at full res.");
@@ -210,7 +219,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       setBusy(true); note("Finishing video at full res…");
       try {
         const r = await renderVideo(stage1Seed, b.width, b.height);
-        const clipId = await waitMedia(r.job_id, (pc) => note(`Finishing… ${pc}%`));
+        const clipId = await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps>1?` · pass ${ps}`:""}`));
         const lane = b.renderMode === "msr" ? "msr" : "fflf";
         const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
         if (pieces.length === 0) setPieces([{ id: rid(), lane, label: "Base shot", takes: [take], selectedTakeId: take.id }]);
@@ -239,7 +248,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       }
       if (b.lipsync && b.audioId) { p.audio_id = b.audioId; p.audio_start = b.audioStart; p.isolate_vocal = false; }   // full song (decided)
       const r = await api.videoLtxFflf(p) as { job_id: string };
-      const clipId = await waitMedia(r.job_id, (pc) => note(`Finishing… ${pc}%`));
+      const clipId = await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps>1?` · pass ${ps}`:""}`));
       const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
       if (forExtend) {
         const piece: ChainPiece = { id: rid(), lane: "fflf", label: `Extend ${pieces.length + 1}`, takes: [take], selectedTakeId: take.id, lastStillId: kf.firstName };
@@ -261,7 +270,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); note("Rendering the timeline…");
     try {
       const r = await api.videoLtxKeyframe({ ...b.director, char_lora: b.charLora, char_strength: b.charStrength, width: b.width, height: b.height, frames: b.frames, fps: b.fps }) as { job_id: string };
-      const clipId = await waitMedia(r.job_id, (pc) => note(`Rendering… ${pc}%`));
+      const clipId = await waitMedia(r.job_id, (pc, ps) => note(`Rendering… ${pc}%${ps>1?` · pass ${ps}`:""}`));
       const take: Take = { id: rid(), clipId, draft: false, label: "timeline" };
       if (pieces.length === 0) setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id }]);
       else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
@@ -293,8 +302,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         drafts.push({ jobId: r.job_id, seed: base + i });
       }
       setKfDrafts(drafts);
-      drafts.forEach((d) => waitMedia(d.jobId, (pc) =>
-        setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, pct: pc } : x)))
+      drafts.forEach((d) => waitMedia(d.jobId, (pc, ps) =>
+        setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, pct: pc, pass: ps } : x)))
         .then((u) => setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x)))
         .catch(() => {}));
       setStatus("Still drafts rendering — pick one to finalize at full res.");
@@ -371,7 +380,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             <div className="grid grid-cols-3 gap-3">
               {kfDrafts.map((d) => (
                 <div key={d.jobId} className="ss-piece">
-                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%` : "queued…"}</div>}</div>
+                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%${d.pass && d.pass > 1 ? ` · pass ${d.pass}` : ""}` : "queued…"}</div>}</div>
                   <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                     <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                     <GhostButton onClick={() => useDraft(d.url!)} disabled={kfBusy || !d.url}>Use this</GhostButton>
@@ -504,7 +513,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           <div className="grid grid-cols-3 gap-3">
             {hunt.drafts.map((d) => (
               <div key={d.jobId} className="ss-piece">
-                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%` : "queued…"}</div>}</div>
+                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%${d.pass && d.pass > 1 ? ` · pass ${d.pass}` : ""}` : "queued…"}</div>}</div>
                 <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                   <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                   <GhostButton onClick={() => finishDraft(d.seed)} disabled={busy || !d.url}>Finish</GhostButton>
