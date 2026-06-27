@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type LibItem } from "./api";
 import { inp, rid, type RunCtx } from "./ui";
 import { Collapse, StillPick } from "./mvui";
+import { openLightbox } from "./Lightbox";
 import { type Character, type Identity, type Wardrobe } from "./mvmodel";
 
 // Push the Z-Image Turbo default look away from the smooth, anime-ish "AI face" it falls back to.
@@ -27,31 +28,44 @@ function waitMedia(jobId: string, onPct?: (p: number) => void): Promise<string> 
   });
 }
 
-// 4-up draft strip: shows the rendering/ready candidates, lets the user pick one or reroll.
-function DraftStrip({ drafts, picked, onPick, onReroll, busy }:
-  { drafts: Draft[]; picked?: string; onPick: (jobId: string) => void; onReroll: () => void; busy: boolean }) {
+// 4-up draft strip: 2x2 candidates. Click an image to ENLARGE it (lightbox); use the
+// explicit "use this" button to lock one in. Picking does NOT clear the strip, so you can
+// keep comparing, change your mind, reroll, or close it yourself.
+function DraftStrip({ drafts, picked, onPick, onReroll, onClose, busy }:
+  { drafts: Draft[]; picked?: string; onPick: (jobId: string) => void; onReroll: () => void; onClose: () => void; busy: boolean }) {
   if (!drafts.length) return null;
   return (
     <div className="space-y-1 rounded border border-[var(--color-line)] bg-[var(--color-bg)] p-1.5">
-      <div className="grid grid-cols-4 gap-1">
+      <div className="flex items-center justify-between px-0.5">
+        <span className="text-[9px] text-[var(--color-muted)]">click to enlarge · "use this" to keep</span>
+        <button onClick={onClose} className="text-[10px] leading-none text-[var(--color-muted)] hover:text-red-400" title="close candidates">×</button>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
         {drafts.map((d) => (
-          <button key={d.jobId} onClick={() => d.url && onPick(d.jobId)} disabled={!d.url}
-            title={d.url ? `pick (seed ${d.seed})` : "rendering…"}
-            className={`relative aspect-square overflow-hidden rounded border ${picked === d.jobId ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"} ${d.url ? "cursor-pointer hover:border-[var(--color-accent2)]" : "cursor-default"}`}>
-            {d.err
-              ? <span className="flex h-full items-center justify-center text-[9px] text-red-400">failed</span>
-              : d.url
-              ? <img src={d.url} alt="" className="h-full w-full object-cover" />
-              : (
-                <span className="flex h-full flex-col items-center justify-center gap-1 text-[9px] text-[var(--color-muted)]">
-                  <span>{d.pct ? `${d.pct}%` : "queued…"}</span>
-                  <span className="h-0.5 w-3/4 overflow-hidden rounded bg-[var(--color-line)]">
-                    <span className="block h-full bg-[var(--color-accent2)] transition-all" style={{ width: `${d.pct || 3}%` }} />
+          <div key={d.jobId}
+            className={`overflow-hidden rounded border ${picked === d.jobId ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"}`}>
+            <div className="relative aspect-square">
+              {d.err
+                ? <span className="flex h-full items-center justify-center text-[9px] text-red-400">failed</span>
+                : d.url
+                ? <img src={d.url} alt="" onClick={() => openLightbox(d.url!)} title={`seed ${d.seed} — click to enlarge`} className="h-full w-full cursor-zoom-in object-cover" />
+                : (
+                  <span className="flex h-full flex-col items-center justify-center gap-1 text-[9px] text-[var(--color-muted)]">
+                    <span>{d.pct ? `${d.pct}%` : "queued…"}</span>
+                    <span className="h-0.5 w-3/4 overflow-hidden rounded bg-[var(--color-line)]">
+                      <span className="block h-full bg-[var(--color-accent2)] transition-all" style={{ width: `${d.pct || 3}%` }} />
+                    </span>
                   </span>
-                </span>
-              )}
-            {picked === d.jobId && <span className="absolute right-0.5 top-0.5 rounded bg-[var(--color-accent2)] px-1 text-[8px] text-black">picked</span>}
-          </button>
+                )}
+              {picked === d.jobId && <span className="absolute right-0.5 top-0.5 rounded bg-[var(--color-accent2)] px-1 text-[8px] text-black">using</span>}
+            </div>
+            {d.url && (
+              <button onClick={() => onPick(d.jobId)}
+                className={`w-full py-0.5 text-[9px] ${picked === d.jobId ? "bg-[var(--color-accent2)] text-black" : "text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                {picked === d.jobId ? "✓ in use" : "use this"}
+              </button>
+            )}
+          </div>
         ))}
       </div>
       <button onClick={onReroll} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
@@ -149,14 +163,16 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
       : api.videoStill({ prompt, negative: PHOTO_NEG, seed }));
   }
 
-  // user picked a candidate -> lock it into the identity/wardrobe slot and clear the strip
+  // user picked a candidate -> lock it into the slot, but KEEP the strip so they can keep
+  // comparing / change their mind / reroll. The strip clears only on reroll or explicit close.
   function pickIdentity(c: Character, slot: "face" | "body", jobId: string) {
     setIdentity(c, slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId });
-    setDrafts((d) => { const n = { ...d }; delete n[`${c.id}:${slot}`]; return n; });
   }
   function pickWardrobe(c: Character, w: Wardrobe, slot: "face" | "body", jobId: string) {
     setWardrobe(c, w.id, slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId });
-    setDrafts((d) => { const n = { ...d }; delete n[`${c.id}:w${w.id}:${slot}`]; return n; });
+  }
+  function closeDrafts(key: string) {
+    setDrafts((d) => { const n = { ...d }; delete n[key]; return n; });
   }
 
   // expand the user's short appearance text into a full photoreal prompt via the LLM
@@ -235,7 +251,7 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                       <StillPick value={c.identity?.faceRefId || ""} stills={stills} set={(id) => setIdentity(c, { faceRefId: id })} placeholder="- face still -" />
                       <button onClick={() => genIdentity(c, "face")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:face` ? "generating 4…" : "generate 4"}</button>
                       <DraftStrip drafts={drafts[`${c.id}:face`] || []} picked={c.identity?.faceRefId} busy={hunting === `${c.id}:face`}
-                        onPick={(id) => pickIdentity(c, "face", id)} onReroll={() => genIdentity(c, "face")} />
+                        onPick={(id) => pickIdentity(c, "face", id)} onReroll={() => genIdentity(c, "face")} onClose={() => closeDrafts(`${c.id}:face`)} />
                     </div>
                     <div className="space-y-1">
                       <span className="text-[9px] text-[var(--color-muted)]">body (full-length)</span>
@@ -248,7 +264,7 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                         </label>
                       )}
                       <DraftStrip drafts={drafts[`${c.id}:body`] || []} picked={c.identity?.bodyRefId} busy={hunting === `${c.id}:body`}
-                        onPick={(id) => pickIdentity(c, "body", id)} onReroll={() => genIdentity(c, "body")} />
+                        onPick={(id) => pickIdentity(c, "body", id)} onReroll={() => genIdentity(c, "body")} onClose={() => closeDrafts(`${c.id}:body`)} />
                     </div>
                   </div>
                 </div>
@@ -271,13 +287,13 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                           <StillPick value={w.faceRefId || ""} stills={stills} set={(id) => setWardrobe(c, w.id, { faceRefId: id })} placeholder="- face ref -" />
                           <button onClick={() => genRef(c, w, "face")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:w${w.id}:face` ? "generating 4…" : "generate 4"}</button>
                           <DraftStrip drafts={drafts[`${c.id}:w${w.id}:face`] || []} picked={w.faceRefId} busy={hunting === `${c.id}:w${w.id}:face`}
-                            onPick={(id) => pickWardrobe(c, w, "face", id)} onReroll={() => genRef(c, w, "face")} />
+                            onPick={(id) => pickWardrobe(c, w, "face", id)} onReroll={() => genRef(c, w, "face")} onClose={() => closeDrafts(`${c.id}:w${w.id}:face`)} />
                         </div>
                         <div className="space-y-1">
                           <StillPick value={w.bodyRefId || ""} stills={stills} set={(id) => setWardrobe(c, w.id, { bodyRefId: id })} placeholder="- body ref -" />
                           <button onClick={() => genRef(c, w, "body")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:w${w.id}:body` ? "generating 4…" : "generate 4"}</button>
                           <DraftStrip drafts={drafts[`${c.id}:w${w.id}:body`] || []} picked={w.bodyRefId} busy={hunting === `${c.id}:w${w.id}:body`}
-                            onPick={(id) => pickWardrobe(c, w, "body", id)} onReroll={() => genRef(c, w, "body")} />
+                            onPick={(id) => pickWardrobe(c, w, "body", id)} onReroll={() => genRef(c, w, "body")} onClose={() => closeDrafts(`${c.id}:w${w.id}:body`)} />
                         </div>
                       </div>
                     </div>
