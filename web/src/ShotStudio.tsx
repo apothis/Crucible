@@ -35,6 +35,13 @@ function ThumbVideo({ id, className = "" }: { id: string; className?: string }) 
     className={`h-full w-full object-cover ${className}`} />;
 }
 
+// A draft preview that actually PLAYS (looping, muted) so you can judge the motion when picking a
+// seed-hunt draft - plus controls to scrub/pause. (ThumbVideo only paints a static poster frame.)
+function PreviewVideo({ src, className = "" }: { src: string; className?: string }) {
+  return <video src={src} muted loop autoPlay playsInline controls preload="auto"
+    className={`h-full w-full object-contain ${className}`} />;
+}
+
 export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, onClose }: {
   block: Block; idx: number; patch: (p: Partial<Block>) => void;
   stills: LibItem[]; audios: LibItem[]; songAudioId: string;
@@ -400,7 +407,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           <div className="grid grid-cols-3 gap-3">
             {hunt.drafts.map((d) => (
               <div key={d.jobId} className="ss-piece">
-                <div className="ss-thumb">{d.url ? <ThumbVideo id={d.url.split("/").pop()!.split("?")[0]} /> : <div className="ss-spin">rendering…</div>}</div>
+                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">rendering…</div>}</div>
                 <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                   <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                   <GhostButton onClick={() => finishDraft(d.seed)} disabled={busy || !d.url}>Finish</GhostButton>
