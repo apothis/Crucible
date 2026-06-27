@@ -10,6 +10,11 @@
 #     (cd web && npm run dev)   -> http://localhost:5173  (proxies /api -> :8000)
 # Edit app_config.json to point at your ComfyUI/RVC hosts (Windows box).
 cd "$(dirname "$0")"
+# Local untracked secrets (gitignored). Put CLAUDE_CODE_OAUTH_TOKEN here (from
+# `claude setup-token`) so the backend's `claude -p` subprocess authenticates against
+# your subscription independently of the desktop app's keychain token (which it rotates
+# and expires out from under a standalone CLI). KEY=value lines, no `export` needed.
+[ -f "$PWD/.env.local" ] && set -a && . "$PWD/.env.local" && set +a
 # Keep all model/cache downloads on the SSD (the system drive is small). Scoped to
 # this process so unrelated caches elsewhere are untouched.
 export TORCH_HOME="$PWD/.caches/torch"

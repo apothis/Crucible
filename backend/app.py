@@ -4058,7 +4058,7 @@ async def import_extract(file: UploadFile = File(None), import_id: str = Form(No
 def llm_providers():
     return {"ollama": llm_mod.ollama_models(),
             "claude": bool(os.environ.get("ANTHROPIC_API_KEY")),   # API key (per-token)
-            "claude_sub": llm_mod.claude_code_available()}          # Claude subscription via the CLI
+            "claude_sub": llm_mod.claude_code_authed()}            # Claude subscription - only if the CLI can actually auth
 
 
 @app.post("/api/llm")

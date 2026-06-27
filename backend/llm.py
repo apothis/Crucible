@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 import requests
 
@@ -31,6 +32,36 @@ def _claude_cli():
 def claude_code_available():
     """True when the `claude` CLI is installed (the subscription completion path)."""
     return bool(_claude_cli())
+
+
+_AUTH = {"ok": None, "ts": 0.0}
+
+def claude_code_authed(ttl: int = 300) -> bool:
+    """True when the `claude` CLI can ACTUALLY authenticate headlessly - not merely
+    installed. `claude_code_available()` only checks for the binary, which made the
+    provider list advertise claude_sub even when the CLI's stored credential was
+    expired (a 401 on every Enhance). This runs the same `claude -p` the completion
+    path uses and caches the verdict for `ttl`s (a real probe costs a tiny call).
+    Set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) for a long-lived headless
+    credential that survives the desktop app rotating the keychain token out."""
+    cli = _claude_cli()
+    if not cli:
+        return False
+    now = time.time()
+    if _AUTH["ok"] is not None and (now - _AUTH["ts"]) < ttl:
+        return _AUTH["ok"]
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    ok = False
+    try:
+        with tempfile.TemporaryDirectory() as cwd:
+            r = subprocess.run([cli, "-p", "ok", "--output-format", "text", "--effort", "low",
+                                "--disallowed-tools", *_CC_NO_TOOLS],
+                               capture_output=True, text=True, env=env, cwd=cwd, timeout=45)
+        ok = (r.returncode == 0) and bool((r.stdout or "").strip())
+    except Exception:
+        ok = False
+    _AUTH.update(ok=ok, ts=now)
+    return ok
 
 
 def claude_code_chat(system: str, prompt: str, model: str = "") -> str:
