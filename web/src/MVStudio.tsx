@@ -127,6 +127,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [scriptModel, setScriptModel] = d.use("scriptModel", "claude-sonnet-4-6"); // LLM for the script writer
   const [grades, setGrades] = useState<string[]>(["none"]);
   const [scripting, setScripting] = useState(false);
+  const [scriptInfo, setScriptInfo] = useState<{ aligned: boolean; segs: number; shots: number } | null>(null);
   const [blocks, setBlocks] = d.use<Block[]>("blocks", []);
   const [selId, setSelId] = d.use("selId", "");
   const [libChars, setLibChars] = useState<Character[]>([]);
@@ -231,9 +232,10 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       // audio_id lets the backend snap the cuts onto the song's ACTUAL structure (allin1 segments +
       // downbeats from the rendered audio) - more accurate than the planned arrangement.
       const r = await api.mvScript({ song: payload, model: scriptModel, audio_id: audioId,
-        cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician", gender: c.gender || "", appearance: c.appearance || "" })) }) as { shots: ScriptShot[] };
+        cast: libChars.map((c) => ({ name: c.name, role: c.role || "", kind: c.kind || "musician", gender: c.gender || "", appearance: c.appearance || "" })) }) as { shots: ScriptShot[]; structure_driven?: boolean; audio_segments?: number };
       const next = (r.shots || []).map((s) => shotToBlock(s, libChars, audioId));
       commit(next); setSelId(next[0]?.id || "");
+      setScriptInfo({ aligned: !!r.structure_driven, segs: r.audio_segments || 0, shots: next.length });
     } catch (e) {
       ctx.setResults([{ id: rid(), title: "Script generation failed", status: "error", pct: 0, err: (e as Error).message }]);
     } finally { setScripting(false); }
@@ -491,6 +493,11 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
           <option value="opus">Opus</option>
         </select>
         {!canScript && <span className="text-[9px] text-[var(--color-muted)]">(open a project with a Song arrangement to script)</span>}
+        {!scripting && scriptInfo && (
+          scriptInfo.aligned
+            ? <span className="text-[10px] text-[var(--color-accent2)]" title="Cuts were snapped onto the song's real structure (allin1 segments + downbeats from the audio).">✓ aligned to {scriptInfo.segs} song segment{scriptInfo.segs === 1 ? "" : "s"} · {scriptInfo.shots} shots</span>
+            : <span className="text-[10px] text-amber-400" title="The box analyze service (analyze_host) was unreachable, so shot timing came from the planned arrangement, not the audio. Start the analyze service and re-script to align cuts to the song.">⚠ free timing — analyze service offline ({scriptInfo.shots} shots)</span>
+        )}
         {blocks.length > 0 && (
           <GhostButton onClick={() => renderAllStills(true)} disabled={busy}>
             Render all stills
