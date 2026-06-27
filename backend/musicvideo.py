@@ -473,7 +473,21 @@ def build_shot_grid(segments, downbeats, total, target=7.0, min_shot=3.0):
         cuts = sorted(set(round(c, 2) for c in cuts))
         for i in range(len(cuts) - 1):
             grid.append({"start": cuts[i], "end": cuts[i + 1], "section": label})
-    return grid
+
+    # Coalesce any sub-`min_shot` window into a neighbour. allin1 can emit a tiny leading "start"
+    # segment (e.g. 0.0-0.42s); left in, the frontend's per-shot minimum expands it and it OVERLAPS the
+    # next shot (a 2s shot at 0-2 plus a 7s shot at 0.42-7.47). Merge keeps the grid gapless + on-structure.
+    merged = []
+    for w in grid:
+        w = dict(w)
+        short = (w["end"] - w["start"]) < min_shot
+        prev_short = merged and (merged[-1]["end"] - merged[-1]["start"]) < min_shot
+        if merged and (short or prev_short):
+            merged[-1]["end"] = w["end"]                                   # absorb (grow the previous window)
+            merged[-1]["section"] = merged[-1].get("section") or w.get("section")
+        else:
+            merged.append(w)
+    return merged
 
 
 def build_grid_prompt(song, cast, grid):
