@@ -1,8 +1,56 @@
 import { useEffect, useState } from "react";
 import { api, type LibItem } from "./api";
-import { inp, rid, pollJob, type RunCtx } from "./ui";
+import { inp, rid, type RunCtx } from "./ui";
 import { Collapse, StillPick } from "./mvui";
 import { type Character, type Identity, type Wardrobe } from "./mvmodel";
+
+// Push the Z-Image Turbo default look away from the smooth, anime-ish "AI face" it falls back to.
+const PHOTO_POS = "candid photograph, photorealistic, natural realistic skin with visible pores and texture, sharp focus, 50mm";
+const PHOTO_NEG = "anime, cartoon, illustration, painting, drawing, 3d render, cgi, video game, doll, " +
+  "plastic skin, waxy skin, airbrushed, overly smooth skin, beauty filter, overly symmetrical face, " +
+  "low quality, blurry, deformed, bad anatomy, extra fingers, watermark, text";
+
+// one generated draft (a still job we're waiting on, then can pick)
+type Draft = { jobId: string; seed: number; url?: string; err?: boolean };
+
+// poll a still job until it has a media URL (or errors)
+function waitMedia(jobId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const t = window.setInterval(async () => {
+      const j = await api.job(jobId).catch(() => null) as { status?: string; media_url?: string; error?: string } | null;
+      if (!j) return;
+      if (j.status === "done" && j.media_url) { clearInterval(t); resolve(j.media_url + "?t=" + Date.now()); }
+      else if (j.status === "error") { clearInterval(t); reject(new Error(j.error || "error")); }
+    }, 1000);
+  });
+}
+
+// 4-up draft strip: shows the rendering/ready candidates, lets the user pick one or reroll.
+function DraftStrip({ drafts, picked, onPick, onReroll, busy }:
+  { drafts: Draft[]; picked?: string; onPick: (jobId: string) => void; onReroll: () => void; busy: boolean }) {
+  if (!drafts.length) return null;
+  return (
+    <div className="space-y-1 rounded border border-[var(--color-line)] bg-[var(--color-bg)] p-1.5">
+      <div className="grid grid-cols-4 gap-1">
+        {drafts.map((d) => (
+          <button key={d.jobId} onClick={() => d.url && onPick(d.jobId)} disabled={!d.url}
+            title={d.url ? `pick (seed ${d.seed})` : "rendering…"}
+            className={`relative aspect-square overflow-hidden rounded border ${picked === d.jobId ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"} ${d.url ? "cursor-pointer hover:border-[var(--color-accent2)]" : "cursor-default"}`}>
+            {d.err
+              ? <span className="flex h-full items-center justify-center text-[9px] text-red-400">failed</span>
+              : d.url
+              ? <img src={d.url} alt="" className="h-full w-full object-cover" />
+              : <span className="flex h-full items-center justify-center text-[9px] text-[var(--color-muted)]">…</span>}
+            {picked === d.jobId && <span className="absolute right-0.5 top-0.5 rounded bg-[var(--color-accent2)] px-1 text-[8px] text-black">picked</span>}
+          </button>
+        ))}
+      </div>
+      <button onClick={onReroll} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
+        {busy ? "rerolling…" : "↻ reroll 4"}
+      </button>
+    </div>
+  );
+}
 
 // The reusable character library editor. `collapsible` embeds it as a Collapse (MV Studio's
 // quick panel); otherwise it renders inline as a full page (the Characters tab). Both edit the
@@ -13,6 +61,9 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState("");
   const [enhancing, setEnhancing] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, Draft[]>>({});   // key `${id}:${slot}` -> 4 candidates
+  const [hunting, setHunting] = useState("");                           // key currently generating
+  const [matchFace, setMatchFace] = useState<Record<string, boolean>>({});   // per-character: derive body from picked face
   const [llmProvider, setLlmProvider] = useState("ollama");   // prefer subscription -> API key -> local
   useEffect(() => { api.llmProviders().then((p) => {
     const q = p as { claude?: boolean; claude_sub?: boolean };
@@ -39,39 +90,62 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   const delWardrobe = (c: Character, wid: string) =>
     patch(c, { wardrobes: (c.wardrobes || []).filter((w) => w.id !== wid) });
 
+  // Fan out 4 candidate stills for one key, render them into the draft strip, and let the user pick.
+  // `gen(seed)` makes ONE still job; nothing is locked in until the user clicks a candidate.
+  async function hunt(key: string, gen: (seed: number) => Promise<unknown>) {
+    setHunting(key);
+    const base = Math.floor(Math.random() * 2_000_000_000);
+    try {
+      const ds: Draft[] = [];
+      for (let i = 0; i < 4; i++) {
+        const r = await gen(base + i) as { job_id: string };
+        ds.push({ jobId: r.job_id, seed: base + i });
+      }
+      setDrafts((d) => ({ ...d, [key]: ds }));
+      ds.forEach((d) => waitMedia(d.jobId)
+        .then((u) => setDrafts((p) => ({ ...p, [key]: (p[key] || []).map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) })))
+        .catch(() => setDrafts((p) => ({ ...p, [key]: (p[key] || []).map((x) => x.jobId === d.jobId ? { ...x, err: true } : x) }))));
+    } catch (e) {
+      ctx.setResults([{ id: rid(), title: "Generation failed", status: "error", pct: 0, err: (e as Error).message }]);
+    } finally { setHunting(""); }
+  }
+
   // generate a dressed reference (Qwen char_still) from the identity core + the wardrobe's outfit text
-  async function genRef(c: Character, w: Wardrobe, slot: "face" | "body") {
+  function genRef(c: Character, w: Wardrobe, slot: "face" | "body") {
     const baseRef = slot === "face"
       ? (c.identity?.faceRefId || c.identity?.bodyRefId)
       : (c.identity?.bodyRefId || c.identity?.faceRefId);
     if (!baseRef) { ctx.setResults([{ id: rid(), title: "Set an identity reference first", status: "error", pct: 0, err: "Pick a face/body still for the identity core, then generate the dressed look from it." }]); return; }
     const framing = slot === "face" ? "head-and-shoulders close-up portrait" : "full-body shot from head to toe";
-    const prompt = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, photoreal, sharp focus`;
-    const card = { id: rid(), title: `${c.name}: ${w.name} ${slot} ref`, status: "pending" as const, pct: 0 };
-    ctx.setResults([card]);
-    try {
-      const { job_id } = await api.videoCharStill({ ref_ids: [baseRef], prompt }) as { job_id: string };
-      setWardrobe(c, w.id, slot === "face" ? { faceRefId: job_id } : { bodyRefId: job_id });   // lock the produced still in
-      ctx.patch(card.id, { status: "running", pct: 5 });
-      pollJob(job_id, card.id, ctx);
-    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+    const prompt = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, ${PHOTO_POS}`;
+    hunt(`${c.id}:w${w.id}:${slot}`, (seed) => api.videoCharStill({ ref_ids: [baseRef], prompt, negative: PHOTO_NEG, seed }));
   }
 
-  // generate a reference still for the character from its appearance text (Z-Image t2i)
-  async function genIdentity(c: Character, slot: "face" | "body") {
+  // generate identity reference candidates. Face: Z-Image t2i from the appearance text. Body: when a
+  // face is already picked and "match face" is on, derive the body FROM that face (Qwen char_still) so
+  // the body matches the face; otherwise an independent t2i from the same appearance text.
+  function genIdentity(c: Character, slot: "face" | "body") {
     const appearance = (c.appearance || "").trim();
     if (!appearance) { ctx.setResults([{ id: rid(), title: "Describe the character first", status: "error", pct: 0, err: "Write an appearance description (optionally Enhance it), then generate the still from it." }]); return; }
     const framing = slot === "face"
       ? "head and shoulders close-up portrait, facing camera, neutral mid-grey studio backdrop, 85mm"
       : "full body shot from head to toe, standing, neutral mid-grey studio backdrop";
-    const card = { id: rid(), title: `${c.name}: ${slot} still`, status: "pending" as const, pct: 0 };
-    ctx.setResults([card]);
-    try {
-      const { job_id } = await api.videoStill({ prompt: `${appearance}, ${framing}, photoreal, sharp focus` }) as { job_id: string };
-      setIdentity(c, slot === "face" ? { faceRefId: job_id } : { bodyRefId: job_id });
-      ctx.patch(card.id, { status: "running", pct: 5 });
-      pollJob(job_id, card.id, ctx);
-    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+    const faceRef = c.identity?.faceRefId;
+    const useFace = slot === "body" && !!faceRef && matchFace[c.id] !== false;
+    const prompt = `${appearance}, ${framing}, ${PHOTO_POS}`;
+    hunt(`${c.id}:${slot}`, (seed) => useFace
+      ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: PHOTO_NEG, seed })
+      : api.videoStill({ prompt, negative: PHOTO_NEG, seed }));
+  }
+
+  // user picked a candidate -> lock it into the identity/wardrobe slot and clear the strip
+  function pickIdentity(c: Character, slot: "face" | "body", jobId: string) {
+    setIdentity(c, slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId });
+    setDrafts((d) => { const n = { ...d }; delete n[`${c.id}:${slot}`]; return n; });
+  }
+  function pickWardrobe(c: Character, w: Wardrobe, slot: "face" | "body", jobId: string) {
+    setWardrobe(c, w.id, slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId });
+    setDrafts((d) => { const n = { ...d }; delete n[`${c.id}:w${w.id}:${slot}`]; return n; });
   }
 
   // expand the user's short appearance text into a full photoreal prompt via the LLM
@@ -148,12 +222,22 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                     <div className="space-y-1">
                       <span className="text-[9px] text-[var(--color-muted)]">face (close-up)</span>
                       <StillPick value={c.identity?.faceRefId || ""} stills={stills} set={(id) => setIdentity(c, { faceRefId: id })} placeholder="- face still -" />
-                      <button onClick={() => genIdentity(c, "face")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate face</button>
+                      <button onClick={() => genIdentity(c, "face")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:face` ? "generating 4…" : "generate 4"}</button>
+                      <DraftStrip drafts={drafts[`${c.id}:face`] || []} picked={c.identity?.faceRefId} busy={hunting === `${c.id}:face`}
+                        onPick={(id) => pickIdentity(c, "face", id)} onReroll={() => genIdentity(c, "face")} />
                     </div>
                     <div className="space-y-1">
                       <span className="text-[9px] text-[var(--color-muted)]">body (full-length)</span>
                       <StillPick value={c.identity?.bodyRefId || ""} stills={stills} set={(id) => setIdentity(c, { bodyRefId: id })} placeholder="- body still -" />
-                      <button onClick={() => genIdentity(c, "body")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate body</button>
+                      <button onClick={() => genIdentity(c, "body")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:body` ? "generating 4…" : "generate 4"}</button>
+                      {c.identity?.faceRefId && (
+                        <label className="flex items-center gap-1 text-[9px] text-[var(--color-muted)]" title="Generate the body FROM the chosen face so they match (Qwen reference). Off = an independent body from the appearance text.">
+                          <input type="checkbox" checked={matchFace[c.id] !== false} onChange={(e) => setMatchFace((m) => ({ ...m, [c.id]: e.target.checked }))} />
+                          match the chosen face
+                        </label>
+                      )}
+                      <DraftStrip drafts={drafts[`${c.id}:body`] || []} picked={c.identity?.bodyRefId} busy={hunting === `${c.id}:body`}
+                        onPick={(id) => pickIdentity(c, "body", id)} onReroll={() => genIdentity(c, "body")} />
                     </div>
                   </div>
                 </div>
@@ -174,11 +258,15 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                       <div className="grid grid-cols-2 gap-1.5">
                         <div className="space-y-1">
                           <StillPick value={w.faceRefId || ""} stills={stills} set={(id) => setWardrobe(c, w.id, { faceRefId: id })} placeholder="- face ref -" />
-                          <button onClick={() => genRef(c, w, "face")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate face</button>
+                          <button onClick={() => genRef(c, w, "face")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:w${w.id}:face` ? "generating 4…" : "generate 4"}</button>
+                          <DraftStrip drafts={drafts[`${c.id}:w${w.id}:face`] || []} picked={w.faceRefId} busy={hunting === `${c.id}:w${w.id}:face`}
+                            onPick={(id) => pickWardrobe(c, w, "face", id)} onReroll={() => genRef(c, w, "face")} />
                         </div>
                         <div className="space-y-1">
                           <StillPick value={w.bodyRefId || ""} stills={stills} set={(id) => setWardrobe(c, w.id, { bodyRefId: id })} placeholder="- body ref -" />
-                          <button onClick={() => genRef(c, w, "body")} disabled={busy} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">generate body</button>
+                          <button onClick={() => genRef(c, w, "body")} disabled={busy || !!hunting} className="w-full rounded border border-[var(--color-line)] py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">{hunting === `${c.id}:w${w.id}:body` ? "generating 4…" : "generate 4"}</button>
+                          <DraftStrip drafts={drafts[`${c.id}:w${w.id}:body`] || []} picked={w.bodyRefId} busy={hunting === `${c.id}:w${w.id}:body`}
+                            onPick={(id) => pickWardrobe(c, w, "body", id)} onReroll={() => genRef(c, w, "body")} />
                         </div>
                       </div>
                     </div>
