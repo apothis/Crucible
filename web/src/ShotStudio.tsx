@@ -383,7 +383,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             <div className="grid grid-cols-3 gap-3">
               {kfDrafts.map((d) => (
                 <div key={d.jobId} className="ss-piece">
-                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%${d.pass && d.pass > 1 ? ` · pass ${d.pass}` : ""}` : "queued…"}</div>}</div>
+                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}% · pass ${Math.min(d.pass || 1, 2)} of 2` : "queued…"}</div>}</div>
                   <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                     <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                     <GhostButton onClick={() => useDraft(d.url!)} disabled={kfBusy || !d.url}>Use this</GhostButton>
@@ -516,7 +516,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           <div className="grid grid-cols-3 gap-3">
             {hunt.drafts.map((d) => (
               <div key={d.jobId} className="ss-piece">
-                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%${d.pass && d.pass > 1 ? ` · pass ${d.pass}` : ""}` : "queued…"}</div>}</div>
+                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}% · pass ${Math.min(d.pass || 1, 2)} of 2` : "queued…"}</div>}</div>
                 <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                   <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                   <GhostButton onClick={() => finishDraft(d.seed)} disabled={busy || !d.url}>Finish</GhostButton>
