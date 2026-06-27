@@ -1,5 +1,5 @@
 // Shared small UI primitives for the MV Studio + Characters tabs.
-import { type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { inp } from "./ui";
 import { type LibItem } from "./api";
 import { openLightbox } from "./Lightbox";
@@ -19,14 +19,30 @@ export function Collapse({ title, open, onToggle, children, accent }: {
   );
 }
 
-export function Num({ label, value, set, step = 1, w = "w-20", title }: {
+export function Num({ label, value, set, step = 1, w = "w-20", title, min, max }: {
   label: string; value: number; set: (n: number) => void; step?: number; w?: string; title?: string;
+  min?: number; max?: number;
 }) {
+  // Buffer keystrokes locally so the field can be cleared + retyped freely; clamp (min/max) only on
+  // blur/Enter. Clamping on every keystroke made a min'd field un-clearable (empty -> snaps to min).
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number(draft);
+    if (draft.trim() === "" || Number.isNaN(n)) { setDraft(null); return; }   // revert to value
+    let v = n;
+    if (min !== undefined) v = Math.max(min, v);
+    if (max !== undefined) v = Math.min(max, v);
+    set(v); setDraft(null);
+  };
   return (
     <label className="flex flex-col gap-0.5 text-[10px] text-[var(--color-muted)]" title={title}>
       {label}
-      <input type="number" step={step} className={`${inp} ${w}`} value={value}
-        onChange={(e) => set(Number(e.target.value))} />
+      <input type="number" step={step} min={min} max={max} className={`${inp} ${w}`}
+        value={draft ?? String(value)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
     </label>
   );
 }

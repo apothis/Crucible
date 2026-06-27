@@ -441,7 +441,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             </label>
             {b.nonDistilled && (
               <div className="flex items-center gap-2">
-                <Num label="Steps" value={b.steps ?? 35} set={(n) => patch({ steps: Math.max(8, Math.min(60, Math.round(n))) })} step={1} w="w-24" />
+                <Num label="Steps" value={b.steps ?? 35} set={(n) => patch({ steps: Math.round(n) })} step={1} w="w-24" min={8} max={60} />
                 <span className="text-[10px] text-[var(--color-muted)]">30–50 typical; more = cleaner but slower</span>
               </div>
             )}
