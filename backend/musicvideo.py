@@ -440,7 +440,7 @@ def parse_shots(text):
 def generate_script(song, cast, provider, model, claude_model, n_shots=0):
     """Returns the parsed shot list (raises on LLM / JSON failure)."""
     system, prompt = build_prompt(song, cast, n_shots)
-    text = llm_mod.complete(provider, model, system, prompt, claude_model)
+    text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=600)
     return parse_shots(text)
 
 
@@ -599,7 +599,7 @@ def generate_script_grid(song, cast, provider, model, claude_model, grid):
     """Structure-driven script: the LLM fills CONTENT for each fixed grid window; we attach the locked
     audio-aligned times (the LLM never sets timing). Returns the parsed shot list, gapless on-structure."""
     system, prompt = build_grid_prompt(song, cast, grid)
-    text = llm_mod.complete(provider, model, system, prompt, claude_model)
+    text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=600)
     content = parse_shots(text)                       # parsed content (its start/end are ignored)
     out = []
     for i, g in enumerate(grid):

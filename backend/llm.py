@@ -64,7 +64,7 @@ def claude_code_authed(ttl: int = 300) -> bool:
     return ok
 
 
-def claude_code_chat(system: str, prompt: str, model: str = "") -> str:
+def claude_code_chat(system: str, prompt: str, model: str = "", timeout: int = 240) -> str:
     """One-shot completion through the Claude Code CLI, drawing on the user's Claude
     SUBSCRIPTION (OAuth) instead of a per-token API key. Runs `claude -p` as a
     subprocess. ANTHROPIC_API_KEY is stripped from the child env so the CLI uses the
@@ -82,8 +82,12 @@ def claude_code_chat(system: str, prompt: str, model: str = "") -> str:
            "--effort", "low", "--disallowed-tools", *_CC_NO_TOOLS]
     if model:
         cmd += ["--model", model]
-    with tempfile.TemporaryDirectory() as cwd:
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, timeout=240)
+    try:
+        with tempfile.TemporaryDirectory() as cwd:
+            r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"claude CLI timed out after {timeout}s (large generation - try a shorter song / "
+                           f"fewer shots, or retry)")
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip()[:300]
         raise RuntimeError(f"claude CLI failed (is it logged in? `claude setup-token`): {msg}")
@@ -133,26 +137,26 @@ def ollama_models():
         return []
 
 
-def ollama_chat(model: str, system: str, prompt: str) -> str:
+def ollama_chat(model: str, system: str, prompt: str, timeout: int = 180) -> str:
     r = requests.post(f"{OLLAMA}/api/chat", json={
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         "stream": False,
-    }, timeout=180)
+    }, timeout=timeout)
     r.raise_for_status()
     return r.json()["message"]["content"].strip()
 
 
-def claude_chat(model: str, system: str, prompt: str) -> str:
+def claude_chat(model: str, system: str, prompt: str, timeout: int = 180, max_tokens: int = 1024) -> str:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY not set (needed for the Claude option)")
     r = requests.post("https://api.anthropic.com/v1/messages", headers={
         "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json",
     }, json={
-        "model": model, "max_tokens": 1024, "system": system,
+        "model": model, "max_tokens": max_tokens, "system": system,
         "messages": [{"role": "user", "content": prompt}],
-    }, timeout=180)
+    }, timeout=timeout)
     r.raise_for_status()
     return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
 
@@ -162,14 +166,16 @@ def chat(provider: str, model: str, task: str, user_input: str, claude_model: st
     return complete(provider, model, system, user_input, claude_model)
 
 
-def complete(provider: str, model: str, system: str, prompt: str, claude_model: str) -> str:
+def complete(provider: str, model: str, system: str, prompt: str, claude_model: str, timeout: int = 240) -> str:
     """Run one system+user completion against the chosen provider (explicit system
-    prompt — used by the melody composer and other structured-output features)."""
+    prompt — used by the melody composer and other structured-output features).
+    `timeout` (seconds) lets big jobs (e.g. a long MV shot list) ask for more headroom."""
     if provider == "claude":
-        return claude_chat(model or claude_model, system, prompt)
+        # a long shot list needs a bigger token budget than the 1024 default, or it truncates.
+        return claude_chat(model or claude_model, system, prompt, timeout=timeout, max_tokens=8192)
     if provider in ("claude_sub", "claude_code"):
-        return claude_code_chat(system, prompt, model or "")   # subscription via CLI, no per-token billing
-    return ollama_chat(model or "gemma4_4b:latest", system, prompt)
+        return claude_code_chat(system, prompt, model or "", timeout=timeout)   # subscription via CLI, no per-token billing
+    return ollama_chat(model or "gemma4_4b:latest", system, prompt, timeout=timeout)
 
 
 def best_provider() -> str:
