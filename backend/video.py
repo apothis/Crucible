@@ -1423,10 +1423,11 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
     # dev-only per LTX docs), so scenic water/clouds always render as a fast timelapse. Non-distilled drops
     # the distill LoRA, uses real multi-step sampling + STGGuider (cfg+stg) which CAN rein in motion. EXPERIMENTAL
     # (no canonical 2.3 recipe) - tune stg/cfg/steps by eye. Distilled path (default) unchanged.
+    # Real-world dev-model settings (from users running non-distilled LTX-2.3, not invented): 30-50 steps,
+    # cfg ~3 (lower=more stable), euler + linear_quadratic. cfg drives motion dynamics (too high degrades).
     nondist = bool(p.get("nondistilled"))
-    cfg = float(p.get("cfg", 3.0 if nondist else 1.0))     # distilled ignores cfg (NAG only); non-distilled uses it
-    stg = float(p.get("stg", 1.0)); stg_rescale = float(p.get("stg_rescale", 0.7))
-    nd_base_steps = int(p.get("nd_base_steps", 24)); nd_refine_steps = int(p.get("nd_refine_steps", 8))
+    cfg = float(p.get("cfg", 3.0 if nondist else 1.0))     # distilled ignores cfg (NAG only); dev uses real cfg
+    nd_base_steps = int(p.get("nd_base_steps", 30)); nd_refine_steps = int(p.get("nd_refine_steps", 6))
     nd_refine_denoise = float(p.get("nd_refine_denoise", 0.5))
     distill = float(p.get("distill_strength", 0.5))
     fstr = float(p.get("first_strength", 0.7))
@@ -1516,12 +1517,9 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
         mdl = ["4", 0]
     # guider + sigma schedule per path (used by both stages below)
     def _guider(nid, pos, neg):
-        if nondist:
-            g[nid] = {"class_type": "STGGuider",
-                      "inputs": {"model": mdl, "positive": pos, "negative": neg,
-                                 "cfg": cfg, "stg": stg, "rescale": stg_rescale}}
-        else:
-            g[nid] = {"class_type": "CFGGuider", "inputs": {"model": mdl, "positive": pos, "negative": neg, "cfg": cfg}}
+        # Both paths use CFGGuider (real users run dev with plain CFG, not STG - which also avoids a
+        # node-install dependency). Difference is the cfg value (3 dev / 1 distilled) + no NAG on dev.
+        g[nid] = {"class_type": "CFGGuider", "inputs": {"model": mdl, "positive": pos, "negative": neg, "cfg": cfg}}
     def _sched(nid, steps, denoise, distilled_sigmas):
         if nondist:
             g[nid] = {"class_type": "BasicScheduler",
