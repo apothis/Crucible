@@ -497,10 +497,30 @@ function LibArtwork({ it }: { it: LibItem }) {
   );
 }
 
+// Exact generation params for one take, pretty-printed + copyable. Toggled by the ⓘ button on
+// the card. Shows the raw stored JSON (the same blob /api/library returns) so nothing is hidden.
+function ParamsPanel({ it }: { it: LibItem }) {
+  const [copied, setCopied] = useState(false);
+  const json = JSON.stringify(it.params ?? {}, null, 2);
+  const copy = () => {
+    navigator.clipboard?.writeText(json).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {});
+  };
+  return (
+    <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] p-2">
+      <div className="mb-1 flex items-center gap-2">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)]">generation params</span>
+        <button onClick={copy} className="ml-auto rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">{copied ? "copied" : "copy"}</button>
+      </div>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-[10.5px] leading-snug text-[var(--color-ink)]">{json}</pre>
+    </div>
+  );
+}
+
 // One card per "group" (a song + its versions, or a single track). Versions share a base
 // title; chips switch which take the card shows/acts on (newest selected by default).
 function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, onCompare }: { group: LibItem[]; inTests: boolean } & LibActions) {
   const [vi, setVi] = useState(group.length - 1);
+  const [showParams, setShowParams] = useState(false);
   const it = group[Math.min(vi, group.length - 1)] || group[0];
   const multi = group.length > 1;
   const canBuild = !!(it.params?.from_builder && it.params?.song_meta && onOpenInBuilder);
@@ -515,11 +535,13 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
           {canBuild && <button onClick={() => onOpenInBuilder!(it)} className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Open in Song Builder (load arrangement, lyrics & tags)">↻</button>}
           <button onClick={() => onOpen(it)} className={`${canBuild ? "" : "ml-auto"} text-[var(--color-muted)] hover:text-[var(--color-accent2)]`} title="Open in workspace">↗</button>
           {onCompare && <button onClick={() => onCompare(it.id)} className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Add to Compare (or drag the card)">⊕</button>}
+          <button onClick={() => setShowParams((s) => !s)} className={`${showParams ? "text-[var(--color-accent2)]" : "text-[var(--color-muted)]"} hover:text-[var(--color-accent2)]`} title="Show the exact generation params">ⓘ</button>
           <a href={`/api/export/${it.id}?fmt=mp3`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Export as MP3 (320k)">⬇</a>
           <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
           <button onClick={() => { if (confirm("Delete this track permanently?")) onDelete(it.id); }} className="text-[var(--color-muted)] hover:text-red-400" title="Delete">✕</button>
         </div>
         <p className="line-clamp-2 text-[11px] font-medium text-[var(--color-ink)]" title={libTitle(it)}>{libTitle(it)}</p>
+        {showParams && <ParamsPanel it={it} />}
         {multi && (
           <div className="flex flex-wrap gap-1">
             {group.map((g, i) => (
