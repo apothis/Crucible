@@ -80,9 +80,13 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
 
   function note(s: string) { setStatus(s); }
-  // FFLF prompt/negative, calm-motion aware (B-roll slow cues + anti-timelapse negative)
-  const fflfPrompt = () => b.calmMotion ? `${CALM_POS}, ${b.prompt}` : b.prompt;
-  const fflfNeg = () => b.calmMotion ? CALM_NEG : undefined;   // undefined -> builder's default negative
+  // FFLF motion speed: <1 slows the FREE motion (waves/clouds) by conditioning the model at a higher
+  // frame_rate than playback (the real lever - text prompts don't control LTX speed). Only for non-lip-sync
+  // B-roll (decoupling fps would desync lips). The slow prompt cues + anti-timelapse negative ride along.
+  const slowMo = (b.motionSpeed ?? 1) < 1 && !b.lipsync;
+  const fflfPrompt = () => slowMo ? `${CALM_POS}, ${b.prompt}` : b.prompt;
+  const fflfNeg = () => slowMo ? CALM_NEG : undefined;                                  // undefined -> builder default
+  const fflfCondFps = () => slowMo ? Math.round(b.fps / (b.motionSpeed ?? 1)) : undefined;  // higher = slower
 
   // ---- FFLF push-in: center-crop the timeline's OPENING image and drop the crop back into the timeline
   // as the LAST keyframe. Both anchors then come from the timeline (no side fields), and the shot dollies
@@ -127,7 +131,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "hunt",
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: fflfPrompt(), negative: fflfNeg(),
+        prompt: fflfPrompt(), negative: fflfNeg(), cond_fps: fflfCondFps(),
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {                                       // extend: video tail of the last clip -> back to the opening still
@@ -218,7 +222,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "finish", stage1_seed: stage1Seed,
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: fflfPrompt(), negative: fflfNeg(), width: b.width, height: b.height, frames: b.frames, fps: b.fps,
+        prompt: fflfPrompt(), negative: fflfNeg(), cond_fps: fflfCondFps(),
+        width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {
         p.first_id = lastClip; p.first_kind = "video"; p.first_frames = FFLF_TAIL; p.first_skip = Math.max(0, b.frames - FFLF_TAIL);
@@ -410,10 +415,13 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />
                 <Num label="Last strength" value={b.fflfLastStrength ?? 0.5} set={(n) => patch({ fflfLastStrength: n })} step={0.05} />
               </div>
-              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]" title="LTX renders water/clouds as a fast timelapse by default. This adds slow-motion cues + a strong anti-timelapse negative (via NAG). Turn ON for scenic B-roll; leave OFF for character/action shots.">
-                <input type="checkbox" checked={!!b.calmMotion} onChange={(e) => patch({ calmMotion: e.target.checked })} />
-                Calm motion (slow B-roll — kills the timelapse look)
-              </label>
+              <div className="flex items-end gap-3 rounded-md border border-dashed border-[var(--color-line)] p-2">
+                <div className="flex-1">
+                  <div className="text-[11px] font-medium text-[var(--color-ink)]">Motion speed (B-roll)</div>
+                  <div className="text-[10px] text-[var(--color-muted)]">Lower = slower waves/clouds (conditions LTX at a higher frame-rate than playback — the real speed lever). 1.0 = normal. Try ~0.7 first; very low can thrash. Ignored on lip-sync shots.</div>
+                </div>
+                <Num label="Speed" value={b.motionSpeed ?? 1} set={(n) => patch({ motionSpeed: Math.max(0.4, Math.min(1, n)) })} step={0.1} w="w-20" />
+              </div>
             </>
           ) : (
             <div className="rounded-md border border-dashed border-[var(--color-line)] p-3 text-[11px] text-[var(--color-muted)]">

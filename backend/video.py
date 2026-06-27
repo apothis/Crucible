@@ -1404,6 +1404,11 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
     w = int(p.get("width", 1280)); h = int(p.get("height", 720))
     fps = int(p.get("fps", 24))
     frames = _ltx_frames(p.get("frames", 97), fps)
+    # The model's TEMPORAL belief. LTX motion speed is frame-rate-conditioning driven (NOT the text prompt):
+    # conditioning at a HIGHER rate than playback packs less motion per frame -> the free dynamics (waves,
+    # clouds) play SLOWER. cond_fps default = fps (no change). Decouple ONLY for non-lip-sync B-roll (the
+    # audio latent below stays at the real fps). NOTE: very high cond_fps (e.g. 48) can thrash - keep mild.
+    cond_fps = float(p.get("cond_fps") or fps)
     # stage 1 = half target res, snapped to /32 (the x2 upsampler nets back to ~target). Mirrors foxydits'
     # SimpleCalculatorKJ a/2 + the "1080 -> 1024" divisibility caveat in his notes.
     s1w = max(32, (w // 2 // 32) * 32)
@@ -1470,7 +1475,7 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
         "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": prompt}},
         "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
         "11": {"class_type": "LTXVConditioning",
-               "inputs": {"positive": ["9", 0], "negative": ["10", 0], "frame_rate": float(fps)}},
+               "inputs": {"positive": ["9", 0], "negative": ["10", 0], "frame_rate": cond_fps}},
         # stage-1 empty AV latent (half res)
         "12": {"class_type": "EmptyLTXVLatentVideo",
                "inputs": {"width": s1w, "height": s1h, "length": frames, "batch_size": 1}},
