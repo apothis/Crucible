@@ -1419,7 +1419,15 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
     s1_seed = int(p["stage1_seed"]) if p.get("stage1_seed") not in (None, "", 0, "0") else _seed(p)
     s2_seed = (int(p["stage2_seed"]) if p.get("stage2_seed") not in (None, "", 0, "0")
                else random.randint(0, 2**31 - 1))
-    cfg = float(p.get("cfg", 1.0))
+    # NON-DISTILLED + STG path (research-led): the distilled model has NO motion-speed control (CFG/STG are
+    # dev-only per LTX docs), so scenic water/clouds always render as a fast timelapse. Non-distilled drops
+    # the distill LoRA, uses real multi-step sampling + STGGuider (cfg+stg) which CAN rein in motion. EXPERIMENTAL
+    # (no canonical 2.3 recipe) - tune stg/cfg/steps by eye. Distilled path (default) unchanged.
+    nondist = bool(p.get("nondistilled"))
+    cfg = float(p.get("cfg", 3.0 if nondist else 1.0))     # distilled ignores cfg (NAG only); non-distilled uses it
+    stg = float(p.get("stg", 1.0)); stg_rescale = float(p.get("stg_rescale", 0.7))
+    nd_base_steps = int(p.get("nd_base_steps", 24)); nd_refine_steps = int(p.get("nd_refine_steps", 8))
+    nd_refine_denoise = float(p.get("nd_refine_denoise", 0.5))
     distill = float(p.get("distill_strength", 0.5))
     fstr = float(p.get("first_strength", 0.7))
     lstr = float(p.get("last_strength", 0.7))
@@ -1481,12 +1489,15 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
                "inputs": {"width": s1w, "height": s1h, "length": frames, "batch_size": 1}},
         "13": {"class_type": "LTXVEmptyLatentAudio",
                "inputs": {"frames_number": frames, "frame_rate": fps, "batch_size": 1, "audio_vae": ["7", 0]}},
-        # shared sampler bits
+        # shared sampler bits (sigma schedule node 35 + guiders built per-path below)
         "34": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
-        "35": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},          # 8-step base
     }
-    # model chain: distill LoRA -> (optional character LoRA) -> (optional OmniNFT-RL) -> LTX2_NAG
-    model_ref = ["2", 0]
+    # model chain: [distill LoRA] -> (optional character LoRA) -> (optional OmniNFT-RL) -> [LTX2_NAG]
+    # Distilled: base -> distill LoRA -> ... -> NAG (negatives via NAG at cfg 1). Non-distilled: base -> ...
+    # -> STGGuider (negatives via real CFG+STG below), no distill LoRA, no NAG.
+    if nondist:
+        g.pop("2", None)                 # drop the distill LoRA node
+    model_ref = ["1", 0] if nondist else ["2", 0]
     if (p.get("char_lora") or "").strip():
         g["3"] = {"class_type": "LoraLoaderModelOnly",
                   "inputs": {"model": model_ref, "lora_name": p["char_lora"].strip(),
@@ -1497,8 +1508,27 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
                    "inputs": {"model": model_ref, "lora_name": LTX_LORA_OMNI,
                               "strength_model": float(p.get("omni_strength", 2.0))}}
         model_ref = ["4o", 0]
-    g["4"] = {"class_type": "LTX2_NAG",
-              "inputs": {"model": model_ref, "nag_scale": nag, "nag_alpha": 0.25, "nag_tau": 2.5}}
+    if nondist:
+        mdl = model_ref                  # STG+CFG handle the negative; no NAG
+    else:
+        g["4"] = {"class_type": "LTX2_NAG",
+                  "inputs": {"model": model_ref, "nag_scale": nag, "nag_alpha": 0.25, "nag_tau": 2.5}}
+        mdl = ["4", 0]
+    # guider + sigma schedule per path (used by both stages below)
+    def _guider(nid, pos, neg):
+        if nondist:
+            g[nid] = {"class_type": "STGGuider",
+                      "inputs": {"model": mdl, "positive": pos, "negative": neg,
+                                 "cfg": cfg, "stg": stg, "rescale": stg_rescale}}
+        else:
+            g[nid] = {"class_type": "CFGGuider", "inputs": {"model": mdl, "positive": pos, "negative": neg, "cfg": cfg}}
+    def _sched(nid, steps, denoise, distilled_sigmas):
+        if nondist:
+            g[nid] = {"class_type": "BasicScheduler",
+                      "inputs": {"model": mdl, "scheduler": "linear_quadratic", "steps": steps, "denoise": denoise}}
+        else:
+            g[nid] = {"class_type": "ManualSigmas", "inputs": {"sigmas": distilled_sigmas}}
+    _sched("35", nd_base_steps, 1.0, LTX_SIGMAS_BASE)        # stage-1 sigma schedule (8-step distilled, or N-step non-distilled)
 
     # ---- anchors (stage-1 res) + the FFLF guide chain (start @0, end @last_idx) ----
     ff_img = _src_node("20", first_src, 17)
@@ -1522,8 +1552,7 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
     g["32"] = {"class_type": "LTXVConcatAVLatent", "inputs": {"video_latent": ["31", 2], "audio_latent": s1_audio}}
     # ---- stage 1 sample (8 steps, denoise 1.0, cfg 1) ----
     g["33"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": s1_seed}}
-    g["36"] = {"class_type": "CFGGuider",
-               "inputs": {"model": ["4", 0], "positive": ["31", 0], "negative": ["31", 1], "cfg": cfg}}
+    _guider("36", ["31", 0], ["31", 1])                     # CFGGuider (distilled) | STGGuider (non-distilled)
     g["37"] = {"class_type": "SamplerCustomAdvanced",
                "inputs": {"noise": ["33", 0], "guider": ["36", 0], "sampler": ["34", 0],
                           "sigmas": ["35", 0], "latent_image": ["32", 0]}}
@@ -1558,9 +1587,8 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
         g["57"] = {"class_type": "LTXVConcatAVLatent",
                    "inputs": {"video_latent": ["56", 2], "audio_latent": ["38", 1]}}
         g["58"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": s2_seed}}
-        g["59"] = {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_FFLF_REFINE}}   # 3-step refine
-        g["60"] = {"class_type": "CFGGuider",
-                   "inputs": {"model": ["4", 0], "positive": ["56", 0], "negative": ["56", 1], "cfg": cfg}}
+        _sched("59", nd_refine_steps, nd_refine_denoise, LTX_SIGMAS_FFLF_REFINE)   # refine schedule
+        _guider("60", ["56", 0], ["56", 1])
         g["61"] = {"class_type": "SamplerCustomAdvanced",
                    "inputs": {"noise": ["58", 0], "guider": ["60", 0], "sampler": ["34", 0],
                               "sigmas": ["59", 0], "latent_image": ["57", 0]}}

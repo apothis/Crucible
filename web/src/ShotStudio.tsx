@@ -80,13 +80,12 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
 
   function note(s: string) { setStatus(s); }
-  // FFLF motion speed: <1 slows the FREE motion (waves/clouds) by conditioning the model at a higher
-  // frame_rate than playback (the real lever - text prompts don't control LTX speed). Only for non-lip-sync
-  // B-roll (decoupling fps would desync lips). The slow prompt cues + anti-timelapse negative ride along.
-  const slowMo = (b.motionSpeed ?? 1) < 1 && !b.lipsync;
-  const fflfPrompt = () => slowMo ? `${CALM_POS}, ${b.prompt}` : b.prompt;
-  const fflfNeg = () => slowMo ? CALM_NEG : undefined;                                  // undefined -> builder default
-  const fflfCondFps = () => slowMo ? Math.round(b.fps / (b.motionSpeed ?? 1)) : undefined;  // higher = slower
+  // Non-distilled + STG path: the ONLY way to control LTX motion speed (distilled has no CFG/STG). For
+  // non-lip-sync B-roll only. With real CFG the negative actually applies, so the anti-timelapse negative
+  // + slow positive cues now matter too. Experimental (no canonical 2.3 recipe) - tune by eye.
+  const cine = !!b.nonDistilled && !b.lipsync;
+  const fflfPrompt = () => cine ? `${CALM_POS}, ${b.prompt}` : b.prompt;
+  const fflfNeg = () => cine ? CALM_NEG : undefined;                                  // undefined -> builder default
 
   // ---- FFLF push-in: center-crop the timeline's OPENING image and drop the crop back into the timeline
   // as the LAST keyframe. Both anchors then come from the timeline (no side fields), and the shot dollies
@@ -131,7 +130,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "hunt",
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: fflfPrompt(), negative: fflfNeg(), cond_fps: fflfCondFps(),
+        prompt: fflfPrompt(), negative: fflfNeg(), nondistilled: cine || undefined,
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {                                       // extend: video tail of the last clip -> back to the opening still
@@ -222,7 +221,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "finish", stage1_seed: stage1Seed,
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: fflfPrompt(), negative: fflfNeg(), cond_fps: fflfCondFps(),
+        prompt: fflfPrompt(), negative: fflfNeg(), nondistilled: cine || undefined,
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {
@@ -415,13 +414,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />
                 <Num label="Last strength" value={b.fflfLastStrength ?? 0.5} set={(n) => patch({ fflfLastStrength: n })} step={0.05} />
               </div>
-              <div className="flex items-end gap-3 rounded-md border border-dashed border-[var(--color-line)] p-2">
-                <div className="flex-1">
-                  <div className="text-[11px] font-medium text-[var(--color-ink)]">Motion speed (B-roll)</div>
-                  <div className="text-[10px] text-[var(--color-muted)]">Lower = slower waves/clouds (conditions LTX at a higher frame-rate than playback — the real speed lever). 1.0 = normal. Try ~0.7 first; very low can thrash. Ignored on lip-sync shots.</div>
-                </div>
-                <Num label="Speed" value={b.motionSpeed ?? 1} set={(n) => patch({ motionSpeed: Math.max(0.4, Math.min(1, n)) })} step={0.1} w="w-20" />
-              </div>
+              <label className="flex items-start gap-2 rounded-md border border-dashed border-[var(--color-line)] p-2 text-[11px] text-[var(--color-muted)]" title="The distilled model has NO motion-speed control (CFG/STG are dev-only). This renders on the non-distilled model with STG so living water/clouds don't race as a timelapse. SLOWER render. Experimental — tune by eye. Ignored on lip-sync shots.">
+                <input type="checkbox" className="mt-0.5" checked={!!b.nonDistilled} onChange={(e) => patch({ nonDistilled: e.target.checked })} />
+                <span><span className="font-medium text-[var(--color-ink)]">Cinematic motion (non-distilled + STG)</span> — slows living water/clouds (the only real speed lever). Slower render; experimental.</span>
+              </label>
             </>
           ) : (
             <div className="rounded-md border border-dashed border-[var(--color-line)] p-3 text-[11px] text-[var(--color-muted)]">
