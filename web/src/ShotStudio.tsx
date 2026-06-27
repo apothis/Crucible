@@ -57,7 +57,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [pushKeep, setPushKeep] = useState(0.72);   // FFLF push-in: fraction of the opening still kept in the end crop
   const pieces = b.pieces || [];
   // transient hunt state: the 3 half-res drafts for the piece currently being hunted
-  const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string }[] } | null>(null);
+  const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string; pct?: number }[] } | null>(null);
   const [status, setStatus] = useState("");
   // "Add keyframe still" panel: generate (seed-hunt half-res -> full on pick) or pick from library,
   // then inject into the editor timeline as a keyframe via the editor's own add-image path.
@@ -144,8 +144,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const drafts = r.drafts.map((d, i) => ({ jobId: d.job_id, seed: r.base_seed + i }));
       setHunt({ kind: "fflf", pieceLabel: forExtend ? `extend ${pieces.length + 1}` : "base", forExtend, drafts });
       // resolve each draft's poster as it finishes
-      drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
-        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h)).catch(() => {}));
+      drafts.forEach((d) => waitMedia(d.jobId, (pc) =>
+        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, pct: pc } : x) } : h))
+        .then((u) => setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h))
+        .catch(() => {}));
       note("Drafts rendering — pick one to finish (drafts are video-only; lip-sync is added on finish).");
     } catch (e) { note("Hunt failed: " + (e as Error).message); }
     finally { setBusy(false); }
@@ -190,8 +192,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         drafts.push({ jobId: r.job_id, seed: base + i });
       }
       setHunt({ kind: "video", pieceLabel: "video", forExtend: false, drafts });
-      drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
-        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h)).catch(() => {}));
+      drafts.forEach((d) => waitMedia(d.jobId, (pc) =>
+        setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, pct: pc } : x) } : h))
+        .then((u) => setHunt((h) => h ? { ...h, drafts: h.drafts.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) } : h))
+        .catch(() => {}));
       note("Half-res drafts rendering — pick one to finish at full res.");
     } catch (e) { note("Video hunt failed: " + (e as Error).message); }
     finally { setBusy(false); }
@@ -487,7 +491,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           <div className="grid grid-cols-3 gap-3">
             {hunt.drafts.map((d) => (
               <div key={d.jobId} className="ss-piece">
-                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">rendering…</div>}</div>
+                <div className="ss-thumb">{d.url ? <PreviewVideo src={d.url} /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%` : "queued…"}</div>}</div>
                 <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                   <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                   <GhostButton onClick={() => finishDraft(d.seed)} disabled={busy || !d.url}>Finish</GhostButton>
