@@ -1223,6 +1223,18 @@ def build_ltx_keyframe(p, keyframes):
         timeline_data = raw_tl
         guide_csv = str(p.get("guide_strength") or "").strip()
         kfs = []
+        if not guide_csv:
+            # The timeline editor leaves guide_strength blank; the programmatic keyframe path (below) sends
+            # 1.0 per keyframe. Without an explicit strength the keyframe guides anchor WEAKLY - the still
+            # doesn't hold as the start frame (looks like t2v, not started-from-the-still). Default each
+            # image segment to full strength so editor-authored keyframes anchor like the other path.
+            try:
+                imgs = [s for s in (json.loads(raw_tl).get("segments") or [])
+                        if s.get("type") == "image" and s.get("imageFile")]
+                if imgs:
+                    guide_csv = ",".join("1.000" for _ in imgs)
+            except Exception:
+                pass
     else:
         # Resolve + sort keyframe placements (the Director sorts image segments by start and indexes the
         # guide_strength CSV by that order, so we must match it).
