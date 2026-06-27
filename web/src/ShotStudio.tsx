@@ -258,8 +258,24 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     } catch (e) { setStatus("Add failed: " + (e as Error).message); }
     finally { setKfBusy(false); }
   }
+  // "Use this" on a generated draft. FFLF reads the First/Last anchor pickers (NOT the editor timeline),
+  // so in FFLF mode the picked still becomes the opening (First) anchor; otherwise it injects as a keyframe.
+  async function useKfDraft(d: { jobId: string; url?: string }) {
+    if (b.renderMode === "fflf") {
+      patch({ fflfFirstId: d.jobId });
+      setKfDrafts([]);
+      setStatus("Opening anchor set. Click 'Make push-in' for B-roll, or pick a Last frame for a sung shot.");
+      return;
+    }
+    if (d.url) await useDraft(d.url);
+  }
   async function addLibraryStill(stillId: string) {
     if (!stillId) return;
+    if (b.renderMode === "fflf") {   // FFLF: a library still becomes the opening (First) anchor
+      patch({ fflfFirstId: stillId });
+      setStatus("Opening anchor set from library. Click 'Make push-in' for B-roll, or pick a Last frame.");
+      return;
+    }
     setKfBusy(true); setStatus("Adding library still as keyframe…");
     try { await injectStill(`/api/media/${stillId}`); setStatus(`Library still added at frame ${kfFrame}.`); }
     catch (e) { setStatus("Add failed: " + (e as Error).message); }
@@ -303,7 +319,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       {/* ===================== ADD KEYFRAME STILL (generate seed-hunt / library -> inject as keyframe) ===================== */}
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
         <div className="ss-card flex flex-col gap-3">
-          <div className="text-xs font-semibold text-[var(--color-ink)]">Add keyframe still</div>
+          <div className="text-xs font-semibold text-[var(--color-ink)]">{b.renderMode === "fflf" ? "Generate the opening still (FFLF anchor)" : "Add keyframe still"}</div>
           <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
             <input type="checkbox" checked={kfUseChar} onChange={(e) => setKfUseChar(e.target.checked)} disabled={!charRefs.length} />
             Use this shot's character (identity){charRefs.length ? ` · ${charRefs.length} ref${charRefs.length > 1 ? "s" : ""}` : " — no refs on this shot"}
@@ -323,7 +339,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                   <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">rendering…</div>}</div>
                   <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                     <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
-                    <GhostButton onClick={() => useDraft(d.url!)} disabled={kfBusy || !d.url}>Use this</GhostButton>
+                    <GhostButton onClick={() => useKfDraft(d)} disabled={kfBusy || !d.url}>{b.renderMode === "fflf" ? "Use as opening" : "Use this"}</GhostButton>
                   </div>
                 </div>
               ))}
