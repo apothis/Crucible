@@ -48,6 +48,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [pushKeep, setPushKeep] = useState(0.72);   // FFLF push-in: fraction of the opening still kept in the end crop
   const pieces = b.pieces || [];
   // transient hunt state: the 3 half-res drafts for the piece currently being hunted
   const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string }[] } | null>(null);
@@ -73,6 +74,19 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const fflfReady = !!b.fflfFirstId;
 
   function note(s: string) { setStatus(s); }
+
+  // ---- FFLF push-in: crop the opening still into the LAST anchor, so the shot dollies in between two
+  // person-free pinned frames (no hallucinated figures, controlled speed). No GPU - a Pillow crop. ----
+  async function makePushIn() {
+    if (!b.fflfFirstId) { note("Pick a First anchor (the opening still) first."); return; }
+    setBusy(true); note("Building push-in (cropping the opening still)…");
+    try {
+      const r = await api.videoCropStill({ src_id: b.fflfFirstId, scale: pushKeep }) as { id: string };
+      patch({ fflfLastId: r.id });
+      note("Push-in built — Last anchor is now a center-crop of the opening. Seed-hunt to render the dolly-in.");
+    } catch (e) { note("Push-in build failed: " + (e as Error).message); }
+    finally { setBusy(false); }
+  }
 
   // ---- seed-hunt: 3 half-res drafts for a new piece (base, or an extend off the last tail) ----
   async function runHunt(forExtend: boolean) {
@@ -334,6 +348,16 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
               <Field label="Last frame (keyframe target — use a singing pose for sung shots)">
                 <StillPick value={b.fflfLastId || ""} set={(id) => patch({ fflfLastId: id })} stills={stills} />
               </Field>
+              {/* B-roll push-in: derive the last anchor from the opening still (full -> center-crop). Both
+                  ends pinned + person-free = a clean dolly-in, no hallucinated people, no super-speed. */}
+              <div className="flex items-end gap-3 rounded-md border border-dashed border-[var(--color-line)] p-2">
+                <div className="flex-1">
+                  <div className="text-[11px] font-medium text-[var(--color-ink)]">Scenic push-in (B-roll)</div>
+                  <div className="text-[10px] text-[var(--color-muted)]">Crops the opening still into the Last anchor — a slow dolly-in with no stray people. Lower = stronger zoom.</div>
+                </div>
+                <Num label="Keep" value={pushKeep} set={setPushKeep} step={0.05} w="w-20" />
+                <GhostButton onClick={makePushIn} disabled={busy || !b.fflfFirstId}>Make push-in</GhostButton>
+              </div>
               <div className="flex gap-3">
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />
                 <Num label="Last strength" value={b.fflfLastStrength ?? 0.5} set={(n) => patch({ fflfLastStrength: n })} step={0.05} />

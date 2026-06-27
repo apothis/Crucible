@@ -1586,6 +1586,34 @@ def video_infinitetalk(p: dict):
     return _submit_video(graph, resolved, "videolipsync")
 
 
+@app.post("/api/video/crop_still")
+def video_crop_still(p: dict):
+    """Center-crop an existing library still into a NEW still (no GPU, Pillow on the Mac). Used to build a
+    FFLF push-in: first anchor = the full still, last anchor = a center-crop of THE SAME still, so the
+    model dollies in between two person-free pinned frames (no hallucinated figures, controlled speed).
+    p: {src_id, scale? (0.30-0.95 of frame kept, default 0.72)}. Returns {id} of the new still."""
+    src = _lib_image_path(p.get("src_id"))
+    if not src:
+        raise HTTPException(404, "src_id must reference a generated still in the library")
+    scale = max(0.30, min(0.95, float(p.get("scale", 0.72))))
+    try:
+        from PIL import Image
+        img = Image.open(src).convert("RGB")
+        w, h = img.size
+        cw, ch = int(round(w * scale)), int(round(h * scale))
+        left, top = (w - cw) // 2, (h - ch) // 2
+        crop = img.crop((left, top, left + cw, top + ch)).resize((w, h), Image.LANCZOS)  # back to source res
+        nid = uuid.uuid4().hex[:12]
+        out = os.path.join(LIBRARY, f"{nid}.png")
+        crop.save(out)
+    except Exception as e:
+        raise HTTPException(500, f"crop failed: {e}")
+    save_done_row(nid, "videostill",
+                  {"kind": "image", "source": "push-in crop", "src_id": os.path.basename(str(p.get("src_id") or "")),
+                   "scale": scale, "prompt": "push-in crop (FFLF last anchor)"}, out)
+    return {"id": nid}
+
+
 @app.post("/api/mv/script")
 def mv_script(body: dict):
     """Generate an editable music-video shot list from a song. Body: {project? (key) OR
