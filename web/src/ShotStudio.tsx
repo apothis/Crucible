@@ -80,10 +80,11 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
 
   function note(s: string) { setStatus(s); }
-  // Non-distilled + STG path: the ONLY way to control LTX motion speed (distilled has no CFG/STG). For
-  // non-lip-sync B-roll only. With real CFG the negative actually applies, so the anti-timelapse negative
-  // + slow positive cues now matter too. Experimental (no canonical 2.3 recipe) - tune by eye.
-  const cine = !!b.nonDistilled && !b.lipsync;
+  // Non-distilled (dev) model = the only way to get controllable/slower LTX motion (distilled has none).
+  // Works on every path now. `nd` = use the dev model; `cine` = also add B-roll slow cues (non-lip-sync).
+  const nd = !!b.nonDistilled;
+  const ndSteps = nd ? (b.steps || undefined) : undefined;   // undefined -> builder default
+  const cine = nd && !b.lipsync;
   const fflfPrompt = () => cine ? `${CALM_POS}, ${b.prompt}` : b.prompt;
   const fflfNeg = () => cine ? CALM_NEG : undefined;                                  // undefined -> builder default
 
@@ -130,7 +131,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "hunt",
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: fflfPrompt(), negative: fflfNeg(), nondistilled: cine || undefined,
+        prompt: fflfPrompt(), negative: fflfNeg(), nondistilled: nd || undefined, steps: ndSteps,
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {                                       // extend: video tail of the last clip -> back to the opening still
@@ -174,9 +175,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
         keyframe_first_name: kf.firstName, keyframe_last_name: kf.lastName,
         prompt: b.prompt, width: w, height: h, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
+        nondistilled: nd || undefined, steps: ndSteps,
       }) as Promise<{ job_id: string }>;
     }
-    return api.videoLtxKeyframe({ ...b.director, char_lora: b.charLora, char_strength: b.charStrength, width: w, height: h, frames: b.frames, fps: b.fps, seed }) as Promise<{ job_id: string }>;
+    return api.videoLtxKeyframe({ ...b.director, char_lora: b.charLora, char_strength: b.charStrength, width: w, height: h, frames: b.frames, fps: b.fps, seed, nondistilled: nd || undefined, steps: ndSteps }) as Promise<{ job_id: string }>;
   }
   // ---- video seed-hunt off the EDITOR TIMELINE: 3 HALF-RES drafts -> pick -> finish at full ----
   async function huntVideo() {
@@ -225,7 +227,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const p: Record<string, unknown> = {
         mode: "finish", stage1_seed: stage1Seed,
         first_strength: b.fflfFirstStrength ?? 0.7, last_strength: b.fflfLastStrength ?? 0.5,
-        prompt: fflfPrompt(), negative: fflfNeg(), nondistilled: cine || undefined,
+        prompt: fflfPrompt(), negative: fflfNeg(), nondistilled: nd || undefined, steps: ndSteps,
         width: b.width, height: b.height, frames: b.frames, fps: b.fps,
       };
       if (forExtend) {
@@ -418,10 +420,6 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />
                 <Num label="Last strength" value={b.fflfLastStrength ?? 0.5} set={(n) => patch({ fflfLastStrength: n })} step={0.05} />
               </div>
-              <label className="flex items-start gap-2 rounded-md border border-dashed border-[var(--color-line)] p-2 text-[11px] text-[var(--color-muted)]" title="The distilled model has NO motion-speed control. This renders on the non-distilled (dev) model — real users report much better, slower motion — at cfg 3 / 35 steps / euler / linear_quadratic. SLOWER render. Ignored on lip-sync shots.">
-                <input type="checkbox" className="mt-0.5" checked={!!b.nonDistilled} onChange={(e) => patch({ nonDistilled: e.target.checked })} />
-                <span><span className="font-medium text-[var(--color-ink)]">Cinematic motion (non-distilled / dev model)</span> — much better, slower motion for B-roll (no timelapse). Slower render.</span>
-              </label>
             </>
           ) : (
             <div className="rounded-md border border-dashed border-[var(--color-line)] p-3 text-[11px] text-[var(--color-muted)]">
@@ -433,6 +431,19 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             <textarea className={inp} rows={3} value={b.prompt} onChange={(e) => patch({ prompt: e.target.value })}
               placeholder="continuous fluid shot, the camera moving naturally around her…" />
           </Field>
+          {/* render model — applies to every path (fflf / msr / keyframe / b-roll) */}
+          <div className="space-y-1.5 rounded-md border border-dashed border-[var(--color-line)] p-2">
+            <label className="flex items-start gap-2 text-[11px] text-[var(--color-muted)]" title="Render on the non-distilled (dev) LTX model: much better, controllable motion (the distilled model has none — water/clouds timelapse). Real users run cfg 3 / 30-50 steps / euler / linear_quadratic. SLOWER render. Experimental on MSR (changes the lip-sync sampler).">
+              <input type="checkbox" className="mt-0.5" checked={!!b.nonDistilled} onChange={(e) => patch({ nonDistilled: e.target.checked })} />
+              <span><span className="font-medium text-[var(--color-ink)]">Non-distilled (dev model)</span> — better, controllable motion (no timelapse). Slower render; experimental on MSR.</span>
+            </label>
+            {b.nonDistilled && (
+              <div className="flex items-center gap-2">
+                <Num label="Steps" value={b.steps ?? 35} set={(n) => patch({ steps: Math.max(8, Math.min(60, Math.round(n))) })} step={1} w="w-24" />
+                <span className="text-[10px] text-[var(--color-muted)]">30–50 typical; more = cleaner but slower</span>
+              </div>
+            )}
+          </div>
         </div>
         {/* right: lip-sync + params + action rail */}
         <div className="flex flex-col gap-3">

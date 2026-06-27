@@ -881,6 +881,14 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     ref_frames = int(p.get("ref_frames", 17))            # LiconMSR combo: 17/25/33/41
     if ref_frames not in (17, 25, 33, 41):
         ref_frames = 17
+    # NON-DISTILLED option (better/controllable motion): drop the distill LoRA to a low strength, raise
+    # cfg, and swap the fixed 8-step distill sigmas (node 20) for a real LTXVScheduler step count (below).
+    # EXPERIMENTAL for MSR - it changes the lip-sync sampler; heavier render.
+    nondist = bool(p.get("nondistilled") or p.get("full"))
+    if nondist:
+        distill = float(p.get("distill_strength", 0.2))
+        cfg = float(p.get("cfg", 3.0))
+        steps = int(p.get("steps", 30))
     # LiconMSR reference-frame resolution, DECOUPLED from the output (node 8). Default = output res.
     # Test lever: set higher (same aspect, /32) to give multi-view char sheets more detail without
     # paying the full output-resolution cost. (LiconMSR resizes each ref to THIS w/h; whether the IC-
@@ -983,6 +991,10 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         # background LoadImage (required) + subject LoadImages wired into LiconMSR
         "35": {"class_type": "LoadImage", "inputs": {"image": background_ref}},
     }
+    if nondist:                                           # dev sampler: real step schedule, not fixed 8-step distill sigmas
+        g["20"] = {"class_type": "LTXVScheduler",
+                   "inputs": {"steps": steps, "max_shift": 2.05, "base_shift": 0.95,
+                              "stretch": True, "terminal": 0.1, "latent": ["16", 0]}}
     for i, r in enumerate(subs):                          # subjects -> LiconMSR inputs "1".."4"
         nid = str(30 + i)
         g[nid] = {"class_type": "LoadImage", "inputs": {"image": r}}
@@ -1204,6 +1216,14 @@ def build_ltx_keyframe(p, keyframes):
     base_steps = int(p.get("base_steps", 8))
     refine_steps = int(p.get("refine_steps", 4))
     refine_denoise = float(p.get("refine_denoise", 0.42))
+    # NON-DISTILLED option (better/controllable motion): the graph already runs BasicScheduler(base_steps)
+    # + CFGGuider(cfg) + the distill LoRA at `distill` strength, so this is just retuning - drop the distill
+    # LoRA to a low strength (dev+low-distill hybrid), raise cfg, and use the configurable step count.
+    if p.get("nondistilled") or p.get("full"):
+        distill = float(p.get("distill_strength", 0.2))
+        cfg = float(p.get("cfg", 3.0))
+        base_steps = int(p.get("steps") or p.get("base_steps") or 35)
+        refine_steps = int(p.get("refine_steps", 8))
     prompt = (p.get("prompt") or "").strip()
     # PROMPT timeline (same handling as build_ltx_msr): held global_prompt + ordered per-segment
     # local_prompts placed at segment_lengths; epsilon = boundary softness. Falls back to one segment.
@@ -1427,7 +1447,7 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
     # cfg ~3 (lower=more stable), euler + linear_quadratic. cfg drives motion dynamics (too high degrades).
     nondist = bool(p.get("nondistilled"))
     cfg = float(p.get("cfg", 3.0 if nondist else 1.0))     # distilled ignores cfg (NAG only); dev uses real cfg
-    nd_base_steps = int(p.get("nd_base_steps", 35)); nd_refine_steps = int(p.get("nd_refine_steps", 6))
+    nd_base_steps = int(p.get("nd_base_steps") or p.get("steps") or 35); nd_refine_steps = int(p.get("nd_refine_steps", 6))
     nd_refine_denoise = float(p.get("nd_refine_denoise", 0.5))
     distill = float(p.get("distill_strength", 0.5))
     fstr = float(p.get("first_strength", 0.7))

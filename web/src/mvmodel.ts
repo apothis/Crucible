@@ -81,7 +81,8 @@ export type Block = {
   // FFLF anchors come from the timeline editor's image keyframes (first image = opening, last = target);
   // no separate anchor fields. These two are just the AddGuide strengths.
   fflfFirstStrength?: number; fflfLastStrength?: number;
-  nonDistilled?: boolean;         // FFLF B-roll: render on the non-distilled (dev) model + STG, the only way to slow living motion (distilled has no speed control)
+  nonDistilled?: boolean;         // render on the non-distilled (dev) model — controllable motion (all paths); distilled has none
+  steps?: number;                 // sampler steps for the non-distilled path (all paths); undefined = builder default
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   charStrength?: number;          // character-LoRA strength (default 1.0)
   assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)
