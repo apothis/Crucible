@@ -36,14 +36,18 @@ export function StillPick({ value, set, stills, placeholder = "— pick a still 
   value: string; set: (id: string) => void; stills: LibItem[]; placeholder?: string; thumb?: boolean;
 }) {
   const cur = stills.find((s) => s.id === value);
+  // A freshly generated/picked still isn't in `stills` until the library refetches, so fall back to
+  // its media endpoint by id - that way the picked ref is always visible immediately.
+  const thumbUrl = cur?.media_url || (value ? `/api/media/${value}` : "");
   return (
     <div className="flex items-center gap-2">
-      {thumb && cur?.media_url && (
-        <img src={cur.media_url} onClick={() => openLightbox(cur.media_url!)}
+      {thumb && thumbUrl && (
+        <img src={thumbUrl} onClick={() => openLightbox(thumbUrl)}
           className="h-10 w-10 shrink-0 cursor-zoom-in rounded object-cover" alt="" />
       )}
       <select className={inp} value={value} onChange={(e) => set(e.target.value)}>
         <option value="">{placeholder}</option>
+        {value && !cur && <option value={value}>{value.slice(0, 8)}… (generated)</option>}
         {stills.map((s) => (
           <option key={s.id} value={s.id}>
             {(s.params?.title || s.params?.prompt || s.id).toString().slice(0, 44)}

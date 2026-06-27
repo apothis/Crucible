@@ -222,6 +222,13 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
           <div key={c.id} className="rounded border border-[var(--color-line)] bg-[var(--color-bg)] p-2 space-y-2">
             <div className="flex items-center gap-1.5">
               <button onClick={() => setEditId(editing ? "" : c.id)} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title="expand">{editing ? "▾" : "▸"}</button>
+              {(() => {
+                const ref = c.identity?.faceRefId || c.identity?.bodyRefId;
+                return ref
+                  ? <img src={`/api/media/${ref}`} onClick={() => openLightbox(`/api/media/${ref}`)} title="identity reference — click to enlarge"
+                      className="h-7 w-7 shrink-0 cursor-zoom-in rounded object-cover" alt="" />
+                  : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-dashed border-[var(--color-line)] text-[8px] text-[var(--color-muted)]" title="no reference still yet">?</span>;
+              })()}
               <input className={inp} value={c.name} onChange={(e) => patch(c, { name: e.target.value })} placeholder="name" />
               <select className={`${inp} w-28`} value={c.kind || "musician"} onChange={(e) => patch(c, { kind: e.target.value })} title="kind">
                 <option value="musician">musician</option>
