@@ -11,15 +11,17 @@ const PHOTO_NEG = "anime, cartoon, illustration, painting, drawing, 3d render, c
   "low quality, blurry, deformed, bad anatomy, extra fingers, watermark, text";
 
 // one generated draft (a still job we're waiting on, then can pick)
-type Draft = { jobId: string; seed: number; url?: string; err?: boolean };
+type Draft = { jobId: string; seed: number; url?: string; err?: boolean; pct?: number };
 
-// poll a still job until it has a media URL (or errors)
-function waitMedia(jobId: string): Promise<string> {
+// poll a still job until it has a media URL (or errors), reporting progress along the way
+function waitMedia(jobId: string, onPct?: (p: number) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const t = window.setInterval(async () => {
-      const j = await api.job(jobId).catch(() => null) as { status?: string; media_url?: string; error?: string } | null;
+      const j = await api.job(jobId).catch(() => null) as { status?: string; media_url?: string; error?: string; progress?: number; max?: number } | null;
       if (!j) return;
-      if (j.status === "done" && j.media_url) { clearInterval(t); resolve(j.media_url + "?t=" + Date.now()); }
+      if ((j.status === "running" || j.status === "finalizing") && onPct)
+        onPct(j.max ? Math.max(2, Math.round((100 * (j.progress || 0)) / j.max)) : 2);
+      if (j.status === "done" && j.media_url) { onPct?.(100); clearInterval(t); resolve(j.media_url + "?t=" + Date.now()); }
       else if (j.status === "error") { clearInterval(t); reject(new Error(j.error || "error")); }
     }, 1000);
   });
@@ -40,7 +42,14 @@ function DraftStrip({ drafts, picked, onPick, onReroll, busy }:
               ? <span className="flex h-full items-center justify-center text-[9px] text-red-400">failed</span>
               : d.url
               ? <img src={d.url} alt="" className="h-full w-full object-cover" />
-              : <span className="flex h-full items-center justify-center text-[9px] text-[var(--color-muted)]">…</span>}
+              : (
+                <span className="flex h-full flex-col items-center justify-center gap-1 text-[9px] text-[var(--color-muted)]">
+                  <span>{d.pct ? `${d.pct}%` : "queued…"}</span>
+                  <span className="h-0.5 w-3/4 overflow-hidden rounded bg-[var(--color-line)]">
+                    <span className="block h-full bg-[var(--color-accent2)] transition-all" style={{ width: `${d.pct || 3}%` }} />
+                  </span>
+                </span>
+              )}
             {picked === d.jobId && <span className="absolute right-0.5 top-0.5 rounded bg-[var(--color-accent2)] px-1 text-[8px] text-black">picked</span>}
           </button>
         ))}
@@ -102,9 +111,11 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
         ds.push({ jobId: r.job_id, seed: base + i });
       }
       setDrafts((d) => ({ ...d, [key]: ds }));
-      ds.forEach((d) => waitMedia(d.jobId)
-        .then((u) => setDrafts((p) => ({ ...p, [key]: (p[key] || []).map((x) => x.jobId === d.jobId ? { ...x, url: u } : x) })))
-        .catch(() => setDrafts((p) => ({ ...p, [key]: (p[key] || []).map((x) => x.jobId === d.jobId ? { ...x, err: true } : x) }))));
+      const upd = (jobId: string, p: Partial<Draft>) =>
+        setDrafts((s) => ({ ...s, [key]: (s[key] || []).map((x) => x.jobId === jobId ? { ...x, ...p } : x) }));
+      ds.forEach((d) => waitMedia(d.jobId, (pct) => upd(d.jobId, { pct }))
+        .then((u) => upd(d.jobId, { url: u }))
+        .catch(() => upd(d.jobId, { err: true })));
     } catch (e) {
       ctx.setResults([{ id: rid(), title: "Generation failed", status: "error", pct: 0, err: (e as Error).message }]);
     } finally { setHunting(""); }
