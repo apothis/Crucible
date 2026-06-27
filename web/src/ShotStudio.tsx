@@ -414,7 +414,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                 <Num label="First strength" value={b.fflfFirstStrength ?? 0.7} set={(n) => patch({ fflfFirstStrength: n })} step={0.05} />
                 <Num label="Last strength" value={b.fflfLastStrength ?? 0.5} set={(n) => patch({ fflfLastStrength: n })} step={0.05} />
               </div>
-              <label className="flex items-start gap-2 rounded-md border border-dashed border-[var(--color-line)] p-2 text-[11px] text-[var(--color-muted)]" title="The distilled model has NO motion-speed control. This renders on the non-distilled (dev) model — real users report much better, slower motion — at cfg 3 / 30 steps / euler / linear_quadratic. SLOWER render. Ignored on lip-sync shots.">
+              <label className="flex items-start gap-2 rounded-md border border-dashed border-[var(--color-line)] p-2 text-[11px] text-[var(--color-muted)]" title="The distilled model has NO motion-speed control. This renders on the non-distilled (dev) model — real users report much better, slower motion — at cfg 3 / 35 steps / euler / linear_quadratic. SLOWER render. Ignored on lip-sync shots.">
                 <input type="checkbox" className="mt-0.5" checked={!!b.nonDistilled} onChange={(e) => patch({ nonDistilled: e.target.checked })} />
                 <span><span className="font-medium text-[var(--color-ink)]">Cinematic motion (non-distilled / dev model)</span> — much better, slower motion for B-roll (no timelapse). Slower render.</span>
               </label>

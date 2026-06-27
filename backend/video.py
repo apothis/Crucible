@@ -1427,7 +1427,7 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
     # cfg ~3 (lower=more stable), euler + linear_quadratic. cfg drives motion dynamics (too high degrades).
     nondist = bool(p.get("nondistilled"))
     cfg = float(p.get("cfg", 3.0 if nondist else 1.0))     # distilled ignores cfg (NAG only); dev uses real cfg
-    nd_base_steps = int(p.get("nd_base_steps", 30)); nd_refine_steps = int(p.get("nd_refine_steps", 6))
+    nd_base_steps = int(p.get("nd_base_steps", 35)); nd_refine_steps = int(p.get("nd_refine_steps", 6))
     nd_refine_denoise = float(p.get("nd_refine_denoise", 0.5))
     distill = float(p.get("distill_strength", 0.5))
     fstr = float(p.get("first_strength", 0.7))
