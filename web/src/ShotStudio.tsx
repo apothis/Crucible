@@ -65,7 +65,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [kfPrompt, setKfPrompt] = useState("");
   const [kfFrame, setKfFrame] = useState(0);
   const [kfBusy, setKfBusy] = useState(false);
-  const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string }[]>([]);
+  const [kfDrafts, setKfDrafts] = useState<{ jobId: string; seed: number; url?: string; pct?: number }[]>([]);
   const [kfUseChar, setKfUseChar] = useState(false);   // generate from the shot's character refs (identity)
   const charRefs = (b.subjectIds || []).filter(Boolean).slice(0, 3);
   const [loras, setLoras] = useState<string[]>([]);    // character/ID LoRAs on the box (identity instead of MSR)
@@ -293,8 +293,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         drafts.push({ jobId: r.job_id, seed: base + i });
       }
       setKfDrafts(drafts);
-      drafts.forEach((d) => waitMedia(d.jobId).then((u) =>
-        setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x))).catch(() => {}));
+      drafts.forEach((d) => waitMedia(d.jobId, (pc) =>
+        setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, pct: pc } : x)))
+        .then((u) => setKfDrafts((ds) => ds.map((x) => x.jobId === d.jobId ? { ...x, url: u } : x)))
+        .catch(() => {}));
       setStatus("Still drafts rendering — pick one to finalize at full res.");
     } catch (e) { setStatus("Still hunt failed: " + (e as Error).message); }
     finally { setKfBusy(false); }
@@ -369,7 +371,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             <div className="grid grid-cols-3 gap-3">
               {kfDrafts.map((d) => (
                 <div key={d.jobId} className="ss-piece">
-                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">rendering…</div>}</div>
+                  <div className="ss-thumb">{d.url ? <img src={d.url} alt="" className="h-full w-full object-cover" /> : <div className="ss-spin">{d.pct ? `rendering… ${d.pct}%` : "queued…"}</div>}</div>
                   <div className="flex items-center justify-between gap-2 px-2 py-1.5">
                     <span className="text-[11px] text-[var(--color-muted)]">seed {d.seed}</span>
                     <GhostButton onClick={() => useDraft(d.url!)} disabled={kfBusy || !d.url}>Use this</GhostButton>
