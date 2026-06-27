@@ -11,6 +11,18 @@ const PHOTO_NEG = "anime, cartoon, illustration, painting, drawing, 3d render, c
   "plastic skin, waxy skin, airbrushed, overly smooth skin, beauty filter, overly symmetrical face, " +
   "low quality, blurry, deformed, bad anatomy, extra fingers, watermark, text";
 
+// "vary" mode: push each of the 4 candidates toward a distinct look so they're real alternatives to
+// choose from (Z-Image Turbo barely varies across seeds alone). Indexed 0-3, one per tile.
+const FACE_VARY = [
+  "softer rounder face shape, fuller cheeks, gentler features",
+  "angular face, sharp defined cheekbones and strong jawline",
+  "narrow oval face, slim refined features, straight nose",
+  "broad strong face, wider-set eyes, heavier brow",
+];
+const BODY_VARY = [
+  "slender lean build", "athletic toned build", "solid stocky build", "tall willowy build",
+];
+
 // one generated draft (a still job we're waiting on, then can pick)
 type Draft = { jobId: string; seed: number; url?: string; err?: boolean; pct?: number };
 
@@ -87,6 +99,7 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   const [drafts, setDrafts] = useState<Record<string, Draft[]>>({});   // key `${id}:${slot}` -> 4 candidates
   const [hunting, setHunting] = useState("");                           // key currently generating
   const [matchFace, setMatchFace] = useState<Record<string, boolean>>({});   // per-character: derive body from picked face
+  const [vary, setVary] = useState<Record<string, boolean>>({});             // per-character: perturb each candidate for variety
   const [llmProvider, setLlmProvider] = useState("ollama");   // prefer subscription -> API key -> local
   useEffect(() => { api.llmProviders().then((p) => {
     const q = p as { claude?: boolean; claude_sub?: boolean };
@@ -115,13 +128,13 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
 
   // Fan out 4 candidate stills for one key, render them into the draft strip, and let the user pick.
   // `gen(seed)` makes ONE still job; nothing is locked in until the user clicks a candidate.
-  async function hunt(key: string, gen: (seed: number) => Promise<unknown>) {
+  async function hunt(key: string, gen: (seed: number, i: number) => Promise<unknown>) {
     setHunting(key);
     const base = Math.floor(Math.random() * 2_000_000_000);
     try {
       const ds: Draft[] = [];
       for (let i = 0; i < 4; i++) {
-        const r = await gen(base + i) as { job_id: string };
+        const r = await gen(base + i, i) as { job_id: string };
         ds.push({ jobId: r.job_id, seed: base + i });
       }
       setDrafts((d) => ({ ...d, [key]: ds }));
@@ -142,8 +155,10 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
       : (c.identity?.bodyRefId || c.identity?.faceRefId);
     if (!baseRef) { ctx.setResults([{ id: rid(), title: "Set an identity reference first", status: "error", pct: 0, err: "Pick a face/body still for the identity core, then generate the dressed look from it." }]); return; }
     const framing = slot === "face" ? "head-and-shoulders close-up portrait" : "full-body shot from head to toe";
-    const prompt = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, ${PHOTO_POS}`;
-    hunt(`${c.id}:w${w.id}:${slot}`, (seed) => api.videoCharStill({ ref_ids: [baseRef], prompt, negative: PHOTO_NEG, seed }));
+    const base = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, ${PHOTO_POS}`;
+    const vy = !!vary[c.id], vset = slot === "face" ? FACE_VARY : BODY_VARY;
+    hunt(`${c.id}:w${w.id}:${slot}`, (seed, i) =>
+      api.videoCharStill({ ref_ids: [baseRef], prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: PHOTO_NEG, seed }));
   }
 
   // generate identity reference candidates. Face: Z-Image t2i from the appearance text. Body: when a
@@ -157,10 +172,14 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
       : "full body shot from head to toe, standing, neutral mid-grey studio backdrop";
     const faceRef = c.identity?.faceRefId;
     const useFace = slot === "body" && !!faceRef && matchFace[c.id] !== false;
-    const prompt = `${appearance}, ${framing}, ${PHOTO_POS}`;
-    hunt(`${c.id}:${slot}`, (seed) => useFace
-      ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: PHOTO_NEG, seed })
-      : api.videoStill({ prompt, negative: PHOTO_NEG, seed }));
+    const base = `${appearance}, ${framing}, ${PHOTO_POS}`;
+    const vy = !!vary[c.id], vset = slot === "face" ? FACE_VARY : BODY_VARY;
+    hunt(`${c.id}:${slot}`, (seed, i) => {
+      const prompt = vy ? `${base}, ${vset[i % 4]}` : base;
+      return useFace
+        ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: PHOTO_NEG, seed })
+        : api.videoStill({ prompt, negative: PHOTO_NEG, seed });
+    });
   }
 
   // user picked a candidate -> lock it into the slot, but KEEP the strip so they can keep
@@ -243,7 +262,13 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                 </div>
                 {/* reference stills - generate from the appearance, or pick from the library */}
                 <div className="space-y-1.5 border-t border-[var(--color-line)] pt-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Reference stills</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Reference stills</span>
+                    <label className="flex items-center gap-1 text-[9px] text-[var(--color-muted)]" title="Push each of the 4 candidates toward a distinct look (face shape / build) so they're real alternatives to explore. Off = 4 close variations of the same described look.">
+                      <input type="checkbox" checked={!!vary[c.id]} onChange={(e) => setVary((v) => ({ ...v, [c.id]: e.target.checked }))} />
+                      vary candidates
+                    </label>
+                  </div>
                   <p className="text-[9px] text-[var(--color-muted)]">One still is enough for a background/distant character; a hero seen in close-ups wants both a face and a full body.</p>
                   <div className="grid grid-cols-2 gap-1.5">
                     <div className="space-y-1">
