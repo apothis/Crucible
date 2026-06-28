@@ -63,4 +63,49 @@ on the MV Studio timeline and what the final assemble uses. "Use this take" = se
 4. Make **Extend** re-feed the result as a video segment (native), remove pieces/chain.
 5. Delete the now-dead FFLF pieces/anchor-picker/assembly code + endpoints.
 
-Status: agreed 2026-06-28. Step 1 next.
+Status: agreed 2026-06-28. Step 1 (Edit inputs / View result toggle) done.
+
+---
+
+## v2 — full per-shot REDESIGN (agreed direction 2026-06-28)
+
+Drop the embedded LTX Director editor as the shot surface. Replace Shot Studio with a
+**guided staged flow** — each stage produces a CHEAP artifact you approve before paying
+for the next (the "gate artifacts before render" rule). Much more usable; keeps every
+working engine under the hood (MSR / FFLF push-in / keyframe / i2v + seed-hunt + extend).
+
+### The stages (a shot is built in order)
+
+1. **Scene** — the BACKGROUND still, person-free. Describe the setting → generate 3 →
+   pick. This is the cheap gate + the MSR background (must contain NO person, per
+   [[project_msr-background-must-be-personfree]]). For B-roll this IS the shot's image.
+2. **Cast** — who's in it: ONE MSR-anchored lead (from the character library) + optional
+   band-in-scene members composited into the background (named, instrument, side) + the
+   mandatory drummer for stage shots (per [[project_band-shots-were-solo-msr]]). B-roll =
+   no cast.
+3. **Placement preview** — render a cheap STILL to approve the COMPOSITION before the
+   video: toggle **background-only** vs **with the character(s) composited**. This is the
+   "render with/without chars for initial placement" the user needs. Approve, then video.
+4. **Video options** — action prompt + lip-sync toggle → "generate 3 options" (seed-hunt,
+   half-res) → pick the best (plays).
+5. **Result / Extend** — the chosen take plays; Extend continues it; "Use on timeline"
+   sets `block.clipId` → the master timeline slot.
+
+Shot type **Performance** vs **B-roll** chooses the engine + which stages show (B-roll
+skips Cast + composite, uses keyframe/FFLF push-in; Performance uses MSR).
+
+### Must-keep details (don't lose these in "simpler")
+- Background still is FIRST-CLASS and person-free; it's reused as the MSR background.
+- With/without-character still preview BEFORE the expensive video (cheap approval gate).
+- Band-in-scene composite (other members named in the action; drummer always present).
+- Seed-hunt = "generate N options"; extend; dev-model/steps under Advanced.
+- Don't over-promise from mockups — build it real in the app and iterate on polish.
+
+### Build order (incremental, each testable in the app)
+1. Scene stage: background-still generate-3/pick (reuse genStill), person-free prompt.
+2. Cast stage: lead + band-in-scene from the character library.
+3. Placement preview: still render with/without character (reuse MSR still/composite).
+4. Video options: wire seed-hunt → pick → result (reuse the working video render).
+5. Result/Extend/Use-on-timeline; then delete the old Shot Studio internals.
+
+Status: redesign agreed 2026-06-28; building stage 1 next.
