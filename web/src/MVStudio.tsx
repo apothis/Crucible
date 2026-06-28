@@ -144,6 +144,24 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [open, setOpen] = d.use<Record<string, boolean>>("openSecs", { refs: true, prompt: true });
   const [editing, setEditing] = useState(false);   // Shot Studio per-segment editor open?
   const toggle = (k: string) => setOpen({ ...open, [k]: !open[k] });
+  // Self-heal block clips: (a) a clipId saved as a /api/media/<id> URL -> bare id; (b) a block whose clip
+  // lives only in a single Shot Studio piece -> hoist it to clipId so the timeline + assembly play it.
+  // Idempotent: only writes when something actually changes, so it won't loop.
+  useEffect(() => {
+    const bare = (s?: string) => (s ? s.split("/").pop()!.split("?")[0].split("#")[0] : "");
+    let changed = false;
+    const next = blocks.map((b) => {
+      if (b.clipId && b.clipId.includes("/")) { changed = true; return { ...b, clipId: bare(b.clipId) }; }
+      if (!b.clipId && b.pieces?.length === 1) {
+        const p = b.pieces[0];
+        const cid = bare((p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0])?.clipId);
+        if (cid) { changed = true; return { ...b, clipId: cid }; }
+      }
+      return b;
+    });
+    if (changed) setBlocks(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocks]);
 
   const [beats, setBeats] = useState<number[]>([]);              // song beat times (for snap-to-beat)
   useEffect(() => { api.mvGrades().then((r) => setGrades((r as { grades: string[] }).grades)).catch(() => {}); }, []);

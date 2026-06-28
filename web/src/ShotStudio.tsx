@@ -16,6 +16,10 @@ import { type Block, type ChainPiece, type Take, type RenderMode } from "./mvmod
 
 const poster = (id: string) => `/api/media/${id}#t=0.5`;        // seek a frame so <video> paints a poster
 const FFLF_TAIL = 33;                                            // foxydits' extend anchor length
+// A clip reference must be a BARE job id (the timeline/assembly + /api/media build the URL themselves).
+// waitMedia resolves to a /api/media/<id> URL, and older takes stored that whole URL - strip it so both
+// new and existing data yield a bare id (else srcs double up to /api/media//api/media/<id> = empty box).
+const bareId = (s?: string) => (s ? s.split("/").pop()!.split("?")[0].split("#")[0] : "");
 // FFLF "calm motion" (B-roll): LTX renders water/clouds as a fast timelapse by default, and the stock
 // FFLF negative actually pushes FOR motion ("no movement, still frame"). NAG (scale 50) makes this
 // negative strong, so an explicit anti-timelapse negative + slow positive cues tame the speed.
@@ -85,7 +89,8 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     const ps = b.pieces || [];
     if (ps.length === 1) {
       const t = ps[0].takes.find((x) => x.id === ps[0].selectedTakeId) || ps[0].takes[0];
-      if (t?.clipId && b.clipId !== t.clipId) patch({ clipId: t.clipId });
+      const cid = bareId(t?.clipId);
+      if (cid && b.clipId !== cid) patch({ clipId: cid });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [b.id]);
@@ -98,13 +103,14 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     const upd: Partial<Block> = { pieces: next };
     if (next.length === 1) {
       const t = next[0].takes.find((x) => x.id === next[0].selectedTakeId) || next[0].takes[0];
-      if (t?.clipId) upd.clipId = t.clipId;
+      const cid = bareId(t?.clipId);
+      if (cid) upd.clipId = cid;
     }
     patch(upd);
   };
   const selectedTakeOf = (p: ChainPiece) => p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0];
   const lastPiece = pieces[pieces.length - 1];
-  const lastClip = lastPiece && selectedTakeOf(lastPiece)?.clipId;
+  const lastClip = lastPiece && bareId(selectedTakeOf(lastPiece)?.clipId);
 
   // base-shot anchors live on the block; extends derive their first anchor from the prior tail.
   const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
@@ -243,7 +249,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       setBusy(true); note("Finishing video at full res…");
       try {
         const r = await renderVideo(stage1Seed, b.width, b.height);
-        const clipId = await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps>1?` · pass ${ps}`:""}`));
+        const clipId = bareId(await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps>1?` · pass ${ps}`:""}`)));
         const lane = b.renderMode === "msr" ? "msr" : "fflf";
         const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
         if (pieces.length === 0) setPieces([{ id: rid(), lane, label: "Base shot", takes: [take], selectedTakeId: take.id }]);
@@ -272,7 +278,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       }
       if (b.lipsync && b.audioId) { p.audio_id = b.audioId; p.audio_start = b.audioStart; p.isolate_vocal = false; }   // full song (decided)
       const r = await api.videoLtxFflf(p) as { job_id: string };
-      const clipId = await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps>1?` · pass ${ps}`:""}`));
+      const clipId = bareId(await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps>1?` · pass ${ps}`:""}`)));
       const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
       if (forExtend) {
         const piece: ChainPiece = { id: rid(), lane: "fflf", label: `Extend ${pieces.length + 1}`, takes: [take], selectedTakeId: take.id, lastStillId: kf.firstName };
@@ -298,7 +304,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); note("Rendering the timeline…");
     try {
       const r = await api.videoLtxKeyframe({ ...b.director, char_lora: b.charLora, char_strength: b.charStrength, width: b.width, height: b.height, frames: b.frames, fps: b.fps }) as { job_id: string };
-      const clipId = await waitMedia(r.job_id, (pc, ps) => note(`Rendering… ${pc}%${ps>1?` · pass ${ps}`:""}`));
+      const clipId = bareId(await waitMedia(r.job_id, (pc, ps) => note(`Rendering… ${pc}%${ps>1?` · pass ${ps}`:""}`)));
       const take: Take = { id: rid(), clipId, draft: false, label: "timeline" };
       if (pieces.length === 0) setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id }]);
       else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
@@ -362,7 +368,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   // each extend's overlapping tail frames, and set it as the block's playable clip so the timeline plays
   // the whole take. Pass the fresh pieces array when calling right after setPieces (state not yet flushed).
   async function assembleChain(ps: ChainPiece[] = (b.pieces || [])) {
-    const clips = ps.map((p) => (p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0])?.clipId).filter(Boolean) as string[];
+    const clips = ps.map((p) => bareId((p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0])?.clipId)).filter(Boolean) as string[];
     if (clips.length < 2) return;
     setBusy(true); note("Assembling continuous take…");
     try {
@@ -589,7 +595,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
               const sel = selectedTakeOf(p);
               return (
                 <div key={p.id} className="ss-piece">
-                  <div className="ss-thumb">{sel?.clipId ? <PreviewVideo src={`/api/media/${sel.clipId}`} /> : <div className="ss-spin">—</div>}</div>
+                  <div className="ss-thumb">{sel?.clipId ? <PreviewVideo src={`/api/media/${bareId(sel.clipId)}`} /> : <div className="ss-spin">—</div>}</div>
                   <div className="px-2 py-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold text-[var(--color-ink)]">{i + 1}. {p.label}</span>
@@ -601,7 +607,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
                         {p.takes.map((t) => (
                           <button key={t.id} title={t.label} onClick={() => selectTake(p.id, t.id)}
                             className={`h-9 w-12 overflow-hidden rounded border ${t.id === p.selectedTakeId ? "border-[var(--color-accent)]" : "border-[var(--color-line)] opacity-70"}`}>
-                            <ThumbVideo id={t.clipId} />
+                            <ThumbVideo id={bareId(t.clipId)} />
                           </button>
                         ))}
                       </div>
