@@ -189,10 +189,25 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
       nondistilled: nd || undefined, steps: ndSteps,
     }) as Promise<{ job_id: string }>;
   }
-  // B-roll push-in: opening anchor = the chosen background; closing anchor = a center-crop of it.
+  // B-roll motion: "pushin" = dolly into a center-crop of the bg; "twostill" = move from the bg to a
+  // chosen end still; "keyframe" = N stills at frame positions (LTXDirector engine, Advanced).
+  const motion = b.brollMotion || "pushin";
   async function fflfAnchors() {
-    const crop = await api.videoCropStill({ still_id: b.backgroundId, keep: pushKeep }) as { id: string };
+    if (motion === "twostill" && b.brollEndId) {   // interpolate scene still -> chosen end still (no crop)
+      return { first_id: b.backgroundId, first_kind: "image", last_id: b.brollEndId, last_kind: "image" };
+    }
+    const crop = await api.videoCropStill({ still_id: b.backgroundId, keep: pushKeep }) as { id: string };  // push-in
     return { first_id: b.backgroundId, first_kind: "image", last_id: crop.id, last_kind: "image" };
+  }
+  // Multi-keyframe (Advanced): N library stills at frame positions, interpolated by the LTXDirector engine.
+  function renderKeyframe(seed: number, w: number, h: number) {
+    const rows = (b.brollKeyframes && b.brollKeyframes.length ? b.brollKeyframes : [{ stillId: b.backgroundId, frame: 0 }])
+      .filter((k) => k.stillId);
+    return api.videoLtxKeyframe({
+      keyframes: rows.map((k) => ({ still_id: bareId(k.stillId), start: Math.max(0, Math.round(k.frame)) })),
+      prompt: b.prompt, width: w, height: h, frames: b.frames, fps: b.fps, seed,
+      nondistilled: nd || undefined, steps: ndSteps,
+    }) as Promise<{ job_id: string }>;
   }
   async function genOptions() {
     if (!b.backgroundId) { note("Pick a background first."); return; }
@@ -201,10 +216,11 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); note("Generating 3 video options (half-res)…"); setVdrafts([]);
     try {
       let ds: Draft[] = [];
-      if (perf) {
+      if (perf || motion === "keyframe") {
         const base = Math.floor(Math.random() * 2_000_000_000);
         const hw = vHalf(b.width), hh = vHalf(b.height);
-        for (let i = 0; i < 3; i++) { const r = await renderMsr(base + i, hw, hh); ds.push({ jobId: r.job_id, seed: base + i }); }
+        const one = (s: number) => perf ? renderMsr(s, hw, hh) : renderKeyframe(s, hw, hh);
+        for (let i = 0; i < 3; i++) { const r = await one(base + i); ds.push({ jobId: r.job_id, seed: base + i }); }
       } else {
         const a = await fflfAnchors();
         const r = await api.videoLtxFflf({
@@ -226,8 +242,8 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); note("Finishing at full res" + (perf && b.lipsync ? " with lip-sync" : "") + "…");
     try {
       let clipId: string;
-      if (perf) {
-        const r = await renderMsr(seed, b.width, b.height);
+      if (perf || motion === "keyframe") {
+        const r = perf ? await renderMsr(seed, b.width, b.height) : await renderKeyframe(seed, b.width, b.height);
         clipId = bareId(await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps > 1 ? ` · pass ${ps}` : ""}`)));
       } else {
         const a = await fflfAnchors();
@@ -313,6 +329,8 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
         .se-typebtn.on{border-color:var(--color-accent);color:var(--color-ink);background:#2a1c19;}
         .se-typebtn b{display:block;color:var(--color-ink);font-size:14px;margin-bottom:4px;}
         .se-foot{display:flex;align-items:center;gap:10px;margin-top:16px;}
+        .se-pill{border:1px solid var(--color-line);background:var(--color-panel2);color:var(--color-muted);border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer;}
+        .se-pill.on{border-color:var(--color-accent);background:#2a1c19;color:var(--color-ink);}
       `}</style>
 
       {/* left rail */}
@@ -472,17 +490,35 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
               <textarea className={inp} rows={3} value={b.prompt} onChange={(e) => patch({ prompt: e.target.value })}
                 placeholder={perf ? "she sings with intensity, the camera slowly pushing in…" : "the camera slowly dollies in across the still water…"} />
             </Field>
-            <div className="flex flex-wrap items-center gap-4">
-              {perf && (
+            {perf && (
+              <div className="flex flex-wrap items-center gap-4">
                 <label className="flex items-center gap-2 text-xs text-[var(--color-ink)]">
                   <input type="checkbox" checked={b.lipsync} onChange={(e) => patch({ lipsync: e.target.checked })} /> Lip-sync to the song
                 </label>
-              )}
-              {perf && b.lipsync && (
-                <div className="min-w-[200px]"><Field label="Vocal track"><StillPick value={b.audioId || songAudioId} set={(id) => patch({ audioId: id })} stills={audios} thumb={false} placeholder="— song —" /></Field></div>
-              )}
-              {!perf && <Num label="Push-in (keep)" value={pushKeep} set={setPushKeep} step={0.05} w="w-20" min={0.3} max={0.95} />}
-            </div>
+                {b.lipsync && (
+                  <div className="min-w-[200px]"><Field label="Vocal track"><StillPick value={b.audioId || songAudioId} set={(id) => patch({ audioId: id })} stills={audios} thumb={false} placeholder="— song —" /></Field></div>
+                )}
+              </div>
+            )}
+            {!perf && (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-[var(--color-muted)]">Motion:</span>
+                  <button className={`se-pill ${motion === "pushin" ? "on" : ""}`} onClick={() => patch({ brollMotion: "pushin" })}>Push-in (auto)</button>
+                  <button className={`se-pill ${motion === "twostill" ? "on" : ""}`} onClick={() => patch({ brollMotion: "twostill" })}>Between two stills</button>
+                  {motion === "keyframe" && <span className="se-pill on">Multi-keyframe (advanced)</span>}
+                </div>
+                {motion === "pushin" && (
+                  <div className="flex items-center gap-2"><Num label="Push-in (keep)" value={pushKeep} set={setPushKeep} step={0.05} w="w-20" min={0.3} max={0.95} /><span className="text-[10px] text-[var(--color-muted)]">lower = stronger zoom into the scene</span></div>
+                )}
+                {motion === "twostill" && (
+                  <div className="flex items-end gap-2">
+                    <div className="min-w-[220px]"><Field label="End still (the shot moves to this)"><StillPick value={b.brollEndId || ""} set={(id) => patch({ brollEndId: bareId(id) })} stills={stills} placeholder="— pick the end frame —" /></Field></div>
+                    {!b.brollEndId && <span className="pb-1.5 text-[10px] text-amber-400">pick an end still (else it falls back to push-in)</span>}
+                  </div>
+                )}
+              </div>
+            )}
             {/* advanced render settings */}
             <details className="rounded-md border border-dashed border-[var(--color-line)] p-2">
               <summary className="cursor-pointer text-[11px] text-[var(--color-muted)]">Advanced render settings</summary>
@@ -498,6 +534,29 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
                   <Num label="Frames" value={b.frames} set={(n) => patch({ frames: n })} step={8} w="w-20" />
                   <Num label="FPS" value={b.fps} set={(n) => patch({ fps: n })} step={1} w="w-16" />
                 </div>
+                {!perf && (
+                  <div className="space-y-1.5 border-t border-[var(--color-line)] pt-2">
+                    <label className="flex items-start gap-2 text-[11px] text-[var(--color-muted)]">
+                      <input type="checkbox" className="mt-0.5" checked={motion === "keyframe"} onChange={(e) => patch({ brollMotion: e.target.checked ? "keyframe" : "pushin" })} />
+                      <span><span className="font-medium text-[var(--color-ink)]">Multi-keyframe</span> — place several stills at frame positions and interpolate across them (LTXDirector engine), instead of the simple start→end move.</span>
+                    </label>
+                    {motion === "keyframe" && (
+                      <div className="space-y-1.5">
+                        {(b.brollKeyframes || []).map((k, i) => (
+                          <div key={i} className="flex items-end gap-2">
+                            <div className="min-w-[200px]"><StillPick value={k.stillId} set={(id) => patch({ brollKeyframes: (b.brollKeyframes || []).map((x, j) => j === i ? { ...x, stillId: bareId(id) } : x) })} stills={stills} placeholder={`keyframe ${i + 1}`} /></div>
+                            <Num label="frame" value={k.frame} set={(n) => patch({ brollKeyframes: (b.brollKeyframes || []).map((x, j) => j === i ? { ...x, frame: Math.round(n) } : x) })} step={1} w="w-20" min={0} max={b.frames - 1} />
+                            <button className="pb-1.5 text-[var(--color-muted)] hover:text-red-400" title="remove" onClick={() => patch({ brollKeyframes: (b.brollKeyframes || []).filter((_, j) => j !== i) })}>×</button>
+                          </div>
+                        ))}
+                        <div className="flex items-center gap-2">
+                          <GhostButton onClick={() => { const kfs = b.brollKeyframes || []; const f = kfs.length === 0 ? 0 : (kfs.length === 1 ? b.frames - 1 : Math.round(b.frames / 2)); patch({ brollKeyframes: [...kfs, { stillId: kfs.length === 0 ? b.backgroundId : "", frame: f }] }); }}>+ keyframe</GhostButton>
+                          <span className="text-[10px] text-[var(--color-muted)]">tip: first = the Scene background at frame 0, last at frame {Math.max(0, b.frames - 1)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </details>
             <div><PrimaryButton onClick={genOptions} disabled={busy}>{vdrafts.length ? "Re-generate 3 options" : "Generate 3 options"}</PrimaryButton></div>

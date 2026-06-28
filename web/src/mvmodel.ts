@@ -82,6 +82,12 @@ export type Block = {
   // no separate anchor fields. These two are just the AddGuide strengths.
   fflfFirstStrength?: number; fflfLastStrength?: number;
   nonDistilled?: boolean;         // render on the non-distilled (dev) model — controllable motion (all paths); distilled has none
+  // B-roll motion (Shot Editor): how the scenic shot moves. "pushin" = auto center-crop dolly (FFLF);
+  // "twostill" = interpolate scene still -> a chosen end still (FFLF 2 anchors); "keyframe" = N stills
+  // at frame positions interpolated (LTXDirector engine). Tiered: pushin/twostill default, keyframe advanced.
+  brollMotion?: "pushin" | "twostill" | "keyframe";
+  brollEndId?: string;            // "twostill": the end-frame still id
+  brollKeyframes?: { stillId: string; frame: number }[];   // "keyframe": ordered keyframe stills + frame positions
   // (steps is declared in render params above; reused for the non-distilled sampler step count)
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   charStrength?: number;          // character-LoRA strength (default 1.0)
