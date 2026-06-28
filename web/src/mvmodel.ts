@@ -22,7 +22,8 @@ export type Character = {
 };
 
 // the up-to-2 hero characters a block features (each contributes its wardrobe's face+body refs)
-export type BlockChar = { charId: string; wardrobeId?: string };
+// pos = where they stand in frame (a POS_PHRASE key; "" = let the model decide)
+export type BlockChar = { charId: string; wardrobeId?: string; pos?: string };
 // one timeline-prompter segment: a frame count + the prompt active over it. In KEYFRAME mode a
 // segment may also pin a keyframe still: keyframeStillId places that library still at the segment's
 // START (or its END when isEndFrame), and the model interpolates between the pinned keyframes.
@@ -63,6 +64,7 @@ export type Block = {
   framing: string;              // "close" | "medium" | "wide" - so the bg is framed to match the shot
   chars: BlockChar[];           // featured hero character(s) - anchored via MSR (resolve to subject refs)
   bandInScene: string[];        // other band members composited INTO the background (char ids; not MSR)
+  bandPos?: Record<string, string>;   // charId -> POS_PHRASE key: where each band member stands in the composite
   subjectIds: string[];         // manual / extra subject stills (merged with char refs, capped 4)
   backgroundId: string;
   // PromptRelayEncode timeline prompter

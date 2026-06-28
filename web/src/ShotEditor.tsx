@@ -44,6 +44,22 @@ function waitMedia(jobId: string, onPct?: (pct: number, pass: number) => void): 
 
 const vHalf = (n: number) => Math.max(256, Math.round(n / 2 / 32) * 32);
 const FRAME_PHRASE: Record<string, string> = { close: "close-up shot", medium: "medium shot", wide: "wide shot" };
+// Where a character stands in frame — fed into the placement preview, the MSR render prompt, and the
+// band composite. "" = let the model decide.
+const POS_PHRASE: Record<string, string> = {
+  "": "",
+  center: "centred in the frame",
+  left: "on the left side of the frame",
+  right: "on the right side of the frame",
+  "fg-left": "in the left foreground, closest to the camera",
+  "fg-right": "in the right foreground, closest to the camera",
+  back: "further back in the scene",
+};
+const POS_OPTIONS = [
+  { v: "", label: "auto" }, { v: "center", label: "centre" }, { v: "left", label: "left" },
+  { v: "right", label: "right" }, { v: "fg-left", label: "front-left" }, { v: "fg-right", label: "front-right" },
+  { v: "back", label: "back" },
+];
 const BACKDROP: Record<string, string> = {
   close: "a close, soft, shallow-depth-of-field backdrop of",
   medium: "a medium-distance view of",
@@ -143,6 +159,9 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     const cur = b.bandInScene || [];
     patch({ bandInScene: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] });
   }
+  function setLeadPos(pos: string) { patch({ chars: b.chars.map((c, i) => i === 0 ? { ...c, pos } : c) }); }
+  function setBandPos(id: string, pos: string) { patch({ bandPos: { ...(b.bandPos || {}), [id]: pos } }); }
+  const leadPosPhrase = POS_PHRASE[b.chars[0]?.pos || ""] || "";   // where the MSR-anchored lead stands
   // Band recipe (memory: band-shots-were-solo-msr): composite the lead (centre) + named members
   // (gender+role+side) + a mandatory drummer into the scene; that composite IS the MSR background.
   async function composeBand() {
@@ -155,8 +174,9 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
       const sides = ["on the left", "on the right", "to one side"];
       const memberDesc = (c: Character) => `a ${[(c.gender || "").trim(), (c.role || "musician").trim()].filter(Boolean).join(" ")}${(c.appearance || "").trim() ? ` (${(c.appearance || "").trim()})` : ""}`;
       const bandShown = bandChars.slice(0, Math.max(0, compRefs.length - (lead ? 1 : 0)));
-      const bandWho = bandShown.map((c, i) => `${memberDesc(c)} plays ${sides[i] || "to one side"}`).join("; ");
-      const leadPhrase = lead ? `${memberDesc(lead)} stands centre at the microphone singing, the clear focus front and centre` : "the lead singer stands centre at the microphone, the clear focus";
+      // each member's chosen placement wins; else fall back to alternating sides
+      const bandWho = bandShown.map((c, i) => `${memberDesc(c)} ${POS_PHRASE[(b.bandPos || {})[c.id] || ""] || ("plays " + (sides[i] || "to one side"))}`).join("; ");
+      const leadPhrase = lead ? `${memberDesc(lead)} stands ${leadPosPhrase || "centre"} at the microphone singing, the clear focus` : "the lead singer stands centre at the microphone, the clear focus";
       const bgFrame = ({ close: "a tight, close framing of", medium: "a medium framing of", wide: "a wide establishing shot of" } as Record<string, string>)[b.framing] || "a medium framing of";
       const prompt = `A live band performing together on a stage, ${bgFrame} the whole band: ${leadPhrase}; ${bandWho}; with a full drum kit at the back and a drummer seated behind it. Setting: ${(b.scene || "a stage").trim()}. Photoreal, cinematic. No audience, no crowd.`;
       const r = await api.videoCharStill({ ref_ids: compRefs, prompt, width: b.width, height: b.height }) as { job_id: string };
@@ -172,7 +192,8 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     if (!charRefs.length) { note("This shot has no character refs to place."); return; }
     setBusy(true); note("Rendering a placement preview (cheap still)…"); setPlacePreview("");
     try {
-      const prompt = `${FRAME_PHRASE[b.framing] || "medium shot"}. ${(b.scene || "").trim()}. The character standing in the scene${b.prompt ? `, ${b.prompt}` : ""}.`;
+      const where = leadPosPhrase ? ` ${leadPosPhrase}` : " in the scene";
+      const prompt = `${FRAME_PHRASE[b.framing] || "medium shot"}. ${(b.scene || "").trim()}. The character standing${where}${b.prompt ? `, ${b.prompt}` : ""}.`;
       const r = await api.videoCharStill({ ref_ids: charRefs, prompt, width: vHalf(b.width), height: vHalf(b.height) }) as { job_id: string };
       const url = await waitMedia(r.job_id, (pc) => note(`Placement preview… ${pc}%`));
       setPlacePreview(url); note("Composition preview ready — approve to render the video, or tweak the scene/cast.");
@@ -182,10 +203,11 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
 
   // ---------- STAGE: VIDEO (seed-hunt → pick → finish) ----------
   function renderMsr(seed: number, w: number, h: number) {
+    const prompt = [b.prompt, leadPosPhrase && `the subject is ${leadPosPhrase}`].filter(Boolean).join(". ");
     return api.videoLtxMsr({
       subject_ids: subjectIds, background_id: b.backgroundId,
       audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
-      prompt: b.prompt, width: w, height: h, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
+      prompt, width: w, height: h, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
       nondistilled: nd || undefined, steps: ndSteps,
     }) as Promise<{ job_id: string }>;
   }
@@ -421,12 +443,21 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
               <div className="se-h">Cast</div>
               <p className="se-hint">One lead is identity-locked via MSR. Add band members to composite them into the background (a drummer is always added for a band shot).</p>
             </div>
-            <Field label="Lead (MSR-anchored)">
-              <select className={inp} value={b.chars[0]?.charId || ""} onChange={(e) => setLead(e.target.value)}>
-                <option value="">— pick the lead —</option>
-                {castChars.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ""}</option>)}
-              </select>
-            </Field>
+            <div className="flex items-end gap-3">
+              <div className="flex-1"><Field label="Lead (MSR-anchored)">
+                <select className={inp} value={b.chars[0]?.charId || ""} onChange={(e) => setLead(e.target.value)}>
+                  <option value="">— pick the lead —</option>
+                  {castChars.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ""}</option>)}
+                </select>
+              </Field></div>
+              {!!b.chars[0]?.charId && (
+                <Field label="Position">
+                  <select className={inp} style={{ width: "auto" }} value={b.chars[0]?.pos || ""} onChange={(e) => setLeadPos(e.target.value)} title="Where the lead stands in frame (fed into the preview + render)">
+                    {POS_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                  </select>
+                </Field>
+              )}
+            </div>
             {lead && !charRefs.length && <span className="text-[10px] text-amber-400">This character has no reference stills — add them in the Characters tab, or identity won't hold.</span>}
             <div>
               <div className="mb-1 text-[11px] text-[var(--color-muted)]">Band in scene (composited into the background)</div>
@@ -440,9 +471,27 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
               </div>
             </div>
             {(b.bandInScene || []).length > 0 && (
+              <div className="rounded-md border border-[var(--color-line)] p-2">
+                <div className="mb-1 text-[11px] text-[var(--color-muted)]">Where each band member stands</div>
+                <div className="flex flex-col gap-1.5">
+                  {(b.bandInScene || []).map((id) => {
+                    const c = libChars.find((x) => x.id === id); if (!c) return null;
+                    return (
+                      <div key={id} className="flex items-center gap-2 text-[11px]">
+                        <span className="min-w-[120px] text-[var(--color-ink)]">{c.name}{c.role ? <span className="text-[var(--color-muted)]"> · {c.role}</span> : ""}</span>
+                        <select className={inp} style={{ width: "auto" }} value={(b.bandPos || {})[id] || ""} onChange={(e) => setBandPos(id, e.target.value)}>
+                          {POS_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {(b.bandInScene || []).length > 0 && (
               <div className="flex items-center gap-2">
                 <PrimaryButton onClick={composeBand} disabled={busy || !lead}>Compose band into background</PrimaryButton>
-                <span className="text-[10px] text-[var(--color-muted)]">replaces the background with the band composite (lead centre + members + drummer)</span>
+                <span className="text-[10px] text-[var(--color-muted)]">composites the band into the background (lead + members at their positions + drummer)</span>
               </div>
             )}
             <div className="se-foot">
@@ -458,6 +507,13 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
             <div>
               <div className="se-h">Placement preview</div>
               <p className="se-hint">Check the composition with a cheap still BEFORE spending GPU on the video. Background-only is the scene; with-character composites the lead in to verify scale/placement.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-[var(--color-muted)]">Lead position:</span>
+              <select className={inp} style={{ width: "auto" }} value={b.chars[0]?.pos || ""} onChange={(e) => setLeadPos(e.target.value)} disabled={!b.chars[0]?.charId}>
+                {POS_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              <span className="text-[10px] text-[var(--color-muted)]">re-render the preview to see it</span>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="se-tile">
