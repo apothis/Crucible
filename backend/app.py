@@ -757,6 +757,13 @@ def video_still(p: dict):
     # Engine: explicit request wins; else the app_config default (still_engine), else Z-Image.
     if not (p.get("engine") or "").strip():
         p["engine"] = CFG.get("still_engine", "zimage")
+    # Krea2 optional levers default from app_config unless the request set them (the enhancer
+    # materially improves Krea2 prompt adherence; both need their custom nodes installed on the box).
+    if (p.get("engine") or "").lower() == "krea2":
+        if "enhancer" not in p:
+            p["enhancer"] = bool(CFG.get("still_krea2_enhancer", False))
+        if "seed_variance" not in p:
+            p["seed_variance"] = bool(CFG.get("still_krea2_seed_variance", False))
     try:
         graph, resolved = video_mod.build_still(p)
     except Exception as e:
@@ -5662,7 +5669,13 @@ SETTINGS_FIELDS = [
      "hint": "OFF (recommended) → ComfyUI · engine lego garbles regions in current testing"},
     {"group": "Engine flags", "key": "still_engine", "type": "select:zimage,krea2",
      "label": "Still image engine",
-     "hint": "Default model for photoreal stills · zimage = Z-Image Turbo (default) · krea2 = Krea 2 Ultra (needs the Krea2 models + ComfyUI-Krea2T nodes on the box). Takes effect immediately."},
+     "hint": "Default model for photoreal stills · zimage = Z-Image Turbo (default) · krea2 = Krea 2 Ultra (needs the Krea2 models on the box). Takes effect immediately."},
+    {"group": "Engine flags", "key": "still_krea2_enhancer", "type": "bool",
+     "label": "Krea2: prompt-adherence enhancer",
+     "hint": "ComfyUI-Krea2T-Enhancer (model patch) — stronger prompt adherence + unfilter; the workflow ships it ON. RECOMMENDED for Krea2 quality. Needs the ComfyUI-Krea2T-Enhancer node installed."},
+    {"group": "Engine flags", "key": "still_krea2_seed_variance", "type": "bool",
+     "label": "Krea2: seed variance",
+     "hint": "RBG_Smart_Seed_Variance (conditioning noise) for more composition variety. Optional — our sampler seed already randomizes. Needs the ComfyUI-RBG-SmartSeedVariance node installed."},
     # API keys ------------------------------------------------------------------
     {"group": "API keys", "key": "lastfm_key", "type": "secret",
      "label": "Last.fm API key",
@@ -5725,8 +5738,9 @@ def put_settings(body: dict):
         with open(_CFG_PATH, "w") as f:
             json.dump(cur, f, indent=2)
         CFG.update({k: cur[k] for k in changes})   # refresh in-memory dict so request-time CFG.get() reads see it
-    # still_engine is read per-request (CFG.get), so it applies without a restart; flag the rest.
-    restart_keys = [k for k in changes if k != "still_engine"]
+    # still_* keys are read per-request (CFG.get in /api/video/still), so they apply without a
+    # restart; flag the rest (module-level vars captured at startup).
+    restart_keys = [k for k in changes if not k.startswith("still_")]
     return {"ok": True, "changes": changes, "restart_required": bool(restart_keys)}
 
 

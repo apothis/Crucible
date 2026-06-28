@@ -32,8 +32,29 @@ template uses `euler`; the AItrepreneur workflow uses `er_sde` — we match the 
 - pass 2: KSampler **euler / 4 / denoise 0.3** (refine), decoupled seed
 
 `lora`/`lora_strength` add a trained character LoRA (model-only) on either path. `turbo_lora:true`
-can also force the turbo LoRA onto the single pass. The img2img path (subgraph 116: euler/8/denoise
-0.4) and the seed-variance / sharpen / grain / Krea2T-Enhancer nodes are NOT ported (optional polish).
+can also force the turbo LoRA onto the single pass.
+
+## The two optional workflow nodes (now ported)
+Both are CUSTOM nodes the workflow uses; ported as opt-in levers (off by default, controllable from
+Settings → Engine flags; both need their node installed on the box):
+
+- **Krea2T enhancer** — `ComfyUI-Krea2T-Enhancer` (capitan01R), a **MODEL→MODEL patch**, inputs
+  `enabled / strength(0–2) / debug`; the workflow runs it **enabled, strength 1.0, debug false**. It
+  scales Krea2's text-fusion *tap layers* (a baked profile with big gains on a few layers + a global
+  multiplier) ⇒ **stronger prompt adherence + "unfilter"/quality-dilution bypass** (per the workflow
+  note "remove the Safety Filter and improve prompting"). Wired UNET → [LoRAs] → **enhancer** →
+  KSampler. App flag `still_krea2_enhancer` (request: `enhancer`, `enhancer_strength`). **Recommended
+  ON** — it's what makes Krea2 worth using over Z-Image.
+- **Seed variance** — `RBG_Smart_Seed_Variance` (RamonGuthrie), a **CONDITIONING→CONDITIONING** node
+  that injects controlled noise into the text embedding. The workflow needs it because its KSampler
+  seeds are **fixed** — variety comes from this node. OUR sampler seed already randomizes per call, so
+  it's *extra* composition variety, not required. Workflow widget values (ported verbatim):
+  preset `🌿 Balanced`, fine_tune 55, model_type `⚙️ Other`, fade `Instant`, noise `Beginning Steps`,
+  protect `🚫 None`, direction `🚫 None`, shift_strength 129, schedule `constant`, cutoff_step 8,
+  total_steps 20, cutoff_strength 0.0, seed randomized. Wired CLIPTextEncode → **seed-variance** →
+  KSampler.positive. App flag `still_krea2_seed_variance` (request: `seed_variance`).
+
+The img2img path (subgraph 116: euler/8/denoise 0.4) and the sharpen/film-grain nodes are NOT ported.
 
 Scope: replaces ONLY the plain text→image still path (`/api/video/still` → genStill scene
 backgrounds, character-identity stills, keyframe stills). The reference-driven `char_still`

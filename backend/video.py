@@ -181,6 +181,15 @@ def build_krea2_still(p):
     h = int(p.get("height", 1080))
     cfg = float(p.get("cfg", KREA2_T2I["cfg"]))
     two_pass = bool(p.get("two_pass"))
+    # Two optional workflow nodes (custom-node deps; off unless asked):
+    #  - enhancer (ComfyUI-Krea2T-Enhancer): MODEL->MODEL patch that scales Krea2's text-fusion tap
+    #    layers => stronger prompt adherence + "unfilter" (workflow ships it ENABLED, strength 1.0).
+    #  - seed_variance (RBG_Smart_Seed_Variance): CONDITIONING->CONDITIONING controlled-noise inject
+    #    for composition variety (the workflow's KSampler seeds are FIXED, so variety comes from here;
+    #    OUR KSampler seed is already random, so this is extra variety, not required).
+    enhancer = bool(p.get("enhancer"))
+    enh_strength = float(p.get("enhancer_strength", 1.0))   # node range 0..2; workflow default 1.0
+    seed_variance = bool(p.get("seed_variance"))
     prompt = (p.get("prompt") or "").strip()
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
@@ -189,9 +198,22 @@ def build_krea2_still(p):
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},   # negative = zeroed pos (cfg 1)
     }
+    # positive conditioning: raw, or routed through the seed-variance node (faithful widget values)
+    pos_src = ["5", 0]
+    if seed_variance:
+        g["41"] = {"class_type": "RBG_Smart_Seed_Variance",
+                   "inputs": {"conditioning": ["5", 0],
+                              "variance_preset": "\U0001f33f Balanced", "fine_tune_variance": 55,
+                              "model_type": "⚙️ Other", "fade_curve": "Instant",
+                              "noise_injection": "Beginning Steps", "protect_prompt": "\U0001f6ab None",
+                              "direction_shift": "\U0001f6ab None", "shift_strength": 129,
+                              "variance_schedule": "constant", "cutoff_step": 8, "total_steps": 20,
+                              "cutoff_strength": 0.0, "seed": random.randint(0, 2**31 - 1)}}
+        pos_src = ["41", 0]
 
     def _model_chain(use_turbo):
-        """Build the model path off the UNET: [turbo LoRA @0.2] then [optional character LoRA]."""
+        """Build the model path off the UNET: [turbo LoRA @0.2] -> [optional character LoRA] ->
+        [optional Krea2T enhancer]. Mirrors the workflow's UNET -> Lora -> Enhancer -> KSampler chain."""
         src = ["1", 0]; nid = 30
         if use_turbo:                               # combo path = turbo LoRA on (str 0.2, model-only)
             g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
@@ -201,6 +223,10 @@ def build_krea2_still(p):
             g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
                            "inputs": {"model": src, "lora_name": p["lora"], "strength_model": float(p.get("lora_strength", 1.0))}}
             src = [str(nid), 0]; nid += 1
+        if enhancer:                                # ComfyUI-Krea2T-Enhancer (enabled, strength, debug)
+            g["40"] = {"class_type": "ComfyUI-Krea2T-Enhancer",
+                       "inputs": {"model": src, "enabled": True, "strength": enh_strength, "debug": False}}
+            src = ["40", 0]
         return src
 
     if not two_pass:
@@ -213,13 +239,14 @@ def build_krea2_still(p):
             "8": {"class_type": "KSampler",
                   "inputs": {"model": model_src, "seed": seed, "steps": steps, "cfg": cfg,
                              "sampler_name": s["sampler"], "scheduler": s["scheduler"],
-                             "positive": ["5", 0], "negative": ["6", 0],
+                             "positive": pos_src, "negative": ["6", 0],
                              "latent_image": ["7", 0], "denoise": s["denoise"]}},
             "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
             "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "videogen/still"}},
         })
         return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
-                   "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": False, "kind": "image"}
+                   "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": False,
+                   "enhancer": enhancer, "seed_variance": seed_variance, "kind": "image"}
 
     # ---- TWO TIMES COMBO (quality path): turbo LoRA on both passes ----
     model_src = _model_chain(True)                  # combo always enables the turbo LoRA
@@ -231,7 +258,7 @@ def build_krea2_still(p):
         "8": {"class_type": "KSampler",
               "inputs": {"model": model_src, "seed": seed, "steps": p1_steps, "cfg": cfg,
                          "sampler_name": p1["sampler"], "scheduler": p1["scheduler"],
-                         "positive": ["5", 0], "negative": ["6", 0],
+                         "positive": pos_src, "negative": ["6", 0],
                          "latent_image": ["7", 0], "denoise": p1["denoise"]}},
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
         # decode -> resize (ImageResize+ : lanczos, keep proportion, condition always) -> re-encode
@@ -243,14 +270,15 @@ def build_krea2_still(p):
         "13": {"class_type": "KSampler",
                "inputs": {"model": model_src, "seed": random.randint(0, 2**31 - 1), "steps": p2["steps"], "cfg": cfg,
                           "sampler_name": p2["sampler"], "scheduler": p2["scheduler"],
-                          "positive": ["5", 0], "negative": ["6", 0],
+                          "positive": pos_src, "negative": ["6", 0],
                           "latent_image": ["12", 0], "denoise": p2["denoise"]}},
         "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}},
         "15": {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "videogen/still"}},
     })
     return g, {"seed": seed, "width": w, "height": h, "steps": p1_steps, "cfg": cfg,
                "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": True,
-               "turbo_lora": KREA2_TURBO_LORA, "kind": "image"}
+               "turbo_lora": KREA2_TURBO_LORA, "enhancer": enhancer, "seed_variance": seed_variance,
+               "kind": "image"}
 
 
 def build_still(p):
