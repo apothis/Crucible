@@ -108,4 +108,10 @@ skips Cast + composite, uses keyframe/FFLF push-in; Performance uses MSR).
 4. Video options: wire seed-hunt → pick → result (reuse the working video render).
 5. Result/Extend/Use-on-timeline; then delete the old Shot Studio internals.
 
-Status: redesign agreed 2026-06-28; building stage 1 next.
+Status: redesign agreed 2026-06-28; **BUILT clean 2026-06-28** as `web/src/ShotEditor.tsx`
+(replaces ShotStudio in MV Studio's "✎ Edit segment"). All stages wired to the existing
+engines; backend `/api/video/crop_still` added for the B-roll push-in's closing anchor.
+The old `ShotStudio.tsx` + `LtxDirectorEditor.tsx` + vendored editor are left in the tree
+but UNUSED — delete them once the new flow is proven in the app. Verified: tsc, vite build,
+and the crop endpoint smoke-tested (real still → 924KB PNG served). NOT yet eyeballed by the
+user against a live render.
