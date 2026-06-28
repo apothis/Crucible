@@ -79,6 +79,16 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const charRefs = (b.subjectIds || []).filter(Boolean).slice(0, 3);
   const [loras, setLoras] = useState<string[]>([]);    // character/ID LoRAs on the box (identity instead of MSR)
   useEffect(() => { api.videoLoras().then((l) => setLoras(Array.isArray(l) ? l as string[] : [])).catch(() => {}); }, []);
+  // Repair shots finished BEFORE the clip-writeback fix: if a single piece exists but the block's clip
+  // doesn't point at its selected take, sync it so the timeline plays through. Runs once per shot open.
+  useEffect(() => {
+    const ps = b.pieces || [];
+    if (ps.length === 1) {
+      const t = ps[0].takes.find((x) => x.id === ps[0].selectedTakeId) || ps[0].takes[0];
+      if (t?.clipId && b.clipId !== t.clipId) patch({ clipId: t.clipId });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [b.id]);
 
   const setPieces = (next: ChainPiece[]) => {
     // Keep the BLOCK's playable clip in sync with the pieces so the MV Studio timeline + assembly use it
