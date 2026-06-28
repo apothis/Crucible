@@ -86,6 +86,7 @@ export type Block = {
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   charStrength?: number;          // character-LoRA strength (default 1.0)
   assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)
+  seamXfade?: number;             // chain assembly: crossfade seconds at each seam (0 = hard cut)
   timelineData?: string;          // the LTXDirector editor's timeline_data JSON (segments/audio/keyframes)
   director?: DirectorPayload;      // full editor output (timeline_data + relay fields) for rendering
 };

@@ -366,7 +366,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     if (clips.length < 2) return;
     setBusy(true); note("Assembling continuous take…");
     try {
-      const r = await api.videoAssembleChain({ clips, frames: b.frames, fps: b.fps, tail: FFLF_TAIL, width: b.width, height: b.height }) as { id: string };
+      const r = await api.videoAssembleChain({ clips, frames: b.frames, fps: b.fps, tail: FFLF_TAIL, width: b.width, height: b.height, transition: b.seamXfade || 0 }) as { id: string };
       patch({ assembledId: r.id, clipId: r.id });
       note(`Assembled ${clips.length} pieces — the continuous take is on the timeline.`);
     } catch (e) { note("Assemble failed: " + (e as Error).message); }
@@ -573,6 +573,9 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           <span className="text-xs font-semibold text-[var(--color-ink)]">Pieces of this take</span>
           {pieces.length > 1 && (
             <GhostButton onClick={() => assembleChain()} disabled={busy}>{busy ? "Assembling…" : `Re-assemble ${pieces.length} pieces → timeline`}</GhostButton>
+          )}
+          {pieces.length > 1 && (
+            <Num label="Seam crossfade (s)" value={b.seamXfade ?? 0} set={(n) => patch({ seamXfade: Math.max(0, n) })} step={0.1} w="w-20" min={0} max={2} />
           )}
           {pieces.length > 1 && b.assembledId && <span className="text-[10px] text-[var(--color-accent2)]">✓ continuous take on timeline</span>}
         </div>

@@ -1624,9 +1624,12 @@ def video_assemble_chain(p: dict):
                     else {"path": path, "dur": max(0.1, full - skip), "ss": skip, "cid": cid})
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
+    # transition (seconds) = optional crossfade blended at each seam; 0 = hard cut (default). A small
+    # value (~0.2-0.5s) smooths any hitch at the trim joins.
+    transition = max(0.0, float(p.get("transition") or 0))
     try:
         musicvideo_mod.assemble(segs, None, out, width=int(p.get("width") or 1280),
-                                height=int(p.get("height") or 720), fps=int(fps), transition=0.0)
+                                height=int(p.get("height") or 720), fps=int(fps), transition=transition)
     except Exception as e:
         raise HTTPException(500, f"chain assemble failed: {e}")
     save_done_row(jid, "videoclip", {"kind": "video", "source": "chain assemble", "pieces": len(clips)}, out)
