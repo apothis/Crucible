@@ -80,7 +80,18 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const [loras, setLoras] = useState<string[]>([]);    // character/ID LoRAs on the box (identity instead of MSR)
   useEffect(() => { api.videoLoras().then((l) => setLoras(Array.isArray(l) ? l as string[] : [])).catch(() => {}); }, []);
 
-  const setPieces = (next: ChainPiece[]) => patch({ pieces: next });
+  const setPieces = (next: ChainPiece[]) => {
+    // Keep the BLOCK's playable clip in sync with the pieces so the MV Studio timeline + assembly use it
+    // (a finished take was previously stored only in pieces, so the timeline never saw it). Single piece
+    // -> the block clip IS the selected take. (A multi-piece chain needs assembly into one clip; handled
+    // separately - don't clobber an existing assembled clipId here.)
+    const upd: Partial<Block> = { pieces: next };
+    if (next.length === 1) {
+      const t = next[0].takes.find((x) => x.id === next[0].selectedTakeId) || next[0].takes[0];
+      if (t?.clipId) upd.clipId = t.clipId;
+    }
+    patch(upd);
+  };
   const selectedTakeOf = (p: ChainPiece) => p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0];
   const lastPiece = pieces[pieces.length - 1];
   const lastClip = lastPiece && selectedTakeOf(lastPiece)?.clipId;
@@ -541,7 +552,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
               const sel = selectedTakeOf(p);
               return (
                 <div key={p.id} className="ss-piece">
-                  <div className="ss-thumb">{sel ? <ThumbVideo id={sel.clipId} /> : <div className="ss-spin">—</div>}</div>
+                  <div className="ss-thumb">{sel?.clipId ? <PreviewVideo src={`/api/media/${sel.clipId}`} /> : <div className="ss-spin">—</div>}</div>
                   <div className="px-2 py-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold text-[var(--color-ink)]">{i + 1}. {p.label}</span>
