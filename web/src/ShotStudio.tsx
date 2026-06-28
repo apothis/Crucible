@@ -328,15 +328,6 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     if (!edRef.current) throw new Error("editor not ready");
     edRef.current.addImage(file, Math.max(0, Math.round(kfFrame)));
   }
-  // A read-only editor timeline that is JUST the rendered clip as one video segment from frame 0, so the
-  // editor's play button plays through the result cleanly (separate "View result" view, not mixed with the
-  // input stills). It's a view only — never written back, so it can't pollute the render inputs.
-  const resultTimeline = () => JSON.stringify({
-    global_prompt: "",
-    segments: [{ id: "result", type: "video", start: 0, length: b.frames,
-                 _blobUrl: `/api/media/${resultClip}`, imageFile: `${resultClip}.mp4` }],
-    audioSegments: [],
-  });
   async function huntStills() {
     if (!kfPrompt.trim()) { setStatus("Enter a prompt for the keyframe still."); return; }
     setKfBusy(true); setStatus("Hunting 3 stills (full size)…");
@@ -427,9 +418,10 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
             </div>
           )}
           {viewResult && resultClip ? (
-            // read-only playback view: just the rendered clip; edits here are ignored (onChange no-op)
-            <LtxDirectorEditor key={`result:${resultClip}`} timelineData={resultTimeline()} frames={b.frames} fps={b.fps}
-              onChange={() => { /* result view is read-only */ }} />
+            // Result playback: the vendored editor's canvas video playback doesn't run outside ComfyUI,
+            // so View result uses a real player in the SAME slot (toggle, not a separate box).
+            <video key={resultClip} src={`/api/media/${resultClip}`} controls autoPlay loop playsInline
+              className="w-full rounded-lg bg-black" style={{ maxHeight: 420 }} />
           ) : (
             <LtxDirectorEditor key={`edit:${b.id}`} ref={edRef} timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
               onChange={(payload) => patch({ director: payload, timelineData: payload.timeline_data })} />
