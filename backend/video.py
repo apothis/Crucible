@@ -348,6 +348,7 @@ def build_qwen_char_still(p, ref_images):
     seed = _seed(p)
     steps = int(p.get("steps", 40))
     cfg = float(p.get("cfg", 4.0))
+    denoise = float(p.get("denoise", 1.0))    # <1.0 retains more of image1 (keeps Krea's render/photoreal)
     prompt = (p.get("prompt") or "").strip()
     neg = p.get("negative")
     neg = "" if neg is None else neg          # template uses an empty negative for edit
@@ -398,7 +399,7 @@ def build_qwen_char_still(p, ref_images):
                "inputs": {"model": ["5", 0], "seed": seed, "steps": steps, "cfg": cfg,
                           "sampler_name": "euler", "scheduler": "simple",
                           "positive": ["10", 0], "negative": ["11", 0],
-                          "latent_image": latent_src, "denoise": 1.0}}
+                          "latent_image": latent_src, "denoise": denoise}}
     g["14"] = {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}}
     g["15"] = {"class_type": "SaveImage",
                "inputs": {"images": ["14", 0], "filename_prefix": "videogen/charstill"}}
