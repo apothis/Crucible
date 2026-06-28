@@ -754,6 +754,9 @@ def video_still(p: dict):
     height?, steps?, cfg?}."""
     if not (p.get("prompt") or "").strip():
         raise HTTPException(400, "a prompt is required")
+    # Engine: explicit request wins; else the app_config default (still_engine), else Z-Image.
+    if not (p.get("engine") or "").strip():
+        p["engine"] = CFG.get("still_engine", "zimage")
     try:
         graph, resolved = video_mod.build_still(p)
     except Exception as e:
@@ -5657,6 +5660,9 @@ SETTINGS_FIELDS = [
     {"group": "Engine flags", "key": "acestep_lego", "type": "bool",
      "label": "Use engine for Add-a-Layer",
      "hint": "OFF (recommended) → ComfyUI · engine lego garbles regions in current testing"},
+    {"group": "Engine flags", "key": "still_engine", "type": "select:zimage,krea2",
+     "label": "Still image engine",
+     "hint": "Default model for photoreal stills · zimage = Z-Image Turbo (default) · krea2 = Krea 2 Ultra (needs the Krea2 models + ComfyUI-Krea2T nodes on the box). Takes effect immediately."},
     # API keys ------------------------------------------------------------------
     {"group": "API keys", "key": "lastfm_key", "type": "secret",
      "label": "Last.fm API key",
@@ -5718,7 +5724,10 @@ def put_settings(body: dict):
     if changes:
         with open(_CFG_PATH, "w") as f:
             json.dump(cur, f, indent=2)
-    return {"ok": True, "changes": changes, "restart_required": bool(changes)}
+        CFG.update({k: cur[k] for k in changes})   # refresh in-memory dict so request-time CFG.get() reads see it
+    # still_engine is read per-request (CFG.get), so it applies without a restart; flag the rest.
+    restart_keys = [k for k in changes if k != "still_engine"]
+    return {"ok": True, "changes": changes, "restart_required": bool(restart_keys)}
 
 
 # static frontend at root (registered last so /api/* wins)

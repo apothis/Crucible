@@ -23,6 +23,18 @@ Z_IMAGE_UNET = "z_image_turbo_bf16.safetensors"
 Z_IMAGE_CLIP = "qwen_3_4b.safetensors"           # CLIPLoader type "lumina2"
 Z_IMAGE_VAE = "ae.safetensors"
 
+# Krea 2 Ultra (AItrepreneur KREA2_ULTRA_WORKFLOW v2). A Qwen-Image-family turbo model: Qwen-Image
+# VAE + a Qwen3-VL-4B text encoder (CLIPLoader type "krea2"), run at cfg 1 / ~8 steps / er_sde /
+# simple (distilled "turbo"). Drop-in alternative to Z-Image Turbo for the photoreal still path.
+# fp8 vs mxfp8: the AItrepreneur note says 5000-series GPUs use mxfp8, 4000-series-and-older use fp8 -
+# our 3090 is Ampere, so the fp8 build. Name verified against the OFFICIAL ComfyUI Krea-2 template
+# (Comfy-Org/workflow_templates image_krea2_turbo_t2i.json) = krea2_turbo_fp8_scaled.safetensors.
+# CONFIRM against the box /object_info once the download finishes (50-series users want _mxfp8).
+KREA2_UNET = "krea2_turbo_fp8_scaled.safetensors"     # 3090/Ampere fp8 (official ComfyUI name; 50-series = _mxfp8)
+KREA2_CLIP = "qwen3vl_4b_fp8_scaled.safetensors"      # CLIPLoader type "krea2"
+KREA2_VAE = "qwen_image_vae.safetensors"
+KREA2_TURBO_LORA = "krea2_turbo_lora_rank_64_bf16.safetensors"   # optional extra turbo LoRA (wf uses str 0.2)
+
 WAN_TI2V = "wan2.2_ti2v_5B_fp16.safetensors"
 WAN_CLIP = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"   # CLIPLoader type "wan"
 WAN22_VAE = "wan2.2_vae.safetensors"                  # 5B TI2V VAE
@@ -136,9 +148,58 @@ def _seed(p):
 
 
 # ---------------------------------------------------------------- Z-Image still
+def build_krea2_still(p):
+    """Text-to-image photoreal still on Krea 2 Ultra (turbo). Faithful port of the t2i path in
+    AItrepreneur's KREA2_ULTRA_WORKFLOW v2: UNETLoader(krea2_turbo) -> [optional turbo LoRA] ->
+    KSampler(8 steps, cfg 1, er_sde/simple, denoise 1) with CLIPTextEncode positive and a
+    ConditioningZeroOut negative (cfg 1, so no real negative). Qwen3-VL-4B CLIP (type "krea2") +
+    Qwen-Image VAE. No ModelSamplingAuraFlow (unlike Z-Image). p: {prompt, seed?, width?, height?,
+    steps?, cfg?, lora?/lora_strength? (a character LoRA), turbo_lora? (bool, adds the rank-64
+    turbo LoRA at 0.2)}. Output: SaveImage -> videogen/still."""
+    seed = _seed(p)
+    w = int(p.get("width", 1024))
+    h = int(p.get("height", 1024))
+    steps = int(p.get("steps", 8))
+    cfg = float(p.get("cfg", 1.0))
+    prompt = (p.get("prompt") or "").strip()
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": KREA2_CLIP, "type": "krea2", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": KREA2_VAE}},
+    }
+    model_src = ["1", 0]
+    nid = 16
+    if p.get("turbo_lora"):                         # the workflow's extra rank-64 turbo LoRA (str 0.2)
+        g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
+                       "inputs": {"model": model_src, "lora_name": KREA2_TURBO_LORA, "strength_model": 0.2}}
+        model_src = [str(nid), 0]; nid += 1
+    if p.get("lora"):                               # optional trained character LoRA -> identity
+        g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
+                       "inputs": {"model": model_src, "lora_name": p["lora"], "strength_model": float(p.get("lora_strength", 1.0))}}
+        model_src = [str(nid), 0]; nid += 1
+    g.update({
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},   # negative = zeroed pos (cfg 1)
+        # Both the official ComfyUI template AND the AItrepreneur workflow use EmptyLatentImage here (not SD3).
+        "7": {"class_type": "EmptyLatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "8": {"class_type": "KSampler",
+              "inputs": {"model": model_src, "seed": seed, "steps": steps, "cfg": cfg,
+                         "sampler_name": "er_sde", "scheduler": "simple",
+                         "positive": ["5", 0], "negative": ["6", 0],
+                         "latent_image": ["7", 0], "denoise": 1.0}},
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "videogen/still"}},
+    })
+    return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
+               "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "kind": "image"}
+
+
 def build_still(p):
-    """Text-to-image photoreal still (Z-Image Turbo). p: {prompt, negative?, seed?,
-    width?, height?, steps?, cfg?}. Output: SaveImage -> videogen/still."""
+    """Text-to-image photoreal still. Engine selectable: "zimage" (Z-Image Turbo, default) or
+    "krea2" (Krea 2 Ultra). p: {prompt, negative?, seed?, width?, height?, steps?, cfg?, engine?}.
+    Output: SaveImage -> videogen/still."""
+    if (p.get("engine") or "").lower() == "krea2":
+        return build_krea2_still(p)
     seed = _seed(p)
     w = int(p.get("width", 1024))
     h = int(p.get("height", 1024))
