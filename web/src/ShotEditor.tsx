@@ -196,21 +196,30 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
   }
 
   // ---------- STAGE: PLACEMENT (cheap composition gate, with/without character) ----------
+  // Two-step placement: (1) Krea renders the scene WITH a person matching the character's own
+  // description (gender + appearance/costume) at the shot's framing + position — so framing, scale,
+  // lighting and rough look are right natively; (2) Qwen-Image-Edit swaps that person for the EXACT
+  // character from the refs (face + outfit). A close starting person => a small, clean identity swap.
   async function previewWithChar() {
-    if (!b.backgroundId) { note("Generate a background in the Scene stage first."); return; }
-    if (!charRefs.length) { note("This shot has no character refs to place."); return; }
-    setBusy(true); note("Placing the character into your background scene…"); setPlacePreview("");
+    if (!lead) { note("Pick a lead in the Cast stage first."); return; }
+    if (!charRefs.length) { note("This character has no reference stills (add them in the Characters tab)."); return; }
+    if (!(b.scene || "").trim()) { note("Describe the setting in the Scene stage first."); return; }
+    setBusy(true); setPlacePreview("");
     try {
-      // Ground in the ACTUAL background: image1 = the chosen scene (the thing Qwen edits), the rest =
-      // the character reference(s). Omit width/height so the builder encodes the background as the canvas
-      // (passing a size makes it generate a fresh scene and ignore the background — the old bug).
-      const refs = [b.backgroundId, ...charRefs].filter(Boolean).slice(0, 3);
+      const personDesc = [lead.gender, lead.role || "person", lead.appearance].map((s) => (s || "").trim()).filter(Boolean).join(", ");
+      const action = b.lipsync ? "singing with emotion at a microphone" : (b.prompt?.trim() || "standing naturally");
       const where = leadPosPhrase || "in the scene";
-      const prompt = `Place the person from the reference photo into this exact background scene, ${subjectScale()}, positioned ${where}, matching the scene's lighting, colour and perspective. Keep the background unchanged. Photorealistic.`;
-      const r = await api.videoCharStill({ ref_ids: refs, prompt }) as { job_id: string };
-      const url = await waitMedia(r.job_id, (pc) => note(`Placing… ${pc}%`));
-      setPlacePreview(url); note("Placement ready — the character is composited into your background.");
-    } catch (e) { note("Preview failed: " + (e as Error).message); }
+      const kreaPrompt = `${subjectScale()} of a ${personDesc}; ${action}; positioned ${where}; setting: ${(b.scene || "").trim()}`;
+      note("Step 1/2 — Krea rendering the scene with the character placed…");
+      const k = await api.videoStill({ prompt: kreaPrompt, engine: "krea2", width: b.width, height: b.height }) as { job_id: string };
+      const kurl = await waitMedia(k.job_id, (pc) => note(`Step 1/2 — Krea… ${pc}%`));
+      note("Step 2/2 — Qwen locking the character's identity…");
+      const swap = "Replace the person in the first image with the exact person shown in the reference photos — same face and identity, and match their clothing to the reference — while keeping the pose, expression, position in frame, framing and the entire background unchanged. Photorealistic, natural skin texture.";
+      const q = await api.videoCharStill({ ref_ids: [bareId(kurl), ...charRefs].slice(0, 3), prompt: swap }) as { job_id: string };
+      const qurl = await waitMedia(q.job_id, (pc) => note(`Step 2/2 — Qwen… ${pc}%`));
+      setPlacePreview(qurl);
+      note("Placement ready — character in-scene at the right framing. Use it as the shot's background to render from it.");
+    } catch (e) { note("Placement failed: " + (e as Error).message); }
     finally { setBusy(false); }
   }
 
@@ -518,31 +527,34 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
         {step === "placement" && perf && (
           <div className="se-card flex flex-col gap-3">
             <div>
-              <div className="se-h">Placement preview</div>
-              <p className="se-hint">Check the composition with a cheap still BEFORE spending GPU on the video. Background-only is the scene; with-character composites the lead in to verify scale/placement.</p>
+              <div className="se-h">Placement</div>
+              <p className="se-hint">Krea renders the scene <b>with</b> the character (from their own description) at the right framing &amp; position, then Qwen swaps in their exact identity. Verify it here, then use it as the shot's background to render from.</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-[var(--color-muted)]">Lead position:</span>
               <select className={inp} style={{ width: "auto" }} value={b.chars[0]?.pos || ""} onChange={(e) => setLeadPos(e.target.value)} disabled={!b.chars[0]?.charId}>
                 {POS_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
               </select>
-              <span className="text-[10px] text-[var(--color-muted)]">re-render the preview to see it</span>
+              <span className="text-[10px] text-[var(--color-muted)]">{b.lipsync ? "lip-sync on — framed close so the face reads" : "set framing in the Scene stage (close for lip-sync)"}</span>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="se-tile">
-                <div className="se-thumb">{b.backgroundId ? <img src={`/api/media/${b.backgroundId}`} alt="" /> : <span className="se-spin">no background</span>}</div>
-                <div className="px-2 py-1.5 text-[11px] text-[var(--color-muted)]">Background only</div>
+                <div className="se-thumb">{b.backgroundId ? <img src={`/api/media/${b.backgroundId}`} alt="" /> : <span className="se-spin">no background yet</span>}</div>
+                <div className="px-2 py-1.5 text-[11px] text-[var(--color-muted)]">Current background</div>
               </div>
               <div className="se-tile">
-                <div className="se-thumb">{placePreview ? <img src={placePreview} alt="" /> : <span className="se-spin">{busy ? "rendering…" : "— not rendered —"}</span>}</div>
-                <div className="flex items-center justify-between px-2 py-1.5">
-                  <span className="text-[11px] text-[var(--color-muted)]">With character</span>
-                  <GhostButton onClick={previewWithChar} disabled={busy || !charRefs.length}>Render preview</GhostButton>
+                <div className="se-thumb">{placePreview ? <img src={placePreview} alt="" /> : <span className="se-spin">{busy ? (status || "working…") : "— not generated —"}</span>}</div>
+                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+                  <span className="text-[11px] text-[var(--color-muted)]">Character in scene</span>
+                  <div className="flex gap-1.5">
+                    {placePreview && <GhostButton onClick={() => { patch({ backgroundId: bareId(placePreview) }); note("Set as the shot's background — the render will use it."); }} disabled={busy}>Use as background</GhostButton>}
+                    <GhostButton onClick={previewWithChar} disabled={busy || !lead || !charRefs.length}>{placePreview ? "Re-roll" : "Generate (Krea→Qwen)"}</GhostButton>
+                  </div>
                 </div>
               </div>
             </div>
             <div className="se-foot">
-              <PrimaryButton onClick={() => { setPlaceApproved(true); setStep("video"); }}>Looks good — to Video →</PrimaryButton>
+              <PrimaryButton onClick={() => { setPlaceApproved(true); setStep("video"); }}>{b.backgroundId ? "Looks good — to Video →" : "Skip to Video →"}</PrimaryButton>
               <GhostButton onClick={() => setStep("scene")}>Back to Scene</GhostButton>
             </div>
           </div>
