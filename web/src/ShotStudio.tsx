@@ -276,7 +276,11 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
       const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
       if (forExtend) {
         const piece: ChainPiece = { id: rid(), lane: "fflf", label: `Extend ${pieces.length + 1}`, takes: [take], selectedTakeId: take.id, lastStillId: kf.firstName };
-        setPieces([...pieces, piece]);
+        const next = [...pieces, piece];
+        setPieces(next);
+        setHunt(null);
+        await assembleChain(next);   // stitch base+extends into one continuous clip -> onto the timeline
+        return;
       } else if (pieces.length === 0) {
         setPieces([{ id: rid(), lane: "fflf", label: "Base shot", takes: [take], selectedTakeId: take.id, lastStillId: kf.lastName || kf.firstName }]);
       } else {
@@ -354,6 +358,20 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     setPieces(pieces.map((p) => p.id === pieceId ? { ...p, selectedTakeId: takeId } : p));
   }
   function removePiece(pieceId: string) { setPieces(pieces.filter((p) => p.id !== pieceId)); }
+  // Stitch a multi-piece chain (base + FFLF extends) into ONE continuous clip (ffmpeg, no GPU), trimming
+  // each extend's overlapping tail frames, and set it as the block's playable clip so the timeline plays
+  // the whole take. Pass the fresh pieces array when calling right after setPieces (state not yet flushed).
+  async function assembleChain(ps: ChainPiece[] = (b.pieces || [])) {
+    const clips = ps.map((p) => (p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0])?.clipId).filter(Boolean) as string[];
+    if (clips.length < 2) return;
+    setBusy(true); note("Assembling continuous take…");
+    try {
+      const r = await api.videoAssembleChain({ clips, frames: b.frames, fps: b.fps, tail: FFLF_TAIL, width: b.width, height: b.height }) as { id: string };
+      patch({ assembledId: r.id, clipId: r.id });
+      note(`Assembled ${clips.length} pieces — the continuous take is on the timeline.`);
+    } catch (e) { note("Assemble failed: " + (e as Error).message); }
+    finally { setBusy(false); }
+  }
 
   const modes: { v: RenderMode; label: string }[] = [
     { v: "fflf", label: "FFLF (extendable)" }, { v: "msr", label: "MSR (identity+sing)" },
@@ -551,7 +569,13 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
 
       {/* ===================== PIECES (card layout under the editor) ===================== */}
       <div>
-        <div className="mb-2 text-xs font-semibold text-[var(--color-ink)]">Pieces of this take</div>
+        <div className="mb-2 flex items-center gap-3">
+          <span className="text-xs font-semibold text-[var(--color-ink)]">Pieces of this take</span>
+          {pieces.length > 1 && (
+            <GhostButton onClick={() => assembleChain()} disabled={busy}>{busy ? "Assembling…" : `Re-assemble ${pieces.length} pieces → timeline`}</GhostButton>
+          )}
+          {pieces.length > 1 && b.assembledId && <span className="text-[10px] text-[var(--color-accent2)]">✓ continuous take on timeline</span>}
+        </div>
         {pieces.length === 0 ? (
           <div className="rounded-lg border border-dashed border-[var(--color-line)] p-6 text-center text-[11px] text-[var(--color-muted)]">
             No pieces yet. Set the anchors, then <b>Seed-hunt base</b> → pick a draft → it becomes piece 1. Then <b>Extend</b> to grow the take.

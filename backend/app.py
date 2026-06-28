@@ -1599,6 +1599,40 @@ def video_infinitetalk(p: dict):
     return _submit_video(graph, resolved, "videolipsync")
 
 
+@app.post("/api/video/assemble_chain")
+def video_assemble_chain(p: dict):
+    """Concat a Shot Studio chain (base shot + FFLF extends) into ONE continuous library clip, GPU-free
+    (ffmpeg). Each extend was driven by the previous clip's last `tail` frames, so it re-depicts them at
+    its head; we trim `tail` frames off every piece after the first so the join is seamless (matches the
+    UI's totalSecs math: base + (N-1)*(frames-tail)). p: {clips:[ids in order], frames (per-piece), fps?,
+    tail?(33), width?, height?}. Returns {id, media_url}."""
+    clips = [os.path.basename(str(c)) for c in (p.get("clips") or []) if c]
+    if len(clips) < 2:
+        raise HTTPException(400, "need 2+ ordered clip ids to assemble a chain")
+    fps = float(p.get("fps") or 24)
+    frames = int(p.get("frames") or 0)
+    tail = int(p.get("tail") or 33)
+    if frames <= 0:
+        raise HTTPException(400, "frames (per-piece length) is required")
+    full, skip = frames / fps, tail / fps
+    segs = []
+    for i, cid in enumerate(clips):
+        path = os.path.join(LIBRARY, f"{cid}.mp4")
+        if not os.path.exists(path):
+            raise HTTPException(404, f"clip {cid} not found")
+        segs.append({"path": path, "dur": full, "cid": cid} if i == 0
+                    else {"path": path, "dur": max(0.1, full - skip), "ss": skip, "cid": cid})
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.mp4")
+    try:
+        musicvideo_mod.assemble(segs, None, out, width=int(p.get("width") or 1280),
+                                height=int(p.get("height") or 720), fps=int(fps), transition=0.0)
+    except Exception as e:
+        raise HTTPException(500, f"chain assemble failed: {e}")
+    save_done_row(jid, "videoclip", {"kind": "video", "source": "chain assemble", "pieces": len(clips)}, out)
+    return {"id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
 @app.post("/api/mv/script")
 def mv_script(body: dict):
     """Generate an editable music-video shot list from a song. Body: {project? (key) OR
