@@ -45,3 +45,5 @@ models/
 
 # local secrets (CLAUDE_CODE_OAUTH_TOKEN etc.)
 .env.local
+.mvwork/
+/library.db

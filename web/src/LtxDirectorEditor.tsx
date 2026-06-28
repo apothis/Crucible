@@ -40,7 +40,7 @@ export const LtxDirectorEditor = forwardRef<LtxDirectorHandle, {
       catch (e) { console.error("[ShotStudio] addImage failed", e); }
     },
     addVideo: (file: File, frame: number) => {
-      try { edRef.current?.handleVideoUpload([file], frame); }
+      try { (edRef.current as unknown as { handleVideoUpload: (f: File[], n: number) => void })?.handleVideoUpload([file], frame); }
       catch (e) { console.error("[ShotStudio] addVideo failed", e); }
     },
   }), []);

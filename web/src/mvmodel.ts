@@ -82,7 +82,7 @@ export type Block = {
   // no separate anchor fields. These two are just the AddGuide strengths.
   fflfFirstStrength?: number; fflfLastStrength?: number;
   nonDistilled?: boolean;         // render on the non-distilled (dev) model — controllable motion (all paths); distilled has none
-  steps?: number;                 // sampler steps for the non-distilled path (all paths); undefined = builder default
+  // (steps is declared in render params above; reused for the non-distilled sampler step count)
   charLora?: string;              // optional downloadable identity LoRA (instead of / with MSR)
   charStrength?: number;          // character-LoRA strength (default 1.0)
   assembledId?: string;           // the crossfade-assembled continuous take (set by the chain orchestrator)

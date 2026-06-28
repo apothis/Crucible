@@ -54,6 +54,7 @@ export const api = {
   videoLtxKeyframe: (p: unknown) => jpost("/api/video/ltx_keyframe", p),  // LTXDirector keyframe interp (still-to-still)
   videoLtxFflf: (p: unknown) => jpost("/api/video/ltx_fflf", p),          // FFLF seed-hunt/multiroll (stock LTXVAddGuide; image OR video anchors); mode:"hunt"|"finish"
   videoAssembleChain: (p: unknown) => jpost("/api/video/assemble_chain", p), // concat a FFLF chain (base+extends) into one continuous clip (no GPU)
+  videoCropStill: (p: unknown) => jpost("/api/video/crop_still", p),         // center-crop a still -> new library still (B-roll push-in end anchor)
   videoFreeModels: () => jpost("/api/video/free_models", {}),             // manually evict ComfyUI GPU models (we no longer free per-render)
   videoLtxRetake: (p: unknown) => jpost("/api/video/ltx_retake", p),      // re-render a time slice of an existing clip (retake_mode)
   videoUpscale: (p: unknown) => jpost("/api/video/upscale", p),  // SeedVR2 diffusion upscale of a finished clip

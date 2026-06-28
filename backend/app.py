@@ -1183,6 +1183,30 @@ def video_ltx_fflf(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+@app.post("/api/video/crop_still")
+def video_crop_still(p: dict):
+    """Center-crop a library still by `keep` (0.3-0.95 of each side) and register the crop as a NEW
+    library videostill. Used by the Shot Editor's B-roll push-in: the chosen background is the FFLF
+    opening anchor and this center-crop is the closing anchor, so the shot dollies IN between two
+    person-free pinned frames (no hallucinated figures, controlled speed). GPU-free (Pillow).
+    p: {still_id (a library videostill), keep? (0.72)}. Returns {id, media_url}."""
+    from PIL import Image
+    src = _lib_image_path(p.get("still_id"))
+    if not src:
+        raise HTTPException(400, "still_id must reference a generated still")
+    keep = max(0.3, min(0.95, float(p.get("keep") or 0.72)))
+    img = Image.open(src).convert("RGB")
+    w, h = img.size
+    cw, ch = round(w * keep), round(h * keep)
+    sx, sy = (w - cw) // 2, (h - ch) // 2
+    out = img.crop((sx, sy, sx + cw, sy + ch)).resize((w, h), Image.LANCZOS)   # back to source res = matches the first anchor
+    jid = uuid.uuid4().hex
+    path = os.path.join(LIBRARY, f"{jid}.png")
+    out.save(path)
+    save_done_row(jid, "videostill", {"source": "crop_still", "still_id": os.path.basename(p.get("still_id")), "keep": keep}, path)
+    return {"id": jid, "media_url": f"/api/media/{jid}"}
+
+
 @app.post("/api/video/ltx_retake")
 def video_ltx_retake(p: dict):
     """LTX-2.3 RETAKE: re-render only a time slice of an EXISTING clip (LTXDirectorGuide retake_mode),

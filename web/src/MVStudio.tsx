@@ -6,7 +6,7 @@ import { MVTimeline } from "./MVTimeline";
 import { ShotTimeline } from "./ShotTimeline";
 import { Num, StillPick, stillLabel } from "./mvui";
 import { CharacterLibrary } from "./Characters";
-import { ShotStudio } from "./ShotStudio";
+import { ShotEditor } from "./ShotEditor";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
   makeBlock, hydrateBlock, ltxFrames, resolveSubjects, charRefIds, sceneRefOf, msrPayload, shotToBlock,
@@ -479,8 +479,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
   // Shot Studio: the selected segment opens full-page (editor + chain pieces), replacing the timeline view
   if (editing && sel) {
-    return <ShotStudio block={sel} idx={sel.idx} patch={patchSel} stills={stills} audios={audios}
-      songAudioId={audioId} onClose={() => setEditing(false)} />;
+    return <ShotEditor block={sel} idx={sel.idx} patch={patchSel} stills={stills} audios={audios}
+      songAudioId={audioId} libChars={castChars} onClose={() => setEditing(false)} />;
   }
 
   return (
