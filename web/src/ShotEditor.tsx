@@ -43,7 +43,6 @@ function waitMedia(jobId: string, onPct?: (pct: number, pass: number) => void): 
 }
 
 const vHalf = (n: number) => Math.max(256, Math.round(n / 2 / 32) * 32);
-const FRAME_PHRASE: Record<string, string> = { close: "close-up shot", medium: "medium shot", wide: "wide shot" };
 // Where a character stands in frame — fed into the placement preview, the MSR render prompt, and the
 // band composite. "" = let the model decide.
 const POS_PHRASE: Record<string, string> = {
@@ -189,14 +188,19 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
 
   // ---------- STAGE: PLACEMENT (cheap composition gate, with/without character) ----------
   async function previewWithChar() {
+    if (!b.backgroundId) { note("Generate a background in the Scene stage first."); return; }
     if (!charRefs.length) { note("This shot has no character refs to place."); return; }
-    setBusy(true); note("Rendering a placement preview (cheap still)…"); setPlacePreview("");
+    setBusy(true); note("Placing the character into your background scene…"); setPlacePreview("");
     try {
-      const where = leadPosPhrase ? ` ${leadPosPhrase}` : " in the scene";
-      const prompt = `${FRAME_PHRASE[b.framing] || "medium shot"}. ${(b.scene || "").trim()}. The character standing${where}${b.prompt ? `, ${b.prompt}` : ""}.`;
-      const r = await api.videoCharStill({ ref_ids: charRefs, prompt, width: vHalf(b.width), height: vHalf(b.height) }) as { job_id: string };
-      const url = await waitMedia(r.job_id, (pc) => note(`Placement preview… ${pc}%`));
-      setPlacePreview(url); note("Composition preview ready — approve to render the video, or tweak the scene/cast.");
+      // Ground in the ACTUAL background: image1 = the chosen scene (the thing Qwen edits), the rest =
+      // the character reference(s). Omit width/height so the builder encodes the background as the canvas
+      // (passing a size makes it generate a fresh scene and ignore the background — the old bug).
+      const refs = [b.backgroundId, ...charRefs].filter(Boolean).slice(0, 3);
+      const where = leadPosPhrase || "in the scene";
+      const prompt = `Place the person from the reference photo into this exact background scene, standing ${where}, at natural human scale, full body visible, matching the scene's lighting, colour and perspective. Keep the background unchanged. Photorealistic.`;
+      const r = await api.videoCharStill({ ref_ids: refs, prompt }) as { job_id: string };
+      const url = await waitMedia(r.job_id, (pc) => note(`Placing… ${pc}%`));
+      setPlacePreview(url); note("Placement ready — the character is composited into your background.");
     } catch (e) { note("Preview failed: " + (e as Error).message); }
     finally { setBusy(false); }
   }
