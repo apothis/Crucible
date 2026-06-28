@@ -68,14 +68,13 @@ backgrounds, character-identity stills, keyframe stills). The reference-driven `
   `still_engine` to app_config.json; read per-request, so it applies WITHOUT a restart).
 - Default stays `zimage` until Krea 2 is proven better (optional-additions rule).
 
-## ⚠ Confirm on the box once the download finishes (models not down yet)
-1. The exact UNET filename via `/object_info` UNETLoader list — `krea2_turbo_fp8_scaled.safetensors`
-   is the official name, but AItrepreneur's download set may name the Ampere build differently.
-   Fix the one constant `KREA2_UNET` if so.
-2. `CLIPLoader` must offer **type `krea2`** (needs a recent ComfyUI; older builds won't have it).
-3. The Krea2 prompt-enhancer / safety nodes (`ComfyUI-Krea2T-Enhancer`, `TextGenerate`) are NOT
-   wired here — our graph is stock-node only. The Krea team's prompt-enhancer is optional polish;
-   add later if wanted.
+## ✓ Verified on the box (/object_info, 2026-06-28)
+- UNET `krea2_turbo_fp8.safetensors` (the AItrepreneur download set name — NOT the official `_scaled`)
+- CLIPLoader offers type **`krea2`**; clip `qwen3vl_4b_fp8_scaled.safetensors`; VAE `qwen_image_vae.safetensors`
+- turbo LoRA `krea2_turbo_lora_rank_64_bf16.safetensors`
+- custom nodes present: `ComfyUI-Krea2T-Enhancer`, `RBG_Smart_Seed_Variance`, `ImageResize+`
+- the enhancer/seed-variance input names + RBG enum option strings all match what we send
+Not yet eyeballed against a real render / A-B vs Z-Image.
 
 ## Prompting Krea 2 (for genStill / our prompt builders)
 Trained on short/medium/long **natural-language** prompts — **longer, detailed prose = best

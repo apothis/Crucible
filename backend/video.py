@@ -27,10 +27,9 @@ Z_IMAGE_VAE = "ae.safetensors"
 # VAE + a Qwen3-VL-4B text encoder (CLIPLoader type "krea2"), run at cfg 1 / ~8 steps / er_sde /
 # simple (distilled "turbo"). Drop-in alternative to Z-Image Turbo for the photoreal still path.
 # fp8 vs mxfp8: the AItrepreneur note says 5000-series GPUs use mxfp8, 4000-series-and-older use fp8 -
-# our 3090 is Ampere, so the fp8 build. Name verified against the OFFICIAL ComfyUI Krea-2 template
-# (Comfy-Org/workflow_templates image_krea2_turbo_t2i.json) = krea2_turbo_fp8_scaled.safetensors.
-# CONFIRM against the box /object_info once the download finishes (50-series users want _mxfp8).
-KREA2_UNET = "krea2_turbo_fp8_scaled.safetensors"     # 3090/Ampere fp8 (official ComfyUI name; 50-series = _mxfp8)
+# our 3090 is Ampere, so the fp8 build. Filename VERIFIED on the box /object_info 2026-06-28 (the
+# AItrepreneur download set ships it as krea2_turbo_fp8.safetensors, NOT the official _scaled name).
+KREA2_UNET = "krea2_turbo_fp8.safetensors"            # 3090/Ampere fp8 (verified on box; 50-series = _mxfp8)
 KREA2_CLIP = "qwen3vl_4b_fp8_scaled.safetensors"      # CLIPLoader type "krea2"
 KREA2_VAE = "qwen_image_vae.safetensors"
 # The turbo LoRA + every number below are taken VERBATIM from the AItrepreneur KREA2_ULTRA_WORKFLOW
