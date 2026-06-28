@@ -2,9 +2,13 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { TimelineEditor } from "./vendor/ltxdirector/ltx_director.js";
 import { type DirectorPayload } from "./mvmodel";
 
-// Imperative handle so Shot Studio can inject a generated/library still as a keyframe via the editor's
-// own add-image path (handleImageUpload uploads to ComfyUI input + places the segment at `frame`).
-export type LtxDirectorHandle = { addImage: (file: File, frame: number) => void };
+// Imperative handle so Shot Studio can drive the editor's OWN media paths: addImage = a keyframe still
+// (handleImageUpload), addVideo = a rendered clip as a video segment (handleVideoUpload) so the editor's
+// play button plays through it on the canvas, the way the timeline editor is meant to be used.
+export type LtxDirectorHandle = {
+  addImage: (file: File, frame: number) => void;
+  addVideo: (file: File, frame: number) => void;
+};
 
 // React wrapper that mounts the vendored (GPL-3) LTXDirector TimelineEditor standalone — no ComfyUI.
 // The editor reads/writes everything through a shim "node" (widgets by name + a properties bag) and
@@ -34,6 +38,10 @@ export const LtxDirectorEditor = forwardRef<LtxDirectorHandle, {
     addImage: (file: File, frame: number) => {
       try { edRef.current?.handleImageUpload([file], frame); }
       catch (e) { console.error("[ShotStudio] addImage failed", e); }
+    },
+    addVideo: (file: File, frame: number) => {
+      try { edRef.current?.handleVideoUpload([file], frame); }
+      catch (e) { console.error("[ShotStudio] addVideo failed", e); }
     },
   }), []);
 

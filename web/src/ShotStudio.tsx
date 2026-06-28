@@ -327,6 +327,21 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     if (!edRef.current) throw new Error("editor not ready");
     edRef.current.addImage(file, Math.max(0, Math.round(kfFrame)));
   }
+  // Load the rendered take into the timeline editor AS A VIDEO SEGMENT (the editor's own Add-Video path),
+  // so the editor's play button plays through it on the canvas — the way the timeline editor is meant to
+  // work. The render reads image keyframes (parseKf ignores video segments), so this doesn't affect re-renders.
+  async function loadResultIntoEditor() {
+    if (!resultClip) { note("Render a take first."); return; }
+    if (!edRef.current) { note("Editor not ready."); return; }
+    setBusy(true); note("Loading rendered take into the editor…");
+    try {
+      const blob = await fetch(`/api/media/${resultClip}`).then((r) => r.blob());
+      const file = new File([blob], `${resultClip}.mp4`, { type: blob.type || "video/mp4" });
+      edRef.current.addVideo(file, 0);
+      note("Loaded into the editor — press its play button to play through it.");
+    } catch (e) { note("Load into editor failed: " + (e as Error).message); }
+    finally { setBusy(false); }
+  }
   async function huntStills() {
     if (!kfPrompt.trim()) { setStatus("Enter a prompt for the keyframe still."); return; }
     setKfBusy(true); setStatus("Hunting 3 stills (full size)…");
@@ -403,20 +418,16 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         </span>
       </div>
 
-      {/* ===================== RENDERED SEGMENT (the finished clip, plays here) ===================== */}
-      {resultClip && (
-        <div className="ss-card" style={{ padding: 8 }}>
-          <div className="mb-1.5 text-[11px] font-semibold text-[var(--color-ink)]">
-            Rendered segment{b.assembledId ? " (continuous take)" : ""} — this is what plays on the timeline
-          </div>
-          <video key={resultClip} src={`/api/media/${resultClip}`} controls loop playsInline
-            className="w-full rounded-lg bg-black" style={{ maxHeight: 360 }} />
-        </div>
-      )}
 
       {/* ===================== TIMELINE EDITOR (vendored LTXDirector, GPL-3) ===================== */}
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
         <div className="ss-card" style={{ padding: 8 }}>
+          {resultClip && (
+            <div className="mb-2 flex items-center gap-2">
+              <GhostButton onClick={loadResultIntoEditor} disabled={busy}>▶ Load rendered take into editor</GhostButton>
+              <span className="text-[10px] text-[var(--color-muted)]">adds the finished clip as a video segment — the editor's play button plays through it</span>
+            </div>
+          )}
           <LtxDirectorEditor ref={edRef} timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
             onChange={(payload) => patch({ director: payload, timelineData: payload.timeline_data })} />
         </div>
