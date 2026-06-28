@@ -24,5 +24,8 @@
   "guitar_soundfont": "",
   "kontakt_vst3_path": "",
   "server_port": 8000,
-  "server_host": "127.0.0.1"
+  "server_host": "127.0.0.1",
+  "still_engine": "zimage",
+  "still_krea2_enhancer": true,
+  "still_krea2_seed_variance": true
 }

@@ -757,13 +757,15 @@ def video_still(p: dict):
     # Engine: explicit request wins; else the app_config default (still_engine), else Z-Image.
     if not (p.get("engine") or "").strip():
         p["engine"] = CFG.get("still_engine", "zimage")
-    # Krea2 optional levers default from app_config unless the request set them (the enhancer
-    # materially improves Krea2 prompt adherence; both need their custom nodes installed on the box).
+    # Krea2 levers default from app_config unless the request set them. Both ship ON to match how
+    # the AItrepreneur workflow is actually run (enhancer for prompt adherence/quality; seed-variance
+    # for image variety). They need their custom nodes installed on the box (ComfyUI-Krea2T-Enhancer,
+    # ComfyUI-RBG-SmartSeedVariance) - turn them off in Settings if the box doesn't have them.
     if (p.get("engine") or "").lower() == "krea2":
         if "enhancer" not in p:
-            p["enhancer"] = bool(CFG.get("still_krea2_enhancer", False))
+            p["enhancer"] = bool(CFG.get("still_krea2_enhancer", True))
         if "seed_variance" not in p:
-            p["seed_variance"] = bool(CFG.get("still_krea2_seed_variance", False))
+            p["seed_variance"] = bool(CFG.get("still_krea2_seed_variance", True))
     try:
         graph, resolved = video_mod.build_still(p)
     except Exception as e:
@@ -5670,12 +5672,12 @@ SETTINGS_FIELDS = [
     {"group": "Engine flags", "key": "still_engine", "type": "select:zimage,krea2",
      "label": "Still image engine",
      "hint": "Default model for photoreal stills · zimage = Z-Image Turbo (default) · krea2 = Krea 2 Ultra (needs the Krea2 models on the box). Takes effect immediately."},
-    {"group": "Engine flags", "key": "still_krea2_enhancer", "type": "bool",
+    {"group": "Engine flags", "key": "still_krea2_enhancer", "type": "bool", "default": True,
      "label": "Krea2: prompt-adherence enhancer",
-     "hint": "ComfyUI-Krea2T-Enhancer (model patch) — stronger prompt adherence + unfilter; the workflow ships it ON. RECOMMENDED for Krea2 quality. Needs the ComfyUI-Krea2T-Enhancer node installed."},
-    {"group": "Engine flags", "key": "still_krea2_seed_variance", "type": "bool",
+     "hint": "ON by default (matches the workflow). ComfyUI-Krea2T-Enhancer (model patch) — stronger prompt adherence + unfilter. Turn OFF only if the ComfyUI-Krea2T-Enhancer node isn't installed on the box."},
+    {"group": "Engine flags", "key": "still_krea2_seed_variance", "type": "bool", "default": True,
      "label": "Krea2: seed variance",
-     "hint": "RBG_Smart_Seed_Variance (conditioning noise) for more composition variety. Optional — our sampler seed already randomizes. Needs the ComfyUI-RBG-SmartSeedVariance node installed."},
+     "hint": "ON by default (matches the workflow). RBG_Smart_Seed_Variance (conditioning noise) for image variety. Turn OFF only if the ComfyUI-RBG-SmartSeedVariance node isn't installed on the box."},
     # API keys ------------------------------------------------------------------
     {"group": "API keys", "key": "lastfm_key", "type": "secret",
      "label": "Last.fm API key",
@@ -5698,7 +5700,7 @@ SETTINGS_TYPES = {f["key"]: f["type"] for f in SETTINGS_FIELDS}
 @app.get("/api/settings")
 def get_settings():
     """Return the curated, self-documenting field list with current values."""
-    return {"fields": [{**f, "value": CFG.get(f["key"], "")} for f in SETTINGS_FIELDS],
+    return {"fields": [{**f, "value": CFG.get(f["key"], f.get("default", ""))} for f in SETTINGS_FIELDS],
             "config_path": _CFG_PATH}
 
 

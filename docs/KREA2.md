@@ -34,21 +34,23 @@ template uses `euler`; the AItrepreneur workflow uses `er_sde` — we match the 
 `lora`/`lora_strength` add a trained character LoRA (model-only) on either path. `turbo_lora:true`
 can also force the turbo LoRA onto the single pass.
 
-## The two optional workflow nodes (now ported)
-Both are CUSTOM nodes the workflow uses; ported as opt-in levers (off by default, controllable from
-Settings → Engine flags; both need their node installed on the box):
+## The two workflow nodes (ported, ON by default for Krea2)
+Both are CUSTOM nodes the workflow uses. They ship **ON by default whenever Krea2 is selected**
+(`still_krea2_enhancer` / `still_krea2_seed_variance` = true in app_config; toggle in Settings →
+Engine flags). Both need their custom node installed on the box — turn the flag OFF if it isn't.
 
 - **Krea2T enhancer** — `ComfyUI-Krea2T-Enhancer` (capitan01R), a **MODEL→MODEL patch**, inputs
   `enabled / strength(0–2) / debug`; the workflow runs it **enabled, strength 1.0, debug false**. It
   scales Krea2's text-fusion *tap layers* (a baked profile with big gains on a few layers + a global
   multiplier) ⇒ **stronger prompt adherence + "unfilter"/quality-dilution bypass** (per the workflow
   note "remove the Safety Filter and improve prompting"). Wired UNET → [LoRAs] → **enhancer** →
-  KSampler. App flag `still_krea2_enhancer` (request: `enhancer`, `enhancer_strength`). **Recommended
-  ON** — it's what makes Krea2 worth using over Z-Image.
+  KSampler. App flag `still_krea2_enhancer` (request: `enhancer`, `enhancer_strength`). **ON by
+  default** — it's what makes Krea2 worth using over Z-Image.
 - **Seed variance** — `RBG_Smart_Seed_Variance` (RamonGuthrie), a **CONDITIONING→CONDITIONING** node
-  that injects controlled noise into the text embedding. The workflow needs it because its KSampler
-  seeds are **fixed** — variety comes from this node. OUR sampler seed already randomizes per call, so
-  it's *extra* composition variety, not required. Workflow widget values (ported verbatim):
+  that injects controlled noise into the text embedding. The workflow ships its KSampler seeds
+  **fixed** (reference/determinism), so variety there comes from this node; we run it ALONGSIDE a
+  non-static sampler seed (`_seed` randomizes per call) — both on, matching how the author actually
+  runs it. **ON by default.** Workflow widget values (ported verbatim):
   preset `🌿 Balanced`, fine_tune 55, model_type `⚙️ Other`, fade `Instant`, noise `Beginning Steps`,
   protect `🚫 None`, direction `🚫 None`, shift_strength 129, schedule `constant`, cutoff_step 8,
   total_steps 20, cutoff_strength 0.0, seed randomized. Wired CLIPTextEncode → **seed-variance** →
