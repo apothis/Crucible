@@ -54,6 +54,13 @@ const POS_PHRASE: Record<string, string> = {
   "fg-right": "in the right foreground, closest to the camera",
   back: "further back in the scene",
 };
+// How LARGE the subject sits in frame (drives placement + the MSR render). Lip-sync needs the face big
+// enough to read at our resolutions, so wide shots are pulled to medium when lip-sync is on.
+const FRAME_SCALE: Record<string, string> = {
+  close: "framed as a tight close-up — head and shoulders, the face large and prominent in frame",
+  medium: "framed as a medium shot — from about the waist up, the face clearly visible",
+  wide: "full body visible, standing in the scene",
+};
 const POS_OPTIONS = [
   { v: "", label: "auto" }, { v: "center", label: "centre" }, { v: "left", label: "left" },
   { v: "right", label: "right" }, { v: "fg-left", label: "front-left" }, { v: "fg-right", label: "front-right" },
@@ -161,6 +168,8 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
   function setLeadPos(pos: string) { patch({ chars: b.chars.map((c, i) => i === 0 ? { ...c, pos } : c) }); }
   function setBandPos(id: string, pos: string) { patch({ bandPos: { ...(b.bandPos || {}), [id]: pos } }); }
   const leadPosPhrase = POS_PHRASE[b.chars[0]?.pos || ""] || "";   // where the MSR-anchored lead stands
+  // how large the subject is framed; lip-sync forces at least a medium so the face reads at our res
+  const subjectScale = () => FRAME_SCALE[(b.lipsync && b.framing === "wide") ? "medium" : (b.framing || "medium")] || FRAME_SCALE.medium;
   // Band recipe (memory: band-shots-were-solo-msr): composite the lead (centre) + named members
   // (gender+role+side) + a mandatory drummer into the scene; that composite IS the MSR background.
   async function composeBand() {
@@ -197,7 +206,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
       // (passing a size makes it generate a fresh scene and ignore the background — the old bug).
       const refs = [b.backgroundId, ...charRefs].filter(Boolean).slice(0, 3);
       const where = leadPosPhrase || "in the scene";
-      const prompt = `Place the person from the reference photo into this exact background scene, standing ${where}, at natural human scale, full body visible, matching the scene's lighting, colour and perspective. Keep the background unchanged. Photorealistic.`;
+      const prompt = `Place the person from the reference photo into this exact background scene, ${subjectScale()}, positioned ${where}, matching the scene's lighting, colour and perspective. Keep the background unchanged. Photorealistic.`;
       const r = await api.videoCharStill({ ref_ids: refs, prompt }) as { job_id: string };
       const url = await waitMedia(r.job_id, (pc) => note(`Placing… ${pc}%`));
       setPlacePreview(url); note("Placement ready — the character is composited into your background.");
@@ -207,7 +216,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
 
   // ---------- STAGE: VIDEO (seed-hunt → pick → finish) ----------
   function renderMsr(seed: number, w: number, h: number) {
-    const prompt = [b.prompt, leadPosPhrase && `the subject is ${leadPosPhrase}`].filter(Boolean).join(". ");
+    const prompt = [b.prompt, subjectScale(), leadPosPhrase && `the subject is ${leadPosPhrase}`].filter(Boolean).join(". ");
     return api.videoLtxMsr({
       subject_ids: subjectIds, background_id: b.backgroundId,
       audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
