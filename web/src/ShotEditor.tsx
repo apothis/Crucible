@@ -61,7 +61,9 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
   stills: LibItem[]; audios: LibItem[]; songAudioId: string; libChars: Character[];
   onClose: () => void;
 }) {
-  const perf = b.renderMode !== "fflf" && b.renderMode !== "i2v";   // performance (MSR) vs B-roll (FFLF push-in)
+  // Performance = a character performs (MSR identity / S2V lip-sync). Everything else (keyframe, fflf, i2v)
+  // is scenic B-roll with no cast, authored through the FFLF push-in path.
+  const perf = b.renderMode === "msr" || b.renderMode === "s2v";
   const STAGES: string[] = perf
     ? ["type", "scene", "cast", "placement", "video", "result"]
     : ["type", "scene", "video", "result"];
