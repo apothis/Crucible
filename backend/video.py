@@ -1766,8 +1766,12 @@ def build_ltx_fflf(p, first_src, last_src, vocal_ref=None):
                    "inputs": {"noise": ["58", 0], "guider": ["60", 0], "sampler": ["34", 0],
                               "sigmas": ["59", 0], "latent_image": ["57", 0]}}
         g["62"] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["61", 0]}}
+        # CROP THE STAGE-2 GUIDES (56), not stage-1 (31): the upsampler runs on the already-cropped
+        # stage-1 latent (39) and stage 2 RE-ADDS guides 55/56, so cropping must reference 56's
+        # conditioning. Using 31 here left the 2 re-added guide frames in -> output ran +16 frames
+        # (the trailing last-anchor guide frame = the warped tail). Mirrors stage-1's 39<-31 crop.
         g["63"] = {"class_type": "LTXVCropGuides",
-                   "inputs": {"positive": ["31", 0], "negative": ["31", 1], "latent": ["62", 0]}}
+                   "inputs": {"positive": ["56", 0], "negative": ["56", 1], "latent": ["62", 0]}}
         g["64"] = {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
                    "inputs": {"vae": ["6", 0], "latents": ["63", 2], "spatial_tiles": 4, "spatial_overlap": 4,
                               "temporal_tile_length": 48, "temporal_overlap": 8, "last_frame_fix": False,
