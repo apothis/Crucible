@@ -1509,9 +1509,11 @@ def build_ltx_keyframe(p, keyframes):
                "inputs": {"noise": ["14", 0], "guider": ["25", 0], "sampler": ["15", 0],
                           "sigmas": ["24", 0], "latent_image": ["23", 0]}},
         "27": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["26", 0]}},
-        # final crop uses the stage-1 guide conditioning (same keyframe count -> same crop), as the example does
+        # Crop the STAGE-2 guides (22), not stage-1 (12): stage 2 re-adds guides on the upsampled latent
+        # via node 22, so the crop must use 22's conditioning. Using 12 left the re-added guide frames in
+        # (same bug as the FFLF refine: output ran long with a warped tail). Mirrors stage-1's 20<-12 crop.
         "28": {"class_type": "LTXVCropGuides",
-               "inputs": {"positive": ["12", 0], "negative": ["12", 1], "latent": ["27", 0]}},
+               "inputs": {"positive": ["22", 0], "negative": ["22", 1], "latent": ["27", 0]}},
         # ---- decode (tiled for VRAM safety) + mux ----
         "29": {"class_type": "LTXVSpatioTemporalTiledVAEDecode",
                "inputs": {"vae": ["6", 0], "latents": ["28", 2], "spatial_tiles": 4, "spatial_overlap": 4,
