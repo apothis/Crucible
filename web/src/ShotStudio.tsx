@@ -111,6 +111,9 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
   const selectedTakeOf = (p: ChainPiece) => p.takes.find((t) => t.id === p.selectedTakeId) || p.takes[0];
   const lastPiece = pieces[pieces.length - 1];
   const lastClip = lastPiece && bareId(selectedTakeOf(lastPiece)?.clipId);
+  // the rendered output to preview at the top: the block's clip (single take or assembled chain), else
+  // fall back to a single piece's selected take (covers the case where clipId hasn't synced yet).
+  const resultClip = bareId(b.clipId) || (pieces.length === 1 ? bareId(selectedTakeOf(pieces[0])?.clipId) : "");
 
   // base-shot anchors live on the block; extends derive their first anchor from the prior tail.
   const fflfReady = !!parseKf(b.director?.timeline_data).firstName;   // FFLF anchors come from the timeline now
@@ -399,6 +402,17 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
           {pieces.length} piece{pieces.length === 1 ? "" : "s"} · ~{totalSecs.toFixed(1)}s take
         </span>
       </div>
+
+      {/* ===================== RENDERED SEGMENT (the finished clip, plays here) ===================== */}
+      {resultClip && (
+        <div className="ss-card" style={{ padding: 8 }}>
+          <div className="mb-1.5 text-[11px] font-semibold text-[var(--color-ink)]">
+            Rendered segment{b.assembledId ? " (continuous take)" : ""} — this is what plays on the timeline
+          </div>
+          <video key={resultClip} src={`/api/media/${resultClip}`} controls loop playsInline
+            className="w-full rounded-lg bg-black" style={{ maxHeight: 360 }} />
+        </div>
+      )}
 
       {/* ===================== TIMELINE EDITOR (vendored LTXDirector, GPL-3) ===================== */}
       {["fflf", "msr", "keyframe"].includes(b.renderMode) && (
