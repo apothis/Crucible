@@ -214,8 +214,12 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
       const k = await api.videoStill({ prompt: kreaPrompt, engine: "krea2", width: b.width, height: b.height }) as { job_id: string };
       const kurl = await waitMedia(k.job_id, (pc) => note(`Step 1/2 — Krea… ${pc}%`));
       note("Step 2/2 — Qwen locking the character's identity…");
-      const swap = "Replace the person in the first image with the exact person shown in the reference photos — same face and identity, and match their clothing to the reference — while keeping the pose, expression, position in frame, framing and the entire background unchanged. Photorealistic, natural skin texture.";
-      const q = await api.videoCharStill({ ref_ids: [bareId(kurl), ...charRefs].slice(0, 3), prompt: swap }) as { job_id: string };
+      // Canonical Qwen-Image-Edit swap: reference the images EXPLICITLY (image 1 = the scene to keep,
+      // image 2 = the face, image 3 = the outfit), DON'T describe the face (the ref drives it), and
+      // keep image 1's colours (Qwen otherwise pushes saturation — the "fluorescent greenery"). No
+      // width/height so the builder uses VAEEncode(image1) and preserves the scene. cfg 3 per the template.
+      const swap = "Replace the person in image 1 with the exact person in image 2; give them the outfit shown in image 3. Keep image 1's background, colours, lighting, pose, framing and composition exactly unchanged. Photorealistic, natural skin texture.";
+      const q = await api.videoCharStill({ ref_ids: [bareId(kurl), ...charRefs].slice(0, 3), prompt: swap, cfg: 3 }) as { job_id: string };
       const qurl = await waitMedia(q.job_id, (pc) => note(`Step 2/2 — Qwen… ${pc}%`));
       setPlacePreview(qurl);
       note("Placement ready — character in-scene at the right framing. Use it as the shot's background to render from it.");
