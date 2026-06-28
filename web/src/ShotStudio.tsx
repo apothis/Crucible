@@ -68,6 +68,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
 }) {
   const [busy, setBusy] = useState(false);
   const [pushKeep, setPushKeep] = useState(0.72);   // FFLF push-in: fraction of the opening still kept in the end crop
+  const [viewResult, setViewResult] = useState<boolean>(!!b.clipId);   // editor view: false = edit inputs (keyframes), true = play the rendered clip
   const pieces = b.pieces || [];
   // transient hunt state: the 3 half-res drafts for the piece currently being hunted
   const [hunt, setHunt] = useState<{ kind: "fflf" | "video"; pieceLabel: string; forExtend: boolean; drafts: { jobId: string; seed: number; url?: string; pct?: number; pass?: number }[] } | null>(null);
@@ -257,7 +258,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         const take: Take = { id: rid(), clipId, stage1Seed, draft: false, label: `seed ${stage1Seed}` };
         if (pieces.length === 0) setPieces([{ id: rid(), lane, label: "Base shot", takes: [take], selectedTakeId: take.id }]);
         else setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
-        setHunt(null); note("Finished — added as a take.");
+        setHunt(null); setViewResult(true); note("Finished — added as a take. Showing the result; press play.");
       } catch (e) { note("Finish failed: " + (e as Error).message); }
       finally { setBusy(false); }
       return;
@@ -296,7 +297,7 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         // re-finish the base piece (multiroll) -> add a take to piece 0
         setPieces(pieces.map((pc, i) => i === 0 ? { ...pc, takes: [...pc.takes, take], selectedTakeId: take.id } : pc));
       }
-      setHunt(null); note("Finished. Added as a take — pick Extend to continue the take.");
+      setHunt(null); setViewResult(true); note("Finished. Showing the result; press play. Pick Extend to continue.");
     } catch (e) { note("Finish failed: " + (e as Error).message); }
     finally { setBusy(false); }
   }
@@ -327,21 +328,15 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
     if (!edRef.current) throw new Error("editor not ready");
     edRef.current.addImage(file, Math.max(0, Math.round(kfFrame)));
   }
-  // Load the rendered take into the timeline editor AS A VIDEO SEGMENT (the editor's own Add-Video path),
-  // so the editor's play button plays through it on the canvas — the way the timeline editor is meant to
-  // work. The render reads image keyframes (parseKf ignores video segments), so this doesn't affect re-renders.
-  async function loadResultIntoEditor() {
-    if (!resultClip) { note("Render a take first."); return; }
-    if (!edRef.current) { note("Editor not ready."); return; }
-    setBusy(true); note("Loading rendered take into the editor…");
-    try {
-      const blob = await fetch(`/api/media/${resultClip}`).then((r) => r.blob());
-      const file = new File([blob], `${resultClip}.mp4`, { type: blob.type || "video/mp4" });
-      edRef.current.addVideo(file, 0);
-      note("Loaded into the editor — press its play button to play through it.");
-    } catch (e) { note("Load into editor failed: " + (e as Error).message); }
-    finally { setBusy(false); }
-  }
+  // A read-only editor timeline that is JUST the rendered clip as one video segment from frame 0, so the
+  // editor's play button plays through the result cleanly (separate "View result" view, not mixed with the
+  // input stills). It's a view only — never written back, so it can't pollute the render inputs.
+  const resultTimeline = () => JSON.stringify({
+    global_prompt: "",
+    segments: [{ id: "result", type: "video", start: 0, length: b.frames,
+                 _blobUrl: `/api/media/${resultClip}`, imageFile: `${resultClip}.mp4` }],
+    audioSegments: [],
+  });
   async function huntStills() {
     if (!kfPrompt.trim()) { setStatus("Enter a prompt for the keyframe still."); return; }
     setKfBusy(true); setStatus("Hunting 3 stills (full size)…");
@@ -424,12 +419,21 @@ export function ShotStudio({ block: b, idx, patch, stills, audios, songAudioId, 
         <div className="ss-card" style={{ padding: 8 }}>
           {resultClip && (
             <div className="mb-2 flex items-center gap-2">
-              <GhostButton onClick={loadResultIntoEditor} disabled={busy}>▶ Load rendered take into editor</GhostButton>
-              <span className="text-[10px] text-[var(--color-muted)]">adds the finished clip as a video segment — the editor's play button plays through it</span>
+              <GhostButton onClick={() => setViewResult(false)} disabled={!viewResult}>Edit inputs</GhostButton>
+              <GhostButton onClick={() => setViewResult(true)} disabled={viewResult}>{"View result ▶"}</GhostButton>
+              <span className="text-[10px] text-[var(--color-muted)]">
+                {viewResult ? "playing the rendered clip — press the editor's play button" : "authoring keyframes / prompts"}
+              </span>
             </div>
           )}
-          <LtxDirectorEditor ref={edRef} timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
-            onChange={(payload) => patch({ director: payload, timelineData: payload.timeline_data })} />
+          {viewResult && resultClip ? (
+            // read-only playback view: just the rendered clip; edits here are ignored (onChange no-op)
+            <LtxDirectorEditor key={`result:${resultClip}`} timelineData={resultTimeline()} frames={b.frames} fps={b.fps}
+              onChange={() => { /* result view is read-only */ }} />
+          ) : (
+            <LtxDirectorEditor key={`edit:${b.id}`} ref={edRef} timelineData={b.director?.timeline_data} frames={b.frames} fps={b.fps}
+              onChange={(payload) => patch({ director: payload, timelineData: payload.timeline_data })} />
+          )}
         </div>
       )}
 
