@@ -45,6 +45,12 @@ KREA2_T2I = {"sampler": "er_sde", "scheduler": "simple", "steps": 8, "cfg": 1.0,
 # euler/simple/4/cfg1/denoise 0.3. Both passes use the turbo LoRA @ 0.2.
 KREA2_COMBO_P1 = {"sampler": "er_sde", "scheduler": "simple", "steps": 8, "cfg": 1.0, "denoise": 1.0}
 KREA2_COMBO_P2 = {"sampler": "euler", "scheduler": "simple", "steps": 4, "cfg": 1.0, "denoise": 0.3}
+# Photorealism emphasis appended to EVERY Krea2 prompt (user: "emphasize photorealism in all prompts").
+# Tasteful, scene-safe cues per Krea2 prompting guidance (real medium + true-to-life detail) - NOT the
+# gloss-inducing "8k/hyperdetailed/masterpiece" spam that reintroduces the AI look. Pass photoreal=False
+# to skip for a specific render.
+KREA2_PHOTOREAL = ("photorealistic, ultra-realistic, cinematic, true-to-life detail, natural lighting, "
+                   "realistic textures, shot on a full-frame camera, no illustration, no CGI")
 
 WAN_TI2V = "wan2.2_ti2v_5B_fp16.safetensors"
 WAN_CLIP = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"   # CLIPLoader type "wan"
@@ -190,6 +196,8 @@ def build_krea2_still(p):
     enh_strength = float(p.get("enhancer_strength", 1.0))   # node range 0..2; workflow default 1.0
     seed_variance = bool(p.get("seed_variance"))
     prompt = (p.get("prompt") or "").strip()
+    if prompt and p.get("photoreal", True):           # emphasize photorealism on every Krea2 still
+        prompt = f"{prompt}. {KREA2_PHOTOREAL}"
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": KREA2_CLIP, "type": "krea2", "device": "default"}},

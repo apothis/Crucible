@@ -63,10 +63,12 @@ backgrounds, character-identity stills, keyframe stills). The reference-driven `
 (Qwen-Image-Edit, band composites) is unchanged.
 
 ## Switching it on
-- Per-request: `POST /api/video/still {engine:"krea2", ...}`.
-- Global default: **Settings → Engine flags → "Still image engine" = krea2** (writes
-  `still_engine` to app_config.json; read per-request, so it applies WITHOUT a restart).
-- Default stays `zimage` until Krea 2 is proven better (optional-additions rule).
+- **DEFAULT as of 2026-06-28**: `still_engine = krea2` (A/B beat Z-Image on photorealism, esp.
+  faces — see `.mvwork/krea_ab/krea2_vs_zimage.pdf`). Enhancer + seed-variance also default ON.
+- Per-request override: `POST /api/video/still {engine:"zimage"|"krea2", ...}`.
+- Toggle in **Settings → Engine flags** (applies without a restart).
+- **Photorealism is emphasized on every Krea2 prompt** — `KREA2_PHOTOREAL` (tasteful real-medium
+  cues, no "8k/masterpiece" gloss) is appended in `build_krea2_still`. Pass `photoreal:false` to skip.
 
 ## ✓ Verified on the box (/object_info, 2026-06-28)
 - UNET `krea2_turbo_fp8.safetensors` (the AItrepreneur download set name — NOT the official `_scaled`)
