@@ -33,7 +33,19 @@ Z_IMAGE_VAE = "ae.safetensors"
 KREA2_UNET = "krea2_turbo_fp8_scaled.safetensors"     # 3090/Ampere fp8 (official ComfyUI name; 50-series = _mxfp8)
 KREA2_CLIP = "qwen3vl_4b_fp8_scaled.safetensors"      # CLIPLoader type "krea2"
 KREA2_VAE = "qwen_image_vae.safetensors"
-KREA2_TURBO_LORA = "krea2_turbo_lora_rank_64_bf16.safetensors"   # optional extra turbo LoRA (wf uses str 0.2)
+# The turbo LoRA + every number below are taken VERBATIM from the AItrepreneur KREA2_ULTRA_WORKFLOW
+# v2 (don't change them without re-reading the workflow). The single-pass "TEXT TO IMAGE" path runs
+# the model with NO LoRA (its Power Lora Loader is empty); ONLY the "TWO TIMES COMBO" path enables
+# the turbo LoRA, on BOTH passes at strength 0.2 (Power Lora Loaders 174 + 180).
+KREA2_TURBO_LORA = "krea2_turbo_lora_rank_64_bf16.safetensors"
+KREA2_TURBO_LORA_STRENGTH = 0.2
+# TEXT TO IMAGE (subgraph 21ffbd86, KSampler 75): er_sde / simple / 8 steps / cfg 1 / denoise 1.
+KREA2_T2I = {"sampler": "er_sde", "scheduler": "simple", "steps": 8, "cfg": 1.0, "denoise": 1.0}
+# TWO TIMES COMBO: pass1 (KSampler 273) = er_sde/simple/8/cfg1/denoise1 on EmptySD3LatentImage;
+# decode -> ImageResize+ (lanczos, keep proportion) -> VAEEncode; pass2 (KSampler 265) =
+# euler/simple/4/cfg1/denoise 0.3. Both passes use the turbo LoRA @ 0.2.
+KREA2_COMBO_P1 = {"sampler": "er_sde", "scheduler": "simple", "steps": 8, "cfg": 1.0, "denoise": 1.0}
+KREA2_COMBO_P2 = {"sampler": "euler", "scheduler": "simple", "steps": 4, "cfg": 1.0, "denoise": 0.3}
 
 WAN_TI2V = "wan2.2_ti2v_5B_fp16.safetensors"
 WAN_CLIP = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"   # CLIPLoader type "wan"
@@ -149,49 +161,96 @@ def _seed(p):
 
 # ---------------------------------------------------------------- Z-Image still
 def build_krea2_still(p):
-    """Text-to-image photoreal still on Krea 2 Ultra (turbo). Faithful port of the t2i path in
-    AItrepreneur's KREA2_ULTRA_WORKFLOW v2: UNETLoader(krea2_turbo) -> [optional turbo LoRA] ->
-    KSampler(8 steps, cfg 1, er_sde/simple, denoise 1) with CLIPTextEncode positive and a
-    ConditioningZeroOut negative (cfg 1, so no real negative). Qwen3-VL-4B CLIP (type "krea2") +
-    Qwen-Image VAE. No ModelSamplingAuraFlow (unlike Z-Image). p: {prompt, seed?, width?, height?,
-    steps?, cfg?, lora?/lora_strength? (a character LoRA), turbo_lora? (bool, adds the rank-64
-    turbo LoRA at 0.2)}. Output: SaveImage -> videogen/still."""
+    """Text-to-image photoreal still on Krea 2 Ultra (turbo). FAITHFUL port of AItrepreneur's
+    KREA2_ULTRA_WORKFLOW v2 (numbers verbatim - see the KREA2_* constants above). Qwen3-VL-4B CLIP
+    (type "krea2") + Qwen-Image VAE; NO ModelSamplingAuraFlow (unlike Z-Image); negative is a
+    ConditioningZeroOut of the positive (cfg 1, so no real negative).
+
+    Two modes (workflow's two paths):
+      - default single pass ("TEXT TO IMAGE"): no LoRA, KSampler er_sde/8/cfg1/denoise1 on
+        EmptyLatentImage.
+      - two_pass=True ("TWO TIMES COMBO"): turbo LoRA @0.2 on BOTH passes; pass1 er_sde/8/denoise1
+        on EmptySD3LatentImage -> VAEDecode -> ImageResize+ (lanczos, keep proportion) -> VAEEncode
+        -> pass2 euler/4/denoise0.3. Quality path; ~2x slower.
+
+    p: {prompt, seed?, width?, height?, steps?(override pass-1 steps), cfg?, two_pass?(bool),
+    turbo_lora?(bool, force the turbo LoRA on the single pass too), lora?/lora_strength? (a trained
+    character LoRA, model-only)}. Output: SaveImage -> videogen/still."""
     seed = _seed(p)
-    w = int(p.get("width", 1024))
-    h = int(p.get("height", 1024))
-    steps = int(p.get("steps", 8))
-    cfg = float(p.get("cfg", 1.0))
+    w = int(p.get("width", 1920))                   # workflow default canvas (EmptyLatentImage 76 = 1920x1080)
+    h = int(p.get("height", 1080))
+    cfg = float(p.get("cfg", KREA2_T2I["cfg"]))
+    two_pass = bool(p.get("two_pass"))
     prompt = (p.get("prompt") or "").strip()
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": KREA2_CLIP, "type": "krea2", "device": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": KREA2_VAE}},
-    }
-    model_src = ["1", 0]
-    nid = 16
-    if p.get("turbo_lora"):                         # the workflow's extra rank-64 turbo LoRA (str 0.2)
-        g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
-                       "inputs": {"model": model_src, "lora_name": KREA2_TURBO_LORA, "strength_model": 0.2}}
-        model_src = [str(nid), 0]; nid += 1
-    if p.get("lora"):                               # optional trained character LoRA -> identity
-        g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
-                       "inputs": {"model": model_src, "lora_name": p["lora"], "strength_model": float(p.get("lora_strength", 1.0))}}
-        model_src = [str(nid), 0]; nid += 1
-    g.update({
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},   # negative = zeroed pos (cfg 1)
-        # Both the official ComfyUI template AND the AItrepreneur workflow use EmptyLatentImage here (not SD3).
-        "7": {"class_type": "EmptyLatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+    }
+
+    def _model_chain(use_turbo):
+        """Build the model path off the UNET: [turbo LoRA @0.2] then [optional character LoRA]."""
+        src = ["1", 0]; nid = 30
+        if use_turbo:                               # combo path = turbo LoRA on (str 0.2, model-only)
+            g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
+                           "inputs": {"model": src, "lora_name": KREA2_TURBO_LORA, "strength_model": KREA2_TURBO_LORA_STRENGTH}}
+            src = [str(nid), 0]; nid += 1
+        if p.get("lora"):                           # optional trained character LoRA -> identity
+            g[str(nid)] = {"class_type": "LoraLoaderModelOnly",
+                           "inputs": {"model": src, "lora_name": p["lora"], "strength_model": float(p.get("lora_strength", 1.0))}}
+            src = [str(nid), 0]; nid += 1
+        return src
+
+    if not two_pass:
+        model_src = _model_chain(bool(p.get("turbo_lora")))
+        s = KREA2_T2I
+        steps = int(p.get("steps", s["steps"]))
+        g.update({
+            # Single-pass t2i uses EmptyLatentImage (both the official template + workflow subgraph 76).
+            "7": {"class_type": "EmptyLatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+            "8": {"class_type": "KSampler",
+                  "inputs": {"model": model_src, "seed": seed, "steps": steps, "cfg": cfg,
+                             "sampler_name": s["sampler"], "scheduler": s["scheduler"],
+                             "positive": ["5", 0], "negative": ["6", 0],
+                             "latent_image": ["7", 0], "denoise": s["denoise"]}},
+            "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+            "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "videogen/still"}},
+        })
+        return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
+                   "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": False, "kind": "image"}
+
+    # ---- TWO TIMES COMBO (quality path): turbo LoRA on both passes ----
+    model_src = _model_chain(True)                  # combo always enables the turbo LoRA
+    p1, p2 = KREA2_COMBO_P1, KREA2_COMBO_P2
+    p1_steps = int(p.get("steps", p1["steps"]))
+    g.update({
+        # pass 1 (workflow's combo uses EmptySD3LatentImage 266)
+        "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
         "8": {"class_type": "KSampler",
-              "inputs": {"model": model_src, "seed": seed, "steps": steps, "cfg": cfg,
-                         "sampler_name": "er_sde", "scheduler": "simple",
+              "inputs": {"model": model_src, "seed": seed, "steps": p1_steps, "cfg": cfg,
+                         "sampler_name": p1["sampler"], "scheduler": p1["scheduler"],
                          "positive": ["5", 0], "negative": ["6", 0],
-                         "latent_image": ["7", 0], "denoise": 1.0}},
+                         "latent_image": ["7", 0], "denoise": p1["denoise"]}},
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
-        "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "videogen/still"}},
+        # decode -> resize (ImageResize+ : lanczos, keep proportion, condition always) -> re-encode
+        "11": {"class_type": "ImageResize+",
+               "inputs": {"image": ["9", 0], "width": w, "height": h, "interpolation": "lanczos",
+                          "method": "keep proportion", "condition": "always", "multiple_of": 0}},
+        "12": {"class_type": "VAEEncode", "inputs": {"pixels": ["11", 0], "vae": ["3", 0]}},
+        # pass 2 = refine at denoise 0.3 (euler / 4 steps), SAME conditioning, decoupled seed
+        "13": {"class_type": "KSampler",
+               "inputs": {"model": model_src, "seed": random.randint(0, 2**31 - 1), "steps": p2["steps"], "cfg": cfg,
+                          "sampler_name": p2["sampler"], "scheduler": p2["scheduler"],
+                          "positive": ["5", 0], "negative": ["6", 0],
+                          "latent_image": ["12", 0], "denoise": p2["denoise"]}},
+        "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}},
+        "15": {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "videogen/still"}},
     })
-    return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
-               "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "kind": "image"}
+    return g, {"seed": seed, "width": w, "height": h, "steps": p1_steps, "cfg": cfg,
+               "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": True,
+               "turbo_lora": KREA2_TURBO_LORA, "kind": "image"}
 
 
 def build_still(p):

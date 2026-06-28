@@ -16,12 +16,24 @@ and the AItrepreneur KREA2_ULTRA_WORKFLOW v2 the user is installing:
 - CLIPLoader `qwen3vl_4b_fp8_scaled.safetensors`, **type `krea2`**
 - VAELoader `qwen_image_vae.safetensors`
 - CLIPTextEncode (positive) → **ConditioningZeroOut** as the negative (cfg 1 ⇒ no real negative)
-- **EmptyLatentImage** (both canonical workflows use this, not EmptySD3LatentImage)
-- KSampler: **8 steps, cfg 1, er_sde, simple, denoise 1** (official template uses `euler`; the
-  AItrepreneur workflow uses `er_sde` — we match the user's workflow; both are fine)
 - No ModelSamplingAuraFlow / shift node (unlike our Z-Image path)
-- Optional: `turbo_lora` flag adds `krea2_turbo_lora_rank_64_bf16` @ 0.2; `lora`/`lora_strength`
-  for a trained character LoRA.
+
+All numbers are taken VERBATIM from the workflow (the `KREA2_*` constants in video.py). The builder
+reproduces the workflow's TWO paths:
+
+**1. Single pass — "TEXT TO IMAGE" (default).** Its Power Lora Loader is EMPTY, so **no LoRA**.
+`EmptyLatentImage` + KSampler **er_sde / simple / 8 / cfg 1 / denoise 1**. (The official ComfyUI
+template uses `euler`; the AItrepreneur workflow uses `er_sde` — we match the user's workflow.)
+
+**2. Two pass — "TWO TIMES COMBO"** (`two_pass:true`, quality path, ~2× slower). The turbo LoRA
+`krea2_turbo_lora_rank_64_bf16` @ **0.2** is enabled on **both** passes (Power Lora Loaders 174+180):
+- pass 1: `EmptySD3LatentImage` + KSampler **er_sde / 8 / denoise 1**
+- → VAEDecode → **ImageResize+** (lanczos, keep proportion, condition always) → VAEEncode
+- pass 2: KSampler **euler / 4 / denoise 0.3** (refine), decoupled seed
+
+`lora`/`lora_strength` add a trained character LoRA (model-only) on either path. `turbo_lora:true`
+can also force the turbo LoRA onto the single pass. The img2img path (subgraph 116: euler/8/denoise
+0.4) and the seed-variance / sharpen / grain / Krea2T-Enhancer nodes are NOT ported (optional polish).
 
 Scope: replaces ONLY the plain text→image still path (`/api/video/still` → genStill scene
 backgrounds, character-identity stills, keyframe stills). The reference-driven `char_still`
