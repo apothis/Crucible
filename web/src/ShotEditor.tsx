@@ -63,16 +63,18 @@ const FRAME_SCALE: Record<string, string> = {
 };
 // Prompt-driven camera moves for B-roll (the dev/non-distilled model executes these well; the distilled
 // model ignores them). Animates the Scene still via i2v — no keyframes/anchors, just the move + action.
+// lateral = a non-zoom move (pan/tilt/orbit/crane): LTX i2v defaults to a push-in, so for these we
+// add an anti-zoom negative to let the real move show. push-in/pull-out/static are dolly/none (no anti-zoom).
 const CAMERA_MOVES = [
-  { v: "push-in", label: "Push in", phrase: "the camera slowly and smoothly pushes in toward the subject" },
-  { v: "pull-out", label: "Pull out", phrase: "the camera slowly pulls back, revealing more of the scene" },
-  { v: "pan-left", label: "Pan left", phrase: "the camera slowly pans to the left across the scene" },
-  { v: "pan-right", label: "Pan right", phrase: "the camera slowly pans to the right across the scene" },
-  { v: "tilt-up", label: "Tilt up", phrase: "the camera slowly tilts upward" },
-  { v: "tilt-down", label: "Tilt down", phrase: "the camera slowly tilts downward" },
-  { v: "orbit", label: "Orbit", phrase: "the camera slowly orbits around the subject" },
-  { v: "crane-up", label: "Crane up", phrase: "the camera slowly cranes upward over the scene" },
-  { v: "static", label: "Static", phrase: "the camera is locked off and perfectly still" },
+  { v: "push-in", label: "Push in", phrase: "the camera slowly and smoothly pushes in toward the subject", lateral: false },
+  { v: "pull-out", label: "Pull out", phrase: "the camera slowly pulls back away from the subject, revealing more of the scene around it", lateral: false },
+  { v: "pan-left", label: "Pan left", phrase: "the camera pans to the left, sweeping horizontally across the scene, the view sliding sideways", lateral: true },
+  { v: "pan-right", label: "Pan right", phrase: "the camera pans to the right, sweeping horizontally across the scene, the view sliding sideways", lateral: true },
+  { v: "tilt-up", label: "Tilt up", phrase: "the camera tilts upward, the framing rising to look up", lateral: true },
+  { v: "tilt-down", label: "Tilt down", phrase: "the camera tilts downward, the framing lowering to look down", lateral: true },
+  { v: "orbit", label: "Orbit", phrase: "the camera arcs sideways around the subject, the viewpoint rotating around it, strong parallax as nearer and farther elements shift", lateral: true },
+  { v: "crane-up", label: "Crane up", phrase: "the camera cranes upward, rising vertically over the scene", lateral: true },
+  { v: "static", label: "Static", phrase: "the camera is locked off and perfectly still", lateral: false },
 ];
 const POS_OPTIONS = [
   { v: "", label: "auto" }, { v: "center", label: "centre" }, { v: "left", label: "left" },
@@ -244,9 +246,14 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
   // (distilled ignores motion). No anchors/keyframes — just the move + action.
   function renderCamera(seed: number, w: number, h: number) {
     const mv = CAMERA_MOVES.find((m) => m.v === (b.brollCamera || "push-in")) || CAMERA_MOVES[0];
-    const prompt = [mv.phrase, CALM_POS, b.prompt?.trim()].filter(Boolean).join(". ");
+    // For lateral moves, DON'T add the calm/still cue (it dampens motion into a zoom) and DO suppress
+    // LTX's default push-in via the negative. Dolly/static moves keep the calm cue, no anti-zoom.
+    const prompt = [mv.phrase, mv.lateral ? "smooth continuous cinematic camera motion, the viewpoint moving through the scene" : CALM_POS, b.prompt?.trim()].filter(Boolean).join(". ");
+    const negative = mv.lateral
+      ? "zoom, zoom in, push in, dolly in, static camera, locked off camera, motionless, still frame, " + CALM_NEG
+      : undefined;
     return api.videoLtxI2V({
-      still_id: b.backgroundId, prompt, width: w, height: h, frames: b.frames, fps: b.fps, seed,
+      still_id: b.backgroundId, prompt, negative, width: w, height: h, frames: b.frames, fps: b.fps, seed,
       nondistilled: true, steps: stepsVal,   // camera moves only work on the dev model
     }) as Promise<{ job_id: string }>;
   }
