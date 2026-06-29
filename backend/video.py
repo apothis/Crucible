@@ -1062,6 +1062,11 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     s2_seed = (int(p["stage2_seed"]) if p.get("stage2_seed") not in (None, "", 0, "0")
                else random.randint(0, 2**31 - 1))
     lat_w, lat_h = (max(32, (w // 2 // 32) * 32), max(32, (h // 2 // 32) * 32)) if two_stage else (w, h)
+    # The MSR reference frames must be the SAME size as the latent they're concatenated into - a full-res
+    # ref forced into the half-res stage-1 latent is the size mismatch behind the two-stage grey-wash. So
+    # stage-1/single-stage sizes LiconMSR to its latent (half in two-stage); the two-stage refine builds
+    # its OWN full-res LiconMSR (node 49) for the upsampled full-res latent.
+    s1_ref_w, s1_ref_h = (lat_w, lat_h) if two_stage else (ref_w, ref_h)
     # Opt-in CAMERA-CONTROL LoRA (Lightricks LTX-2 camera pack: dolly in/out/left/right, jib up/down,
     # static). A plain additive LoRA that OWNS the camera move - the official guidance is to drive the
     # camera with the LoRA and let the PROMPT describe only the scene (prompt-only camera cues give
@@ -1126,7 +1131,7 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         "12": {"class_type": "LTX2_NAG",
                "inputs": {"model": ["9", 0], "nag_scale": 11.0, "nag_alpha": 0.25, "nag_tau": 2.5}},
         "13": {"class_type": "LiconMSR",
-               "inputs": {"width": ref_w, "height": ref_h, "frame_count": ref_frames, "background": ["35", 0]}},
+               "inputs": {"width": s1_ref_w, "height": s1_ref_h, "frame_count": ref_frames, "background": ["35", 0]}},
         "14": {"class_type": "LTXAddVideoICLoRAGuide",
                "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
                           "latent": ["8", 0], "image": ["13", 0], "frame_idx": 0,
@@ -1209,10 +1214,16 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         g["50"] = {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": LTX_SPATIAL_UPSCALER}}
         g["51"] = {"class_type": "LTXVLatentUpsampler",
                    "inputs": {"samples": ["23", 2], "upscale_model": ["50", 0], "vae": ["6", 0]}}
-        # re-add the MSR IC-LoRA guide at full res on the upsampled latent (reuse LiconMSR node 13)
+        # FULL-RES LiconMSR for the refine: node 13 is sized to the HALF-res stage-1 latent, so the
+        # upsampled full-res refine latent needs its own full-res ref to stay size-matched.
+        g["49"] = {"class_type": "LiconMSR",
+                   "inputs": {"width": w, "height": h, "frame_count": ref_frames, "background": ["35", 0]}}
+        for i, _r in enumerate(subs):
+            g["49"]["inputs"][str(i + 1)] = [str(30 + i), 0]
+        # re-add the MSR IC-LoRA guide at full res on the upsampled latent (full-res LiconMSR node 49)
         g["52"] = {"class_type": "LTXAddVideoICLoRAGuide",
                    "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
-                              "latent": ["51", 0], "image": ["13", 0], "frame_idx": 0,
+                              "latent": ["51", 0], "image": ["49", 0], "frame_idx": 0,
                               "strength": guide_str, "latent_downscale_factor": 1.0, "crop": "center",
                               "use_tiled_encode": False, "tile_size": 256, "tile_overlap": 64}}
         g["53"] = {"class_type": "LTXVConcatAVLatent",
