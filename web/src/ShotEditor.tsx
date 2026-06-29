@@ -61,6 +61,19 @@ const FRAME_SCALE: Record<string, string> = {
   medium: "framed as a medium shot — from about the waist up, the face clearly visible",
   wide: "full body visible, standing in the scene",
 };
+// Prompt-driven camera moves for B-roll (the dev/non-distilled model executes these well; the distilled
+// model ignores them). Animates the Scene still via i2v — no keyframes/anchors, just the move + action.
+const CAMERA_MOVES = [
+  { v: "push-in", label: "Push in", phrase: "the camera slowly and smoothly pushes in toward the subject" },
+  { v: "pull-out", label: "Pull out", phrase: "the camera slowly pulls back, revealing more of the scene" },
+  { v: "pan-left", label: "Pan left", phrase: "the camera slowly pans to the left across the scene" },
+  { v: "pan-right", label: "Pan right", phrase: "the camera slowly pans to the right across the scene" },
+  { v: "tilt-up", label: "Tilt up", phrase: "the camera slowly tilts upward" },
+  { v: "tilt-down", label: "Tilt down", phrase: "the camera slowly tilts downward" },
+  { v: "orbit", label: "Orbit", phrase: "the camera slowly orbits around the subject" },
+  { v: "crane-up", label: "Crane up", phrase: "the camera slowly cranes upward over the scene" },
+  { v: "static", label: "Static", phrase: "the camera is locked off and perfectly still" },
+];
 const POS_OPTIONS = [
   { v: "", label: "auto" }, { v: "center", label: "centre" }, { v: "left", label: "left" },
   { v: "right", label: "right" }, { v: "fg-left", label: "front-left" }, { v: "fg-right", label: "front-right" },
@@ -222,6 +235,16 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     const crop = await api.videoCropStill({ still_id: b.backgroundId, keep: pushKeep }) as { id: string };  // push-in
     return { first_id: b.backgroundId, first_kind: "image", last_id: crop.id, last_kind: "image" };
   }
+  // Camera move (text): animate the Scene still via i2v with a prompt-driven camera move on the dev model
+  // (distilled ignores motion). No anchors/keyframes — just the move + action.
+  function renderCamera(seed: number, w: number, h: number) {
+    const mv = CAMERA_MOVES.find((m) => m.v === (b.brollCamera || "push-in")) || CAMERA_MOVES[0];
+    const prompt = [mv.phrase, CALM_POS, b.prompt?.trim()].filter(Boolean).join(". ");
+    return api.videoLtxI2V({
+      still_id: b.backgroundId, prompt, width: w, height: h, frames: b.frames, fps: b.fps, seed,
+      nondistilled: true, steps: stepsVal,   // camera moves only work on the dev model
+    }) as Promise<{ job_id: string }>;
+  }
   // Multi-keyframe (Advanced): N library stills at frame positions, interpolated by the LTXDirector engine.
   function renderKeyframe(seed: number, w: number, h: number) {
     const rows = (b.brollKeyframes && b.brollKeyframes.length ? b.brollKeyframes : [{ stillId: b.backgroundId, frame: 0 }])
@@ -239,10 +262,10 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); note("Generating 3 video options (half-res)…"); setVdrafts([]);
     try {
       let ds: Draft[] = [];
-      if (perf || motion === "keyframe") {
+      if (perf || motion === "keyframe" || motion === "camera") {
         const base = Math.floor(Math.random() * 2_000_000_000);
         const hw = vHalf(b.width), hh = vHalf(b.height);
-        const one = (s: number) => perf ? renderMsr(s, hw, hh) : renderKeyframe(s, hw, hh);
+        const one = (s: number) => perf ? renderMsr(s, hw, hh) : motion === "camera" ? renderCamera(s, hw, hh) : renderKeyframe(s, hw, hh);
         for (let i = 0; i < 3; i++) { const r = await one(base + i); ds.push({ jobId: r.job_id, seed: base + i }); }
       } else {
         const a = await fflfAnchors();
@@ -265,8 +288,8 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); note("Finishing at full res" + (perf && b.lipsync ? " with lip-sync" : "") + "…");
     try {
       let clipId: string;
-      if (perf || motion === "keyframe") {
-        const r = perf ? await renderMsr(seed, b.width, b.height) : await renderKeyframe(seed, b.width, b.height);
+      if (perf || motion === "keyframe" || motion === "camera") {
+        const r = perf ? await renderMsr(seed, b.width, b.height) : motion === "camera" ? await renderCamera(seed, b.width, b.height) : await renderKeyframe(seed, b.width, b.height);
         clipId = bareId(await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps > 1 ? ` · pass ${ps}` : ""}`)));
       } else {
         const a = await fflfAnchors();
@@ -562,6 +585,8 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
                   <span className="text-[11px] text-[var(--color-muted)]">Motion:</span>
                   <button className={`se-pill ${motion === "pushin" ? "on" : ""}`} onClick={() => patch({ brollMotion: "pushin" })}>Push-in (auto)</button>
                   <button className={`se-pill ${motion === "twostill" ? "on" : ""}`} onClick={() => patch({ brollMotion: "twostill" })}>Between two stills</button>
+                  {/* Camera move (text) needs the dev model — selecting it turns non-distilled on. */}
+                  <button className={`se-pill ${motion === "camera" ? "on" : ""}`} onClick={() => patch({ brollMotion: "camera", nonDistilled: true })}>Camera move (text)</button>
                   {motion === "keyframe" && <span className="se-pill on">Multi-keyframe (advanced)</span>}
                 </div>
                 {motion === "pushin" && (
@@ -571,6 +596,16 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
                   <div className="flex items-end gap-2">
                     <div className="min-w-[220px]"><Field label="End still (the shot moves to this)"><StillPick value={b.brollEndId || ""} set={(id) => patch({ brollEndId: bareId(id) })} stills={stills} placeholder="— pick the end frame —" /></Field></div>
                     {!b.brollEndId && <span className="pb-1.5 text-[10px] text-amber-400">pick an end still (else it falls back to push-in)</span>}
+                  </div>
+                )}
+                {motion === "camera" && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">Camera move
+                      <select className={inp} style={{ width: "auto" }} value={b.brollCamera || "push-in"} onChange={(e) => patch({ brollCamera: e.target.value })}>
+                        {CAMERA_MOVES.map((m) => <option key={m.v} value={m.v}>{m.label}</option>)}
+                      </select>
+                    </label>
+                    <span className="text-[10px] text-[var(--color-muted)]">prompt-driven move on the dev model (animates the Scene still — no keyframes){nd ? "" : " · enables Non-distilled"}</span>
                   </div>
                 )}
               </div>
