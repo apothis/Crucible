@@ -6,6 +6,9 @@ import { openLightbox } from "./Lightbox";
 import { type Character, type Identity, type Wardrobe } from "./mvmodel";
 
 // Push the Z-Image Turbo default look away from the smooth, anime-ish "AI face" it falls back to.
+// Character refs are generated at the RENDER aspect (16:9) — MSR stretches refs to the 16:9 output, so
+// square refs come out too wide. 1280x720 matches the MSR reference-frame resolution.
+const CHAR_REF_W = 1280, CHAR_REF_H = 720;
 const PHOTO_POS = "candid photograph, photorealistic, natural realistic skin with visible pores and texture, sharp focus, 50mm";
 const PHOTO_NEG = "anime, cartoon, illustration, painting, drawing, 3d render, cgi, video game, doll, " +
   "plastic skin, waxy skin, airbrushed, overly smooth skin, beauty filter, overly symmetrical face, " +
@@ -162,7 +165,9 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     const base = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, ${PHOTO_POS}`;
     const vy = !!vary[c.id], vset = slot === "face" ? FACE_VARY : BODY_VARY;
     hunt(`${c.id}:w${w.id}:${slot}`, (seed, i) =>
-      api.videoCharStill({ ref_ids: refs, prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: PHOTO_NEG, seed }));
+      // 16:9 to match the render aspect — MSR stretches refs to the (16:9) output, so square refs come
+      // out too wide (Susan). Generating at 16:9 keeps proportions correct.
+      api.videoCharStill({ ref_ids: refs, prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: PHOTO_NEG, seed, width: CHAR_REF_W, height: CHAR_REF_H }));
   }
 
   // generate identity reference candidates. Face: Z-Image t2i from the appearance text. Body: when a
@@ -181,8 +186,8 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     hunt(`${c.id}:${slot}`, (seed, i) => {
       const prompt = vy ? `${base}, ${vset[i % 4]}` : base;
       return useFace
-        ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: PHOTO_NEG, seed })
-        : api.videoStill({ prompt, negative: PHOTO_NEG, seed });
+        ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: PHOTO_NEG, seed, width: CHAR_REF_W, height: CHAR_REF_H })
+        : api.videoStill({ prompt, negative: PHOTO_NEG, seed, width: CHAR_REF_W, height: CHAR_REF_H });
     });
   }
 
