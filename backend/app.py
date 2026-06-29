@@ -196,6 +196,32 @@ _MEDIA_CT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webm": "video/webm", ".mkv": "video/x-matroska"}
 
 
+def _write_media_retry(path, data, attempts=5):
+    """Write a finished render to the library, retrying transient OS errors. An external SSD enclosure
+    intermittently throws EPERM ('Operation not permitted') on writes; a single attempt silently lost
+    renders (and left no file/DB row). Write to a .part temp then atomically rename, and retry with
+    backoff so a transient failure doesn't drop the render."""
+    last = None
+    tmp = path + ".part"
+    for i in range(attempts):
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)            # atomic: never leaves a half-written final file
+            return
+        except OSError as e:
+            last = e
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+            time.sleep(0.3 * (i + 1))
+    raise last
+
+
 def on_complete_media(pid):
     """Fetch history, download the produced image/video into the library. ComfyUI
     reports SaveImage under 'images' and SaveVideo/VHS under 'images'/'gifs'/'video',
