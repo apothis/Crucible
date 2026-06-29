@@ -184,7 +184,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
       const bandShown = bandChars.slice(0, Math.max(0, compRefs.length - (lead ? 1 : 0)));
       // each member's chosen placement wins; else fall back to alternating sides
       const bandWho = bandShown.map((c, i) => `${memberDesc(c)} ${POS_PHRASE[(b.bandPos || {})[c.id] || ""] || ("plays " + (sides[i] || "to one side"))}`).join("; ");
-      const leadPhrase = lead ? `${memberDesc(lead)} stands ${leadPosPhrase || "centre"} at the microphone singing, the clear focus` : "the lead singer stands centre at the microphone, the clear focus";
+      const leadPhrase = lead ? `${memberDesc(lead)} stands ${leadPosPhrase || "centre"} singing into a microphone mounted on a tall mic stand, the clear focus` : "the lead singer stands centre at a microphone on a stand, the clear focus";
       const bgFrame = ({ close: "a tight, close framing of", medium: "a medium framing of", wide: "a wide establishing shot of" } as Record<string, string>)[b.framing] || "a medium framing of";
       const prompt = `A live band performing together on a stage, ${bgFrame} the whole band: ${leadPhrase}; ${bandWho}; with a full drum kit at the back and a drummer seated behind it. Setting: ${(b.scene || "a stage").trim()}. Photoreal, cinematic. No audience, no crowd.`;
       const r = await api.videoCharStill({ ref_ids: compRefs, prompt, width: b.width, height: b.height }) as { job_id: string };
@@ -207,7 +207,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     setBusy(true); setPlacePreview("");
     try {
       const personDesc = [lead.gender, lead.role || "person", lead.appearance].map((s) => (s || "").trim()).filter(Boolean).join(", ");
-      const action = b.lipsync ? "singing with emotion at a microphone" : (b.prompt?.trim() || "standing naturally");
+      const action = b.lipsync ? "singing with emotion into a microphone mounted on a tall mic stand in front of them" : (b.prompt?.trim() || "standing naturally");
       const where = leadPosPhrase || "in the scene";
       const kreaPrompt = `${subjectScale()} of a ${personDesc}; ${action}; positioned ${where}; setting: ${(b.scene || "").trim()}`;
       note("Step 1/2 — Krea rendering the scene with the character placed…");
