@@ -105,7 +105,6 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
 
   // ---- transient per-stage state ----
   const [scenes, setScenes] = useState<Draft[]>([]);          // 3 background candidates
-  const [placePreview, setPlacePreview] = useState<string>(""); // with-character composition preview (url)
   const [placeApproved, setPlaceApproved] = useState(false);
   const [vdrafts, setVdrafts] = useState<Draft[]>([]);         // 3 video option drafts
   const [pushKeep, setPushKeep] = useState(0.72);
@@ -195,37 +194,13 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     finally { setBusy(false); }
   }
 
-  // ---------- STAGE: PLACEMENT (cheap composition gate, with/without character) ----------
-  // Two-step placement: (1) Krea renders the scene WITH a person matching the character's own
-  // description (gender + appearance/costume) at the shot's framing + position — so framing, scale,
-  // lighting and rough look are right natively; (2) Qwen-Image-Edit swaps that person for the EXACT
-  // character from the refs (face + outfit). A close starting person => a small, clean identity swap.
-  async function previewWithChar() {
-    if (!lead) { note("Pick a lead in the Cast stage first."); return; }
-    if (!charRefs.length) { note("This character has no reference stills (add them in the Characters tab)."); return; }
-    if (!(b.scene || "").trim()) { note("Describe the setting in the Scene stage first."); return; }
-    setBusy(true); setPlacePreview("");
-    try {
-      const personDesc = [lead.gender, lead.role || "person", lead.appearance].map((s) => (s || "").trim()).filter(Boolean).join(", ");
-      const action = b.lipsync ? "singing with emotion into a microphone mounted on a tall mic stand in front of them" : (b.prompt?.trim() || "standing naturally");
-      const where = leadPosPhrase || "in the scene";
-      const kreaPrompt = `${subjectScale()} of a ${personDesc}; ${action}; positioned ${where}; setting: ${(b.scene || "").trim()}`;
-      note("Step 1/2 — Krea rendering the scene with the character placed…");
-      const k = await api.videoStill({ prompt: kreaPrompt, engine: "krea2", width: b.width, height: b.height }) as { job_id: string };
-      const kurl = await waitMedia(k.job_id, (pc) => note(`Step 1/2 — Krea… ${pc}%`));
-      note("Step 2/2 — Qwen locking the character's identity…");
-      // Canonical Qwen-Image-Edit swap: reference the images EXPLICITLY (image 1 = the scene to keep,
-      // image 2 = the face, image 3 = the outfit), DON'T describe the face (the ref drives it), and
-      // keep image 1's colours (Qwen otherwise pushes saturation — the "fluorescent greenery"). No
-      // width/height so the builder uses VAEEncode(image1) and preserves the scene. cfg 3 per the template.
-      const swap = "Replace the person in image 1 with the exact person in image 2; give them the outfit shown in image 3. Keep image 1's background, colours, lighting, pose, framing and composition exactly unchanged. Photorealistic, natural skin texture.";
-      const q = await api.videoCharStill({ ref_ids: [bareId(kurl), ...charRefs].slice(0, 3), prompt: swap, cfg: 3 }) as { job_id: string };
-      const qurl = await waitMedia(q.job_id, (pc) => note(`Step 2/2 — Qwen… ${pc}%`));
-      setPlacePreview(qurl);
-      note("Placement ready — character in-scene at the right framing. Use it as the shot's background to render from it.");
-    } catch (e) { note("Placement failed: " + (e as Error).message); }
-    finally { setBusy(false); }
-  }
+  // ---------- STAGE: PLACEMENT (background gate for MSR) ----------
+  // MSR holds the person-free background and places the lead from the subject refs (identity comes from
+  // the refs, NOT from a person painted into the still). So placement = confirm the background is
+  // person-free and framed how you want; the character is verified for real in the Video seed-hunt.
+  // (We dropped the Krea->Qwen swap here: it softened photorealism, got the dress wrong, and a person
+  // in the background corrupts MSR. Lesson from the session: prompt the SUBJECT + action, let the bg own
+  // the scene.)
 
   // ---------- STAGE: VIDEO (seed-hunt → pick → finish) ----------
   function renderMsr(seed: number, w: number, h: number) {
@@ -527,39 +502,35 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
           </div>
         )}
 
-        {/* ---------------- PLACEMENT ---------------- */}
+        {/* ---------------- PLACEMENT (background gate) ---------------- */}
         {step === "placement" && perf && (
           <div className="se-card flex flex-col gap-3">
             <div>
               <div className="se-h">Placement</div>
-              <p className="se-hint">Krea renders the scene <b>with</b> the character (from their own description) at the right framing &amp; position, then Qwen swaps in their exact identity. Verify it here, then use it as the shot's background to render from.</p>
+              <p className="se-hint">This background must stay <b>person-free</b> — MSR places {lead?.name || "the lead"} into it from the references at render (that's what locks identity & wardrobe). Confirm the framing here; you'll see the character for real in the Video seed-hunt.</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-[var(--color-muted)]">Lead position:</span>
-              <select className={inp} style={{ width: "auto" }} value={b.chars[0]?.pos || ""} onChange={(e) => setLeadPos(e.target.value)} disabled={!b.chars[0]?.charId}>
-                {POS_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
-              </select>
-              <span className="text-[10px] text-[var(--color-muted)]">{b.lipsync ? "lip-sync on — framed close so the face reads" : "set framing in the Scene stage (close for lip-sync)"}</span>
+            <div className="se-tile">
+              <div className="se-thumb" style={{ aspectRatio: "auto" }}>
+                {b.backgroundId ? <img src={`/api/media/${b.backgroundId}`} alt="" style={{ maxHeight: 360, width: "100%", objectFit: "contain" }} /> : <span className="se-spin">no background yet — generate one in the Scene stage</span>}
+              </div>
+              <div className="px-2 py-1.5 text-[11px] text-[var(--color-muted)]">Person-free background (the MSR scene) · framing: {b.framing || "medium"}</div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="se-tile">
-                <div className="se-thumb">{b.backgroundId ? <img src={`/api/media/${b.backgroundId}`} alt="" /> : <span className="se-spin">no background yet</span>}</div>
-                <div className="px-2 py-1.5 text-[11px] text-[var(--color-muted)]">Current background</div>
-              </div>
-              <div className="se-tile">
-                <div className="se-thumb">{placePreview ? <img src={placePreview} alt="" /> : <span className="se-spin">{busy ? (status || "working…") : "— not generated —"}</span>}</div>
-                <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-                  <span className="text-[11px] text-[var(--color-muted)]">Character in scene</span>
-                  <div className="flex gap-1.5">
-                    {placePreview && <GhostButton onClick={() => { patch({ backgroundId: bareId(placePreview) }); note("Set as the shot's background — the render will use it."); }} disabled={busy}>Use as background</GhostButton>}
-                    <GhostButton onClick={previewWithChar} disabled={busy || !lead || !charRefs.length}>{placePreview ? "Re-roll" : "Generate (Krea→Qwen)"}</GhostButton>
-                  </div>
-                </div>
-              </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">Framing
+                <select className={inp} style={{ width: "auto" }} value={b.framing} onChange={(e) => patch({ framing: e.target.value })}>
+                  <option value="close">close</option><option value="medium">medium</option><option value="wide">wide</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">Lead position
+                <select className={inp} style={{ width: "auto" }} value={b.chars[0]?.pos || ""} onChange={(e) => setLeadPos(e.target.value)} disabled={!b.chars[0]?.charId}>
+                  {POS_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                </select>
+              </label>
+              <span className="text-[10px] text-[var(--color-muted)]">{b.lipsync ? "lip-sync on — use close/medium so the face reads" : "close/medium frames the singer larger"}</span>
             </div>
             <div className="se-foot">
-              <PrimaryButton onClick={() => { setPlaceApproved(true); setStep("video"); }}>{b.backgroundId ? "Looks good — to Video →" : "Skip to Video →"}</PrimaryButton>
-              <GhostButton onClick={() => setStep("scene")}>Back to Scene</GhostButton>
+              <GhostButton onClick={() => setStep("scene")}>Regenerate background (Scene)</GhostButton>
+              <PrimaryButton onClick={() => { setPlaceApproved(true); setStep("video"); }} disabled={!b.backgroundId}>Background's good — to Video →</PrimaryButton>
             </div>
           </div>
         )}
