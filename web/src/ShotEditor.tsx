@@ -216,12 +216,17 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
   // the scene.)
 
   // ---------- STAGE: VIDEO (seed-hunt → pick → finish) ----------
-  function renderMsr(seed: number, w: number, h: number) {
+  // MSR is 2-stage like FFLF: mode "hunt" samples stage-1 at HALF res (cheap draft); mode "finish"
+  // re-runs stage-1 at the SAME seed (deterministic) then latent-upscales + low-denoise refines → the
+  // full-res result is a faithful upscale of the picked draft (no resolution drift). Always pass FULL
+  // width/height — the builder halves internally for stage-1.
+  function renderMsr(seed: number, mode: "hunt" | "finish") {
     const prompt = [b.prompt, subjectScale(), leadPosPhrase && `the subject is ${leadPosPhrase}`].filter(Boolean).join(". ");
     return api.videoLtxMsr({
       subject_ids: subjectIds, background_id: b.backgroundId,
       audio_id: b.lipsync ? (b.audioId || songAudioId) : undefined, audio_start: b.audioStart, isolate_vocal: false,
-      prompt, width: w, height: h, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
+      prompt, width: b.width, height: b.height, frames: b.frames, fps: b.fps, ref_frames: b.refFrames, seed,
+      two_stage: true, mode, stage1_seed: seed,
       nondistilled: nd || undefined, steps: ndSteps,
     }) as Promise<{ job_id: string }>;
   }
@@ -265,7 +270,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
       if (perf || motion === "keyframe" || motion === "camera") {
         const base = Math.floor(Math.random() * 2_000_000_000);
         const hw = vHalf(b.width), hh = vHalf(b.height);
-        const one = (s: number) => perf ? renderMsr(s, hw, hh) : motion === "camera" ? renderCamera(s, hw, hh) : renderKeyframe(s, hw, hh);
+        const one = (s: number) => perf ? renderMsr(s, "hunt") : motion === "camera" ? renderCamera(s, hw, hh) : renderKeyframe(s, hw, hh);
         for (let i = 0; i < 3; i++) { const r = await one(base + i); ds.push({ jobId: r.job_id, seed: base + i }); }
       } else {
         const a = await fflfAnchors();
@@ -289,7 +294,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     try {
       let clipId: string;
       if (perf || motion === "keyframe" || motion === "camera") {
-        const r = perf ? await renderMsr(seed, b.width, b.height) : motion === "camera" ? await renderCamera(seed, b.width, b.height) : await renderKeyframe(seed, b.width, b.height);
+        const r = perf ? await renderMsr(seed, "finish") : motion === "camera" ? await renderCamera(seed, b.width, b.height) : await renderKeyframe(seed, b.width, b.height);
         clipId = bareId(await waitMedia(r.job_id, (pc, ps) => note(`Finishing… ${pc}%${ps > 1 ? ` · pass ${ps}` : ""}`)));
       } else {
         const a = await fflfAnchors();

@@ -1051,6 +1051,17 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
     # LoRA guide concat tolerates ref res != output res is exactly what we're testing.)
     ref_w = int(p.get("ref_width") or w)
     ref_h = int(p.get("ref_height") or h)
+    # TWO-STAGE (opt-in, mirrors FFLF): stage-1 samples at HALF res for a cheap seed-hunt; the FINISH
+    # re-runs stage-1 at the SAME seed (deterministic -> reproduces the picked draft's latent) then
+    # LTXVLatentUpsampler x2 + a low-denoise refine -> the full-res output is an UPSCALE of exactly what
+    # you picked (no resolution drift). Default OFF = the original single-stage MSR (MV Studio uses it).
+    two_stage = bool(p.get("two_stage"))
+    msr_mode = (p.get("mode") or "finish").strip().lower()
+    msr_hunt = two_stage and msr_mode == "hunt"
+    s1_seed = int(p["stage1_seed"]) if p.get("stage1_seed") not in (None, "", 0, "0") else seed
+    s2_seed = (int(p["stage2_seed"]) if p.get("stage2_seed") not in (None, "", 0, "0")
+               else random.randint(0, 2**31 - 1))
+    lat_w, lat_h = (max(32, (w // 2 // 32) * 32), max(32, (h // 2 // 32) * 32)) if two_stage else (w, h)
     # Opt-in CAMERA-CONTROL LoRA (Lightricks LTX-2 camera pack: dolly in/out/left/right, jib up/down,
     # static). A plain additive LoRA that OWNS the camera move - the official guidance is to drive the
     # camera with the LoRA and let the PROMPT describe only the scene (prompt-only camera cues give
@@ -1091,7 +1102,7 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
         "7": {"class_type": "VAELoaderKJ",
               "inputs": {"vae_name": LTX_VAE_AUDIO, "device": "cpu", "weight_dtype": "bf16"}},
         "8": {"class_type": "EmptyLTXVLatentVideo",
-              "inputs": {"width": w, "height": h, "length": frames, "batch_size": 1}},
+              "inputs": {"width": lat_w, "height": lat_h, "length": frames, "batch_size": 1}},
         # LTXDirector = the maintained relay engine (replaces the standalone PromptRelayEncode so MSR
         # shares ONE relay path with i2v). optional_latent gives it our frame layout for the temporal
         # token->frame mapping; we only consume its model [9,0] + positive [9,1]. motion/audio off
@@ -1107,7 +1118,7 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
                          "start_second": 0.0, "end_second": frames / float(fps),
                          "use_custom_audio": False, "use_custom_motion": False,
                          "frame_rate": float(fps), "display_mode": "frames",
-                         "custom_width": w, "custom_height": h,
+                         "custom_width": lat_w, "custom_height": lat_h,
                          "resize_method": "maintain aspect ratio", "divisible_by": 32}},
         "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["5", 0], "text": neg}},
         "11": {"class_type": "LTXVConditioning",
@@ -1127,7 +1138,7 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
                "inputs": {"video_latent": ["14", 2], "audio_latent": ["15", 0]}},
         "17": {"class_type": "CFGGuider",
                "inputs": {"model": ["12", 0], "positive": ["14", 0], "negative": ["14", 1], "cfg": cfg}},
-        "18": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "18": {"class_type": "RandomNoise", "inputs": {"noise_seed": s1_seed}},
         "19": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
         "20": {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_BASE}},
         "21": {"class_type": "SamplerCustomAdvanced",
@@ -1191,10 +1202,40 @@ def build_ltx_msr(p, subject_refs, background_ref, vocal_ref=None):
                    "inputs": {"steps": nd_steps, "max_shift": 2.05, "base_shift": 0.95,
                               "stretch": True, "terminal": 0.1, "latent": ["16", 0]}}
         g["17"]["inputs"]["cfg"] = float(p.get("cfg", 3.0))
+    # ---- TWO-STAGE FINISH: upscale the (seed-reproduced) stage-1 latent + a low-denoise refine, so the
+    #      full-res output is a faithful upscale of the picked half-res draft (no resolution drift). ----
+    if two_stage and not msr_hunt:
+        audio_src = ["37", 0] if vocal_ref else ["15", 0]   # same audio latent (temporal; upscale is spatial)
+        g["50"] = {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": LTX_SPATIAL_UPSCALER}}
+        g["51"] = {"class_type": "LTXVLatentUpsampler",
+                   "inputs": {"samples": ["23", 2], "upscale_model": ["50", 0], "vae": ["6", 0]}}
+        # re-add the MSR IC-LoRA guide at full res on the upsampled latent (reuse LiconMSR node 13)
+        g["52"] = {"class_type": "LTXAddVideoICLoRAGuide",
+                   "inputs": {"positive": ["11", 0], "negative": ["11", 1], "vae": ["6", 0],
+                              "latent": ["51", 0], "image": ["13", 0], "frame_idx": 0,
+                              "strength": guide_str, "latent_downscale_factor": 1.0, "crop": "center",
+                              "use_tiled_encode": False, "tile_size": 256, "tile_overlap": 64}}
+        g["53"] = {"class_type": "LTXVConcatAVLatent",
+                   "inputs": {"video_latent": ["52", 2], "audio_latent": audio_src}}
+        g["54"] = {"class_type": "CFGGuider",
+                   "inputs": {"model": ["12", 0], "positive": ["52", 0], "negative": ["52", 1], "cfg": cfg}}
+        g["55"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": s2_seed}}
+        g["56"] = {"class_type": "ManualSigmas", "inputs": {"sigmas": LTX_SIGMAS_FFLF_REFINE}}
+        g["57"] = {"class_type": "SamplerCustomAdvanced",
+                   "inputs": {"noise": ["55", 0], "guider": ["54", 0], "sampler": ["19", 0],
+                              "sigmas": ["56", 0], "latent_image": ["53", 0]}}
+        g["58"] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["57", 0]}}
+        # crop the STAGE-2 guides (52), NOT stage-1 (14) — same lesson as the FFLF/keyframe crop fix
+        g["59"] = {"class_type": "LTXVCropGuides",
+                   "inputs": {"positive": ["52", 0], "negative": ["52", 1], "latent": ["58", 0]}}
+        g["24"]["inputs"]["latents"] = ["59", 2]            # decode the refined full-res latent
     resolved = {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
                 "seconds": round(frames / fps, 2), "steps": steps, "cfg": cfg, "msr_strength": msr_str,
                 "guide_strength": guide_str, "ref_frames": ref_frames, "subjects": len(subs),
-                "prompt": local_prompts, "lipsync": bool(vocal_ref), "kind": "video"}
+                "prompt": local_prompts, "lipsync": bool(vocal_ref), "kind": "video",
+                "two_stage": two_stage, "mode": msr_mode if two_stage else None,
+                "stage1_seed": s1_seed if two_stage else None,
+                "stage1_res": [lat_w, lat_h] if two_stage else None}
     if global_prompt or "|" in local_prompts:                 # timeline prompter was used
         resolved["global_prompt"] = global_prompt
         resolved["segment_lengths"] = segment_lengths or "(even)"
