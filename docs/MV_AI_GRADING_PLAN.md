@@ -118,9 +118,19 @@ license-checking each image); not done yet.
 
 ## Status
 
+**SCAFFOLD ONLY - nothing here is live (re-checked 2026-07-24).** The code exists but has never run:
+`build_darkroom_grade` / `build_vcg_lut` / `build_vcg_apply` in `backend/video.py` and the
+`/api/video/regrade`, `/api/mv/generate_lut`, `/api/mv/look_library` endpoints are written against
+UNVERIFIED node class names, and **no frontend calls them** (`api.videoRegrade` / `api.mvGenerateLut`
+are defined in `api.ts` but unused). `/api/mv/look_library` returns empty `darkroom_stocks`/`luts`.
+
+The grading that ACTUALLY runs is the ffmpeg look chain applied per segment at assemble time
+(`musicvideo.GRADES`, ~20 looks, exposed via `/api/mv/grades` and the MV Studio Grade picker).
+
 - [x] Research + decision (this doc) - 2026-06-23
+- [x] Backend builders + endpoints written (against UNVERIFIED node names - see above)
 - [ ] Box install (Darkroom + VCG + color-matcher) - USER
 - [ ] /object_info verification of node class names/keys + VCG VRAM
-- [ ] Backend builders + endpoints wired against verified nodes
-- [ ] Curated PD reference starter library
+- [ ] Curated PD reference starter library (`library/grade_refs/manifest.json` absent)
+- [ ] Frontend wiring (look-source picker, per-block grade loop, `gradedId` in assemble)
 - [ ] Frontend look-source picker

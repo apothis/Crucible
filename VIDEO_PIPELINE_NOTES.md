@@ -9,6 +9,29 @@ All renders driven from the app Video tab -> backend/video.py graph builders -> 
 
 ---
 
+## WHAT IS WIRED TODAY (routing, re-verified 2026-07-24)
+
+The ledger below records what we LEARNED. This is what the app actually CALLS now. Full map +
+known issues: the CURRENT STATE section of `HANDOFF.md`.
+
+- **Stills:** `/api/video/still` -> Krea 2 Ultra (`still_engine: "krea2"`, not Z-Image any more).
+  Reference-driven stills (character identity / wardrobe / band composite) -> `/api/video/char_still`
+  = Qwen-Image-Edit-2511 fp8. **Krea2 discards the `negative` field entirely** (cfg 1 +
+  ConditioningZeroOut) - put constraints in the POSITIVE prompt. See docs/KREA2.md.
+- **Video (all LTX-2.3 22B fp8, distilled 8-step, cfg 1):** `ltx_msr` (the spine: identity from refs
+  + native masked-audio lip-sync + optional two-stage hunt/finish), `ltx_fflf` (first/last anchors,
+  3 half-res hunt drafts server-side, decoupled refine seed), `ltx_keyframe` (LTXDirector 2-stage
+  keyframe port), `ltx_i2v` (B-roll camera moves - dev/non-distilled model only).
+- **Upscale:** FlashVSR (`/api/video/flashvsr`, auto-chunks above 200 frames). The SeedVR2 endpoint
+  still exists but no UI calls it.
+- **Grade:** the ffmpeg look chain at assemble (`musicvideo.GRADES`). The AI-grading endpoints
+  (`/api/video/regrade`, `/api/mv/generate_lut`) are unverified scaffold with no caller.
+- **UI:** MV Studio (master timeline) + the staged per-shot Shot Editor + the Characters tab. The old
+  Shot Studio / vendored LTXDirector editor are dead code. The legacy Video tab still drives Wan i2v,
+  native S2V and InfiniteTalk v2v directly for one-off experiments.
+
+---
+
 ## WHAT WORKS (settled)
 
 ### 20s natural-speed walk -- SOLVED via MSR (2026-06-17)

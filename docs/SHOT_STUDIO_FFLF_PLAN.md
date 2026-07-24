@@ -1,5 +1,14 @@
 # Shot Studio + FFLF Lane — Implementation Plan
 
+> **SUPERSEDED (2026-07-24) for the UI half.** The "Shot Studio" page this plan designed was built
+> and then REPLACED by the staged Shot Editor - see `docs/SHOT_EDITOR_MODEL.md` (v2). `ShotStudio.tsx`
+> + `LtxDirectorEditor.tsx` + the vendored editor are now dead code (nothing imports them).
+>
+> Still valid and load-bearing: the **FFLF lane** itself (`build_ltx_fflf`, seed-hunt/multiroll,
+> video anchors, extend-by-tail) and every verified fact in section 0 - MSR identity + keyframe +
+> lip-sync DO coexist in one graph, feed the FULL SONG (`isolate_vocal:false`) not an isolated vocal,
+> a last-frame keyframe must be a singing pose, and seed-hunt-then-finish is the required loop.
+
 Status: **PLAN / not yet built.** No GPU runs fired. Provenance is marked throughout:
 **[V]** = verified (from the workflow JSON, our source, or a read-only box check),
 **[H]** = hypothesis / designed-correct but not yet run on our box.

@@ -5,9 +5,130 @@ _App name: **Crucible** (AI metal studio). Repo folder is still `MusicGen` and t
 
 _Read this first when picking up the project in a fresh context. It's the index to everything and a snapshot of where we are._
 
-Last updated: 2026-05-28
+Last updated: 2026-07-24 (the CURRENT STATE section below; everything under it is 2026-05-28 or older)
 
 **Repository:** on GitHub at `git@github.com:apothis/Crucible.git` (public, `main`). `app_config.json` is gitignored (copy from `app_config.example.json`).
+
+## CURRENT STATE (2026-07-24) - READ THIS FIRST
+
+The "Current status" snapshot further down is from 2026-05-24 and covers the AUDIO app only.
+Everything video (Characters / MV Studio / Shot Editor, built June 2026) postdates it. This
+section is the current routing map; the sections below are history.
+
+**Routing rule:** what runs where = the `app_config.json` VALUE times the code gate. Reading only
+the gate's fallback default (e.g. `CFG.get("acestep_dcw_ok", False)`) gives the wrong answer -
+this has been got wrong twice. Check the config file.
+
+### Music -> the OFFICIAL ACE-Step engine (`acestep_host`, :8001)
+
+`app_config.json` sets `acestep_dcw_ok: true`, so `use_engine` in `/api/generate` is always true here.
+
+- `/api/generate` (Generate AND the Song builder, all models) -> engine `text2music`.
+- `/api/cover` -> engine `cover`. Cover AND Restyle/Reimagine both ride this endpoint: the Restyle
+  form branches on `cfg.acestep` and calls `api.cover` with `result_mode: "cover"|"restyle"`
+  (`web/src/forms.tsx` ~L391), so `result_mode` only sets the library label.
+- LoRA train / eval / adapters -> engine only (ACE LoRAs are PEFT; native ComfyUI cannot load them).
+- `/api/repaint` -> ComfyUI `comfy.build_edit` (`acestep_repaint: false`; the engine's repaint
+  silence-seeds the region and skips the LM).
+- `/api/layer` (Add-a-Layer) -> ComfyUI `comfy.build_lego` (`acestep_lego: false`).
+- COLD FALLBACKS, only reachable if `acestep_host` is cleared: `comfy.build_t2m`, `build_restyle`,
+  `build_cover`, `build_extract`, the whole `/api/restyle` endpoint, and the ComfyUI VARIANTS model
+  picker (the UI shows engine model ids `acestep-v15-xl-*` whenever `cfg.acestep`).
+
+Engine specifics that bite (all in `backend/acestep_py.py` + `app.py`):
+- `POST /release_task` does NOT load the requested model - it silently falls back to the loaded
+  primary, so `_acestep_ensure_model()` has to `POST /v1/init` first (a ~9GB swap).
+- The engine batches (generate 1, cover/repaint 2); extra takes are saved as their own library rows
+  tagged `take: 2`, `take: 3`.
+- Progress is scraped out of `progress_text` (`N/M` or `NN%`) and folded over `phases` (2 when
+  `thinking` is on) into one monotonic bar.
+- Every engine output lands as `<jid>.wav` then runs `postfx.tidy_ending`.
+- Song builder: `compile` = blocks -> `[section - descriptor]` tagged lyrics + total duration -> ONE
+  `/api/generate`; `stitch` = per-block generate at exact lengths -> `/api/stitch` crossfade concat.
+  NOTE: on the engine path an INSTRUMENTAL song sends `lyrics: ""`, so the arrangement's section tags
+  are dropped (the ComfyUI path kept them via `comfy._structure_only`). Unverified whether the
+  engine's own `instrumental` flag compensates.
+
+### Stills -> ComfyUI, `still_engine: "krea2"`
+
+- `/api/video/still` -> `video.build_krea2_still` (verbatim port of the AItrepreneur Krea 2 Ultra
+  workflow; `enhancer` + `seed_variance` default ON from config and need their custom nodes on the
+  box). Z-Image Turbo remains available via `engine: "zimage"`.
+- Reference-driven stills (character identity, wardrobe, band composites) -> `/api/video/char_still`
+  = Qwen-Image-Edit-2511 fp8. Unaffected by the still-engine switch.
+- GOTCHA: Krea2 runs at cfg 1 with `ConditioningZeroOut` as its negative and `build_krea2_still`
+  never reads `p["negative"]`, so EVERY caller negative is discarded on the default engine. See
+  docs/KREA2.md and Known issues below.
+
+### Video -> ComfyUI, LTX-2.3 22B fp8 + distilled 8-step LoRA at cfg 1
+
+Four graphs in `backend/video.py`:
+- `build_ltx_msr` - the spine. Identity comes from REFERENCE IMAGES via the Licon MSR IC-LoRA (no
+  keyframe anchor, so motion is prompt-driven). Native single-pass lip-sync = vocal trimmed to
+  EXACTLY frames/fps -> `LTXVAudioVAEEncode` -> `SolidMask(0)` + `SetLatentNoiseMask` (preserve, do
+  not denoise) -> concat into the AV latent. Optional two-stage: `mode:"hunt"` samples at half res,
+  `mode:"finish"` re-runs the SAME stage-1 seed then latent-upscales + low-denoise refines, so the
+  finish is provably an upscale of the draft you picked.
+- `build_ltx_fflf` - stock `LTXVAddGuide` first/last anchors (each a still OR a clip tail/head),
+  2-stage with decoupled seeds. `mode:"hunt"` submits 3 half-res drafts SERVER-side and returns
+  `{base_seed, drafts[]}`.
+- `build_ltx_keyframe` - faithful LTXDirector 2-stage keyframe port (`base_scale 0.5` so the x2
+  upsampler nets back to target). No MSR IC-LoRA: LiconMSR prepends ~17 reference frames and
+  corrupts LTXDirectorGuide's absolute `insert_frames`.
+- `_build_ltx` (t2v/i2v) - B-roll camera moves, which only execute on the non-distilled dev model.
+
+Post-processing: FlashVSR upscale (`/api/video/flashvsr`, auto `frame_chunk_size: 48` above 200
+frames because the whole clip buffers in system RAM) and the ffmpeg grade looks applied per segment
+at assemble (`musicvideo.GRADES`, ~20 looks).
+
+Wired but NOT called by any UI: `/api/video/upscale` (SeedVR2, superseded by FlashVSR),
+`/api/video/vace`, `/api/video/regrade` + `/api/mv/generate_lut` (the AI-grading scaffold, never
+verified against the box). The legacy Video tab still drives Wan i2v, native S2V and InfiniteTalk
+v2v directly.
+
+Job plumbing: ComfyUI graph -> `_submit_video` (frees VRAM only when the model SIGNATURE changes,
+so back-to-back LTX shots stay warm) -> prompt_id is the job id -> WS progress -> `on_complete*`
+downloads into `library/<pid>.<ext>`. `reconcile_loop()` re-checks `/history` every 5s for
+unfinished video jobs from memory AND the DB, so a render survives a missed WS event or a restart.
+
+### MV pipeline (song -> finished video)
+
+`/api/mv/script`: when `analyze_host` + an audio id are present it runs allin1 on the REAL audio and
+builds a deterministic shot grid from segment boundaries + downbeats (`build_shot_grid`), then the
+LLM only fills each fixed window's CONTENT (`build_grid_prompt`); without audio it falls back to
+free timing (`build_prompt`). `parse_shots` hard-enforces the pipeline's rules (lip-sync /
+performance / character-present shots can never be `keyframe`; wide lip-sync is pulled to medium).
+Shots -> `Block`s (`web/src/mvmodel.ts`) -> MV Studio master timeline; each shot is authored in the
+staged Shot Editor (Type -> Scene -> Cast -> Placement -> Video -> Result) -> `/api/mv/assemble`
+(ffmpeg: per-slot scale/pad/fit, hard cut or xfade, grade, optional intro pre-roll, mux the song).
+
+### Doc trust map
+
+| Doc | Trust |
+|---|---|
+| VIDEO_PIPELINE_NOTES.md | AUTHORITATIVE - empirical ledger (what works / dead ends / mechanisms) |
+| docs/SHOT_EDITOR_MODEL.md (v2 section) | AUTHORITATIVE - the per-shot staged flow that shipped |
+| docs/KREA2.md | Accurate, box-verified |
+| MUSIC_VIDEO_PLAN.md | PARTLY SUPERSEDED - see the banner at its top |
+| docs/LTXDIRECTOR_PIPELINE_PLAN.md | Phases A + B shipped, C partial, D partial (retake shipped) |
+| docs/SHOT_STUDIO_FFLF_PLAN.md | SUPERSEDED by SHOT_EDITOR_MODEL v2; its section 0 facts still hold |
+| docs/MV_AI_GRADING_PLAN.md | Scaffold only, never verified on the box |
+| This file below this section, README.md, PLAN.md, RESEARCH.md | Audio / LoRA history; predate all video work |
+
+### Known issues (verified in code 2026-07-24, all open)
+
+1. **`_write_media_retry()` has no caller.** The HEAD commit "library writes: retry transient EPERM"
+   added the helper but `on_complete_media`, `on_complete` and `reconcile_video_job` still do a plain
+   `open(path, "wb")`, so the render-loss it was written to fix is still unguarded.
+2. **Krea2 discards negatives.** The MSR person-free background negatives in `MVStudio.genStill` and
+   `ShotEditor.soloBgNeg`, and the anti-portrait negative in `Characters`, are inert on the default
+   still engine - only their positive phrasing is doing the work.
+3. **`build_ltx_msr` node-id collision.** The two-stage finish writes nodes 49-59 while the
+   MSR-keyframe block below it starts at `kid = 50`. Unreachable today (ShotEditor sends `two_stage`
+   without keyframes) but sending both would clobber the upscaler nodes.
+4. **Orphaned UI code:** `web/src/ShotStudio.tsx`, `web/src/LtxDirectorEditor.tsx` and the vendored
+   editor under `web/src/vendor/` are dead (MVStudio imports only `ShotEditor`; nothing imports
+   `ShotStudio`). Delete once the staged Shot Editor is fully trusted.
 
 ## Guiding principle (applies to the WHOLE app)
 **Research, take good ideas, and enhance.** For every feature, look at how others do it, borrow what's good, but don't be constrained by it — improve on it. We are building a power-user, metal-focused local studio, not a clone of any one tool.
@@ -23,6 +144,15 @@ A local, private music-generation studio focused on rock/metal (heavy, power, sy
 - **`UI_DESIGN.md`** — UI/UX research + design brief for the Phase 2 redesign (Suno/Udio/etc. teardown, patterns to steal, enhancements, proposed layout).
 - **`HANDOFF.md`** (this file) — entry point + current status.
 - **Memory** (`~/.claude/.../project_musicgen-app.md`) — condensed durable facts for the assistant.
+
+Video / music-video docs (all newer than the audio docs above - see the doc trust map in CURRENT STATE):
+- **`VIDEO_PIPELINE_NOTES.md`** - the empirical ledger for the video pipeline. Read before any video work.
+- **`MUSIC_VIDEO_PLAN.md`** - the original 5-stage MV design (partly superseded; has a banner).
+- **`docs/SHOT_EDITOR_MODEL.md`** - the per-shot staged Shot Editor model (v2 = what shipped).
+- **`docs/LTXDIRECTOR_PIPELINE_PLAN.md`** - LTXDirector relay / keyframe-mode phased plan.
+- **`docs/SHOT_STUDIO_FFLF_PLAN.md`** - FFLF lane + the old Shot Studio (superseded UI, valid FFLF facts).
+- **`docs/KREA2.md`** - the Krea 2 Ultra still engine (current default).
+- **`docs/MV_AI_GRADING_PLAN.md`** - AI grading design (scaffold only, not verified on the box).
 
 ## Current status (2026-05-24)
 **Working end-to-end — the whole creative loop is built:**

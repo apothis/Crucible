@@ -115,3 +115,11 @@ The old `ShotStudio.tsx` + `LtxDirectorEditor.tsx` + vendored editor are left in
 but UNUSED — delete them once the new flow is proven in the app. Verified: tsc, vite build,
 and the crop endpoint smoke-tested (real still → 924KB PNG served). NOT yet eyeballed by the
 user against a live render.
+
+Re-verified 2026-07-24: `MVStudio.tsx` imports ONLY `ShotEditor` (mounted as its "Edit segment"
+view); nothing imports `ShotStudio`, and only `ShotStudio` imports `LtxDirectorEditor`. So those two
+plus `web/src/vendor/` are confirmed dead code, safe to delete. The staged flow's actual dispatch:
+Performance -> `ltx_msr` two-stage (`mode:"hunt"` x3 at half res -> pick -> `mode:"finish"` on the
+same stage-1 seed, lip-sync added at finish with `isolate_vocal:false`); B-roll -> `brollMotion`
+selects `fflf` push-in (closing anchor from `/api/video/crop_still`), `fflf` two-still,
+`ltx_keyframe` (N stills at frame positions), or `ltx_i2v` (prompt camera move, dev model forced on).

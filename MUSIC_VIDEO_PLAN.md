@@ -1,5 +1,20 @@
 # Music Video Pipeline - design + phased build plan
 
+> **PARTLY SUPERSEDED (2026-07-24).** This is the original design (2026-06-13/15) and its 5-stage
+> architecture still describes the shape of the pipeline, but four specifics below are now wrong.
+> For what actually runs, read `VIDEO_PIPELINE_NOTES.md` (empirical ledger),
+> `docs/SHOT_EDITOR_MODEL.md` (per-shot flow) and the CURRENT STATE section of `HANDOFF.md`.
+>
+> | This doc says | Actually now |
+> |---|---|
+> | Lip-sync shots stay on Wan2.2-S2V (section 10, "LIP-SYNC DECISION") | LTX-2.3 does it natively in ONE pass: masked audio latent inside the MSR render. S2V is a fallback only. |
+> | Identity via anchor-still i2v / Qwen / VACE / Z-Image LoRA (section 3, 8) | LTX MSR (Licon MSR IC-LoRA) is the spine - identity from reference IMAGES, no keyframe anchor. Qwen-Edit is kept for reference stills + band composites; VACE is unused. |
+> | Z-Image Turbo is the still engine | `still_engine: "krea2"` (Krea 2 Ultra). See `docs/KREA2.md`. |
+> | SeedVR2 upscale (section 5 assembly) | FlashVSR (`/api/video/flashvsr`). The SeedVR2 endpoint exists but nothing calls it. |
+>
+> Also: the "Music Video tab" this doc describes was replaced by the **MV Studio** master timeline +
+> the **Characters** tab + the per-shot **Shot Editor**. RIFE/FILM interpolation was never built.
+
 _Crucible feature: turn a generated song into a full, character-consistent, beat-cut music video,
 driven entirely from the app (ComfyUI headless). Research-led design, 2026-06-13. Builds on the
 verified Phase-1 gate (Z-Image stills + Wan2.2 i2v + Wan2.2-S2V lip-sync all working). See

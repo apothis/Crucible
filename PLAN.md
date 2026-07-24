@@ -7,6 +7,11 @@ _Living document. Check items off as we go. Technical details and verified facts
 
 Last updated: 2026-05-23
 
+> **SCOPE NOTE (2026-07-24):** this roadmap covers the AUDIO app only and predates the entire
+> music-video pipeline (Characters / MV Studio / Shot Editor, built June 2026) and the migration of
+> music generation onto the official ACE-Step engine. For what is actually built and how it routes,
+> read the CURRENT STATE section of `HANDOFF.md`; for video, `VIDEO_PIPELINE_NOTES.md`.
+
 ---
 
 ## 1. Vision

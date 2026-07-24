@@ -83,7 +83,16 @@ Trained on short/medium/long **natural-language** prompts — **longer, detailed
 quality**; no JSON/tag-soup needed. Practical rules:
 - Write flowing sentences, ordered: subject → scene/background → shot type → camera/lens →
   style → lighting → medium → color palette.
-- **Negatives are inert at cfg 1** — steer everything in the positive.
+- **Negatives are inert at cfg 1** — steer everything in the positive. Stronger than "inert":
+  `build_krea2_still` never reads `p["negative"]` at all (node 6 is a `ConditioningZeroOut` of the
+  positive), so any negative a caller sends is DISCARDED. Callers written for Z-Image still send one
+  and it silently does nothing:
+  - `MVStudio.genStill` - the person-free MSR background negative ("people, person, singer, ...")
+  - `ShotEditor.soloBgNeg` - same purpose in the Scene stage
+  - `Characters` - `PHOTO_NEG` plus the anti-portrait negative on body/wardrobe generation
+  Those prompts mostly also state the constraint positively, which is why they still broadly work -
+  but any new constraint must go in the POSITIVE text, or the still must be generated on Z-Image
+  (`engine: "zimage"`), which does use its negative.
 - Anti-"AI-plastic" (positive cues): name a real medium ("shot on 35mm / Kodak Portra 400"),
   "natural skin texture, visible pores, no retouching", candid/documentary framing, motivated
   soft lighting, shallow DoF + grain. AVOID "flawless / smooth / perfect / 8k / hyperdetailed /
