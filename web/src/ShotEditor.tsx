@@ -65,16 +65,18 @@ const FRAME_SCALE: Record<string, string> = {
 // model ignores them). Animates the Scene still via i2v — no keyframes/anchors, just the move + action.
 // lateral = a non-zoom move (pan/tilt/orbit/crane): LTX i2v defaults to a push-in, so for these we
 // add an anti-zoom negative to let the real move show. push-in/pull-out/static are dolly/none (no anti-zoom).
+// lateral = a non-zoom move => add the anti-zoom negative. `exclude` axis-locks the move (the i2v model
+// confuses pan/tilt directions, so we also negate the OTHER axis). push-in/pull-out/static = no exclude.
 const CAMERA_MOVES = [
-  { v: "push-in", label: "Push in", phrase: "the camera slowly and smoothly pushes in toward the subject", lateral: false },
-  { v: "pull-out", label: "Pull out", phrase: "the camera slowly pulls back away from the subject, revealing more of the scene around it", lateral: false },
-  { v: "pan-left", label: "Pan left", phrase: "the camera pans to the left, sweeping horizontally across the scene, the view sliding sideways", lateral: true },
-  { v: "pan-right", label: "Pan right", phrase: "the camera pans to the right, sweeping horizontally across the scene, the view sliding sideways", lateral: true },
-  { v: "tilt-up", label: "Tilt up", phrase: "the camera tilts upward, the framing rising to look up", lateral: true },
-  { v: "tilt-down", label: "Tilt down", phrase: "the camera tilts downward, the framing lowering to look down", lateral: true },
-  { v: "orbit", label: "Orbit", phrase: "the camera arcs sideways around the subject, the viewpoint rotating around it, strong parallax as nearer and farther elements shift", lateral: true },
-  { v: "crane-up", label: "Crane up", phrase: "the camera cranes upward, rising vertically over the scene", lateral: true },
-  { v: "static", label: "Static", phrase: "the camera is locked off and perfectly still", lateral: false },
+  { v: "push-in", label: "Push in", phrase: "the camera slowly and smoothly pushes in toward the subject", lateral: false, exclude: "" },
+  { v: "pull-out", label: "Pull out", phrase: "the camera slowly pulls back away from the subject, revealing more of the scene around it", lateral: false, exclude: "" },
+  { v: "pan-left", label: "Pan left", phrase: "the camera tracks to the left in a smooth horizontal tracking shot, the whole scene sliding to the right, purely horizontal sideways movement", lateral: true, exclude: "tilt, vertical movement, moving up, moving down, crane, rising, falling" },
+  { v: "pan-right", label: "Pan right", phrase: "the camera tracks to the right in a smooth horizontal tracking shot, the whole scene sliding to the left, purely horizontal sideways movement", lateral: true, exclude: "tilt, vertical movement, moving up, moving down, crane, rising, falling" },
+  { v: "tilt-up", label: "Tilt up", phrase: "the camera tilts upward, the framing rising vertically to look up at the scene, purely vertical movement", lateral: true, exclude: "pan, panning, horizontal movement, moving sideways, tracking sideways" },
+  { v: "tilt-down", label: "Tilt down", phrase: "the camera tilts downward, the framing lowering vertically to look down at the scene, purely vertical movement", lateral: true, exclude: "pan, panning, horizontal movement, moving sideways, tracking sideways" },
+  { v: "orbit", label: "Orbit", phrase: "the camera arcs sideways around the subject, the viewpoint rotating around it, strong parallax as nearer and farther elements shift", lateral: true, exclude: "" },
+  { v: "crane-up", label: "Crane up", phrase: "the camera cranes upward, rising vertically over the scene, purely vertical movement", lateral: true, exclude: "pan, horizontal movement, moving sideways" },
+  { v: "static", label: "Static", phrase: "the camera is locked off and perfectly still", lateral: false, exclude: "" },
 ];
 const POS_OPTIONS = [
   { v: "", label: "auto" }, { v: "center", label: "centre" }, { v: "left", label: "left" },
@@ -250,7 +252,7 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
     // LTX's default push-in via the negative. Dolly/static moves keep the calm cue, no anti-zoom.
     const prompt = [mv.phrase, mv.lateral ? "smooth continuous cinematic camera motion, the viewpoint moving through the scene" : CALM_POS, b.prompt?.trim()].filter(Boolean).join(". ");
     const negative = mv.lateral
-      ? "zoom, zoom in, push in, dolly in, static camera, locked off camera, motionless, still frame, " + CALM_NEG
+      ? "zoom, zoom in, push in, dolly in, static camera, locked off camera, motionless, still frame, " + (mv.exclude ? mv.exclude + ", " : "") + CALM_NEG
       : undefined;
     return api.videoLtxI2V({
       still_id: b.backgroundId, prompt, negative, width: w, height: h, frames: b.frames, fps: b.fps, seed,
