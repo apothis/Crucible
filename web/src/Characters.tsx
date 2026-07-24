@@ -157,17 +157,29 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   // takes up to 3 refs, image1 = primary.
   function genRef(c: Character, w: Wardrobe, slot: "face" | "body") {
     const face = c.identity?.faceRefId, body = c.identity?.bodyRefId;
+    // Wardrobe BODY gen: prefer the wardrobe's OWN picked face ref for identity, and fall back to the
+    // standard identity face when no wardrobe face has been generated/selected. (Wardrobe face gen is
+    // unchanged - it still derives from the identity face/body.)
+    const bodyFace = w.faceRefId || face;
     const refs = (slot === "face"
       ? [face || body]
-      : [body || face, ...(body && face ? [face] : [])]).filter(Boolean) as string[];
+      : [body || bodyFace, ...(body && bodyFace ? [bodyFace] : [])]).filter(Boolean) as string[];
     if (!refs.length) { ctx.setResults([{ id: rid(), title: "Set an identity reference first", status: "error", pct: 0, err: "Pick a face/body still for the identity core, then generate the dressed look from it." }]); return; }
-    const framing = slot === "face" ? "head-and-shoulders close-up portrait" : "full-body shot from head to toe";
+    // Body framing must LEAD and reference "image 1" (Qwen-Edit anchors to the reference composition,
+    // so a short "full-body" cue loses to the head-shot ref). Mirrors the identity body gen.
+    const framing = slot === "face"
+      ? "head-and-shoulders close-up portrait"
+      : "Full-length full-body photograph of the person in image 1, standing upright and facing the camera, the entire body visible from head to toe including the legs and feet, the full figure centred in frame at a distance";
     const base = `${framing}, wearing ${w.outfitPrompt || "the same outfit"}, neutral studio background, ${PHOTO_POS}`;
+    // Body needs an anti-portrait negative to fight the head-shot reference's framing pull.
+    const neg = slot === "body"
+      ? `${PHOTO_NEG}, close-up, portrait, headshot, head and shoulders, bust shot, cropped at the chest, face only, zoomed in`
+      : PHOTO_NEG;
     const vy = !!vary[c.id], vset = slot === "face" ? FACE_VARY : BODY_VARY;
     hunt(`${c.id}:w${w.id}:${slot}`, (seed, i) =>
       // 16:9 to match the render aspect — MSR stretches refs to the (16:9) output, so square refs come
       // out too wide (Susan). Generating at 16:9 keeps proportions correct.
-      api.videoCharStill({ ref_ids: refs, prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: PHOTO_NEG, seed, width: CHAR_REF_W, height: CHAR_REF_H }));
+      api.videoCharStill({ ref_ids: refs, prompt: vy ? `${base}, ${vset[i % 4]}` : base, negative: neg, seed, width: CHAR_REF_W, height: CHAR_REF_H }));
   }
 
   // generate identity reference candidates. Face: Z-Image t2i from the appearance text. Body: when a
@@ -176,18 +188,31 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   function genIdentity(c: Character, slot: "face" | "body") {
     const appearance = (c.appearance || "").trim();
     if (!appearance) { ctx.setResults([{ id: rid(), title: "Describe the character first", status: "error", pct: 0, err: "Write an appearance description (optionally Enhance it), then generate the still from it." }]); return; }
-    const framing = slot === "face"
-      ? "head and shoulders close-up portrait, facing camera, neutral mid-grey studio backdrop, 85mm"
-      : "full body shot from head to toe, standing, neutral mid-grey studio backdrop";
     const faceRef = c.identity?.faceRefId;
     const useFace = slot === "body" && !!faceRef && matchFace[c.id] !== false;
-    const base = `${appearance}, ${framing}, ${PHOTO_POS}`;
+    // Body framing must LEAD and be forceful: Qwen-Edit anchors to the (head-shot) reference's
+    // composition, so a "full body" cue buried at the end of a face-heavy prompt loses and it
+    // reproduces the portrait crop. Lead with an explicit full-length framing; when using the face
+    // ref, address "the person in image 1" (Qwen-Edit responds to explicit image refs) so identity
+    // comes from the reference rather than from re-describing the face.
+    const bodyFraming = useFace
+      ? "Full-length full-body photograph of the person in image 1, standing upright and facing the camera, the entire body visible from head to toe including the legs and feet, the full figure centred in frame at a distance, neutral mid-grey studio backdrop"
+      : "full-length full-body photograph, standing upright and facing the camera, the entire body visible from head to toe including the legs and feet, the full figure centred in frame at a distance, neutral mid-grey studio backdrop";
+    const framing = slot === "face"
+      ? "head and shoulders close-up portrait, facing camera, neutral mid-grey studio backdrop, 85mm"
+      : bodyFraming;
+    // Body: framing leads, appearance follows (for build/wardrobe). Face: appearance leads (it IS the subject).
+    const base = slot === "body" ? `${framing}. ${appearance}, ${PHOTO_POS}` : `${appearance}, ${framing}, ${PHOTO_POS}`;
+    // Body needs an anti-portrait negative to fight the head-shot reference's framing pull.
+    const neg = slot === "body"
+      ? `${PHOTO_NEG}, close-up, portrait, headshot, head and shoulders, bust shot, cropped at the chest, face only, zoomed in`
+      : PHOTO_NEG;
     const vy = !!vary[c.id], vset = slot === "face" ? FACE_VARY : BODY_VARY;
     hunt(`${c.id}:${slot}`, (seed, i) => {
       const prompt = vy ? `${base}, ${vset[i % 4]}` : base;
       return useFace
-        ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: PHOTO_NEG, seed, width: CHAR_REF_W, height: CHAR_REF_H })
-        : api.videoStill({ prompt, negative: PHOTO_NEG, seed, width: CHAR_REF_W, height: CHAR_REF_H });
+        ? api.videoCharStill({ ref_ids: [faceRef], prompt, negative: neg, seed, width: CHAR_REF_W, height: CHAR_REF_H })
+        : api.videoStill({ prompt, negative: neg, seed, width: CHAR_REF_W, height: CHAR_REF_H });
     });
   }
 

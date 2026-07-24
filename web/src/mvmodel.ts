@@ -136,7 +136,13 @@ export function ltxFrames(n: number): number {
 export function charRefIds(c: Character | undefined, wardrobeId?: string): string[] {
   if (!c) return [];
   const w = (c.wardrobes || []).find((x) => x.id === wardrobeId) || (c.wardrobes || [])[0];
-  if (w && (w.faceRefId || w.bodyRefId)) return [w.faceRefId, w.bodyRefId].filter(Boolean) as string[];
+  if (w && (w.faceRefId || w.bodyRefId)) {
+    // Wardrobe look selected: use its refs, but if it has NO face of its own, fall back to the
+    // identity face so MSR still gets a face anchor (a wardrobe with only a body would otherwise
+    // lose the face entirely). Body stays the wardrobe's (it carries the outfit).
+    const face = w.faceRefId || c.identity?.faceRefId;
+    return [face, w.bodyRefId].filter(Boolean) as string[];
+  }
   if (c.identity && (c.identity.faceRefId || c.identity.bodyRefId))
     return [c.identity.faceRefId, c.identity.bodyRefId].filter(Boolean) as string[];
   if (c.refStillIds?.length) return c.refStillIds;
