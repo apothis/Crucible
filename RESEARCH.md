@@ -547,6 +547,43 @@ Native graph: `LoadAudio→VAEEncodeAudio→source_latents`; our `TextEncodeAceS
 - **Install footprint:** the parent pack pulls heavy unrelated deps (pygame, pymunk, opencv-python, openunmix, scikit-image, matplotlib). BUT `nodes/acestep/` is **self-contained** (imports only torch/numpy/`comfy.*` + its own files; `__init__.py` defines its own `logger`) and **MIT** → can be **VENDORED as a lean standalone custom node** (no extra pip installs) instead of installing the whole pack. Recommended install = vendor `acestep/` → drop into the box's `ComfyUI/custom_nodes/` + restart ComfyUI.
 - **Build plan (after install + node-verify):** `comfy.py` `build_repaint(p, audio_ref)` + `build_extend(p, audio_ref)` (SamplerCustomAdvanced graphs w/ the guiders) → `/api/repaint` + `/api/extend` endpoints (mirror restyle's upload) → UI (Restyle-like tabs: pick a library track + time range / extend seconds + new tags/lyrics). Verify on GPU first run (confirm guiders work with xl_base/xl_sft).
 
+**UPDATE 2026-07-26 — status of the two items from this batch we never built (RETAKE + FLOW-EDIT).**
+Both were identified above from the pipeline source on 2026-05-25. Neither was built. Re-verified
+against the LIVE BOX (read-only: `:5080 /fs/read` on the engine source + `:8001 /openapi.json`):
+
+- **RETAKE** (`retake_seed` + `retake_variance`) — we deliberately APPROXIMATED it rather than
+  building it: "audio2audio (our Restyle path) at LOW denoise + new seed ≈ ACE's retake_variance"
+  (see _Cheap adjacent wins_ above). That approximation is what shipped and is still what runs —
+  Reimagine sends `cover_strength = 1 - amount` on the engine `cover` task. Context for why native
+  retake was never considered: this batch predates the engine migration by ONE DAY (2026-05-26), so
+  it was written while we were still on the ComfyUI graph path where retake did not exist.
+  The NATIVE feature is present on the box (`acestep/inference.py` L168-171, resolved seeds returned
+  L927-951) and does something our approximation does not: variance-preserving noise mixing around a
+  KEPT take, rather than a fresh low-denoise pass over the rendered audio.
+- **FLOW-EDIT** (`flow_edit_morph` + `flow_edit_source_caption`/`_source_lyrics`/`_n_min`/`_n_max`/
+  `_n_avg`) — we noted the params here, then parked it in HANDOFF as "the engine's in-progress remix
+  work (#1156)", our nominated escape route from the cover/remix quality ceiling.
+  **It was NOT in progress: it shipped in v0.1.8 dated 2026-05-18, and our box checkout IS that
+  commit (`dce6214`)** — so it has been installed and unused since setup. Present in the box source at
+  `inference.py` L177-187, plumbed into the DiT call at L856-863. The parking note was written from the
+  issue tracker instead of the installed source; nothing triggered a recheck for two months.
+
+**Why neither is reachable from Crucible today:** the HTTP request model
+`acestep/api/http/release_task_models.py :: GenerateMusicRequest` carries no dcw / retake / flow_edit
+fields and does not set `extra="allow"`, so extra fields we POST to `/release_task` are silently
+dropped. The blocker is the API surface, not the model. Exposing them is a 2-file engine patch of the
+same shape as our existing seven (add fields to the request model + `getattr` them in
+`job_generation_setup.py`, which already does exactly that for `repaint_mode`/`repaint_strength`) —
+tracked as candidate patch 8 in memory `project_engine-patches`.
+**Gate before building:** both features ARE reachable in the engine's own Gradio UI right now. Try
+Flow-Edit on a real track there first; if it is as weak as the `cover` task was by ear, do not write
+the patch. Also note DIAGNOSTIC TRAP: `/openapi.json` cannot answer "is field X accepted" for
+`/release_task` — that route has an untyped request body, so its schema lists no fields at all.
+
+Not to be confused with: **video retake** (`build_ltx_retake` / `/api/video/ltx_retake` /
+`LTXDirectorGuide retake_mode`), a different feature on the LTX video path, BUILT and shipped
+2026-06 (LTXDirector Phase D, commits `42015e3` + `ae57cb1`).
+
 ### 10j. EXTEND is not a native ACE task — don't chase it (2026-05-25)
 
 _After repaint worked (turbo) but extend kept failing (seam gap, beat-phase not locking, length undershoot ~6s for +10, timbre drift), the question was: "if extend exists, someone solved it — are we chasing ghosts?" Researched the official ACE-Step docs. **Answer: yes, a ghost.**_
