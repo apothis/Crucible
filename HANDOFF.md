@@ -49,6 +49,23 @@ Engine specifics that bite (all in `backend/acestep_py.py` + `app.py`):
   are dropped (the ComfyUI path kept them via `comfy._structure_only`). Unverified whether the
   engine's own `instrumental` flag compensates.
 
+### ACTIVE EXPERIMENT: the box is running a NON-DEFAULT VAE (2026-07-26)
+
+`run_acestep_api.bat` sets `ACESTEP_VAE_CHECKPOINT=scragvae` (community VAE, MIT,
+`scragnog/Ace-Step-1.5-ScragVAE`, auto-downloaded to `checkpoints/scragvae/`). **Every generation the
+engine produces is currently decoded through it** - factor that in before attributing any audio
+change to something else. Left active at the user's request while they test more material.
+REVERT: comment that one line out (or set `official`) + engine restart (USER; there is no ACE-Step
+restart endpoint - the :5080 helper's `/comfy/restart` is ComfyUI-only). The pre-A/B launcher is on
+the box as `run_acestep_api.bat.official-vae.bak`.
+
+First A/B (3 x 248s xl-base renders, same LoKr, replayed via `/api/generate`): user verdict "none of
+those are great, but it's not conclusive". The test could NOT isolate the VAE - all three same-seed
+takes came back as DIFFERENT songs (RMS-envelope r=0.49-0.67 between takes vs r=0.49-0.59 against the
+baseline), i.e. within-condition spread as large as between-condition spread. **Do not design
+pinned-seed A/Bs on the engine text2music path.** The unbuilt tool that would fix this is a
+deterministic eval mode (CoT/thinking off) - see memory `lora-scale-clean-seed-nondeterministic`.
+
 ### Engine version + patch state (verified on the box 2026-07-26, read-only)
 
 - Box checkout = commit **`dce6214`, dated 2026-05-18** (the v0.1.8 release day). Upstream `main` is
