@@ -49,22 +49,40 @@ Engine specifics that bite (all in `backend/acestep_py.py` + `app.py`):
   are dropped (the ComfyUI path kept them via `comfy._structure_only`). Unverified whether the
   engine's own `instrumental` flag compensates.
 
-### ACTIVE EXPERIMENT: the box is running a NON-DEFAULT VAE (2026-07-26)
+### CLOSED EXPERIMENT: ScragVAE trial (2026-07-26), REVERTED 2026-08-02
 
-`run_acestep_api.bat` sets `ACESTEP_VAE_CHECKPOINT=scragvae` (community VAE, MIT,
-`scragnog/Ace-Step-1.5-ScragVAE`, auto-downloaded to `checkpoints/scragvae/`). **Every generation the
-engine produces is currently decoded through it** - factor that in before attributing any audio
-change to something else. Left active at the user's request while they test more material.
-REVERT: comment that one line out (or set `official`) + engine restart (USER; there is no ACE-Step
-restart endpoint - the :5080 helper's `/comfy/restart` is ComfyUI-only). The pre-A/B launcher is on
-the box as `run_acestep_api.bat.official-vae.bak`.
+The box briefly ran a community VAE (`ACESTEP_VAE_CHECKPOINT=scragvae`, MIT,
+`scragnog/Ace-Step-1.5-ScragVAE`). **Reverted at the user's request on 2026-08-02** - the launcher is
+restored byte-for-byte from `run_acestep_api.bat.official-vae.bak` and is back on the official VAE
+(verified: no `ACESTEP_VAE_CHECKPOINT`, launch line intact). Takes effect at the next engine start.
+The downloaded `checkpoints/scragvae/` (~1GB, 644MB fp32 safetensors vs the official 322MB) is still
+on the box, so a re-test costs nothing but a launcher line. No ACE-Step restart endpoint exists (the
+:5080 helper's `/comfy/restart` is ComfyUI-only), so engine restarts remain USER-only.
 
-First A/B (3 x 248s xl-base renders, same LoKr, replayed via `/api/generate`): user verdict "none of
-those are great, but it's not conclusive". The test could NOT isolate the VAE - all three same-seed
-takes came back as DIFFERENT songs (RMS-envelope r=0.49-0.67 between takes vs r=0.49-0.59 against the
-baseline), i.e. within-condition spread as large as between-condition spread. **Do not design
-pinned-seed A/Bs on the engine text2music path.** The unbuilt tool that would fix this is a
-deterministic eval mode (CoT/thinking off) - see memory `lora-scale-clean-seed-nondeterministic`.
+Verdict: **inconclusive, no evidence of benefit.** User on the 3 A/B renders: "none of those are
+great, but it's not conclusive". The test could not isolate the VAE - all three same-seed takes came
+back as DIFFERENT songs (RMS-envelope r=0.49-0.67 between takes vs r=0.49-0.59 against the baseline),
+i.e. within-condition spread as large as between-condition spread. **Do not design pinned-seed A/Bs
+on the engine text2music path.** The unbuilt tool that would fix this is a deterministic eval mode
+(CoT/thinking off) - see memory `lora-scale-clean-seed-nondeterministic`.
+
+### OPEN / UNDIAGNOSED: progressive degradation in a long engine session (2026-08-02)
+
+During a long generation session the user's takes became **slow and garbled**, having been fine
+earlier in the same session. NOT diagnosed - do not assume a cause. What was ruled out with evidence:
+the VAE swap (renders on scragvae measured normal earlier that day), the LoRA (same adapter across
+good and bad takes), VRAM (~14GB in use, ComfyUI reporting 24.4GB free), and disk (box outputs/temp
+empty, 8.5GB HF cache).
+Objective signature of the bad take vs its healthy siblings: spectral flatness collapsed 0.037 ->
+**0.0049** (tonally narrow, NOT noise), centroid 2809 -> **1476Hz** (dark/muffled), RMS spread 0.027
+-> **0.0049** (dynamics gone), at correct full length. That reads as a degenerate decode, not a wrong
+setting. Leading (UNVERIFIED) hypothesis: system-RAM exhaustion in the long-running engine process -
+`ACESTEP_OFFLOAD_TO_CPU=true` keeps DiT weights in RAM, the 5Hz LM loads mid-session
+(`llm_initialized` flips false->true), and the box has 32GB.
+NEXT TIME IT HAPPENS, capture before restarting: the ACE-Step **console** output (the engine keeps
+only the last line in memory via `LogBuffer` and has no log file or log route, so the console window
+is the only history) and **Task Manager RAM** during a run. A restart is both the fix-attempt and the
+discriminator: fixed by a fresh process = state accumulation; still broken = something else.
 
 ### Engine version + patch state (verified on the box 2026-07-26, read-only)
 
