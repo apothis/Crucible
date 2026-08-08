@@ -922,11 +922,38 @@ def video_h3_t2v(p: dict):
     20 steps, cfg-free BasicGuider (so there is NO negative prompt), joint AV latent decoded through
     both VAEs, VHS_VideoCombine at 24fps. p: {prompt (the author's SECTIONED format), seed?,
     width?/height? or megapixels? (default 0.9 = 1280x736), frames? or seconds? (snapped to 17k+5),
-    steps? (20), spectrum? (opt-in SPEEDUP group)}."""
+    steps? (20), spectrum? (opt-in SPEEDUP group), turbo? (the author's atomic 4-step recipe),
+    mode? ("finish" [default] | "hunt"), drafts? (hunt only, default 3, max 6)}.
+    HUNT renders N turbo drafts at the SAME resolution as the finish and returns
+    {mode, base_seed, drafts:[...]}; pick a seed, then re-submit it with mode="finish"."""
     if not (p.get("prompt") or "").strip():
         raise HTTPException(400, "a prompt is required")
+    mode = (p.get("mode") or "finish").strip().lower()
+    # SEED HUNT (design decided 2026-08-02 after measuring resolution transfer - see
+    # docs/MINIMAX_H3_PLAN.md 0a). Drafts are rendered on the TURBO recipe at the SAME resolution as
+    # the finish, NOT at a cheaper tier: a pinned seed does NOT survive a resolution change (measured
+    # composition correlation 0.46, below even the different-scene reference of 0.77), but it DOES
+    # survive the recipe change (0.95). So turbo drafts predict their base finish; a low-res draft
+    # would not. mode="hunt" -> N drafts at base_seed, +1, +2... (mirrors /api/video/ltx_fflf);
+    # mode="finish" -> one render on the base recipe at the seed you picked.
+    if mode == "hunt":
+        base = video_mod._seed(p)
+        n = max(1, min(int(p.get("drafts") or 3), 6))
+        out = []
+        for i in range(n):
+            bp = dict(p)
+            bp["seed"] = base + i
+            bp.setdefault("turbo", True)          # drafts default to the fast recipe
+            bp.pop("mode", None)
+            try:
+                graph, resolved = video_mod.build_h3_t2v(bp)
+            except Exception as e:
+                raise HTTPException(500, f"build failed: {e}")
+            resolved["hunt_index"] = i
+            out.append(_submit_video(graph, resolved, "videoclip"))
+        return {"mode": "hunt", "base_seed": base, "drafts": out}
     try:
-        graph, resolved = video_mod.build_h3_t2v(p)
+        graph, resolved = video_mod.build_h3_t2v(p)   # finish: base recipe unless turbo is asked for
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     return _submit_video(graph, resolved, "videoclip")

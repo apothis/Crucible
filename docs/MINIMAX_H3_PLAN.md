@@ -66,13 +66,36 @@ Two routes, DECISION OPEN:
   recipe. Needs no installs, but the finish cannot be conditioned on the pick the way Refine does
   unless we feed the draft back as `ref_video_0` (REF2VA model, continuation/editing role).
 
-**OPEN EMPIRICAL QUESTION for route B:** does a pinned seed hold composition ACROSS RESOLUTION TIERS
-(0.4MP hunt -> 0.9MP finish)? Recipe-transfer looks OK (turbo vs base at the same res/seed gave very
-similar scenes), but resolution-transfer is untested. Cheapest test: one turbo render at 0.4MP on
-seed 77123 with the arc prompt, compared against the 0.9MP turbo take we already have. If it does not
-transfer, route B's hunt cannot predict its finish and route A (or a ref_video-conditioned finish) is
-required. Do NOT ship a pick-one-of-N UI before this is answered - same trap as the ScragVAE A/B,
-where a pinned seed was assumed to hold things constant and did not.
+### ANSWERED 2026-08-02: a pinned seed does NOT survive a resolution change [V]
+
+Measured with matched-timestamp frames -> 128x72 grayscale -> Pearson r (`.mvwork/compose_corr.py`),
+calibrated against pairs the user had already judged by eye:
+
+| Pair (all seed-pinned, same prompt) | mean r | reading |
+|---|---|---|
+| same shot, RECIPE changed (base vs turbo, both 0.9MP) | **+0.946** | same shot, minor render differences |
+| different scenes (Spectrum off vs on, both 0.9MP) | +0.765 | visibly different scene |
+| **same recipe, TIER changed (turbo 0.4MP vs 0.9MP)** | **+0.461** | worse than "different scene" |
+| unrelated scenes (moor vs cathedral) - floor | -0.098 | |
+
+The 0.4 vs 0.9 pair also DEGRADES over the clip (+0.69 at t=0 -> +0.23 at t=5.1s): same concept
+(standing stone, moor, storm) and the arc works in both, but different stone shape, different horizon
+height, different foreground rocks/puddle, and the two arcs rotate at different rates. A low-res
+draft predicts the CONCEPT, not the shot.
+=> A cheap-tier hunt CANNOT predict its finish. Ruled out. Recipe transfer, by contrast, is strong,
+which is what makes the chosen design work.
+0.4MP timing for reference: 105s (vs 215s turbo / 553s base at 0.9MP).
+
+### CHOSEN DESIGN (user decision 2026-08-02): hunt at FINISH resolution on the TURBO recipe
+
+BUILT in `/api/video/h3_t2v`:
+- `mode:"hunt"` -> N drafts (default 3, max 6) at `base_seed, +1, +2...`, forced onto the turbo
+  recipe, at **the same width/height as the finish**. Returns `{mode, base_seed, drafts:[...]}`,
+  mirroring `/api/video/ltx_fflf`'s server-side fan-out so the frontend pattern is unchanged.
+- `mode:"finish"` -> one render of the picked seed on the BASE recipe, same resolution.
+Cost: ~215s per draft + ~553s for the finish (3 drafts + finish ~= 20 min per approved shot).
+Route A (install the Director pack) remains the alternative if we want the cheap 0.4MP tier back -
+its Refine conditions the finish on the upscaled pick, so it does not depend on seed transfer at all.
 
 ### Corrections to earlier assumptions in this doc
 
