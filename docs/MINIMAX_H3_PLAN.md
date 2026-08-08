@@ -427,6 +427,67 @@ previous one is eyeballed by the user.
   pedestal) now that a still anchors the shot - the t2v tests proved the moves work WITHOUT an anchor,
   which is not the same thing.
 
+### Phase 1 RENDER RESULTS + the TIMELAPSE/PACE investigation (2026-08-02, all [V])
+
+**The image lane works on the box.** 2-draft hunt from a library still (person-free night clifftop,
+1280x720), turbo, 124 frames:
+- `mode:"hunt"` returned `{mode, base_seed, drafts:[2]}` with consecutive seeds - the same shape
+  `/api/video/ltx_fflf` returns, so ShotEditor's existing pick-one-of-N pattern will slot in.
+- **The anchor holds exactly**: source still vs frame 0 correlates at **r = +1.000** on both drafts.
+  `first_frame` genuinely pins the opening frame.
+- **Image-derived sizing works**: the 1280x720 still came out **1280x736** via the author's
+  `ImageScaleToTotalPixels -> GetImageSize` chain (0.9MP on the /32 grid).
+- Timings: 161s and 253s for the two turbo drafts.
+- KNOWN GAP: in image-derived mode we record `width`/`height` as `None` in the library row (the
+  dimensions are decided inside the graph, not in Python). Harmless but it makes the row less useful
+  for later comparison; fill it from the finished file at reconcile time.
+
+**USER VERDICT: parallax was fine but both drafts "looked like they were sped up timelapse shots."**
+This is the same failure class we hit on LTX with scenic water/clouds (see VIDEO_PIPELINE_NOTES) so
+it was worth decomposing properly rather than guessing.
+
+Metric: mean absolute pixel change between matched-timestamp frames (128x72 grayscale, 0-255 scale) -
+a motion-magnitude proxy. Composition r confirms each pair is the same shot, so the comparisons are
+clean. FOUR conditions, varied ONE at a time from the failing draft:
+
+| Condition | per-interval motion | mean | composition r vs draft1 |
+|---|---|---|---|
+| draft1: 3 motions incl. SKY, turbo | 8.99 9.24 10.45 11.22 | **9.98** | - |
+| test1: SAME prompt, base recipe | 7.89 8.12 9.63 11.05 | **9.17** | +0.952 |
+| test2: 1 motion + duration anchor, turbo | 7.54 7.04 6.86 6.38 | **6.96** | +0.980 |
+| chapel: 1 motion + anchor, base, enclosed scene | 1.38 5.57 7.14 7.18 | **5.32** | (different shot) |
+
+**Attribution, in order of magnitude:**
+1. **PROMPT ~30%** (9.98 -> 6.96, prompt-only change). The dominant cause. Note the SHAPE flip too:
+   the busy prompt ACCELERATES through the clip (8.99 -> 11.22) while the disciplined one
+   DECELERATES (7.54 -> 6.38). Accelerating vs settling is the timelapse signature, and it came
+   purely from wording.
+2. **CONTENT ~ the residual** (6.96 -> 5.32). Open-sky night scenery carries more apparent motion
+   than an enclosed stone interior even with identical prompt discipline.
+3. **RECIPE ~8%** (9.98 -> 9.17, recipe-only change). Turbo is largely EXONERATED - which is good
+   news for the hunt: turbo drafts do represent their base finals for pace, so the hunt economics in
+   0a stand. (Contrast LTX, where the distill WAS the motion-speed culprit - do not carry that
+   assumption across models.)
+
+**TWO PROMPT RULES for the Phase 3 compiler (earned, not guessed):**
+- **ONE described motion per shot, with a real-world duration anchor.** The wording that worked:
+  "each stem's movement taking only a fraction of a second exactly as real grass does". Giving the
+  model a physical referent to calibrate against is the lever. This matters because the chain is
+  cfg-free so there is NO negative prompt - pace can only be steered POSITIVELY.
+- **Pin the sky explicitly.** "The stars and the Milky Way hold fixed positions with no drift at all,
+  and there is no cloud movement anywhere." Sky elements are the strongest timelapse cue and the
+  model animates them if they are left unmentioned.
+- Corollary constraint: prefer foreground-anchored framings for held shots; wide open-sky B-roll will
+  always carry more motion. The author's own guide says the same thing in general terms ("do not
+  overload short clips with too many actions", every movement "physically possible within the
+  requested duration") - we now have the numbers for why.
+
+**METHOD LESSON (recorded because it cost renders):** the first pace attempt changed THREE things at
+once (recipe + content + prompt), produced a good clip, and was therefore worthless - user: "its
+meaningless because you changed so many things, we have no idea which actually worked." Vary ONE
+thing per render, hold the seed and the shot fixed, and carry unchanged sentences over VERBATIM
+(assert it in code - the camera sentence was hash-checked identical between draft1 and test2).
+
 ### Phase 2 - reference lane (the MSR replacement)
 - `build_h3_ref2v(p, ref_images, ref_videos, ref_video_audios, ref_audios)` on the REF2VA model,
   emitting flat `ref_image_N` / `ref_audio_N` keys.
@@ -443,6 +504,10 @@ previous one is eyeballed by the user.
   `non_diegetic_music: N/A`).
 - The author's embedded 12k-char LLM system prompt (workflow node 2133) is effectively the spec -
   adapt it for our writer rather than inventing our own phrasing.
+- MUST enforce the two measured pace rules from the Phase 1 results above: exactly ONE described
+  motion per shot carrying a real-world duration anchor, and an explicit "the sky holds still" clause
+  whenever sky/cloud/stars are visible. These are the difference between a held shot and a timelapse
+  on this model, and there is no negative prompt to fall back on.
 - `web/src/mvmodel.ts`: `shotToBlock` stops building the LTX-style prompt string and carries the
   structured fields instead.
 
