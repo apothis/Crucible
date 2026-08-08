@@ -915,6 +915,40 @@ def video_ltx_t2v(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
+def _h3_dispatch(p, build, *args):
+    """Shared hunt/finish dispatch for every MiniMax H3 lane.
+
+    SEED HUNT (design decided 2026-08-02 after measuring resolution transfer - see
+    docs/MINIMAX_H3_PLAN.md 0a). Drafts render on the TURBO recipe at the SAME resolution as the
+    finish, NOT at a cheaper tier: a pinned seed does NOT survive a resolution change (measured
+    composition correlation 0.46, below even the different-scene reference of 0.77) but it DOES
+    survive the recipe change (0.95). So turbo drafts predict their base finish; low-res drafts
+    would not. mode="hunt" -> N drafts at base_seed, +1, +2... (same shape as /api/video/ltx_fflf);
+    mode="finish" -> one render on the base recipe at the seed you picked."""
+    mode = (p.get("mode") or "finish").strip().lower()
+    if mode == "hunt":
+        base = video_mod._seed(p)
+        n = max(1, min(int(p.get("drafts") or 3), 6))
+        out = []
+        for i in range(n):
+            bp = dict(p)
+            bp["seed"] = base + i
+            bp.setdefault("turbo", True)              # drafts default to the fast recipe
+            bp.pop("mode", None)
+            try:
+                graph, resolved = build(bp, *args)
+            except Exception as e:
+                raise HTTPException(500, f"build failed: {e}")
+            resolved["hunt_index"] = i
+            out.append(_submit_video(graph, resolved, "videoclip"))
+        return {"mode": "hunt", "base_seed": base, "drafts": out}
+    try:
+        graph, resolved = build(p, *args)             # finish: base recipe unless turbo is asked for
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    return _submit_video(graph, resolved, "videoclip")
+
+
 @app.post("/api/video/h3_t2v")
 def video_h3_t2v(p: dict):
     """MiniMax H3 TEXT to video+audio (Phase 0 feasibility gate; see docs/MINIMAX_H3_PLAN.md).
@@ -928,35 +962,48 @@ def video_h3_t2v(p: dict):
     {mode, base_seed, drafts:[...]}; pick a seed, then re-submit it with mode="finish"."""
     if not (p.get("prompt") or "").strip():
         raise HTTPException(400, "a prompt is required")
-    mode = (p.get("mode") or "finish").strip().lower()
-    # SEED HUNT (design decided 2026-08-02 after measuring resolution transfer - see
-    # docs/MINIMAX_H3_PLAN.md 0a). Drafts are rendered on the TURBO recipe at the SAME resolution as
-    # the finish, NOT at a cheaper tier: a pinned seed does NOT survive a resolution change (measured
-    # composition correlation 0.46, below even the different-scene reference of 0.77), but it DOES
-    # survive the recipe change (0.95). So turbo drafts predict their base finish; a low-res draft
-    # would not. mode="hunt" -> N drafts at base_seed, +1, +2... (mirrors /api/video/ltx_fflf);
-    # mode="finish" -> one render on the base recipe at the seed you picked.
-    if mode == "hunt":
-        base = video_mod._seed(p)
-        n = max(1, min(int(p.get("drafts") or 3), 6))
-        out = []
-        for i in range(n):
-            bp = dict(p)
-            bp["seed"] = base + i
-            bp.setdefault("turbo", True)          # drafts default to the fast recipe
-            bp.pop("mode", None)
-            try:
-                graph, resolved = video_mod.build_h3_t2v(bp)
-            except Exception as e:
-                raise HTTPException(500, f"build failed: {e}")
-            resolved["hunt_index"] = i
-            out.append(_submit_video(graph, resolved, "videoclip"))
-        return {"mode": "hunt", "base_seed": base, "drafts": out}
+    return _h3_dispatch(p, video_mod.build_h3_t2v)
+
+
+@app.post("/api/video/h3_i2v")
+def video_h3_i2v(p: dict):
+    """MiniMax H3 IMAGE to video+audio (reference workflow's IMAGE TO VIDEO lane). One endpoint,
+    three of the node's modes depending on which ids you pass:
+      still_id                -> image-to-video
+      still_id + last_id      -> first-last-frame interpolation
+      last_id only            -> last-frame-only (converge onto a still)
+    Output size is derived from the FIRST still (preserving its aspect ratio) unless you pass explicit
+    width+height. The prompt must be the sectioned format and, for i2v, must open with the author's
+    exact "<Picture 1> ... is fully referenced." line - see docs/MINIMAX_H3_PLAN.md section 4.
+    Also supports mode="hunt"/"finish" + drafts?, exactly like /api/video/h3_t2v."""
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required")
+    if not (p.get("still_id") or p.get("last_id")):
+        raise HTTPException(400, "provide still_id (first frame) and/or last_id (last frame)")
+    up = {}
     try:
-        graph, resolved = video_mod.build_h3_t2v(p)   # finish: base recipe unless turbo is asked for
+        for key, slot in (("still_id", "first"), ("last_id", "last")):
+            if not p.get(key):
+                continue
+            path = _lib_image_path(p.get(key))
+            if not path:
+                raise HTTPException(400, f"{key} must reference a generated still in the library")
+            with open(path, "rb") as f:
+                up[slot] = C.upload_audio(f.read(), os.path.basename(path))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"build failed: {e}")
-    return _submit_video(graph, resolved, "videoclip")
+        raise HTTPException(500, f"still upload failed: {e}")
+
+    def _build(q):
+        graph, resolved = video_mod.build_h3_i2v(q, up.get("first"), up.get("last"))
+        if p.get("still_id"):
+            resolved["still_id"] = os.path.basename(p["still_id"])
+        if p.get("last_id"):
+            resolved["last_id"] = os.path.basename(p["last_id"])
+        return graph, resolved
+
+    return _h3_dispatch(p, lambda q: _build(q))
 
 
 @app.post("/api/video/ltx_i2v")

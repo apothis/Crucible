@@ -2529,3 +2529,62 @@ def build_h3_t2v(p):
                "sampler": rec["sampler"], "scheduler": rec["scheduler"],
                "lora": rec["lora"], "lora_strength": rec["lora_strength"] if rec["lora"] else None,
                "kind": "video"}
+
+def build_h3_i2v(p, first_ref, last_ref=None):
+    """MiniMax H3 IMAGE to video+audio - a port of the reference workflow's IMAGE TO VIDEO lane
+    (FL2VA model). Covers three of the node's modes depending on what you pass:
+      first_ref only            -> image-to-video (animate a still)
+      first_ref + last_ref      -> first-last-frame (interpolate between two stills)
+      last_ref only             -> last-frame-only (converge onto a still) - pass first_ref=None
+    Faithful details from the workflow:
+      - the FIRST frame is fed RAW (LoadImage -> first_frame);
+      - the LAST frame goes through ImageScaleToTotalPixels(nearest-exact, 1.0, 32) first;
+      - output size comes from the FIRST image via its "IMAGE SIZE" group
+        (ImageScaleToTotalPixels(megapixels) -> GetImageSize), which preserves the STILL's aspect
+        ratio instead of forcing 16:9. Pass explicit width/height to override with the manual path
+        (the workflow's "IMAGE MANUAL RESOLUTION" group).
+    p: as build_h3_t2v, plus {img_megapixels? (sizing tier when deriving from the image)}.
+    Prompt must be the sectioned format, and for i2v it must OPEN with the author's exact line:
+      "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is
+      fully referenced." followed by a blank line. See docs/MINIMAX_H3_PLAN.md section 4."""
+    seed = _seed(p)
+    fps = int(p.get("fps", H3_FPS))
+    frames = _h3_frames(p.get("frames") or round(float(p.get("seconds", 5.0)) * fps))
+    prompt = (p.get("prompt") or "").strip()
+    manual = bool(p.get("width") and p.get("height"))
+    w, h = _h3_size(p)
+    g = {}
+    _h3_loaders(g)
+    node = {"clip": ["5", 0], "vae": ["6", 0], "prompt": prompt, "length": frames}
+    if first_ref:
+        g["30"] = {"class_type": "LoadImage", "inputs": {"image": first_ref}}
+        node["first_frame"] = ["30", 0]
+    if last_ref:
+        g["31"] = {"class_type": "LoadImage", "inputs": {"image": last_ref}}
+        g["32"] = {"class_type": "ImageScaleToTotalPixels",
+                   "inputs": {"image": ["31", 0], "upscale_method": "nearest-exact",
+                              "megapixels": 1.0, "resolution_steps": 32}}
+        node["last_frame"] = ["32", 0]
+    if manual or not first_ref:
+        node["width"], node["height"] = w, h          # manual path (or nothing to derive from)
+    else:
+        # the workflow's IMAGE SIZE group: scale the first still to the target megapixels on a /32
+        # grid, then read its dimensions back. Keeps the still's aspect ratio.
+        g["33"] = {"class_type": "ImageScaleToTotalPixels",
+                   "inputs": {"image": ["30", 0], "upscale_method": "nearest-exact",
+                              "megapixels": float(p.get("img_megapixels", H3_MP_DEFAULT)),
+                              "resolution_steps": 32}}
+        g["34"] = {"class_type": "GetImageSize", "inputs": {"image": ["33", 0]}}
+        node["width"], node["height"] = ["34", 0], ["34", 1]
+    g["20"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": node}
+    steps = _h3_tail(g, H3_FL2VA, "20", p, seed, frames, fps, "videogen/h3i2v")
+    rec = _h3_recipe(p)
+    lane = ("flf" if (first_ref and last_ref) else "i2v" if first_ref else "lastframe")
+    return g, {"seed": seed, "frames": frames, "fps": fps, "seconds": round(frames / fps, 2),
+               "steps": steps, "prompt": prompt, "engine": "minimax_h3", "lane": lane,
+               "model": H3_FL2VA, "spectrum": bool(p.get("spectrum")), "turbo": bool(p.get("turbo")),
+               "sampler": rec["sampler"], "scheduler": rec["scheduler"],
+               "lora": rec["lora"], "lora_strength": rec["lora_strength"] if rec["lora"] else None,
+               "width": w if (manual or not first_ref) else None,
+               "height": h if (manual or not first_ref) else None,
+               "size_from_image": not (manual or not first_ref), "kind": "video"}

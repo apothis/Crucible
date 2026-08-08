@@ -407,12 +407,25 @@ previous one is eyeballed by the user.
 - **Decision point:** if it thrashes like GGUF LTX did, stop and report; H3 may simply not fit our
   box for reference-mode work.
 
-### Phase 1 - image lane
-- `build_h3_i2v(p, first_ref, last_ref=None)` - adds `first_frame` / `last_frame`
-  (+ `ImageScaleToTotalPixels` on the last frame, per the workflow).
-- `POST /api/video/h3_i2v`.
-- Replaces `ltx_i2v` for B-roll and the FFLF push-in lane; this is where the real camera vocabulary
-  arrives, so re-test the moves that LTX could not do (truck, pan, arc, pedestal).
+### Phase 1 - image lane  [BUILT 2026-08-02, not yet rendered on the box]
+- `build_h3_i2v(p, first_ref, last_ref=None)` + `POST /api/video/h3_i2v`. ONE endpoint covers three
+  of the node's modes by which library ids you pass: `still_id` -> i2v; `still_id` + `last_id` ->
+  first-last-frame; `last_id` alone -> last-frame-only. `resolved["lane"]` records which.
+- Faithful details taken from the workflow's IMAGE TO VIDEO lane:
+  - the FIRST frame is fed RAW; the LAST frame goes through
+    `ImageScaleToTotalPixels(nearest-exact, 1.0, 32)` first (the author's asymmetry, not a slip);
+  - output size is derived from the FIRST still via the "IMAGE SIZE" group
+    (`ImageScaleToTotalPixels(megapixels)` -> `GetImageSize` -> width/height), which PRESERVES the
+    still's aspect ratio instead of forcing 16:9. That chain is acyclic so it can be wired as real
+    links, unlike the frame-count feedback loop. Explicit `width`+`height` selects the workflow's
+    manual-resolution path instead.
+- `_h3_dispatch()` in app.py now provides hunt/finish for EVERY H3 lane, so the image lane gets the
+  seed hunt for free.
+- Verified offline (no GPU): all four wiring modes, the raw-first/scaled-last asymmetry, the
+  image-derived size chain, and turbo/base recipes applying to this lane.
+- STILL TO DO on the box: render it, and re-test the camera moves LTX could not do (truck, pan, arc,
+  pedestal) now that a still anchors the shot - the t2v tests proved the moves work WITHOUT an anchor,
+  which is not the same thing.
 
 ### Phase 2 - reference lane (the MSR replacement)
 - `build_h3_ref2v(p, ref_images, ref_videos, ref_video_audios, ref_audios)` on the REF2VA model,
