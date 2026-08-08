@@ -2588,3 +2588,80 @@ def build_h3_i2v(p, first_ref, last_ref=None):
                "width": w if (manual or not first_ref) else None,
                "height": h if (manual or not first_ref) else None,
                "size_from_image": not (manual or not first_ref), "kind": "video"}
+
+
+def build_h3_ref2v(p, ref_images=None, ref_videos=None, ref_audios=None):
+    """MiniMax H3 REFERENCE to video+audio - a port of the reference workflow's FULL REFERENCES lane
+    (REF2VA model, node MiniMaxH3ReferenceToVideo). This is the identity/MSR-replacement lane.
+
+    Faithful details, VERIFIED from the reference workflow's ref-lane wiring + the node source
+    (comfy_extras/nodes_minimax_h3.py, fetched off the box 2026-08-08):
+      - ref images feed the node RAW from LoadImage - the node does its OWN sizing, governed by
+        ref_image_size ("match" = scale down to the generation's pixel area [author's setting];
+        "max" = 2048px short edge, better identity but several times slower);
+      - a reference video feeds BOTH ref_video_N (VHS_LoadVideo images, slot 0) and - when its
+        soundtrack should be referenced - the INDEX-PAIRED ref_video_audio_N (slot 2), exactly how
+        the author wires his single VHS_LoadVideo to both sockets;
+      - standalone audio (voice timbre / lip-sync) feeds ref_audio_N from LoadAudio;
+      - API-format keys for these sockets are the DOTTED autogrow paths ("ref_images.ref_image_0"):
+        finalize_prefix() in comfy_api/latest/_io.py joins the Autogrow input id and the member name
+        with ".", and build_nested_inputs() splits on "." to regroup them at execute time;
+      - reference ORDER in the prompt's numbering is fixed by the node: all images first
+        (<Picture 1..>), then videos (each soundtrack's <Audio j> label just BEFORE its <Video k>),
+        then standalone audio - ordinals 1-based PER TYPE. So the wiring index i maps to
+        <Picture i+1> etc., and standalone audio numbering starts AFTER any video soundtracks.
+      - there is no image to derive the canvas from (refs aren't frames), so size = explicit
+        width/height or the megapixel tier, same as t2v.
+
+    ref_images: list of uploaded box image refs (max 9).
+    ref_videos: list of {"video": box_ref, "use_audio": bool} (max 3).
+    ref_audios: list of uploaded box audio refs (max 3).
+    p: as build_h3_t2v, plus {ref_image_size? ("match")}. Prompt must be the FULL REFERENCES format
+    (subject_definitions / summary / retention_analysis / detailed_description / overall_soundscape /
+    non_diegetic_music) using the same <Picture/Video/Audio/Subject N> tags - docs/MINIMAX_H3_PLAN.md
+    section 4. Cfg-free: NO negative prompt."""
+    ref_images, ref_videos, ref_audios = ref_images or [], ref_videos or [], ref_audios or []
+    if not (ref_images or ref_videos or ref_audios):
+        raise ValueError("the reference lane needs at least one reference (use t2v otherwise)")
+    if len(ref_images) > 9 or len(ref_videos) > 3 or len(ref_audios) > 3:
+        raise ValueError("MiniMax H3 reference caps: 9 images, 3 videos, 3 audios")
+    seed = _seed(p)
+    w, h = _h3_size(p)
+    fps = int(p.get("fps", H3_FPS))
+    frames = _h3_frames(p.get("frames") or round(float(p.get("seconds", 5.0)) * fps))
+    prompt = (p.get("prompt") or "").strip()
+    g = {}
+    _h3_loaders(g)
+    node = {"clip": ["5", 0], "vae": ["6", 0], "audio_vae": ["7", 0], "prompt": prompt,
+            "width": w, "height": h, "length": frames,
+            "ref_image_size": p.get("ref_image_size") or "match"}
+    for i, img in enumerate(ref_images):
+        nid = str(40 + i)
+        g[nid] = {"class_type": "LoadImage", "inputs": {"image": img}}
+        node[f"ref_images.ref_image_{i}"] = [nid, 0]
+    for i, rv in enumerate(ref_videos):
+        nid = str(50 + i)
+        g[nid] = {"class_type": "VHS_LoadVideo",
+                  "inputs": {"video": rv["video"], "force_rate": 0.0, "custom_width": 0,
+                             "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0,
+                             "select_every_nth": 1}}
+        node[f"ref_videos.ref_video_{i}"] = [nid, 0]
+        if rv.get("use_audio"):
+            node[f"ref_video_audios.ref_video_audio_{i}"] = [nid, 2]
+    for i, aud in enumerate(ref_audios):
+        nid = str(60 + i)
+        g[nid] = {"class_type": "LoadAudio", "inputs": {"audio": aud}}
+        node[f"ref_audios.ref_audio_{i}"] = [nid, 0]
+    g["20"] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": node}
+    steps = _h3_tail(g, H3_REF2VA, "20", p, seed, frames, fps, "videogen/h3ref2v")
+    rec = _h3_recipe(p)
+    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+               "seconds": round(frames / fps, 2), "steps": steps, "prompt": prompt,
+               "engine": "minimax_h3", "lane": "ref2v", "model": H3_REF2VA,
+               "ref_image_size": node["ref_image_size"],
+               "n_ref_images": len(ref_images), "n_ref_videos": len(ref_videos),
+               "n_ref_audios": len(ref_audios),
+               "spectrum": bool(p.get("spectrum")), "turbo": bool(p.get("turbo")),
+               "sampler": rec["sampler"], "scheduler": rec["scheduler"],
+               "lora": rec["lora"], "lora_strength": rec["lora_strength"] if rec["lora"] else None,
+               "kind": "video"}

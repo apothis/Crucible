@@ -488,14 +488,37 @@ meaningless because you changed so many things, we have no idea which actually w
 thing per render, hold the seed and the shot fixed, and carry unchanged sentences over VERBATIM
 (assert it in code - the camera sentence was hash-checked identical between draft1 and test2).
 
-### Phase 2 - reference lane (the MSR replacement)
-- `build_h3_ref2v(p, ref_images, ref_videos, ref_video_audios, ref_audios)` on the REF2VA model,
-  emitting flat `ref_image_N` / `ref_audio_N` keys.
-- `POST /api/video/h3_ref2v`, mirroring `/api/video/ltx_msr`'s library-id -> upload plumbing
-  (`_lib_image_path`, `C.upload_audio`, `_audio_name` content-hash naming, `_isolate_vocal_bytes`
-  for the audio window). Reuse `_trim_audio_window` so the audio matches the clip length.
-- Feed character sheet + wardrobe + background as separate refs; test whether the person-free
-  background rule can be dropped (declare the background as its own `<Subject>`).
+### Phase 2 - reference lane (the MSR replacement) - BUILT 2026-08-08, awaiting first render
+- `build_h3_ref2v(p, ref_images, ref_videos, ref_audios)` on the REF2VA model + `POST
+  /api/video/h3_ref2v` (library ids -> upload, `_trim_audio_window` for audio windows,
+  `_audio_name` content-hash naming, hunt/finish via `_h3_dispatch`). Graph shape verified
+  offline (dotted keys, slot wiring, turbo atomicity, both error paths); not yet rendered.
+- Wiring facts, all [V] from the node source (`comfy_extras/nodes_minimax_h3.py`, fetched off the
+  box) + the reference workflow's ref-lane links:
+  - **API-format keys are the DOTTED autogrow paths** - `"ref_images.ref_image_0"`, NOT flat
+    `ref_image_0` as this plan originally guessed. `finalize_prefix()` in
+    `comfy_api/latest/_io.py` joins the Autogrow input id and member name with `"."`;
+    `build_nested_inputs()` splits them back into per-group dicts at execute time.
+  - Ref images feed the node **RAW from LoadImage** - the node sizes them itself, per
+    `ref_image_size`: `"match"` (author's setting; scale DOWN to the generation's pixel area) or
+    `"max"` (2048px short edge, "best identity fidelity", tooltip warns it is several times
+    slower because reference tokens ride through every sampling step). `"max"` is the knob to try
+    if `match` identity is not close enough.
+  - A reference video's soundtrack is **index-paired**: the author wires ONE `VHS_LoadVideo` to
+    both `ref_video_0` (slot 0) and `ref_video_audio_0` (slot 2). Our endpoint exposes this as
+    `{"id":..., "use_audio": true}` per video entry.
+  - **Prompt numbering is fixed by the node**, 1-based per type, in this order: all images
+    (`<Picture 1..>`), then videos - each soundtrack's `<Audio j>` label emitted just BEFORE its
+    `<Video k>` - then standalone audio. So standalone-audio numbering starts AFTER any video
+    soundtracks.
+  - Ref videos must be >=5 frames; the node trims them DOWN to the 17k+5 grid and caps them at
+    the generation's frame count. Qwen sees each ref video at 2fps with timestamps.
+  - No image to derive the canvas from (refs are not frames), so size = explicit width/height or
+    the megapixel tier, like t2v. The author's ref-lane default in the workflow is 1344x768; ours
+    stays the 0.9 tier (1280x736) for consistency across lanes.
+- STILL TO TEST (the actual point of the phase): character sheet + wardrobe + background as
+  separate refs; whether the person-free background rule can be dropped (declare the background
+  as its own `<Subject>`); `ref_audio_0` voice-timbre lip-sync; `match` vs `max` identity.
 
 ### Phase 3 - prompt builder
 - `backend/musicvideo.py`: new `build_h3_prompt(shot, cast, mode)` producing the sectioned format,

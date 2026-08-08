@@ -1006,6 +1006,80 @@ def video_h3_i2v(p: dict):
     return _h3_dispatch(p, lambda q: _build(q))
 
 
+@app.post("/api/video/h3_ref2v")
+def video_h3_ref2v(p: dict):
+    """MiniMax H3 FULL REFERENCES to video+audio (reference workflow's ref lane, REF2VA model) -
+    the identity / MSR-replacement lane. References, all from the library:
+      ref_still_ids:  up to 9 generated stills   -> <Picture 1..> in prompt order
+      ref_video_ids:  up to 3 library videos     -> <Video 1..>; entries are ids or
+                      {"id":..., "use_audio": true} to also reference that video's own soundtrack
+                      (its <Audio j> label lands just BEFORE its <Video k>)
+      ref_audio_ids:  up to 3 library tracks     -> standalone <Audio j> (voice timbre / lip-sync);
+                      entries are ids or {"id":..., "start": sec, "seconds": sec} to reference just
+                      a window of the track (e.g. the sung line for this shot)
+    Standalone-audio numbering continues AFTER any video soundtracks - the node emits labels in
+    fixed order (images, then videos with their soundtracks, then standalone audio).
+    The prompt must be the FULL REFERENCES sectioned format (subject_definitions / summary /
+    retention_analysis / detailed_description / overall_soundscape / non_diegetic_music) using the
+    same <Picture/Video/Audio/Subject N> tags - see docs/MINIMAX_H3_PLAN.md section 4.
+    Other p keys as /api/video/h3_t2v: seed?, width?/height? or megapixels?(0.9), frames? or
+    seconds?, turbo?, spectrum?, ref_image_size? ("match" [default] | "max" - max = better identity,
+    several times slower), mode? ("finish" | "hunt"), drafts?."""
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required")
+    stills = p.get("ref_still_ids") or []
+    vids = p.get("ref_video_ids") or []
+    auds = p.get("ref_audio_ids") or []
+    if not (stills or vids or auds):
+        raise HTTPException(400, "provide at least one reference (ref_still_ids / ref_video_ids / "
+                                 "ref_audio_ids); use /api/video/h3_t2v for pure text-to-video")
+    ref_images, ref_videos, ref_audios = [], [], []
+    try:
+        for sid in stills[:9]:
+            path = _lib_image_path(sid)
+            if not path:
+                raise HTTPException(400, f"ref still {sid} not found in the library")
+            with open(path, "rb") as f:
+                ref_images.append(C.upload_audio(f.read(), os.path.basename(path)))
+        for ent in vids[:3]:
+            vid = ent.get("id") if isinstance(ent, dict) else ent
+            path = _lib_video_path(vid)
+            if not path:
+                raise HTTPException(400, f"ref video {vid} not found in the library")
+            with open(path, "rb") as f:
+                ref = C.upload_audio(f.read(), os.path.basename(path))
+            ref_videos.append({"video": ref,
+                               "use_audio": bool(isinstance(ent, dict) and ent.get("use_audio"))})
+        for ent in auds[:3]:
+            aid = ent.get("id") if isinstance(ent, dict) else ent
+            path = _lib_source_path(aid)
+            if not path:
+                raise HTTPException(400, f"ref audio {aid} not found in the library")
+            if isinstance(ent, dict) and (ent.get("start") is not None or ent.get("seconds")):
+                start = max(0.0, float(ent.get("start") or 0))
+                win = float(ent.get("seconds") or 15.0)
+                aud_bytes = _trim_audio_window(path, start, win)
+            else:
+                with open(path, "rb") as f:
+                    aud_bytes = f.read()
+            ref_audios.append(C.upload_audio(aud_bytes, _audio_name("h3_ref", aud_bytes)))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"reference upload failed: {e}")
+
+    def _build(q):
+        graph, resolved = video_mod.build_h3_ref2v(q, ref_images, ref_videos, ref_audios)
+        resolved["ref_still_ids"] = [os.path.basename(s) for s in stills[:9]]
+        resolved["ref_video_ids"] = [os.path.basename(e.get("id") if isinstance(e, dict) else e)
+                                     for e in vids[:3]]
+        resolved["ref_audio_ids"] = [os.path.basename(e.get("id") if isinstance(e, dict) else e)
+                                     for e in auds[:3]]
+        return graph, resolved
+
+    return _h3_dispatch(p, lambda q: _build(q))
+
+
 @app.post("/api/video/ltx_i2v")
 def video_ltx_i2v(p: dict):
     """LTX-2.3 image-to-video: animate a library keyframe still (Z-Image/Qwen-Edit still ->
