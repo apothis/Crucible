@@ -196,7 +196,8 @@ def build_krea2_still(p):
     enh_strength = float(p.get("enhancer_strength", 1.0))   # node range 0..2; workflow default 1.0
     seed_variance = bool(p.get("seed_variance"))
     prompt = (p.get("prompt") or "").strip()
-    if prompt and p.get("photoreal", True):           # emphasize photorealism on every Krea2 still
+    layout = p.get("layout")
+    if prompt and not layout and p.get("photoreal", True):  # emphasize photorealism on every Krea2 still
         prompt = f"{prompt}. {KREA2_PHOTOREAL}"
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
@@ -205,6 +206,37 @@ def build_krea2_still(p):
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "6": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}},   # negative = zeroed pos (cfg 1)
     }
+    if layout:
+        # REGIONAL layout prompting (the KREA2_ULTRA_WORKFLOW v2.1's Ideogram4PromptBuilderKJ path):
+        # the KJ node assembles an Ideogram-4-style structured caption JSON - global fields plus
+        # per-REGION descriptions on a normalized bbox grid (0-1000, [ymin,xmin,ymax,xmax]) - and its
+        # STRING output feeds the ordinary CLIPTextEncode; Krea2's Qwen3-VL encoder understands the
+        # format. Region x/y/w/h here are 0-1 FRACTIONS of the canvas (the node's own editor format,
+        # matching the workflow's widgets_values); the node does the 0-1000 conversion itself.
+        # `style` is a DynamicCombo: API format = {"style": "photo", "style.photo": "<camera text>"}
+        # (dotted key, same _io.py machinery as the H3 autogrow inputs). When a layout is used, the
+        # KREA2_PHOTOREAL suffix is NOT appended (it would corrupt the JSON caption) - put photoreal
+        # emphasis in the layout's aesthetics/medium fields instead.
+        elements = [{"type": r.get("type", "obj"), "text": r.get("text", ""),
+                     "desc": (r.get("desc") or "").strip(),
+                     "palette": r.get("palette", []),
+                     "x": float(r["x"]), "y": float(r["y"]),
+                     "w": float(r["w"]), "h": float(r["h"])}
+                    for r in (layout.get("regions") or [])]
+        g["50"] = {"class_type": "Ideogram4PromptBuilderKJ",
+                   "inputs": {"width": w, "height": h,
+                              "high_level_description": (layout.get("overview") or "").strip(),
+                              "background": (layout.get("background") or "").strip(),
+                              "style": "photo",
+                              "style.photo": (layout.get("photo_style") or "").strip(),
+                              "aesthetics": (layout.get("aesthetics") or "").strip(),
+                              "lighting": (layout.get("lighting") or "").strip(),
+                              "medium": layout.get("medium", "photograph"),
+                              "style_palette_data": json.dumps(layout.get("palette", []), separators=(",", ":")),
+                              "elements_data": json.dumps(elements, separators=(",", ":")),
+                              "bg_brightness": 25, "import_mode": "when empty",
+                              "output_format": "compact"}}
+        g["5"]["inputs"]["text"] = ["50", 0]
     # positive conditioning: raw, or routed through the seed-variance node (faithful widget values)
     pos_src = ["5", 0]
     if seed_variance:
@@ -253,7 +285,8 @@ def build_krea2_still(p):
         })
         return g, {"seed": seed, "width": w, "height": h, "steps": steps, "cfg": cfg,
                    "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": False,
-                   "enhancer": enhancer, "seed_variance": seed_variance, "kind": "image"}
+                   "enhancer": enhancer, "seed_variance": seed_variance,
+                   "layout": layout or None, "kind": "image"}
 
     # ---- TWO TIMES COMBO (quality path): turbo LoRA on both passes ----
     model_src = _model_chain(True)                  # combo always enables the turbo LoRA
@@ -285,7 +318,7 @@ def build_krea2_still(p):
     return g, {"seed": seed, "width": w, "height": h, "steps": p1_steps, "cfg": cfg,
                "prompt": prompt, "lora": p.get("lora"), "engine": "krea2", "two_pass": True,
                "turbo_lora": KREA2_TURBO_LORA, "enhancer": enhancer, "seed_variance": seed_variance,
-               "kind": "image"}
+               "layout": layout or None, "kind": "image"}
 
 
 def build_still(p):

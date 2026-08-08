@@ -520,6 +520,29 @@ thing per render, hold the seed and the shot fixed, and carry unchanged sentence
   separate refs; whether the person-free background rule can be dropped (declare the background
   as its own `<Subject>`); `ref_audio_0` voice-timbre lip-sync; `match` vs `max` identity.
 
+#### Character sheet for the identity test - DONE 2026-08-08 (all [V])
+- Research (RunDiffusion guide + official ComfyUI tutorial): H3 wants 2-3 COMPATIBLE views -
+  a sharp identity portrait, a full-body view, an optional detail close-up - "large, sharp
+  subjects and clearly separated sections", neutral background, and above all NO
+  self-contradiction between panels (wardrobe/hair/age). The old multi-pic MSR ref sets and the
+  June 2026 sheet (job 7622aa11, jacket in one panel, sleeveless in another) violate exactly that.
+- Built with the NEW regional path: `build_krea2_still` now takes `layout` (regional bbox
+  prompting via `Ideogram4PromptBuilderKJ`, ported from KREA2_ULTRA_WORKFLOW v2.1; API format
+  uses the dotted DynamicCombo key `style.photo`). Request template:
+  `.mvwork/h3_charsheet_request.json` (1920x1088, two_pass, enhancer ON, 4 regions).
+- The Krea2T-Enhancer had to be fixed first (box had v1.0.2, ComfyUI's H3 update changed the
+  model-wrapper call signature to 7 args; upstream v1.1.2 deployed via fs API, ComfyUI restarted
+  via the fs API's /comfy/restart). Enhancer OFF = regions loosely obeyed / duplicated views;
+  enhancer ON = distinct panels per region. The enhancer is EFFECTIVELY REQUIRED for layout work.
+- **CANONICAL SHEET: library job `28b14574-16f0-4783-a3ae-ade77d69d9af`** ("Sheet D", seed
+  52208801): full-body front + large 3/4 identity portrait + full side profile, wardrobe
+  consistent (floor-length black lace gown). This is `<Picture 1>` for the Phase 2 tests.
+- **TODO (user-requested): migrate the app's character creator to this process** - one regional
+  Krea2 sheet per character (layout request like the template above) instead of the old
+  multiple-independent-stills flow used for MSR refs. Independent stills drift identity/wardrobe
+  between images; the single-sheet layout keeps every view consistent by construction, and H3
+  ref2v consumes the sheet directly.
+
 ### Phase 3 - prompt builder
 - `backend/musicvideo.py`: new `build_h3_prompt(shot, cast, mode)` producing the sectioned format,
   plus a rewrite of the script-writer schema so the LLM emits H3-shaped shots (subject definitions,

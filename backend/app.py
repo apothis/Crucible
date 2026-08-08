@@ -787,9 +787,10 @@ def video_free_models():
 @app.post("/api/video/still")
 def video_still(p: dict):
     """Generate a photoreal still (Z-Image Turbo). p: {prompt, negative?, seed?, width?,
-    height?, steps?, cfg?}."""
-    if not (p.get("prompt") or "").strip():
-        raise HTTPException(400, "a prompt is required")
+    height?, steps?, cfg?}. Krea2 also accepts `layout` (regional bbox prompting via the
+    Ideogram4PromptBuilderKJ node) instead of a plain prompt."""
+    if not (p.get("prompt") or "").strip() and not p.get("layout"):
+        raise HTTPException(400, "a prompt (or a krea2 layout) is required")
     # Engine: explicit request wins; else the app_config default (still_engine), else Z-Image.
     if not (p.get("engine") or "").strip():
         p["engine"] = CFG.get("still_engine", "zimage")
