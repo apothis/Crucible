@@ -78,9 +78,35 @@ backgrounds, character-identity stills, keyframe stills). The reference-driven `
 - the enhancer/seed-variance input names + RBG enum option strings all match what we send
 Not yet eyeballed against a real render / A-B vs Z-Image.
 
+## ⚠ BROKEN ON THE CURRENT BOX STACK: plain-prompt renders come out BLACK (2026-08-08)
+Since the box's ComfyUI was updated for MiniMax H3 (early Aug 2026), **every plain-text Krea2
+render produces a pure-black image** (NaN latents; `invalid value encountered in cast` at decode).
+Isolated with a 16-render single-variable ladder (each test = one change to a KNOWN-GOOD graph):
+
+- Plain prompts fail at ANY length (47 chars and 1,558 chars both black). [V]
+- Builder captions with SKELETAL global fields fail too, with or without regions. [V]
+- **What works: the `Ideogram4PromptBuilderKJ` caption path with SUBSTANTIAL global fields**
+  (high_level_description / background / aesthetics / lighting all filled with rich prose).
+  Region descs can be tiny, palettes can be empty - the rich globals are what matters. [V]
+- Exonerated by direct test: enhancer (v1.1.2), seed-variance, two-pass, turbo LoRA, resolution,
+  API-vs-UI transport, H3 model residue, ComfyUI restarts, "NaN contamination". One transient
+  near-black render of a known-good caption request was observed once (~1/10); treat a ~0-luma
+  output from a caption render as a retry, not a diagnosis. [V]
+- External guides confirm short plain prompts are NORMAL for Krea 2 (fal + community guides
+  recommend 5-20 word exploration prompts) => this is a STACK bug on our box, not model behavior.
+  Prime suspect [H]: the `qwen3vl_4b_fp8_scaled` TEXT ENCODER - "fp8 scaled/convrot variants
+  produce NaN while non-scaled works" is a reported Krea2 failure class (forge-classic #1325);
+  also in the same window: ComfyUI's Aug-3 dynamic-VRAM regression (Comfy-Org/ComfyUI#15255,
+  workaround `--disable-dynamic-vram`) - untested here because the caption workaround holds.
+- **Operational rule until fixed: every Krea2 render must go through the `layout` param**
+  (regional builder path in `build_krea2_still`) **with the global fields richly filled.**
+  The plain-prompt path below is UNSAFE on this stack. A candidate root fix = download a
+  non-fp8-scaled Qwen3-VL-4B TE and A/B it (user decision, ~8GB; no such file on the box today).
+
 ## Prompting Krea 2 (for genStill / our prompt builders)
 Trained on short/medium/long **natural-language** prompts — **longer, detailed prose = best
-quality**; no JSON/tag-soup needed. Practical rules:
+quality**; no JSON/tag-soup needed. (See the BROKEN note above: on the current box stack this
+plain path black-screens regardless of prompt quality; route through `layout`.) Practical rules:
 - Write flowing sentences, ordered: subject → scene/background → shot type → camera/lens →
   style → lighting → medium → color palette.
 - **Negatives are inert at cfg 1** — steer everything in the positive. Stronger than "inert":
