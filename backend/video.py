@@ -2367,3 +2367,165 @@ def build_svi_i2v(p, image_ref):
                "model": "full" if full else "distilled", "steps": steps, "cfg": cfg,
                "lightx_strength": lightx, "continue_frames": continue_frames,
                "segment_offset": seg_offset, "kind": "video"}
+
+
+# ================================================================= MiniMax H3 (video + native audio)
+# Ported from the user's reference workflow MINIMAX_H3_ULTRA_WORKFLOW.json (Aitrepreneur). Node
+# signatures + model filenames VERIFIED live on the box /object_info 2026-08-02; the frame-count and
+# autogrow-key rules VERIFIED from ComfyUI source (comfy_extras/nodes_minimax_h3.py and
+# comfy_api/latest/_io.py). Plan + provenance: docs/MINIMAX_H3_PLAN.md.
+#
+# Two conditioning nodes cover all five modes, and BOTH emit (positive CONDITIONING, LATENT) which
+# feed one shared tail:
+#   MiniMaxH3ImageToVideo      - t2v (no frames) / i2v (first_frame) / FLF (both) / last-frame-only
+#   MiniMaxH3ReferenceToVideo  - up to 9 ref images, 3 ref videos (+index-paired soundtracks), 3 audios
+# The tail is cfg-FREE (BasicGuider, no CFG) => there is NO negative prompt on this path at all.
+H3_FL2VA = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"   # UNETLoader (text + image lanes)
+H3_REF2VA = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"  # UNETLoader (reference lane)
+H3_CLIP = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"      # CLIPLoader, type "minimax"
+H3_VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
+H3_AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
+# The author's settings, verbatim from the workflow (all three lanes use the same numbers).
+H3_FPS = 24
+H3_STEPS = 20
+H3_SAMPLER = "res_multistep"
+H3_SCHEDULER = "simple"
+# ResolutionSelector 16:9 reference table from the workflow's own note (multiple of 32). 0.9 is the
+# author's default. We resolve this in PYTHON because the workflow feeds width/height back into the
+# H3 node through rgthree Any Switch nodes - a cycle that cannot exist in an API-format graph.
+H3_MEGAPIXELS = {0.2: (608, 352), 0.3: (736, 416), 0.4: (864, 480), 0.5: (960, 544),
+                 0.6: (1056, 608), 0.7: (1152, 640), 0.8: (1216, 672), 0.9: (1280, 736),
+                 0.98: (1344, 768), 1.0: (1376, 768), 1.2: (1504, 832), 1.5: (1664, 928),
+                 1.8: (1824, 1024), 2.0: (1920, 1088)}
+H3_MP_DEFAULT = 0.9
+# The author ships a TURBO variant of the same workflow (MINIMAX_H3_ULTRA_+TURBO-LORA_WORKFLOW.json).
+# Diffing it against the base ULTRA workflow shows FOUR settings change TOGETHER - the LoRA is not a
+# drop-in on its own, so we apply them as ONE atomic recipe (`turbo: True`) to make half-applying it
+# impossible. VERIFIED by diff 2026-08-02; the 4-step LoRA is present on the box.
+H3_TURBO_LORA = "minimax_h3_turbo_4step_ckpt500_comfyui_pruned.safetensors"
+H3_TURBO = {"lora": H3_TURBO_LORA, "lora_strength": 1.0,
+            "sampler": "euler", "scheduler": "beta", "steps": 8}
+
+
+def _h3_frames(n):
+    """MiniMax H3 wants frame_count % 17 == 5 at 24fps, snapped UP. Mirrors align_frame_count() in
+    comfy_extras/nodes_minimax_h3.py - the node snaps internally, so we mirror it to keep the
+    frames/seconds we RECORD honest. Trained range is ~124-362 frames (5.17s - 15.08s)."""
+    n = max(5, int(n))
+    while n % 17 != 5:
+        n += 1
+    return n
+
+
+def _h3_size(p):
+    """Output size: explicit width/height win; else the megapixel tier (author default 0.9 = 1280x736).
+    Both are snapped to /32 because the model's latent grid requires it."""
+    if p.get("width") and p.get("height"):
+        w, h = int(p["width"]), int(p["height"])
+    else:
+        mp = float(p.get("megapixels", H3_MP_DEFAULT))
+        w, h = H3_MEGAPIXELS.get(mp) or H3_MEGAPIXELS[H3_MP_DEFAULT]
+    return max(32, (w // 32) * 32), max(32, (h // 32) * 32)
+
+
+def _h3_recipe(p):
+    """Resolve sampler / scheduler / steps / LoRA. `turbo: True` applies the author's ULTRA+TURBO
+    recipe VERBATIM (all four values at once); explicit per-request values still win over it."""
+    r = {"sampler": H3_SAMPLER, "scheduler": H3_SCHEDULER, "steps": H3_STEPS,
+         "lora": None, "lora_strength": 1.0}
+    if p.get("turbo"):
+        r.update(H3_TURBO)
+    for k in ("sampler", "scheduler", "steps", "lora", "lora_strength"):
+        if p.get(k) not in (None, ""):
+            r[k] = p[k]
+    r["steps"] = int(r["steps"])
+    r["lora_strength"] = float(r["lora_strength"])
+    return r
+
+
+def _h3_tail(g, unet_name, cond_node, p, seed, frames, fps, prefix):
+    """The shared chain every H3 lane uses, traced from the reference workflow's subgraphs:
+      UNETLoader -> [SigmaShift -> SpectrumApply] -> BasicGuider
+                                                 -> BasicScheduler (fed the PATCHED model)
+      SamplerCustomAdvanced(RandomNoise, guider, KSamplerSelect, sigmas, latent)
+        -> VAEDecode(video vae)     -> IMAGE
+        -> VAEDecodeAudio(audio vae) -> AUDIO   (same joint AV latent, decoded twice)
+      -> VHS_VideoCombine
+    NOTE: no PathchSageAttentionKJ - our ComfyUI launcher already passes --use-sage-attention, and the
+    author's note says to patch in-graph ONLY when the launcher argument is absent.
+    `spectrum` (default OFF) adds the author's SPEEDUP group at its node defaults; it is a separate
+    toggleable group in his workflow, so we keep it opt-in and A/B it rather than baking it in."""
+    rec = _h3_recipe(p)
+    steps = rec["steps"]
+    g["1"] = {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}}
+    model = ["1", 0]
+    # LoRA sits immediately after the UNET, as in BOTH reference workflows (ULTRA puts an rgthree
+    # Power Lora Loader there; the Director/scout workflow uses stock LoraLoaderModelOnly). We use the
+    # stock node because the rgthree one carries a UI-shaped dict widget with no API-format equivalent.
+    if rec["lora"]:
+        g["4"] = {"class_type": "LoraLoaderModelOnly",
+                  "inputs": {"model": model, "lora_name": rec["lora"],
+                             "strength_model": rec["lora_strength"]}}
+        model = ["4", 0]
+    if p.get("spectrum"):
+        g["2"] = {"class_type": "MiniMaxH3SigmaShift",
+                  "inputs": {"model": model,
+                             "shift_video": float(p.get("shift_video", 12.0)),
+                             "shift_audio": float(p.get("shift_audio", 3.0))}}
+        g["3"] = {"class_type": "SpectrumApplyMiniMaxH3",
+                  "inputs": {"model": ["2", 0], "enabled": True, "blend_weight": 0.5, "degree": 1,
+                             "ridge_lambda": 0.1, "window_size": 2.0, "flex_window": 0.75,
+                             "warmup_steps": 1, "tail_actual_steps": 1, "max_history": 8,
+                             "debug": False, "history_storage": "system_ram",
+                             "bootstrap_first_forecast": True}}
+        model = ["3", 0]
+    g["10"] = {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": [cond_node, 0]}}
+    g["11"] = {"class_type": "BasicScheduler",
+               "inputs": {"model": model, "scheduler": rec["scheduler"], "steps": steps, "denoise": 1.0}}
+    g["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": rec["sampler"]}}
+    g["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
+    g["14"] = {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["13", 0], "guider": ["10", 0], "sampler": ["12", 0],
+                          "sigmas": ["11", 0], "latent_image": [cond_node, 1]}}
+    g["15"] = {"class_type": "VAEDecode", "inputs": {"samples": ["14", 0], "vae": ["6", 0]}}
+    g["16"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["14", 0], "vae": ["7", 0]}}
+    g["17"] = {"class_type": "VHS_VideoCombine",
+               "inputs": {"images": ["15", 0], "audio": ["16", 0], "frame_rate": fps,
+                          "loop_count": 0, "filename_prefix": prefix,
+                          "format": "video/h264-mp4", "pingpong": False, "save_output": True}}
+    return steps
+
+
+def _h3_loaders(g):
+    """CLIP (type "minimax") + the two VAEs, shared by every lane."""
+    g["5"] = {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": H3_CLIP, "type": "minimax", "device": "default"}}
+    g["6"] = {"class_type": "VAELoader", "inputs": {"vae_name": H3_VIDEO_VAE}}
+    g["7"] = {"class_type": "VAELoader", "inputs": {"vae_name": H3_AUDIO_VAE}}
+
+
+def build_h3_t2v(p):
+    """MiniMax H3 TEXT to video+audio (the reference workflow's TEXT TO VIDEO lane, FL2VA model).
+    p: {prompt, seed?, width?/height? or megapixels?(0.9), frames?(124) or seconds?, steps?(20),
+    spectrum?(False)}. The prompt must be the author's sectioned format - see docs/MINIMAX_H3_PLAN.md
+    section 4 (integrated_multimodal_description / overall_soundscape / non_diegetic_music).
+    There is NO negative prompt on this path (BasicGuider, cfg-free)."""
+    seed = _seed(p)
+    w, h = _h3_size(p)
+    fps = int(p.get("fps", H3_FPS))
+    frames = _h3_frames(p.get("frames") or round(float(p.get("seconds", 5.0)) * fps))
+    prompt = (p.get("prompt") or "").strip()
+    g = {}
+    _h3_loaders(g)
+    g["20"] = {"class_type": "MiniMaxH3ImageToVideo",
+               "inputs": {"clip": ["5", 0], "vae": ["6", 0], "prompt": prompt,
+                          "width": w, "height": h, "length": frames}}
+    steps = _h3_tail(g, H3_FL2VA, "20", p, seed, frames, fps, "videogen/h3t2v")
+    rec = _h3_recipe(p)
+    return g, {"seed": seed, "width": w, "height": h, "frames": frames, "fps": fps,
+               "seconds": round(frames / fps, 2), "steps": steps, "prompt": prompt,
+               "engine": "minimax_h3", "lane": "t2v", "model": H3_FL2VA,
+               "spectrum": bool(p.get("spectrum")), "turbo": bool(p.get("turbo")),
+               "sampler": rec["sampler"], "scheduler": rec["scheduler"],
+               "lora": rec["lora"], "lora_strength": rec["lora_strength"] if rec["lora"] else None,
+               "kind": "video"}

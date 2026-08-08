@@ -460,7 +460,17 @@ def config():
             "video_ltx": _ltx_available(),          # LTX-2.3 GGUF present (fast video backbone)
             "video_ltx_quants": _ltx_quants_present(),  # which LTX quants are on the box
             "video_msr": _msr_available(),          # LTX MSR renderable (Licon-MSR + PromptRelay nodes)
+            "video_h3": _h3_available(),            # MiniMax H3 video+audio backbone present
             "genres": genres}
+
+
+def _h3_available():
+    """True when the MiniMax H3 backbone is renderable: both conditioning nodes registered on the box.
+    The model files are checked implicitly (UNETLoader would reject a missing name at submit)."""
+    try:
+        return C.has_node("MiniMaxH3ImageToVideo") and C.has_node("MiniMaxH3ReferenceToVideo")
+    except Exception:
+        return False
 
 
 def _msr_available():
@@ -900,6 +910,23 @@ def video_ltx_t2v(p: dict):
         raise HTTPException(400, "a prompt is required")
     try:
         graph, resolved = video_mod.build_ltx_t2v(p)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    return _submit_video(graph, resolved, "videoclip")
+
+
+@app.post("/api/video/h3_t2v")
+def video_h3_t2v(p: dict):
+    """MiniMax H3 TEXT to video+audio (Phase 0 feasibility gate; see docs/MINIMAX_H3_PLAN.md).
+    Faithful port of the reference workflow's TEXT TO VIDEO lane: FL2VA model, res_multistep/simple,
+    20 steps, cfg-free BasicGuider (so there is NO negative prompt), joint AV latent decoded through
+    both VAEs, VHS_VideoCombine at 24fps. p: {prompt (the author's SECTIONED format), seed?,
+    width?/height? or megapixels? (default 0.9 = 1280x736), frames? or seconds? (snapped to 17k+5),
+    steps? (20), spectrum? (opt-in SPEEDUP group)}."""
+    if not (p.get("prompt") or "").strip():
+        raise HTTPException(400, "a prompt is required")
+    try:
+        graph, resolved = video_mod.build_h3_t2v(p)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     return _submit_video(graph, resolved, "videoclip")

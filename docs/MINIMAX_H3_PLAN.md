@@ -1,6 +1,7 @@
 # MiniMax H3 video backbone - integration plan
 
-Status: **PLAN. No GPU fired. Nothing built.** Written 2026-08-02 from a full read of the user's
+Status: **Phase 0 BUILT + GATE PASSED (2026-08-02).** `build_h3_t2v` + `/api/video/h3_t2v` are live;
+four real renders measured on the box. Phases 1-5 still unbuilt. Written 2026-08-02 from a full read of the user's
 reference workflow `MINIMAX_H3_ULTRA_WORKFLOW.json` (Aitrepreneur), the ComfyUI node source on the
 box, and read-only `/object_info` + `/fs/read` probes.
 
@@ -10,6 +11,79 @@ as measured unless tagged [V].
 
 Goal: replace the LTX-2.3 / LTXDirector video path with MiniMax H3 as the music-video backbone,
 copying the reference workflow's structure rather than inventing new graphs.
+
+---
+
+## 0a. MEASURED ON THE BOX (2026-08-02) - all [V]
+
+Four renders, 1280x736 / 124 frames (5.17s) / seed-pinned, via `/api/video/h3_t2v`.
+
+| Recipe | sampler / scheduler / steps | LoRA | Time |
+|---|---|---|---|
+| base | `res_multistep` / `simple` / 20 | - | **553s** |
+| base + Spectrum | as above + SigmaShift(12,3) + SpectrumApply | - | **342s** (-38%) |
+| **turbo** (author's ULTRA+TURBO) | `euler` / `beta` / **8** | 4-step @ **1.0** | **215s** (-61%) |
+
+- **Memory: FITS.** Peak VRAM **18.7GB / 25.8GB**, ~7GB headroom, no spill, ~24s/it. Sampling begins
+  ~51s in (the 27.1GB text encoder loads faster than feared). The 54GB-of-weights worry in section 6
+  did NOT materialise - ComfyUI's sequential load handles it. The author's "usable on 8GB" claim is
+  consistent with what we saw.
+- **Native audio works**: every render came out h264 + AAC with real content (not silence).
+- **CAMERA MOVES WORK - the headline win.** A `truck right ... past a foreground pillar` and an
+  `arc shot to the left with large amplitude at slow speed` both executed with genuine parallax and
+  NO warping, morphing or stepped framing. These are precisely the moves that failed on LTX
+  ([[project_ltx-camera-lora]]), so the 3-move restriction in our script writer can be lifted.
+- **USER VERDICT (2026-08-02): "turbo is fine for a seed hunt, but base is needed for final."**
+  So: turbo = draft/hunt recipe, base = finish recipe. Both look good; Spectrum was slightly
+  disliked vs off and is NOT in the default path.
+- **Spectrum changes the picture, it is not free speed.** At a pinned seed it produced a materially
+  DIFFERENT scene (different cathedral geometry/contrast), so it must be judged on quality. The turbo
+  LoRA by contrast largely PRESERVED the seed's composition at the same resolution - which is what
+  makes it viable as a hunt recipe.
+
+### The hunt/finish design (from muse_minimax_h3_director_scout_v1.json)
+
+That workflow implements the seed hunt with `MuseMinimaxDirector` (runs at **0.4MP**, emits
+`candidate_1..4` images+audio plus a `compiled_prompt` STRING) -> each candidate through
+`RTXVideoSuperResolution` (x3 ULTRA) -> `MuseMinimaxRefine` (runs at **0.9MP**, takes ALL four
+candidates + a pick index + `ref_images` + the compiled prompt, at what looks like ~0.2 denoise).
+So the finish is a LOW-DENOISE PASS CONDITIONED ON THE UPSCALED PICK - not a fresh generation at the
+same seed. RTX VSR stands in for the latent upsampler H3 does not have. [V from node IO; the 0.2
+semantics are [H], inferred from widget position.]
+
+**BLOCKER: that pack is NOT installed.** `MuseMinimaxDirector`, `MuseMinimaxRefine`,
+`RTXVideoSuperResolution`, `SolAttnPatch`, `MiniMaxH3MemoryEfficientSageAttentionPatch`,
+`LayerUtility: PurgeVRAM`, `iToolsPreviewText` all absent from `/object_info` (only `EasyCache`,
+`ModelPreviewOverrideKJ`, `ImageFromBatch` are present, and the `taeh3` preview AE is missing).
+Source: github.com/muse-collective-26/MiniMaxH3-Director.
+
+Two routes, DECISION OPEN:
+- **A - install the Director pack.** Hands us the six-section prompt compilation (our Phase 3), the
+  >15s auto-chunking, hybrid continuation, and the hunt/refine, as one node driven by a timeline JSON
+  widget with a verifiable `compiled_prompt` output.
+- **B - stock-only hunt.** N low-res turbo drafts via the server-side fan-out we already use in
+  `/api/video/ltx_fflf` (`mode:"hunt"` -> `{base_seed, drafts[]}`), then finish the pick on the base
+  recipe. Needs no installs, but the finish cannot be conditioned on the pick the way Refine does
+  unless we feed the draft back as `ref_video_0` (REF2VA model, continuation/editing role).
+
+**OPEN EMPIRICAL QUESTION for route B:** does a pinned seed hold composition ACROSS RESOLUTION TIERS
+(0.4MP hunt -> 0.9MP finish)? Recipe-transfer looks OK (turbo vs base at the same res/seed gave very
+similar scenes), but resolution-transfer is untested. Cheapest test: one turbo render at 0.4MP on
+seed 77123 with the arc prompt, compared against the 0.9MP turbo take we already have. If it does not
+transfer, route B's hunt cannot predict its finish and route A (or a ref_video-conditioned finish) is
+required. Do NOT ship a pick-one-of-N UI before this is answered - same trap as the ScragVAE A/B,
+where a pinned seed was assumed to hold things constant and did not.
+
+### Corrections to earlier assumptions in this doc
+
+- The turbo LoRA is NOT a drop-in: the author's ULTRA+TURBO workflow changes FOUR settings together
+  (LoRA@1.0 + `euler` + `beta` + 8 steps). Diffed 2026-08-02. `video.py` applies them as one atomic
+  `H3_TURBO` recipe so they cannot be half-applied.
+- `beta` scheduler is now corroborated by BOTH authors (ULTRA+TURBO uses it; the scout note says
+  "`beta` or `normal` tends to outperform `simple` for reference-heavy prompts"). Worth testing on
+  the base recipe independently of the LoRA.
+- The shipped `api_minimax_h3_*.json` ComfyUI templates are for the CLOUD node
+  (`MinimaxHailuo03ReferenceNode`) and are NOT a guide for this local pipeline.
 
 ---
 
