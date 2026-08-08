@@ -2484,14 +2484,20 @@ def _h3_tail(g, unet_name, cond_node, p, seed, frames, fps, prefix):
         -> VAEDecode(video vae)     -> IMAGE
         -> VAEDecodeAudio(audio vae) -> AUDIO   (same joint AV latent, decoded twice)
       -> VHS_VideoCombine
-    NOTE: no PathchSageAttentionKJ - our ComfyUI launcher already passes --use-sage-attention, and the
-    author's note says to patch in-graph ONLY when the launcher argument is absent.
+    NOTE: PathchSageAttentionKJ ("auto") is applied IN-GRAPH, per the author's note to patch in-graph
+    when the launcher argument is absent. --use-sage-attention came OFF the launcher 2026-08-09:
+    launcher-wide sage silently drops attention masks, which NaN'd every short-prompt Krea2 render
+    to black (and broke LTX PromptRelay back in June the same way). Sage is now H3-graph-only.
     `spectrum` (default OFF) adds the author's SPEEDUP group at its node defaults; it is a separate
     toggleable group in his workflow, so we keep it opt-in and A/B it rather than baking it in."""
     rec = _h3_recipe(p)
     steps = rec["steps"]
     g["1"] = {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}}
     model = ["1", 0]
+    # Sage attention for H3 only (author's node, his shipped setting "auto"); see the note above.
+    g["8"] = {"class_type": "PathchSageAttentionKJ",
+              "inputs": {"model": model, "sage_attention": "auto"}}
+    model = ["8", 0]
     # LoRA sits immediately after the UNET, as in BOTH reference workflows (ULTRA puts an rgthree
     # Power Lora Loader there; the Director/scout workflow uses stock LoraLoaderModelOnly). We use the
     # stock node because the rgthree one carries a UI-shaped dict widget with no API-format equivalent.

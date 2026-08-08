@@ -78,7 +78,19 @@ backgrounds, character-identity stills, keyframe stills). The reference-driven `
 - the enhancer/seed-variance input names + RBG enum option strings all match what we send
 Not yet eyeballed against a real render / A-B vs Z-Image.
 
-## ⚠ BROKEN ON THE CURRENT BOX STACK: plain-prompt renders come out BLACK (2026-08-08)
+## ✔ RESOLVED 2026-08-09: the black renders were LAUNCHER-WIDE SAGE ATTENTION
+**Root cause found by single-variable test 18: `--use-sage-attention` on the ComfyUI launcher.**
+Sage silently drops attention masks (same mechanism that broke LTX PromptRelay in June, per the
+launcher's own comment); short prompts depend on their mask => garbage conditioning => fp8 NaN =>
+black. Long builder captions fill the context so the mask barely matters => they survived. The flag
+had been re-added for MiniMax H3 in early Aug; it is now OFF the launcher again
+(`run_musicgen_lan.bat`, backup `.sage.bak`) and H3 gets sage IN-GRAPH instead
+(`PathchSageAttentionKJ` "auto" in `_h3_tail`, the author's documented pattern). The bf16 TE
+(`qwen3vl_4b_bf16.safetensors`, downloaded during diagnosis) was exonerated but is kept as a
+quality option. The section below records the investigation and stands as the failure signature
+if launcher-wide sage ever returns.
+
+## ⚠ superseded (see RESOLVED above): plain-prompt renders came out BLACK (2026-08-08)
 Since the box's ComfyUI was updated for MiniMax H3 (early Aug 2026), **every plain-text Krea2
 render produces a pure-black image** (NaN latents; `invalid value encountered in cast` at decode).
 Isolated with a 16-render single-variable ladder (each test = one change to a KNOWN-GOOD graph):
