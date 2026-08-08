@@ -168,6 +168,7 @@ staged Shot Editor (Type -> Scene -> Cast -> Placement -> Video -> Result) -> `/
 | docs/LTXDIRECTOR_PIPELINE_PLAN.md | Phases A + B shipped, C partial, D partial (retake shipped) |
 | docs/SHOT_STUDIO_FFLF_PLAN.md | SUPERSEDED by SHOT_EDITOR_MODEL v2; its section 0 facts still hold |
 | docs/MV_AI_GRADING_PLAN.md | Scaffold only, never verified on the box |
+| docs/MINIMAX_H3_PLAN.md | PLAN as of 2026-08-02, nothing built, Phase 0 is a feasibility gate |
 | This file below this section, README.md, PLAN.md, RESEARCH.md | Audio / LoRA history; predate all video work |
 
 ### Known issues (verified in code 2026-07-24, all open)
@@ -207,6 +208,7 @@ Video / music-video docs (all newer than the audio docs above - see the doc trus
 - **`docs/LTXDIRECTOR_PIPELINE_PLAN.md`** - LTXDirector relay / keyframe-mode phased plan.
 - **`docs/SHOT_STUDIO_FFLF_PLAN.md`** - FFLF lane + the old Shot Studio (superseded UI, valid FFLF facts).
 - **`docs/KREA2.md`** - the Krea 2 Ultra still engine (current default).
+- **`docs/MINIMAX_H3_PLAN.md`** - plan to replace the LTX video backbone with MiniMax H3 (not built).
 - **`docs/MV_AI_GRADING_PLAN.md`** - AI grading design (scaffold only, not verified on the box).
 
 ## Current status (2026-05-24)
