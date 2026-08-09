@@ -831,15 +831,41 @@ in its window."""
     return system, prompt
 
 
+def _extract_json_array(text):
+    """Pull the LARGEST valid JSON array of objects out of arbitrary LLM output. Robust against
+    markdown fences, prose before/after, bracketed asides like "[Shot 1]", and trailing notes -
+    the greedy-regex approach failed on exactly those (a real 8-minute writer run died with
+    "Extra data" at the final parse, 2026-08-09). raw_decode at every '[' and keep the best."""
+    dec = json.JSONDecoder()
+    best = None
+    for m in re.finditer(r"\[", text):
+        try:
+            val, _end = dec.raw_decode(text, m.start())
+        except ValueError:
+            continue
+        if isinstance(val, list) and val and all(isinstance(x, dict) for x in val):
+            if best is None or len(val) > len(best):
+                best = val
+    if best is None:
+        # keep the evidence: a failed 8-minute LLM run must be diagnosable, not vanished
+        try:
+            os.makedirs(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                     ".mvwork"), exist_ok=True)
+            fp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              ".mvwork", "h3_writer_failed.txt")
+            with open(fp, "w") as f:
+                f.write(text)
+            raise ValueError(f"no JSON segment array found in the writer output (raw saved to {fp})")
+        except OSError:
+            raise ValueError("no JSON segment array found in the writer output")
+    return best
+
+
 def parse_h3_segments(text, segments):
     """Validate the writer's JSON against the fixed segment windows. Enforces (hard, in code):
     lipsync => kind single + close/medium; scene shot-count == internal cut count (clamped 1-4);
     camera vocabulary; one shot minimum. Returns the segment list with content attached."""
-    m = re.search(r"\[.*\]", text, re.S)
-    raw = m.group(0) if m else text
-    data = json.loads(raw)
-    if not isinstance(data, list):
-        raise ValueError("writer output is not a JSON array")
+    data = _extract_json_array(text)
     out = []
     for i, g in enumerate(segments):
         seg = dict(g)
