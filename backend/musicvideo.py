@@ -848,7 +848,7 @@ def _extract_json_array(text):
     the greedy-regex approach failed on exactly those (a real 8-minute writer run died with
     "Extra data" at the final parse, 2026-08-09). raw_decode at every '[' and keep the best."""
     dec = json.JSONDecoder()
-    best, best_score = None, (-1, -1)
+    best, best_score, best_seg_like = None, (-1, -1), 0
     for m in re.finditer(r"\[", text):
         try:
             val, _end = dec.raw_decode(text, m.start())
@@ -860,7 +860,37 @@ def _extract_json_array(text):
             seg_like = sum(1 for x in val if "shots" in x or "kind" in x)
             score = (seg_like, len(val))
             if score > best_score:
-                best, best_score = val, score
+                best, best_score, best_seg_like = val, score, seg_like
+    # A NON-segment-shaped array (e.g. an inner "shots" array, when the outer array is corrupt or
+    # unterminated) must NOT win - otherwise salvage never runs and one shot is mistaken for the
+    # whole script (caught by test 2026-08-09).
+    fallback = best if (best is not None and best_seg_like == 0) else None
+    if fallback is not None:
+        best = None
+    if best is None:
+        # SALVAGE: no complete array parsed (a reply corrupted mid-stream, or a fragment whose
+        # head was lost). Collect whatever complete top-level OBJECTS the text does contain -
+        # partial output beats discarding a multi-minute run. MEASURED failure shapes 2026-08-09:
+        # a 47KB reply that went malformed at object 27 (`,"",""` inside an object), and a
+        # 919-byte fragment that began mid-object.
+        objs = []
+        pos = 0
+        while pos < len(text):
+            nxt = text.find("{", pos)
+            if nxt < 0:
+                break
+            try:
+                val, end = dec.raw_decode(text, nxt)
+            except ValueError:
+                pos = nxt + 1
+                continue
+            if isinstance(val, dict) and ("shots" in val or "kind" in val):
+                objs.append(val)
+            pos = end
+        if objs:
+            return objs
+        if fallback is not None:
+            return fallback
     if best is None:
         # keep the evidence: a failed 8-minute LLM run must be diagnosable, not vanished
         try:
@@ -1115,13 +1145,59 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                     "envs": env_map, "env": env_pic}
 
 
-def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
+H3_BATCH = 8            # segments per writer call (see generate_h3_script_grid)
+
+
+def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, batch=H3_BATCH):
     """H3 hybrid script: segments from the audio grid -> writer fills content -> each segment gets
-    its compiled full-references prompt attached (prompt, picture_map, env picture index)."""
+    its compiled full-references prompt attached (prompt, picture_map, env picture index).
+
+    WRITTEN IN BATCHES (2026-08-09). A whole-video single call produces a ~30KB JSON reply, and
+    that reply was arriving TRUNCATED through the CLI transport - two 8-minute runs died at the
+    final parse ("Extra data", then a 919-byte fragment that started mid-object). Batching
+    caps each reply at a few KB, and a failed batch is retried ONCE on its own instead of
+    discarding the whole video. Continuity is preserved by telling each batch what came before
+    (locations already established + the previous segment's last shot)."""
     segments = build_h3_segments(grid)
-    system, prompt = build_h3_grid_prompt(song, cast, segments)
-    text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=600)
-    segs = parse_h3_segments(text, segments)
+    done, established = [], []
+    for start in range(0, len(segments), max(1, batch)):
+        chunk = segments[start:start + max(1, batch)]
+        prev = done[-1] if done else None
+        note = ""
+        if established:
+            note += ("\nLOCATIONS ALREADY ESTABLISHED (reuse these names verbatim where the story "
+                     "returns to them): " + ", ".join(sorted(set(established))) + ".")
+        if prev:
+            last = prev["shots"][-1]
+            note += (f"\nCONTINUING FROM: segment {start} ended at {prev['end']:.1f}s in "
+                     f"'{last.get('location') or 'an unnamed place'}' - {last.get('action','')[:120]}")
+        note += (f"\nThese are segments {start + 1}-{start + len(chunk)} of {len(segments)} for the "
+                 f"whole video; number your JSON array from 1 for THIS batch only "
+                 f"({len(chunk)} objects).")
+        system, prompt = build_h3_grid_prompt(song, cast, chunk)
+        prompt += note
+        part = None
+        for attempt in (1, 2):
+            try:
+                text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=600)
+                cand = parse_h3_segments(text, chunk)
+                # a SHORT result means the reply was cut off / salvaged - retry once for a full
+                # batch, but keep the salvaged content rather than failing if the retry is no better
+                filled = sum(1 for s in cand if s["shots"][0]["scene"])
+                if filled >= len(chunk) or attempt == 2:
+                    part = cand if (part is None
+                                    or filled >= sum(1 for s in part if s["shots"][0]["scene"])) else part
+                    break
+                part = cand
+            except Exception:
+                if attempt == 2 and part is None:
+                    raise
+        done.extend(part)
+        for s in part:
+            for sh in s["shots"]:
+                if (sh.get("location") or "").strip():
+                    established.append(sh["location"].strip())
+    segs = done
     for seg in segs:
         seg["prompt"], refs = compile_h3_prompt(seg, cast, audio_ref=seg["lipsync"])
         seg["picture_map"] = refs["sheets"]
