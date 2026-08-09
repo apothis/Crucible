@@ -682,7 +682,11 @@ def snap_shots_to_structure(shots, seg_bounds, downbeats):
 
 H3_SEG_FPS = 24
 H3_SEG_MIN_S = 124 / 24.0        # 5.17s - shortest trained duration
-H3_SEG_MAX_S = 362 / 24.0        # 15.08s - longest trained duration
+H3_SEG_MAX_S = 10.5              # practical ceiling MEASURED 2026-08-09: at the trained max
+#   (15.08s) a heavy-reference render (5 pictures + audio) collapses from the tail - audio
+#   diverges from ~10s (envelope r 0.415 vs 0.975) and the image degrades to noise by ~14s;
+#   the IDENTICAL payload at 10.1s is clean end to end. 11-14s is unexplored territory.
+#   362 frames stays as the hard clamp in h3_seg_seconds for explicit long renders.
 H3_CAMERA_MOVES = {
     # writer vocabulary -> the author's exact phrasing (small amplitude / slow speed is the pace-safe
     # envelope measured in Phase 1; see the pace rules)
