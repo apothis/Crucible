@@ -868,10 +868,13 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     docs/MINIMAX_H3_PLAN.md section 4 + the Phase 2 test prompts verbatim where proven).
 
     Picture numbering contract (the dispatcher MUST upload refs in this order):
-      <Picture 1..N> = the character sheets of `chars` (the named cast appearing in the segment,
-                       in the order returned as `picture_map`),
-      <Picture N+1>  = the segment's ENVIRONMENT still.
-      <Audio 1>      = the song window (only when audio_ref=True, i.e. a lip-sync segment).
+      <Picture 1..N>    = the character sheets of `chars` (order = `picture_map`),
+      <Picture N+1..M>  = the OUTFIT stills of characters carrying a `costume`
+                          ({"name","desc","still_id"} on the cast entry; order = `outfit_map`),
+      <Picture M+1>     = the segment's ENVIRONMENT still (`env_picture`).
+      <Audio 1>         = the song window (only when audio_ref=True, i.e. a lip-sync segment).
+    A character with a costume is dressed via H3's native outfit Subject [VERIFIED 2026-08-09]:
+    the sheet's wardrobe is declared not-used and the outfit declared fully_preserved as worn.
     Enforces (in the emitted text): the subject-swap/exclusion clause on the environment still
     [verified Test B], direct-audio-reuse retention [verified lip-sync test], ONE motion + a
     real-world duration anchor per shot, the sky-pin clause when sky words appear, framing stated
@@ -883,21 +886,42 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         for n in s["characters"]:
             if n in by_name and n not in chars:
                 chars.append(n)
-    env_pic = len(chars) + 1
+    outfits = [n for n in chars if (by_name[n].get("costume") or {}).get("still_id")]
+    outfit_pic = {n: len(chars) + 1 + i for i, n in enumerate(outfits)}
+    env_pic = len(chars) + len(outfits) + 1
     lead = chars[0] if chars else None
 
     defs, keeps = [], []
     for i, n in enumerate(chars):
         c = by_name[n]
         look = (c.get("look") or c.get("description") or "").strip()
-        costume = next((s["costume"] for s in seg["shots"] if s["costume"] and n in s["characters"]), "")
-        wear = f", wearing {costume}" if costume else ""
         looktxt = f" - {look}" if look else ""
-        defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}{wear}. "
-                    f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
-                    f"preserve the face, hair and wardrobe exactly.")
-        keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
-                     f"wardrobe remain exactly consistent with <Picture {i + 1}> throughout.")
+        if n in outfit_pic:
+            # dressed via the outfit Subject: the sheet is FACE/HAIR ONLY, wardrobe comes from
+            # the costume still (the verified wardrobe-not-used + fully_preserved-outfit pair)
+            co = by_name[n]["costume"]
+            op = outfit_pic[n]
+            defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}. "
+                        f"<Picture {i + 1}> is a character reference sheet showing {n} from several "
+                        f"views; preserve the face and hair exactly. {n}'s wardrobe in "
+                        f"<Picture {i + 1}> is NOT used in the target video.")
+            defs.append(f"<Subject {op}> is the OUTFIT from <Picture {op}>: "
+                        f"{(co.get('desc') or 'the outfit').rstrip('. ')}. <Picture {op}> shows it "
+                        f"on a headless dress form; only the garment is referenced.")
+            keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face and hairstyle "
+                         f"remain exactly consistent with <Picture {i + 1}> throughout; the clothing "
+                         f"comes from <Picture {op}>, not from <Picture {i + 1}>.")
+            keeps.append(f"<Subject {op}>: fully_preserved - the outfit's cut, color and fabric "
+                         f"remain exactly consistent with <Picture {op}>, now worn by "
+                         f"<Subject {i + 1}> and fitting naturally.")
+        else:
+            costume = next((s["costume"] for s in seg["shots"] if s["costume"] and n in s["characters"]), "")
+            wear = f", wearing {costume}" if costume else ""
+            defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}{wear}. "
+                        f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
+                        f"preserve the face, hair and wardrobe exactly.")
+            keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
+                         f"wardrobe remain exactly consistent with <Picture {i + 1}> throughout.")
     env_scene = next((s["scene"] for s in seg["shots"] if s["scene"]), "the environment").rstrip(". ") + "."
     defs.append(f"<Subject {env_pic}> is the ENVIRONMENT from <Picture {env_pic}>: {env_scene} "
                 f"Only the environment and its objects are referenced from <Picture {env_pic}>. "
@@ -914,6 +938,8 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
 
     first = seg["shots"][0]
     who = (f"<Subject 1>" if chars else "the scene")
+    if lead and lead in outfit_pic:
+        who = f"<Subject 1> wearing <Subject {outfit_pic[lead]}>"
     only = " They are the only people in the video." if len(chars) > 1 else \
            (" This is the only person in the video." if chars else "")
     mode_tag = "[reference generation + audio reference]" if (audio_ref and lead) else "[reference generation]"
@@ -929,7 +955,10 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         cut_dur = round(cut["end"] - cut["start"], 2)
         head = "[Shot 1]" if i == 0 else \
                f"[Shot {i + 1}] At {int((cut['start'] - t0) // 60):02d}:{(cut['start'] - t0) % 60:06.3f}, the camera cuts to"
-        subj = " and ".join(f"<Subject {chars.index(n) + 1}>" for n in s["characters"] if n in chars) or "the scene"
+        def _stag(n):
+            base_tag = f"<Subject {chars.index(n) + 1}>"
+            return f"{base_tag} wearing <Subject {outfit_pic[n]}>" if n in outfit_pic else base_tag
+        subj = " and ".join(_stag(n) for n in s["characters"] if n in chars) or "the scene"
         act = s["action"].rstrip(". ")
         anchor = (f" The movement unfolds at a natural real-world pace, taking the full "
                   f"{cut_dur:.0f} seconds, exactly as it would in real time.")
@@ -959,7 +988,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
               f"overall_soundscape:\n{sound}\n\n"
               f"non_diegetic_music:\nN/A")
     picture_map = {n: i + 1 for i, n in enumerate(chars)}
-    return prompt, picture_map
+    return prompt, {"sheets": picture_map, "outfits": outfit_pic, "env": env_pic}
 
 
 def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
@@ -970,6 +999,8 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
     text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=600)
     segs = parse_h3_segments(text, segments)
     for seg in segs:
-        seg["prompt"], seg["picture_map"] = compile_h3_prompt(seg, cast, audio_ref=seg["lipsync"])
-        seg["env_picture"] = len(seg["picture_map"]) + 1
+        seg["prompt"], refs = compile_h3_prompt(seg, cast, audio_ref=seg["lipsync"])
+        seg["picture_map"] = refs["sheets"]
+        seg["outfit_map"] = refs["outfits"]
+        seg["env_picture"] = refs["env"]
     return segs

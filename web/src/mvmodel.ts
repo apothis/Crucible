@@ -7,16 +7,30 @@
 import { rid } from "./ui";
 
 // ---- character library (identity core + per-video wardrobe) ----
-export type Identity = { faceRefId?: string; bodyRefId?: string; notes?: string };
+export type Identity = {
+  faceRefId?: string; bodyRefId?: string; notes?: string;
+  // H3-era guided identity fields - composed into the locked identity block (appearance)
+  build?: string; face?: string; eyes?: string; hair?: string; marks?: string;
+};
 export type Wardrobe = {
   id: string; name: string; outfitPrompt?: string;
   faceRefId?: string; bodyRefId?: string; sheetId?: string;   // the locked 2-image MSR ref pair
 };
+// H3-era costume: a person-free three-view garment sheet (front/back/side on a headless dress
+// form). No face is ever rendered, so adding outfits carries zero identity risk; at render time
+// H3 dresses the character via its native outfit Subject (verified 2026-08-09).
+export type Costume = { id: string; name: string; desc: string; stillId?: string; created?: number };
+
 export type Character = {
   id: string; name: string; role?: string; kind?: string;
   gender?: string;              // "female" | "male" | "non-binary" | "" - fed into band-composite + cast naming
   appearance?: string;          // free-text look description (drives still generation + LLM enhance)
   identity?: Identity; wardrobes?: Wardrobe[];
+  // H3-era root+costume model: the canonical identity SHEET is the character's ONLY face source
+  // (never re-rendered - Krea2 seeds do not hold a face across renders); costumes layer wardrobe.
+  style?: string;               // "h3" once migrated to the new model
+  sheetId?: string;             // canonical identity sheet (Sheet-D-style regional render)
+  costumes?: Costume[];
   // legacy single-ref fields (pre-v2 characters); still resolved as a fallback
   refStillId?: string; refStillIds?: string[]; loraName?: string; method?: string; notes?: string;
 };

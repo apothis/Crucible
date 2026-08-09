@@ -3135,7 +3135,11 @@ def characters_upsert(body: dict):
         raise HTTPException(400, "character name required")
     cid = os.path.basename(str(body.get("id") or "")) or uuid.uuid4().hex
     data = {k: body.get(k) for k in ("kind", "role", "gender", "refStillId", "refStillIds", "loraName",
-            "method", "notes", "identity", "wardrobes", "appearance")
+            "method", "notes", "identity", "wardrobes", "appearance",
+            # H3-era root+costume model (docs/MINIMAX_H3_PLAN.md "Outfit-layering test"):
+            # sheetId = the canonical identity sheet (the ONLY face source, never re-rendered);
+            # costumes = person-free garment stills layered at render time via H3's outfit Subject
+            "sheetId", "costumes", "style")
             if body.get(k) is not None}
     now = time.time()
     with db() as conn:
@@ -3152,6 +3156,150 @@ def characters_delete(cid: str):
     with db() as conn:
         conn.execute("DELETE FROM characters WHERE id=?", (cid,))
     return {"ok": True}
+
+
+def _character(cid):
+    with db() as conn:
+        r = conn.execute("SELECT id,name,data FROM characters WHERE id=?", (os.path.basename(cid),)).fetchone()
+    if not r:
+        return None
+    c = json.loads(r["data"] or "{}")
+    c.update({"id": r["id"], "name": r["name"]})
+    return c
+
+
+# ---- H3-era character asset generation (docs/MINIMAX_H3_PLAN.md "Outfit-layering test").
+# Both endpoints wrap the VERIFIED Krea2 regional-layout templates so the UI never re-invents
+# prompts: the identity SHEET is the Sheet-D 4-region recipe (identity block repeated in every
+# region => panels cannot drift), the COSTUME still is the person-free dress-form recipe (no
+# face is ever rendered => zero identity risk). Library still id == job id, so refs attach
+# immediately and the image lands when the render completes.
+
+def _char_sheet_request(identity, base_wear, seed):
+    ident = identity.rstrip(". ")
+    return {
+        "engine": "krea2", "two_pass": True, "enhancer": True,
+        "width": 1920, "height": 1088, "seed": seed,
+        "layout": {
+            "overview": ("A professional photoreal character model sheet of one single person shown in "
+                         "four separate panels on one page, every panel showing the same person with an "
+                         "identical face, identical hair and identical wardrobe"),
+            "background": ("A seamless plain light-grey studio backdrop covering the whole page, even soft "
+                           "shadowless studio lighting, clean model-sheet layout, the four panels clearly "
+                           "separated by empty grey margins, no text and no logos anywhere"),
+            "photo_style": ("85mm studio reference photography, sharp focus in every panel, uniform even "
+                            "lighting across the whole page, deep depth of field, true-to-life skin texture"),
+            "aesthetics": ("photorealistic, ultra-realistic, true-to-life detail, professional character "
+                           "reference sheet, consistent identity across all panels"),
+            "lighting": "even soft diffused studio light, identical in every panel, no dramatic shadows",
+            "medium": "photograph",
+            "regions": [
+                {"desc": f"Full-body front view: {ident}, wearing {base_wear}. Standing straight facing "
+                         f"the camera, arms relaxed at the sides, the whole figure visible from head to foot.",
+                 "x": 0.02, "y": 0.03, "w": 0.28, "h": 0.94},
+                {"desc": f"Head-and-shoulders close-up portrait only, cropped at mid-chest, the face large "
+                         f"and filling most of the panel: the same person - {ident} - turned slightly to a "
+                         f"three-quarter view, sharp focus on the face, neutral calm expression.",
+                 "x": 0.345, "y": 0.03, "w": 0.31, "h": 0.58},
+                {"desc": f"Full side profile head-and-shoulders view of the same person - {ident} - facing "
+                         f"left, the profile line of the face sharply resolved.",
+                 "x": 0.345, "y": 0.65, "w": 0.31, "h": 0.32},
+                {"desc": f"Full-body left side profile view of the same person - {ident} - standing "
+                         f"straight, the same height and posture, arms relaxed, seen from the side.",
+                 "x": 0.70, "y": 0.03, "w": 0.28, "h": 0.94},
+            ],
+        },
+    }
+
+
+def _costume_request(desc, seed):
+    # THREE-VIEW garment sheet (front / back / side), one render: a single front view leaves the
+    # garment's back and sides unconstrained, so H3 invents them the moment the character turns.
+    # Within-one-render panel consistency is the proven property of the regional layout (identity
+    # sheets never contradict themselves across panels) - same mechanism, applied to the garment.
+    d = desc.rstrip(". ")
+    def panel(view):
+        return (f"{view} view of the SAME single outfit - {d} - displayed on a headless tailor's "
+                f"dress form, the identical garment in every panel, every seam, fold and fabric "
+                f"texture sharply resolved. No person, no face, no mannequin head.")
+    return {
+        "engine": "krea2", "two_pass": True, "enhancer": True,
+        "width": 1920, "height": 1088, "seed": seed,
+        "layout": {
+            "overview": (f"A professional photoreal garment reference sheet showing ONE single outfit - "
+                         f"{d} - in three separate panels on one page: a front view, a back view and a "
+                         f"side view, the identical garment on a headless dress form in each panel, "
+                         f"no person present anywhere"),
+            "background": ("A seamless plain warm-grey studio backdrop covering the whole page, even soft "
+                           "diffused studio lighting, a clean fashion-catalogue layout with the three "
+                           "panels clearly separated by empty margins, no text, no logos, no person"),
+            "photo_style": "",
+            "aesthetics": ("photorealistic, true-to-life fabric detail, professional garment reference "
+                           "sheet, catalogue clarity, the same garment identical in all three panels"),
+            "lighting": "even soft diffused studio light, identical in every panel, no dramatic shadows",
+            "medium": "photograph",
+            "regions": [
+                {"desc": "Full-length FRONT " + panel("front"), "x": 0.02, "y": 0.03, "w": 0.30, "h": 0.94},
+                {"desc": "Full-length BACK " + panel("back"),   "x": 0.35, "y": 0.03, "w": 0.30, "h": 0.94},
+                {"desc": "Full-length SIDE " + panel("side profile"), "x": 0.68, "y": 0.03, "w": 0.30, "h": 0.94},
+            ],
+        },
+    }
+
+
+@app.post("/api/characters/{cid}/sheet")
+def character_sheet(cid: str, body: dict):
+    """Generate canonical IDENTITY SHEET candidates for a character (the Sheet-D recipe).
+    Body: {identity? (defaults to the character's appearance text), base_wear?, drafts? (4),
+    seed?}. Returns {drafts: [{job_id, seed}]} - the UI picks one and saves it as `sheetId`.
+    The picked sheet becomes the character's ONLY face source; it is never re-rendered."""
+    c = _character(cid)
+    if not c:
+        raise HTTPException(404, "character not found")
+    identity = (body.get("identity") or c.get("appearance") or "").strip()
+    if not identity:
+        raise HTTPException(400, "describe the character's identity first (appearance)")
+    base_wear = (body.get("base_wear") or "a plain fitted black long-sleeved top and simple "
+                 "black trousers").strip()
+    n = max(1, min(int(body.get("drafts") or 4), 6))
+    base = int(body.get("seed") or 0) or random.randint(0, 2**31 - 1)
+    drafts = []
+    for i in range(n):
+        r = video_still(dict(_char_sheet_request(identity, base_wear, base + i)))
+        drafts.append({"job_id": r["job_id"], "seed": base + i})
+    return {"drafts": drafts, "base_seed": base}
+
+
+@app.post("/api/characters/{cid}/costume")
+def character_costume(cid: str, body: dict):
+    """Add a COSTUME to a character: renders the person-free garment still (headless dress form -
+    no face involved, zero identity risk) and attaches the costume entry immediately (stillId =
+    job id; the image lands when the render finishes). Body: {name, desc, drafts? (2), seed?}.
+    Returns the costume entry with its draft jobs - the UI picks which still to keep via
+    the normal character save (costume.stillId)."""
+    c = _character(cid)
+    if not c:
+        raise HTTPException(404, "character not found")
+    name = (body.get("name") or "").strip()
+    desc = (body.get("desc") or "").strip()
+    if not desc:
+        raise HTTPException(400, "describe the outfit")
+    n = max(1, min(int(body.get("drafts") or 2), 4))
+    base = int(body.get("seed") or 0) or random.randint(0, 2**31 - 1)
+    drafts = []
+    for i in range(n):
+        r = video_still(dict(_costume_request(desc, base + i)))
+        drafts.append({"job_id": r["job_id"], "seed": base + i})
+    entry = {"id": uuid.uuid4().hex, "name": name or "New outfit", "desc": desc,
+             "stillId": drafts[0]["job_id"], "created": time.time()}
+    costumes = (c.get("costumes") or []) + [entry]
+    with db() as conn:
+        row = conn.execute("SELECT data FROM characters WHERE id=?", (c["id"],)).fetchone()
+        data = json.loads(row["data"] or "{}")
+        data["costumes"] = costumes
+        conn.execute("UPDATE characters SET data=?, updated=? WHERE id=?",
+                     (json.dumps(data), time.time(), c["id"]))
+    return {"costume": entry, "drafts": drafts, "base_seed": base}
 
 
 @app.get("/api/projects/{key}/video")
