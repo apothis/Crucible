@@ -489,7 +489,9 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
   const songPayload = canScript && song ? {
     title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
-    sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })),
+    // style carries the vocal-part markers ("female bell canto" / "warm male" / "duet") that
+    // the H3 writer uses for voice-matched casting
+    sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics, style: b.style })),
   } : null;
 
   return (

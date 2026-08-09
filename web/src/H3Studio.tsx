@@ -85,6 +85,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       const pr = (c.props || []).find((x) => x.id === (castProp[c.id] ?? (c.props || [])[0]?.id));
       return {
         name: c.name, role: c.role, look: c.appearance || "",
+        // the writer's cast formatter reads appearance + gender (voice-matched casting needs
+        // the gender; without it the writer cannot know who sings the male/female parts)
+        appearance: c.appearance || "", gender: c.gender || "",
         sheet_id: c.sheetId,
         // "" selection = "(sheet outfit)": no costume ref, the identity sheet's wardrobe is worn
         ...(co?.stillId && castCostume[c.id] !== "" ? { costume: { name: co.name, desc: co.desc, still_id: co.stillId } } : {}),

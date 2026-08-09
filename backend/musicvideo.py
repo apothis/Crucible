@@ -213,7 +213,11 @@ def _song_summary(song):
     for s in secs:
         dur = int(s.get("seconds") or 0)
         lyr = (s.get("lyrics") or "").strip()
-        head = f"  [{t}-{t + dur}s] {s.get('type') or 'section'}:"
+        # the section STYLE carries the vocal-part marker ("tender female bell canto", "warm male",
+        # "duet swell") - essential for voice-matched casting, so surface it to the writer
+        style = (s.get("style") or "").strip()
+        stag = f" ({style})" if style else ""
+        head = f"  [{t}-{t + dur}s] {s.get('type') or 'section'}{stag}:"
         if lyr:
             body.append(head)
             for ln in lyr.splitlines():
@@ -788,6 +792,11 @@ Each shot object:
   "lipsync": <true when the lead singer sings the lyrics ON CAMERA in this shot>}}
 
 HARD RULES:
+- VOICE-MATCHED CASTING: the singer ON CAMERA must be the singer whose VOICE is actually
+  singing in that window. The section markers in the song brief say whose voice it is (e.g.
+  "female bell canto" = the female singer, "warm male" = the male singer, "duet" = both).
+  NEVER show a singer mouthing a part sung in the other voice. On duet windows both singers
+  may appear - together in one shot or intercut - each singing their own lines.
 - SUNG SECTIONS focus on the LEAD SINGER: while lyrics are being sung, most segments should be
   the singer performing (lip-sync singles). B-roll IS allowed during singing - use an occasional
   "scene" segment to breathe (imagery tied to the lyric being sung) - but the singer carries
