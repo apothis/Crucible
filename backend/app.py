@@ -1926,6 +1926,60 @@ def mv_script(body: dict):
             "duration": sum(int(s.get("seconds") or 0) for s in song.get("sections", []))}
 
 
+@app.post("/api/mv/h3_script")
+def mv_h3_script(body: dict):
+    """MiniMax H3 HYBRID script (docs/MINIMAX_H3_PLAN.md Phase 3/4): the audio-structure grid is
+    merged into render SEGMENTS on H3's frame grid (5.17-15.08s, never crossing a section
+    boundary); the writer LLM picks "single" (one shot - always for lip-sync) or "scene" (2-4
+    timestamped cuts in one render) per segment and fills creative content; code compiles each
+    segment's six-section full-references prompt (subject-swap, pace anchors, sky-pin, doubled
+    framing, direct-audio-reuse on lip-sync). STRUCTURE-DRIVEN ONLY: requires audio_id (the H3
+    segment grid is built from the real audio structure; there is no free-timing fallback).
+    Body: {song? OR project?, cast?: [{name, look, ...}], audio_id, provider?, model?}.
+    Returns segments each carrying: window (start/end/seconds), render_seconds/frames, kind,
+    shots, lipsync, compiled `prompt`, `picture_map` (character -> <Picture N>) and `env_picture`
+    - the dispatcher uploads refs in exactly that order and, for lip-sync segments, passes
+    ref_audio_ids [{id: audio_id, start: seg.start, seconds: seg.render_seconds}]."""
+    song = body.get("song")
+    if not song and body.get("project"):
+        r = _resolve_project(body["project"])
+        if not r:
+            raise HTTPException(404, "project not found")
+        song = _project_song_view(json.loads(r["data"] or "{}"))
+    if not song or not song.get("sections"):
+        raise HTTPException(400, "provide a song with sections, or a project key with a Song arrangement")
+    audio_id = body.get("audio_id")
+    ap = _lib_source_path(audio_id) if audio_id else None
+    if not (ANALYZE_HOST and ap):
+        raise HTTPException(400, "audio_id (a library track) is required - H3 segments are built "
+                                 "from the real audio structure")
+    provider = body.get("provider") or llm_mod.best_provider()
+    model = body.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-4-6"
+    claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
+    cast = body.get("cast") or []
+    try:
+        a = analyze_py.analyze(ANALYZE_HOST, ap, with_tags=False, with_key=False)
+        segs = a.get("segments") or []
+        if not segs:
+            raise ValueError("audio analysis returned no segments")
+        total = max((float(s.get("end") or 0) for s in segs), default=0.0)
+        grid = musicvideo_mod.build_shot_grid(segs, a.get("downbeats") or [], total)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"audio structure analysis failed: {e}")
+    try:
+        segments = musicvideo_mod.generate_h3_script_grid(song, cast, provider, model, claude_model, grid)
+    except Exception as e:
+        raise HTTPException(500, f"h3 script generation failed: {e}")
+    return {"segments": segments, "song_title": song.get("title"), "audio_id": audio_id,
+            "segments_count": len(segments),
+            "singles": sum(1 for s in segments if s["kind"] == "single"),
+            "scenes": sum(1 for s in segments if s["kind"] == "scene")}
+
+
 @app.get("/api/mv/grades")
 def mv_grades():
     """Color-grade looks available for assembly (the Music Video tab picker)."""

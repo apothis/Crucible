@@ -665,3 +665,311 @@ def snap_shots_to_structure(shots, seg_bounds, downbeats):
         s["start"] = bounds[i]
         s["end"] = bounds[i + 1]
     return shots
+
+
+# ========================================================= MiniMax H3 hybrid segment pipeline (Phase 3)
+# The MV spine on the H3 reference lane (docs/MINIMAX_H3_PLAN.md). Division of labor, mirroring the
+# proven grid flow: CODE owns timing and the compiled prompt; the LLM owns creative content and the
+# single-vs-scene choice (user-decided hybrid shot model, 2026-08-09).
+#
+# A SEGMENT is the render unit (one /api/video/h3_ref2v call): either
+#   kind "single" - one shot (mandatory for lip-sync; keeps the expensive lane re-rollable), or
+#   kind "scene"  - 2-4 scripted cuts inside one generation via H3's native [Shot N] At MM:SS.mmm
+#                   timestamps (B-roll / narrative runs; intrinsic cross-cut continuity).
+# All timing lives on H3's frame grid: frames % 17 == 5 at 24 fps, trained range 124-362 frames
+# (5.17 - 15.08 s). Segments are built from the audio-structure shot grid and never cross a section
+# boundary. Renders are snapped UP to the grid and trimmed at assembly (same pattern as LTX).
+
+H3_SEG_FPS = 24
+H3_SEG_MIN_S = 124 / 24.0        # 5.17s - shortest trained duration
+H3_SEG_MAX_S = 362 / 24.0        # 15.08s - longest trained duration
+H3_CAMERA_MOVES = {
+    # writer vocabulary -> the author's exact phrasing (small amplitude / slow speed is the pace-safe
+    # envelope measured in Phase 1; see the pace rules)
+    "static": "The camera holds still",
+    "push in": "The camera pushes in with small amplitude at slow speed",
+    "pull back": "The camera pulls back with small amplitude at slow speed",
+    "truck left": "The camera trucks left with small amplitude at slow speed",
+    "truck right": "The camera trucks right with small amplitude at slow speed",
+    "arc left": "The camera arcs left around the subject with small amplitude at slow speed",
+    "arc right": "The camera arcs right around the subject with small amplitude at slow speed",
+    "tilt up": "The camera tilts up with small amplitude at slow speed",
+    "crane up": "The camera cranes up with small amplitude at slow speed",
+}
+_H3_SKY_RE = re.compile(r"\b(sky|skies|cloud|clouds|stars?|starlit|moon|moonlit|milky way|sunset|"
+                        r"sunrise|dawn|dusk|horizon|aurora|night sky)\b", re.I)
+
+
+def h3_seg_seconds(dur):
+    """Snap a duration UP to the H3 frame grid (frames % 17 == 5), clamped to the trained range.
+    Returns (render_seconds, frames). Render slightly long + trim at assembly."""
+    frames = max(124, int(round(float(dur) * H3_SEG_FPS)))
+    while frames % 17 != 5:
+        frames += 1
+    frames = min(frames, 362)
+    return round(frames / H3_SEG_FPS, 3), frames
+
+
+def build_h3_segments(grid):
+    """Merge the audio-structure shot grid ([{start,end,section}]) into SEGMENT windows for the H3
+    hybrid model: greedy within-section merge up to H3_SEG_MAX_S; a window that cannot reach
+    H3_SEG_MIN_S on its own stays (the render is snapped up and trimmed). Each segment carries its
+    member windows as `cuts` so a "scene" segment can place H3 timestamps on the real grid cuts.
+    Returns [{start, end, seconds, render_seconds, frames, section, cuts:[{start,end}...]}]."""
+    segs = []
+    for w in grid or []:
+        s, e, label = float(w["start"]), float(w["end"]), w.get("section") or "section"
+        if (segs and segs[-1]["section"] == label
+                and (e - segs[-1]["start"]) <= H3_SEG_MAX_S):
+            segs[-1]["end"] = e
+            segs[-1]["cuts"].append({"start": s, "end": e})
+        else:
+            segs.append({"start": s, "end": e, "section": label, "cuts": [{"start": s, "end": e}]})
+    for g in segs:
+        g["seconds"] = round(g["end"] - g["start"], 2)
+        g["render_seconds"], g["frames"] = h3_seg_seconds(g["seconds"])
+    return segs
+
+
+def build_h3_grid_prompt(song, cast, segments):
+    """Writer prompt for the hybrid model: per SEGMENT the LLM chooses "single" or "scene" and fills
+    creative content only (timing is fixed by the segment windows; scene cut times come from the
+    segment's own audio-grid cuts). The environment may now CONTAIN people (H3's subject-swap
+    replaces them - verified); it must still be environment-LED prose, not a person portrait."""
+    summary, total = _song_summary(song)
+    title = song.get("title") or "Untitled"
+    named = [c for c in cast if c.get("name")]
+    cast_txt = _fmt_cast(named) if named else "  (no fixed cast - lean scenic/atmospheric)"
+
+    def _win(i, g):
+        cuts = ""
+        if len(g["cuts"]) > 1:
+            cuts = "  internal cuts at " + ", ".join(f"{c['start']:.2f}s" for c in g["cuts"][1:])
+        return f"  Segment {i + 1}: [{g['start']:.2f}-{g['end']:.2f}s] ({g['section']}){cuts}"
+    windows = "\n".join(_win(i, g) for i, g in enumerate(segments))
+
+    system = ("You are a music video director working with the MiniMax H3 video model. The video is "
+              "ALREADY cut into render segments on the song's actual structure. Fill in the CONTENT of "
+              "each segment - never the timing. Output STRICT JSON ONLY (no prose, no markdown).")
+    prompt = f"""{summary}
+
+DIRECTION:
+- The song is titled "{title}". Make the TITLE the central visual theme of the whole video.
+- For each segment, read the lyric lines sung in its window and make the visuals ILLUSTRATE those
+  exact words. Instrumental windows: advance the story or show atmosphere.
+
+Characters (keep each visually consistent wherever they appear):
+{cast_txt}
+
+The video is cut into {len(segments)} SEGMENTS, IN ORDER, aligned to the song structure:
+{windows}
+
+Return ONLY a JSON array of EXACTLY {len(segments)} objects, one per segment, IN ORDER:
+{{"kind": "single" | "scene",
+  "shots": [<"single" = exactly ONE shot object; "scene" = one shot object PER internal cut listed
+             for that segment (2-4), in order>],
+  "soundscape": "<the segment's ambient/physical sounds - wind, room tone, cloth, footsteps; short>"}}
+Each shot object:
+{{"type": "performance" | "narrative" | "broll",
+  "scene": "<the ENVIRONMENT, described as rich flowing prose: location, surfaces, materials, light
+    sources, weather, depth layers. Environment-LED (not a person portrait), but people ARE allowed
+    in it when the story wants them - the render replaces/controls who appears.>",
+  "framing": "close" | "medium" | "wide",
+  "action": "<what the subject does: EXACTLY ONE continuous motion or performance for the whole shot,
+    described plainly. No compound sequences, no 'then'.>",
+  "camera": "static" | "push in" | "pull back" | "truck left" | "truck right" | "arc left" |
+            "arc right" | "tilt up" | "crane up",
+  "costume": "<what named characters wear; '' if their reference wardrobe>",
+  "characters": [<named cast in this shot; [] if none>],
+  "lipsync": <true when the lead singer sings the lyrics ON CAMERA in this shot>}}
+
+HARD RULES:
+- LIP-SYNC segments are ALWAYS "kind": "single" (one shot, close or medium framing, the singer
+  performing TO CAMERA, mouth visible - never turned away, never silhouette, never wide).
+- "scene" is for connected NON-vocal cuts (B-roll runs, narrative beats, establishing sequences):
+  give it one shot per listed internal cut, visually connected (same world, evolving viewpoint).
+- ONE motion per shot. The action is a single continuous thing a real person/scene does at
+  real-world speed. Never describe multiple movements, weather changes or time passing.
+- Open-sky wide shots are motion-prone: prefer a near foreground anchor in every scene, and keep
+  sky/stars/clouds INCIDENTAL, not the subject of motion.
+- Framing scale must match the scene: close/medium needs a near foreground anchor for the subject;
+  open vistas are wide-only.
+- Pick ONE consistent visual grade/palette for the WHOLE video from the song's mood + title, and
+  keep light on faces soft and even in every segment.
+- Prefer ONE named character per shot. Vary locations across segments; tie each to the title theme
+  and its lyric window.
+
+Photoreal live-action music video. Every segment connects to BOTH the title theme and the lyrics
+in its window."""
+    return system, prompt
+
+
+def parse_h3_segments(text, segments):
+    """Validate the writer's JSON against the fixed segment windows. Enforces (hard, in code):
+    lipsync => kind single + close/medium; scene shot-count == internal cut count (clamped 1-4);
+    camera vocabulary; one shot minimum. Returns the segment list with content attached."""
+    m = re.search(r"\[.*\]", text, re.S)
+    raw = m.group(0) if m else text
+    data = json.loads(raw)
+    if not isinstance(data, list):
+        raise ValueError("writer output is not a JSON array")
+    out = []
+    for i, g in enumerate(segments):
+        seg = dict(g)
+        content = data[i] if i < len(data) and isinstance(data[i], dict) else {}
+        kind = str(content.get("kind") or "single").strip().lower()
+        shots_in = [s for s in (content.get("shots") or []) if isinstance(s, dict)]
+        shots = []
+        for s in shots_in[:4]:
+            framing = str(s.get("framing") or "").strip().lower()
+            if framing not in ("close", "medium", "wide"):
+                framing = "medium"
+            lipsync = bool(s.get("lipsync"))
+            if lipsync and framing == "wide":
+                framing = "medium"
+            camera = str(s.get("camera") or "static").strip().lower()
+            if camera not in H3_CAMERA_MOVES:
+                camera = "static"
+            stype = s.get("type") if s.get("type") in SHOT_TYPES else "broll"
+            chars = [str(x).strip() for x in (s.get("characters") or [])
+                     if x and str(x).strip() not in ("[]", "none", "None", "-", "")]
+            shots.append({"type": stype, "framing": framing, "lipsync": lipsync, "camera": camera,
+                          "scene": str(s.get("scene") or "").strip(),
+                          "action": str(s.get("action") or "").strip(),
+                          "costume": str(s.get("costume") or "").strip(),
+                          "characters": chars})
+        if not shots:
+            shots = [{"type": "broll", "framing": "wide", "lipsync": False, "camera": "static",
+                      "scene": "", "action": "", "costume": "", "characters": []}]
+        lipsync_any = any(s["lipsync"] for s in shots)
+        if lipsync_any or len(seg["cuts"]) == 1:
+            kind = "single"
+        if kind == "single":
+            shots = shots[:1]
+            # one shot spans the WHOLE segment - collapse the merged windows so the compiled
+            # duration anchor and any timestamps cover the full render, not just the first cut
+            seg["cuts"] = [{"start": seg["start"], "end": seg["end"]}]
+        else:
+            # a scene segment carries one shot per internal cut; pad/trim to the real cut count
+            n = max(2, min(len(seg["cuts"]), 4))
+            while len(shots) < n:
+                shots.append(dict(shots[-1]))
+            shots = shots[:n]
+        seg["kind"] = kind
+        seg["shots"] = shots
+        seg["lipsync"] = lipsync_any
+        seg["soundscape"] = str(content.get("soundscape") or "").strip()
+        out.append(seg)
+    return out
+
+
+def compile_h3_prompt(seg, cast, audio_ref=False):
+    """Compile ONE segment into the six-section FULL REFERENCES prompt (verified format,
+    docs/MINIMAX_H3_PLAN.md section 4 + the Phase 2 test prompts verbatim where proven).
+
+    Picture numbering contract (the dispatcher MUST upload refs in this order):
+      <Picture 1..N> = the character sheets of `chars` (the named cast appearing in the segment,
+                       in the order returned as `picture_map`),
+      <Picture N+1>  = the segment's ENVIRONMENT still.
+      <Audio 1>      = the song window (only when audio_ref=True, i.e. a lip-sync segment).
+    Enforces (in the emitted text): the subject-swap/exclusion clause on the environment still
+    [verified Test B], direct-audio-reuse retention [verified lip-sync test], ONE motion + a
+    real-world duration anchor per shot, the sky-pin clause when sky words appear, framing stated
+    in BOTH summary and detailed_description [SING-2 drift lesson], and the environment-hold line.
+    Returns (prompt_text, picture_map)."""
+    by_name = {c.get("name"): c for c in cast if c.get("name")}
+    chars = []
+    for s in seg["shots"]:
+        for n in s["characters"]:
+            if n in by_name and n not in chars:
+                chars.append(n)
+    env_pic = len(chars) + 1
+    lead = chars[0] if chars else None
+
+    defs, keeps = [], []
+    for i, n in enumerate(chars):
+        c = by_name[n]
+        look = (c.get("look") or c.get("description") or "").strip()
+        costume = next((s["costume"] for s in seg["shots"] if s["costume"] and n in s["characters"]), "")
+        wear = f", wearing {costume}" if costume else ""
+        looktxt = f" - {look}" if look else ""
+        defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}{wear}. "
+                    f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
+                    f"preserve the face, hair and wardrobe exactly.")
+        keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
+                     f"wardrobe remain exactly consistent with <Picture {i + 1}> throughout.")
+    env_scene = next((s["scene"] for s in seg["shots"] if s["scene"]), "the environment").rstrip(". ") + "."
+    defs.append(f"<Subject {env_pic}> is the ENVIRONMENT from <Picture {env_pic}>: {env_scene} "
+                f"Only the environment and its objects are referenced from <Picture {env_pic}>. "
+                f"Any person who appears in <Picture {env_pic}> is NOT part of the target video "
+                f"and does not appear in it.")
+    keeps.append(f"<Subject {env_pic}>: reference - the environment, its architecture, objects and "
+                 f"lighting remain recognizable from <Picture {env_pic}>; any person shown in "
+                 f"<Picture {env_pic}> is replaced by the defined subjects and does not appear.")
+    if audio_ref and lead:
+        defs.append(f"<Audio 1> is the song that <Subject 1> (S1) performs in the target video.")
+        keeps.append("<Audio 1>: fully_preserved - the target video's soundtrack IS <Audio 1>, "
+                     "reused directly, and the singer's lip movements, phrasing and breaths are "
+                     "synchronized to its vocal line.")
+
+    first = seg["shots"][0]
+    who = (f"<Subject 1>" if chars else "the scene")
+    only = " They are the only people in the video." if len(chars) > 1 else \
+           (" This is the only person in the video." if chars else "")
+    mode_tag = "[reference generation + audio reference]" if (audio_ref and lead) else "[reference generation]"
+    sings = (f", singing <Audio 1> directly to the camera in a {first['framing']} framing, lips and "
+             f"breathing synchronized to the vocal" if (audio_ref and lead) else "")
+    summary = (f"{mode_tag} The target video shows {who} inside <Subject {env_pic}>{sings}, "
+               f"framed {first['framing']} at the start.{only}")
+
+    fr_txt = {"close": "a close-up", "medium": "a medium shot", "wide": "a wide shot"}
+    lines = ["The target video uses a cinematic, photorealistic style with natural film-like exposure."]
+    t0 = seg["start"]
+    for i, (s, cut) in enumerate(zip(seg["shots"], seg["cuts"])):
+        cut_dur = round(cut["end"] - cut["start"], 2)
+        head = "[Shot 1]" if i == 0 else \
+               f"[Shot {i + 1}] At {int((cut['start'] - t0) // 60):02d}:{(cut['start'] - t0) % 60:06.3f}, the camera cuts to"
+        subj = " and ".join(f"<Subject {chars.index(n) + 1}>" for n in s["characters"] if n in chars) or "the scene"
+        act = s["action"].rstrip(". ")
+        anchor = (f" The movement unfolds at a natural real-world pace, taking the full "
+                  f"{cut_dur:.0f} seconds, exactly as it would in real time.")
+        cam = f" {H3_CAMERA_MOVES[s['camera']]}." if s["camera"] != "static" else \
+              " The camera holds still."
+        sing = ""
+        if s["lipsync"] and audio_ref:
+            sing = (f" {subj} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
+                    f"and breaths matching the vocal exactly, face to camera and clearly visible in "
+                    f"{fr_txt[s['framing']]}.")
+        line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic}>: "
+                f"{act}.{sing}{anchor}{cam} The environment behind holds completely still.")
+        if _H3_SKY_RE.search(s["scene"] + " " + s["action"]):
+            line += (" The sky holds fixed: stars, moon and clouds keep their positions with no "
+                     "drift at all, and there is no cloud movement anywhere.")
+        lines.append(line)
+    detailed = "\n\n".join(lines)
+
+    sound = seg.get("soundscape") or "Quiet natural room tone and the soft ambience of the location."
+    if audio_ref and lead:
+        sound = f"The song from <Audio 1> carries the scene; beneath it only {sound[0].lower() + sound[1:]}"
+
+    prompt = (f"subject_definitions:\n" + "\n".join(defs) + "\n\n"
+              f"summary:\n{summary}\n\n"
+              f"retention_analysis:\n" + "\n".join(keeps) + "\n\n"
+              f"detailed_description:\n{detailed}\n\n"
+              f"overall_soundscape:\n{sound}\n\n"
+              f"non_diegetic_music:\nN/A")
+    picture_map = {n: i + 1 for i, n in enumerate(chars)}
+    return prompt, picture_map
+
+
+def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
+    """H3 hybrid script: segments from the audio grid -> writer fills content -> each segment gets
+    its compiled full-references prompt attached (prompt, picture_map, env picture index)."""
+    segments = build_h3_segments(grid)
+    system, prompt = build_h3_grid_prompt(song, cast, segments)
+    text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=600)
+    segs = parse_h3_segments(text, segments)
+    for seg in segs:
+        seg["prompt"], seg["picture_map"] = compile_h3_prompt(seg, cast, audio_ref=seg["lipsync"])
+        seg["env_picture"] = len(seg["picture_map"]) + 1
+    return segs
