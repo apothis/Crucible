@@ -1218,14 +1218,21 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
         # locations for four minutes. The allowance ramps with position so the world builds up
         # instead of all six places existing by the end of batch 1.
         have = len(set(established))
-        allow = max(2, round(H3_LOCATIONS * (start + len(chunk)) / max(1, len(segments))))
-        may_add = max(0, allow - have)
-        note += (f"\nLOCATION BUDGET: {have} named location(s) established, about {H3_LOCATIONS} for "
-                 f"the whole video. " + (
-                     f"In THIS batch introduce at most {may_add} NEW named location(s); otherwise "
-                     f"return to the established ones."
+        want_by_now = max(2, round(H3_LOCATIONS * (start + len(chunk)) / max(1, len(segments))))
+        may_add = max(0, want_by_now - have)
+        # A FLOOR, not just a ceiling. First cut of this said "introduce at most N new locations",
+        # which the writer satisfied by introducing none: the whole-video "about 6" lost to the
+        # per-batch continuity pressure and the script came back with 4 locations again, exactly the
+        # repetition this was meant to fix. Stating the number as a quota is what actually moves it.
+        note += (f"\nLOCATION BUDGET: {have} named location(s) established so far; about "
+                 f"{H3_LOCATIONS} across the whole video, and about {want_by_now} should exist by "
+                 f"the end of THIS batch. " + (
+                     f"So introduce EXACTLY {may_add} NEW named location(s) here - this is a floor "
+                     f"as well as a ceiling, not an option - and set every other shot in "
+                     + ("them." if not have else "the locations already established.")
                      if may_add else
-                     "Introduce NO new locations in this batch - reuse the established names."))
+                     "That target is already met, so introduce NO new locations in this batch - "
+                     "reuse the established names."))
         if prev:
             last = prev["shots"][-1]
             note += (f"\nCONTINUING FROM: segment {start} ended at {prev['end']:.1f}s in "
