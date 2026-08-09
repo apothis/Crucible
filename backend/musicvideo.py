@@ -850,15 +850,19 @@ def _extract_json_array(text):
     the greedy-regex approach failed on exactly those (a real 8-minute writer run died with
     "Extra data" at the final parse, 2026-08-09). raw_decode at every '[' and keep the best."""
     dec = json.JSONDecoder()
-    best = None
+    best, best_score = None, (-1, -1)
     for m in re.finditer(r"\[", text):
         try:
             val, _end = dec.raw_decode(text, m.start())
         except ValueError:
             continue
         if isinstance(val, list) and val and all(isinstance(x, dict) for x in val):
-            if best is None or len(val) > len(best):
-                best = val
+            # prefer arrays whose elements ARE segments ("kind"/"shots" keys) - plain size picks
+            # a nested shots array over a short outer segment array (caught by test 2026-08-09)
+            seg_like = sum(1 for x in val if "shots" in x or "kind" in x)
+            score = (seg_like, len(val))
+            if score > best_score:
+                best, best_score = val, score
     if best is None:
         # keep the evidence: a failed 8-minute LLM run must be diagnosable, not vanished
         try:
