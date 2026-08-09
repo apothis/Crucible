@@ -585,27 +585,48 @@ user decision), Phase 5 (wire the UI + retire).
   between images; the single-sheet layout keeps every view consistent by construction, and H3
   ref2v consumes the sheet directly.
 
-### Phase 3 - prompt builder
-- `backend/musicvideo.py`: new `build_h3_prompt(shot, cast, mode)` producing the sectioned format,
-  plus a rewrite of the script-writer schema so the LLM emits H3-shaped shots (subject definitions,
-  retention verdicts, timestamped sub-shots, dialogue with speaker IDs, soundscape,
-  `non_diegetic_music: N/A`).
-- The author's embedded 12k-char LLM system prompt (workflow node 2133) is effectively the spec -
-  adapt it for our writer rather than inventing our own phrasing.
-- MUST enforce the two measured pace rules from the Phase 1 results above: exactly ONE described
-  motion per shot carrying a real-world duration anchor, and an explicit "the sky holds still" clause
-  whenever sky/cloud/stars are visible. These are the difference between a held shot and a timelapse
-  on this model, and there is no negative prompt to fall back on.
-- `web/src/mvmodel.ts`: `shotToBlock` stops building the LTX-style prompt string and carries the
-  structured fields instead.
+### Phase 3 - prompt builder (design settled 2026-08-09 for the HYBRID shot model)
+Division of labor: **code owns timing and the compiled prompt; the LLM owns creative content
+and the single/scene choice.** Mirrors the proven grid flow (timing is never the LLM's).
 
-### Phase 4 - shot-model decision (architecture, needs a design pass)
-Either:
-- **(a) 1 block = 1 render** (minimal change): clamp shots to 5.17-15.08s, trim at assemble.
-- **(b) 1 render = a multi-shot scene** (better model fit): one generation covers several scripted
-  cuts via native timestamps. Changes what a "shot" is in MV Studio, and breaks per-shot
-  retake/pick/upscale as they exist today.
-Decide with the user; do not pick unilaterally.
+1. `build_h3_segments(grid)` [code]: merge the audio-structure grid windows into SEGMENT
+   windows on the 17k+5 grid (5.17-15.08s each), never merging across a section boundary.
+   Each segment = one render.
+2. `build_h3_grid_prompt(song, cast, segments)` [LLM schema]: per segment the writer returns
+   `{"kind": "single"|"scene", ...}` - `single` = one shot's fields; `scene` = 2-4 cuts with
+   in-segment timestamps. Writer guidance: any lip-sync => `single` (close/medium, performing
+   to camera); short connected B-roll/narrative cuts => `scene`; environment field stays
+   person-free-STYLE (environment-led) but people in the env still are now ALLOWED - the
+   subject-swap declaration handles them.
+3. `compile_h3_prompt(segment, cast)` [code]: emits the six-section full-references prompt -
+   subject_definitions from the cast's character sheets + the segment's environment still,
+   the VERIFIED subject-swap/exclusion clauses, retention_analysis, per-shot detailed
+   description enforcing the three earned rules (ONE motion + real-world duration anchor;
+   sky-pin clause auto-added when sky/cloud/stars appear; framing language REPEATED in both
+   summary and detailed_description - the SING-2 draft showed single-mention framing drifts),
+   overall_soundscape, `non_diegetic_music: N/A`. Adapt phrasing from the author's node-2133
+   system prompt, not invented.
+4. Render dispatch per segment via the existing `/api/video/h3_ref2v`: `ref_still_ids` =
+   [character sheet(s), environment still], and for lip-sync segments `ref_audio_ids` =
+   `{id: song, start: seg.start, seconds: seg.dur}` declared fully_preserved (the verified
+   direct-reuse pattern; assembly lays the master underneath at zero offset).
+- `web/src/mvmodel.ts`: `shotToBlock` carries the structured segment instead of an LTX prompt
+  string (Phase 5 wires the UI).
+
+### Phase 4 - shot model: DECIDED 2026-08-09 - HYBRID, the writer LLM picks per segment
+User: "the hybrid approach is probably more flexible, with the driving llm able to pick which
+type of shot to use given context." So the script writer emits a list of **SEGMENTS**, each one
+of which is ONE render on one of two shapes:
+- **`single`** - one shot, one render (5.17-15.08s): for precious shots where per-shot seed
+  hunting / retakes matter - above all LIP-SYNC performance shots (also the expensive lane at
+  ~90s/step for 10s; keep them individually re-rollable).
+- **`scene`** - one render covering SEVERAL scripted cuts via H3's native `[Shot 2] At
+  00:03.500...` timestamps (still capped at 15.08s total): for B-roll runs, montage beats and
+  establishing sequences where intrinsic cross-cut continuity + one continuous soundtrack beat
+  per segment is worth losing per-cut retakes.
+Guidance the writer gets: lip-sync => `single`; 2-4 short connected non-vocal cuts => `scene`;
+never mix a lip-sync cut into a `scene` segment; every segment carries its own duration on the
+17k+5 frame grid. MV Studio's retake/pick/upscale operate on SEGMENTS (the render unit).
 
 ### Phase 5 - retire LTX (only after 1-4 are proven)
 Keep `build_ltx_*` until H3 is user-approved on identity, lip-sync and camera. Then remove the
