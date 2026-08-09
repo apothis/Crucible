@@ -542,6 +542,22 @@ will"). Verified mechanism: H3's native `outfit` Subject type.
   writer's `costume` field then SELECTS from the character's wardrobe and the compiler adds the
   outfit ref + declaration.
 
+#### Instruments as reference subjects - VERIFIED 2026-08-09 + the PROPS feature
+User insight: within one render the band's instruments stay consistent, but across renders each
+render would invent new ones. Fix = the outfit mechanic applied to OBJECTS: a person-free
+canonical instrument still per band member, declared "<Subject k> is the BASS from <Picture k>
+... fully_preserved ... played by <Subject i>". Verified on the 10s band render (7 pictures:
+3 sheets + gown + bass + guitar + stage, plus the song audio): the played bass matches its ref
+exactly (matte black / white pickguard / silver hardware); the guitar matches the described
+design (the render followed the text where the ref still itself was off-design - description
+and reference reinforce each other). Built as `props` on characters: `/api/characters/{id}/prop`
+(product-still template, 2 candidates), creator step 4 "Instruments & props", compiler prop
+subjects + prop_map in the refs plan, per-video costume AND prop pickers on the MV Studio cast
+row. Band verdict (user, on the 10s test): full-band shots are OK to keep - no band-minimization
+guideline needed. OPERATIONAL: never restart the :8000 backend with renders in flight - its job
+tracking orphans (the render survives on the box; recover via ComfyUI /history + /view with
+subfolder=videogen and place the file at library/<prompt_id>.mp4).
+
 #### Phase 2: COMPLETE 2026-08-09 - user verdict on the ref2v lane vs MSR
 User, after watching the lip-sync drafts: **"looks really good, much better than msr on non
 closeups, and equal to it on more close shots."** With that, every capability the MV spine needs
