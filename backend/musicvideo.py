@@ -784,6 +784,11 @@ Each shot object:
   "lipsync": <true when the lead singer sings the lyrics ON CAMERA in this shot>}}
 
 HARD RULES:
+- SUNG SECTIONS focus on the LEAD SINGER: while lyrics are being sung, most segments should be
+  the singer performing (lip-sync singles). B-roll IS allowed during singing - use an occasional
+  "scene" segment to breathe (imagery tied to the lyric being sung) - but the singer carries
+  sung sections; never let B-roll dominate a sung section. Instrumental windows are where
+  B-roll and narrative belong.
 - LIP-SYNC segments are ALWAYS "kind": "single" (one shot, close or medium framing, the singer
   performing TO CAMERA, mouth visible - never turned away, never silhouette, never wide).
 - "scene" is for connected NON-vocal cuts (B-roll runs, narrative beats, establishing sequences):
