@@ -369,29 +369,6 @@ export function ShotEditor({ block: b, idx, patch, stills, audios, songAudioId, 
 
   return (
     <div className="se-root">
-      <style>{`
-        .se-root{display:grid;grid-template-columns:200px 1fr;gap:20px;}
-        .se-rail{display:flex;flex-direction:column;gap:4px;}
-        .se-step{display:flex;align-items:center;gap:9px;text-align:left;border:1px solid transparent;background:transparent;color:var(--color-muted);border-radius:9px;padding:9px 11px;font-size:13px;cursor:pointer;}
-        .se-step:hover{background:var(--color-panel2);color:var(--color-ink);}
-        .se-step.on{background:var(--color-panel2);border-color:var(--color-accent);color:var(--color-ink);font-weight:600;}
-        .se-dot{display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;font-size:11px;border:1px solid var(--color-line);flex:none;}
-        .se-dot.ok{background:var(--color-accent2);border-color:var(--color-accent2);color:#0c0e13;}
-        .se-card{border:1px solid var(--color-line);background:var(--color-panel);border-radius:14px;padding:18px;}
-        .se-h{font-size:15px;font-weight:600;color:var(--color-ink);margin:0 0 3px;}
-        .se-hint{font-size:11px;color:var(--color-muted);margin:0 0 14px;}
-        .se-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
-        .se-tile{border:1px solid var(--color-line);background:var(--color-panel2);border-radius:10px;overflow:hidden;}
-        .se-thumb{aspect-ratio:16/9;background:#0d0f13;display:flex;align-items:center;justify-content:center;}
-        .se-thumb img{height:100%;width:100%;object-fit:cover;}
-        .se-spin{font-size:10px;color:var(--color-muted);}
-        .se-typebtn{flex:1;border:1px solid var(--color-line);background:var(--color-panel2);border-radius:12px;padding:16px;cursor:pointer;text-align:left;color:var(--color-muted);}
-        .se-typebtn.on{border-color:var(--color-accent);color:var(--color-ink);background:#2a1c19;}
-        .se-typebtn b{display:block;color:var(--color-ink);font-size:14px;margin-bottom:4px;}
-        .se-foot{display:flex;align-items:center;gap:10px;margin-top:16px;}
-        .se-pill{border:1px solid var(--color-line);background:var(--color-panel2);color:var(--color-muted);border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer;}
-        .se-pill.on{border-color:var(--color-accent);background:#2a1c19;color:var(--color-ink);}
-      `}</style>
 
       {/* left rail */}
       <div>

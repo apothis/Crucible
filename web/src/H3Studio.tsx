@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type LibItem } from "./api";
-import { inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
+import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
 import { type Character } from "./mvmodel";
@@ -35,6 +35,16 @@ export type H3Segment = {
 
 const H3_CAMERAS = ["static", "push in", "pull back", "truck left", "truck right",
   "arc left", "arc right", "tilt up", "crane up"];
+// Editor stages, in order - the same gate-then-pay progression as the LTX Shot Editor's rail.
+const H3_STAGES = ["shots", "prompt", "env", "video", "result"];
+
+// module scope on purpose: a random seed called straight from a component body trips the
+// react-hooks purity rule, and these are fire-a-render callbacks, not render-time values
+const randSeed = () => Math.floor(Math.random() * 2_000_000_000);
+
+function VideoTile({ src }: { src: string }) {
+  return <video src={src} muted loop autoPlay playsInline controls preload="auto" className="h-full w-full object-contain" />;
+}
 
 const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(Math.max(0, t) % 60)).padStart(2, "0")}`;
 
@@ -69,11 +79,19 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   // environment stills keyed by LOCATION (lowercased) - one still per named place, shared by
   // every segment/cut set there. Unnamed environments stay on the segment (envStillId).
   const [envByLoc, setEnvByLoc] = d.use<Record<string, string>>("h3envByLoc", {});
+  // environment CANDIDATES keyed the same way (a location, or "seg<i>" for an unnamed one): the
+  // gate-before-render rule wants several cheap stills to choose from, not one take you either
+  // accept or re-roll away.
+  const [envCands, setEnvCands] = d.use<Record<string, { jobId: string; seed: number }[]>>("h3envCands", {});
   const [writing, setWriting] = useState(false);
   const [genning, setGenning] = useState("");        // "env:<i>" | "seg:<i>" while submitting
-  const [drafts, setDrafts] = useState<Record<number, { jobId: string; seed: number; url?: string; err?: boolean }[]>>({});
-  const [editIdx, setEditIdx] = useState(-1);        // segment editor open for this row
-  const [showRaw, setShowRaw] = useState(false);
+  // seed-hunt drafts per segment index - persisted so closing the editor (or the project) does not
+  // throw away renders you have already paid for
+  const [drafts, setDrafts] = d.use<Record<number, { jobId: string; seed: number }[]>>("h3drafts", {});
+  const [jobState, setJobState] = useState<Record<string, { pct: number; url?: string; err?: string }>>({});
+  const [editIdx, setEditIdx] = useState(-1);        // segment open in the full editor
+  const [estep, setEstep] = useState("shots");       // which editor stage is showing
+  const [huntN, setHuntN] = useState(2);
   const [recompiling, setRecompiling] = useState(false);
   // which LLM writes the script (defaults to Claude; "local" = whatever local provider the backend picks).
   // Key is versioned (h3scriptLlm2) so projects saved with the old Sonnet 4.6 default pick up Sonnet 5.
@@ -170,7 +188,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     if (!forceNew && envOf(seg, loc)) return;
     setGenning(`env:${i}:${loc}`);
     try {
-      const r = await api.videoStill(envRequest(scene, Math.floor(Math.random() * 2_000_000_000))) as { job_id: string };
+      const r = await api.videoStill(envRequest(scene, randSeed())) as { job_id: string };
       if (loc) setEnvByLoc((prev) => ({ ...(prev as Record<string, string>), [loc]: r.job_id }));
       else patchSeg(i, { envStillId: r.job_id });
       const card = { id: rid(), title: `"${locDisplay(seg, loc)}" environment`, status: "running" as const, pct: 5 };
@@ -183,6 +201,60 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     for (let i = 0; i < segments.length; i++)
       for (const loc of segLocs(segments[i]))
         if (!envOf(segments[i], loc)) await genEnvLoc(i, loc);
+  }
+
+  // ---- job tracking for the editor's candidate tiles. A still's media is /api/media/<job_id>, so
+  // all the tile needs is "is it done yet"; the poll stops itself on done/error. ----
+  function track(jobId: string) {
+    if (jobState[jobId]?.url) return;
+    setJobState((s) => ({ ...s, [jobId]: { pct: s[jobId]?.pct ?? 2 } }));
+    const t = window.setInterval(async () => {
+      const j = await api.job(jobId).catch(() => null);
+      if (!j) return;
+      if (j.status === "done" && j.media_url) {
+        window.clearInterval(t);
+        setJobState((s) => ({ ...s, [jobId]: { pct: 100, url: j.media_url } }));
+      } else if (j.status === "error" || j.status === "failed") {
+        window.clearInterval(t);
+        setJobState((s) => ({ ...s, [jobId]: { pct: 0, err: j.error || "render error" } }));
+      } else {
+        setJobState((s) => ({ ...s, [jobId]: { pct: j.max ? Math.round((100 * (j.progress || 0)) / j.max) : 5 } }));
+      }
+    }, 1500);
+  }
+  const envKey = (i: number, loc: string) => loc || `seg${i}`;
+  const locUsedBy = (loc: string) =>
+    loc ? segments.filter((s) => segLocs(s).includes(loc)).length : 1;
+
+  // N environment candidates for one location - pick one, and it becomes the shared still for every
+  // segment set there. Additive: the old single-still buttons in the table still work.
+  async function genEnvCands(i: number, loc: string, n = 3) {
+    const seg = segments[i];
+    const shot = seg.shots.find((sh) => (sh.location || "").trim().toLowerCase() === loc) || seg.shots[0];
+    const scene = shot?.scene || "";
+    if (!scene) { ctx.setResults([{ id: rid(), title: `segment ${i + 1}`, status: "error", pct: 0, err: "No scene description for this environment - write one in Shots first." }]); return; }
+    setGenning(`cand:${i}:${loc}`);
+    try {
+      const base = randSeed();
+      const made: { jobId: string; seed: number }[] = [];
+      for (let k = 0; k < n; k++) {
+        const r = await api.videoStill(envRequest(scene, base + k)) as { job_id: string };
+        made.push({ jobId: r.job_id, seed: base + k });
+        track(r.job_id);
+      }
+      const key = envKey(i, loc);
+      setEnvCands((prev) => ({ ...(prev as Record<string, { jobId: string; seed: number }[]>),
+        [key]: [...made, ...((prev as Record<string, { jobId: string; seed: number }[]>)[key] || [])].slice(0, 9) }));
+      ctx.setResults([{ id: rid(), title: `${n} "${locDisplay(seg, loc)}" candidates rendering`,
+        status: "running", pct: 5, err: "pick one when they land" }]);
+    } catch (e) { ctx.setResults([{ id: rid(), title: "environment render failed", status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setGenning(""); }
+  }
+  function pickEnv(i: number, loc: string, jobId: string) {
+    if (loc) setEnvByLoc((prev) => ({ ...(prev as Record<string, string>), [loc]: jobId }));
+    else patchSeg(i, { envStillId: jobId });
+    ctx.setResults([{ id: rid(), title: `✓ "${locDisplay(segments[i], loc)}" environment set`,
+      status: "done", pct: 100, err: loc ? `used by ${locUsedBy(loc)} segment(s)` : undefined }]);
   }
 
   // refs in the compiled prompt's exact picture order: sheets, outfits, environment
@@ -223,28 +295,49 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
         prompt: seg.prompt, ref_still_ids: refs,
         seconds: seg.render_seconds, mode,
         ...(seed ? { seed } : {}),
-        ...(mode === "hunt" ? { drafts: 2 } : {}),
+        ...(mode === "hunt" ? { drafts: huntN } : {}),
       };
       if (seg.lipsync && audioId)
         body.ref_audio_ids = [{ id: audioId, start: seg.start, seconds: seg.render_seconds }];
       const r = await api.videoH3Ref2V(body) as
         { mode?: string; drafts?: { job_id: string; seed: number }[]; job_id?: string };
       if (r.drafts) {
-        setDrafts((s) => ({ ...s, [i]: r.drafts!.map((x) => ({ jobId: x.job_id, seed: x.seed })) }));
+        // keep earlier hunts: a second hunt ADDS seeds to choose between instead of discarding the first
+        setDrafts((s) => ({ ...(s as Record<number, { jobId: string; seed: number }[]>),
+          [i]: [...r.drafts!.map((x) => ({ jobId: x.job_id, seed: x.seed })),
+                ...((s as Record<number, { jobId: string; seed: number }[]>)[i] || [])].slice(0, 8) }));
         ctx.patch(card.id, { status: "running", pct: 5 });
         r.drafts.forEach((x) => {
+          track(x.job_id);
           const c2 = { id: rid(), title: `segment ${i + 1} draft (seed ${x.seed})`, status: "running" as const, pct: 2 };
           ctx.setResults([c2]);
           pollJob(x.job_id, c2.id, ctx);
         });
-        ctx.patch(card.id, { status: "done", pct: 100, err: "2 drafts rendering - pick one, then Finish with its seed" });
+        ctx.patch(card.id, { status: "done", pct: 100, err: `${r.drafts.length} drafts rendering - pick one, then Finish with its seed` });
       } else if (r.job_id) {
+        track(r.job_id);
         patchSeg(i, { clipId: r.job_id, clipVariants: [...(seg.clipVariants || []), r.job_id] });
         ctx.patch(card.id, { status: "running", pct: 5 });
         pollJob(r.job_id, card.id, ctx);
       }
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
     finally { setGenning(""); }
+  }
+
+  // open a segment in the editor at its first INCOMPLETE stage (the old editor's auto-advance):
+  // no scene text yet -> Shots; no background -> Environment; no clip -> Video; else the Result.
+  function openSeg(i: number) {
+    if (i < 0 || i >= segments.length) return;
+    const s = segments[i];
+    setEditIdx(i);
+    setEstep(!s.shots.every((x) => x.scene && x.action) ? "shots"
+      : !segLocs(s).every((l) => !!envOf(s, l)) ? "env"
+      : !s.clipId ? "video" : "result");
+  }
+  function keepDraft(i: number, jobId: string, seed: number) {
+    const seg = segments[i];
+    patchSeg(i, { clipId: jobId, clipVariants: [...(seg.clipVariants || []), jobId] });
+    ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: draft seed ${seed} kept`, status: "done", pct: 100 }]);
   }
 
   async function assemble() {
@@ -263,6 +356,299 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   }
 
   const clipUrl = (id?: string) => (id ? library.find((x) => x.id === id)?.media_url : undefined);
+
+  // =====================================================================================
+  // SEGMENT EDITOR - the selected segment opens FULL-PAGE, replacing the table, in the same
+  // shape as the LTX Shot Editor it succeeds: a numbered stage rail on the left, one card at
+  // a time on the right, ticks as each stage completes, and every expensive step gated behind
+  // cheap candidates you pick from. Stages: Shots -> Prompt -> Environment -> Video -> Result.
+  // =====================================================================================
+  const eseg = editIdx >= 0 ? segments[editIdx] : undefined;
+  if (eseg) {
+    const i = editIdx;
+    const refs = refsFor(eseg);
+    const segDrafts = drafts[i] || [];
+    const locs = segLocs(eseg);
+    const done: Record<string, boolean> = {
+      shots: eseg.shots.every((s) => s.scene && s.action),
+      prompt: !!eseg.prompt,
+      env: locs.every((l) => !!envOf(eseg, l)),
+      video: !!eseg.clipId,
+      result: !!eseg.clipId,
+    };
+    const stageLabel: Record<string, string> = {
+      shots: "Shots", prompt: "Prompt", env: "Environment", video: "Video", result: "Result",
+    };
+    return (
+      <div className="se-root">
+        {/* left rail */}
+        <div>
+          <GhostButton onClick={() => setEditIdx(-1)}>{"← Segments"}</GhostButton>
+          <div className="mt-3 mb-1 text-sm font-semibold text-[var(--color-ink)]">Segment {i + 1}</div>
+          <div className="mb-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
+            {fmt(eseg.start)}–{fmt(eseg.end)} {"·"} {eseg.section}<br />
+            {eseg.kind}{eseg.lipsync ? " ♪ lip-sync" : ""}{eseg.kind === "scene" ? ` ×${eseg.shots.length} cuts` : ""}<br />
+            renders {eseg.render_seconds}s / {eseg.frames}f
+          </div>
+          <div className="se-rail">
+            {H3_STAGES.map((s) => (
+              <button key={s} className={`se-step ${estep === s ? "on" : ""}`} onClick={() => setEstep(s)}>
+                <span className={`se-dot ${done[s] ? "ok" : ""}`}>{done[s] ? "✓" : H3_STAGES.indexOf(s) + 1}</span>
+                {stageLabel[s]}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 flex gap-1">
+            <button onClick={() => openSeg(i - 1)} disabled={i === 0}
+              className="flex-1 rounded border border-[var(--color-line)] px-1 py-0.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-40">‹ prev</button>
+            <button onClick={() => openSeg(i + 1)} disabled={i === segments.length - 1}
+              className="flex-1 rounded border border-[var(--color-line)] px-1 py-0.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-40">next ›</button>
+          </div>
+        </div>
+
+        {/* active stage */}
+        <div className="flex flex-col gap-3">
+          {/* ---------------- SHOTS ---------------- */}
+          {estep === "shots" && (
+            <div className="se-card flex flex-col gap-3">
+              <div>
+                <div className="se-h">{eseg.kind === "scene" ? `Shots — ${eseg.shots.length} cuts in one render` : "Shot — one take across the segment"}</div>
+                <p className="se-hint">
+                  {eseg.kind === "scene"
+                    ? "The cuts render as a SINGLE clip at the timestamps below, so keep them visually connected — an evolving viewpoint or a two-thread intercut."
+                    : "One continuous shot spanning the whole segment."} The "scene" text is what renders the environment still; "action" is the motion inside it.
+                </p>
+              </div>
+              {eseg.shots.map((s, j) => (
+                <div key={j} className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-line)] p-2">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-muted)]">
+                    <span className="font-semibold uppercase tracking-wide text-[var(--color-ink)]">
+                      {eseg.kind === "scene" ? `cut ${j + 1}` : "shot"}
+                    </span>
+                    {eseg.cuts[j] && <span>{eseg.cuts[j].start.toFixed(1)}–{eseg.cuts[j].end.toFixed(1)}s</span>}
+                    <label className="flex items-center gap-1">framing
+                      <select className={`${inp} !w-auto`} value={s.framing} onChange={(e) => patchShot(i, j, { framing: e.target.value })}>
+                        {["close", "medium", "wide"].map((f) => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1">camera
+                      <select className={`${inp} !w-auto`} value={s.camera} onChange={(e) => patchShot(i, j, { camera: e.target.value })}>
+                        {H3_CAMERAS.map((cm) => <option key={cm} value={cm}>{cm}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1" title="the singer performs the lyric on camera; recompiling attaches the song window as <Audio 1> and forces close/medium">
+                      <input type="checkbox" checked={s.lipsync} onChange={(e) => patchShot(i, j, { lipsync: e.target.checked })} /> lip-sync
+                    </label>
+                    <span className="flex-1" />
+                    <span title="named cast in this shot (set by the script writer)">{s.characters.join(", ") || "no cast"}</span>
+                  </div>
+                  <Field label="Location (shared name — one environment still per name, everywhere it appears)">
+                    <input className={inp} value={s.location || ""} onChange={(e) => patchShot(i, j, { location: e.target.value })} />
+                  </Field>
+                  <Field label="Scene — the environment only, no people (this renders the environment still)">
+                    <textarea className={inp} rows={3} value={s.scene} onChange={(e) => patchShot(i, j, { scene: e.target.value })} />
+                  </Field>
+                  <Field label="Action — ONE continuous motion at real-world speed">
+                    <textarea className={inp} rows={3} value={s.action} onChange={(e) => patchShot(i, j, { action: e.target.value })} />
+                  </Field>
+                </div>
+              ))}
+              <Field label="Soundscape (sits under the song on lip-sync segments)">
+                <input className={inp} value={eseg.soundscape} onChange={(e) => patchSeg(i, { soundscape: e.target.value })} />
+              </Field>
+              <div className="se-foot">
+                <PrimaryButton onClick={async () => { await recompile(i); setEstep("prompt"); }} disabled={recompiling || busy}>
+                  {recompiling ? "Recompiling…" : "Recompile prompt →"}
+                </PrimaryButton>
+                <span className="text-[10px] text-[var(--color-muted)]">re-applies the enforced rules: pace anchors, sky-pin, subject-swap, reference budget, band fill</span>
+              </div>
+            </div>
+          )}
+
+          {/* ---------------- PROMPT ---------------- */}
+          {estep === "prompt" && (
+            <div className="se-card flex flex-col gap-3">
+              <div>
+                <div className="se-h">Prompt</div>
+                <p className="se-hint">
+                  The compiled six-section prompt that renders. Edit it directly for full control — it then renders verbatim
+                  and Recompile discards the edit.
+                </p>
+              </div>
+              <textarea className={`${inp} font-mono`} rows={22} value={eseg.prompt}
+                onChange={(e) => patchSeg(i, { prompt: e.target.value, handEdited: true })} />
+              <div className="se-foot">
+                <GhostButton onClick={() => recompile(i)} disabled={recompiling || busy}>
+                  {recompiling ? "Recompiling…" : "Recompile from the shots"}
+                </GhostButton>
+                <PrimaryButton onClick={() => setEstep("env")}>Next: Environment →</PrimaryButton>
+                {eseg.handEdited && <span className="text-[10px] text-amber-400">⚠ hand-edited — keep the six sections and the &lt;Picture/Subject/Audio N&gt; tags</span>}
+              </div>
+            </div>
+          )}
+
+          {/* ---------------- ENVIRONMENT ---------------- */}
+          {estep === "env" && (
+            <div className="se-card flex flex-col gap-4">
+              <div>
+                <div className="se-h">Environment — the background still</div>
+                <p className="se-hint">
+                  Person-free environment stills, one per named location. H3 swaps the people out and keeps the place,
+                  so the still's realism sets the shot's realism. Generate candidates and pick one — the pick is shared
+                  by every segment set in that location.
+                </p>
+              </div>
+              {locs.map((loc) => {
+                const chosen = envOf(eseg, loc);
+                const cands = envCands[envKey(i, loc)] || [];
+                return (
+                  <div key={loc} className="flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13px] font-semibold text-[var(--color-ink)]">{locDisplay(eseg, loc)}</span>
+                      {!!loc && <span className="text-[10px] text-[var(--color-muted)]">used by {locUsedBy(loc)} segment(s)</span>}
+                      <div className="flex-1" />
+                      <PrimaryButton onClick={() => genEnvCands(i, loc, 3)} disabled={busy || !!genning}>
+                        {genning === `cand:${i}:${loc}` ? "Submitting…" : cands.length ? "Generate 3 more" : "Generate 3 backgrounds"}
+                      </PrimaryButton>
+                      <GhostButton onClick={() => genEnvCands(i, loc, 1)} disabled={busy || !!genning}>+1</GhostButton>
+                    </div>
+                    {cands.length > 0 && (
+                      <div className="se-grid3">
+                        {cands.map((c) => {
+                          const st = jobState[c.jobId];
+                          const ready = !!st?.url || st === undefined;
+                          const picked = chosen === c.jobId;
+                          return (
+                            <div key={c.jobId} className="se-tile">
+                              <div className="se-thumb">
+                                {st?.err ? <span className="se-spin text-red-300">failed</span>
+                                  : ready ? <img src={`/api/media/${c.jobId}`} alt="" onClick={() => openLightbox(`/api/media/${c.jobId}`)} className="cursor-zoom-in" />
+                                    : <span className="se-spin">{st?.pct ? `rendering… ${st.pct}%` : "queued…"}</span>}
+                              </div>
+                              <div className="flex items-center justify-between px-2 py-1.5">
+                                <span className="text-[11px] text-[var(--color-muted)]">seed {c.seed}</span>
+                                {picked
+                                  ? <span className="text-[11px] text-[var(--color-accent2)]">✓ in use</span>
+                                  : <GhostButton onClick={() => pickEnv(i, loc, c.jobId)} disabled={!ready || !!st?.err}>Use this</GhostButton>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {chosen && !cands.some((c) => c.jobId === chosen) && (
+                      <div className="flex items-center gap-3 rounded-lg border border-[var(--color-line)] p-2">
+                        <img src={`/api/media/${chosen}`} alt="" onClick={() => openLightbox(`/api/media/${chosen}`)}
+                          className="h-16 w-28 cursor-zoom-in rounded object-cover" />
+                        <span className="text-[11px] text-[var(--color-accent2)]">✓ environment set</span>
+                      </div>
+                    )}
+                    {!chosen && !cands.length && (
+                      <p className="se-hint m-0">Nothing yet for this location.</p>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="se-foot">
+                <PrimaryButton onClick={() => setEstep("video")} disabled={!done.env}>
+                  {done.env ? "Backgrounds are good — to Video →" : "Pick a background for every location"}
+                </PrimaryButton>
+              </div>
+            </div>
+          )}
+
+          {/* ---------------- VIDEO ---------------- */}
+          {estep === "video" && (
+            <div className="se-card flex flex-col gap-3">
+              <div>
+                <div className="se-h">Video options</div>
+                <p className="se-hint">
+                  Cheap turbo drafts first: pick the seed whose take works, then Finish renders that exact seed on the
+                  full-quality base recipe. Drafts accumulate, so a second hunt adds seeds instead of replacing them.
+                </p>
+              </div>
+              <div className="text-[11px] text-[var(--color-muted)]">
+                {typeof refs === "string"
+                  ? <span className="text-amber-400">⚠ {refs}</span>
+                  : <>references in picture order: <span className="text-[var(--color-ink)]">{refs.length} pictures</span>
+                    {eseg.lipsync && audioId ? " + the song window as <Audio 1> (the soundtrack IS the song)" : ""}
+                    {refs.length >= 8 ? " · at the reference budget" : ""}</>}
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">Drafts
+                  <select className={`${inp} !w-auto`} value={huntN} onChange={(e) => setHuntN(Number(e.target.value))}>
+                    {[2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+                <PrimaryButton onClick={() => renderSeg(i, "hunt")} disabled={busy || !!genning || typeof refs === "string"}>
+                  {segDrafts.length ? `Generate ${huntN} more options` : `Generate ${huntN} options`}
+                </PrimaryButton>
+                <GhostButton onClick={() => renderSeg(i, "finish")} disabled={busy || !!genning || typeof refs === "string"}>
+                  Skip the hunt — finish now
+                </GhostButton>
+              </div>
+              {segDrafts.length > 0 && (
+                <div className="se-grid3">
+                  {segDrafts.map((x) => {
+                    const st = jobState[x.jobId];
+                    const durl = st?.url || clipUrl(x.jobId);
+                    const picked = eseg.clipId === x.jobId;
+                    return (
+                      <div key={x.jobId} className="se-tile">
+                        <div className="se-thumb">
+                          {st?.err ? <span className="se-spin text-red-300">failed</span>
+                            : durl ? <VideoTile src={durl} />
+                              : <span className="se-spin">{st?.pct ? `rendering… ${st.pct}%` : "queued…"}</span>}
+                        </div>
+                        <div className="flex items-center justify-between gap-1 px-2 py-1.5">
+                          <span className="text-[11px] text-[var(--color-muted)]">seed {x.seed}</span>
+                          <div className="flex items-center gap-1">
+                            {picked
+                              ? <span className="text-[11px] text-[var(--color-accent2)]">✓ in use</span>
+                              : <GhostButton onClick={() => keepDraft(i, x.jobId, x.seed)} disabled={!durl}>Keep</GhostButton>}
+                            <GhostButton onClick={() => renderSeg(i, "finish", x.seed)} disabled={busy || !!genning || !durl}>Finish</GhostButton>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ---------------- RESULT ---------------- */}
+          {estep === "result" && (
+            <div className="se-card flex flex-col gap-3">
+              <div className="se-h">Result</div>
+              {eseg.clipId
+                ? <video key={eseg.clipId} src={`/api/media/${eseg.clipId}`} controls autoPlay loop muted playsInline
+                    className="w-full rounded-lg bg-black" style={{ maxHeight: 440 }} />
+                : <p className="se-hint">No clip yet — generate one in the Video stage.</p>}
+              {eseg.clipId && (
+                <>
+                  <div className="se-foot">
+                    <PrimaryButton onClick={() => setEditIdx(-1)}>Use in the video ✓</PrimaryButton>
+                    <GhostButton onClick={() => setEstep("video")}>Re-roll options</GhostButton>
+                    <GhostButton onClick={() => setEstep("env")}>Change the background</GhostButton>
+                  </div>
+                  {(eseg.clipVariants || []).length > 1 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-[10px] text-[var(--color-muted)]">takes:</span>
+                      {(eseg.clipVariants || []).map((v, k) => (
+                        <button key={v} onClick={() => patchSeg(i, { clipId: v })}
+                          className={`se-pill ${eseg.clipId === v ? "on" : ""}`}>take {k + 1}</button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -394,10 +780,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                         </td>
                         <td className="px-2 py-1.5">
                           <div className="flex flex-wrap gap-1">
-                            <button onClick={() => { setEditIdx(editIdx === i ? -1 : i); setShowRaw(false); }}
-                              title="edit this segment's shots + prompt"
-                              className={`rounded border px-1.5 py-0.5 text-[9px] ${editIdx === i ? "border-[var(--color-accent2)] text-[var(--color-accent2)]" : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
-                              {editIdx === i ? "close" : "edit"}
+                            <button onClick={() => openSeg(i)}
+                              title="open this segment in the editor: shots, prompt, environment candidates, seed hunt, result"
+                              className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
+                              open
                             </button>
                             <button onClick={() => renderSeg(i, "hunt")} disabled={busy || !!genning || segLocs(seg).some((l) => !envOf(seg, l))}
                               title="2 fast turbo drafts to pick a seed"
@@ -430,63 +816,6 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           )}
                         </td>
                       </tr>
-                      {editIdx === i && (
-                        <tr key={`edit-${i}`} className="border-t border-[var(--color-line)] bg-[var(--color-bg)]">
-                          <td colSpan={7} className="px-3 py-2">
-                            <div className="space-y-2">
-                              {seg.shots.map((s, j) => (
-                                <div key={j} className="rounded border border-[var(--color-line)] p-2 space-y-1.5">
-                                  <div className="flex flex-wrap items-center gap-2 text-[9px] text-[var(--color-muted)]">
-                                    <span className="font-semibold uppercase tracking-wide">{seg.kind === "scene" ? `cut ${j + 1}` : "shot"}</span>
-                                    <label className="flex items-center gap-1">framing
-                                      <select className={`${inp} !w-auto`} value={s.framing} onChange={(e) => patchShot(i, j, { framing: e.target.value })}>
-                                        {["close", "medium", "wide"].map((f) => <option key={f} value={f}>{f}</option>)}
-                                      </select>
-                                    </label>
-                                    <label className="flex items-center gap-1">camera
-                                      <select className={`${inp} !w-auto`} value={s.camera} onChange={(e) => patchShot(i, j, { camera: e.target.value })}>
-                                        {H3_CAMERAS.map((cm) => <option key={cm} value={cm}>{cm}</option>)}
-                                      </select>
-                                    </label>
-                                    <label className="flex items-center gap-1" title="the singer performs the lyrics on camera in this shot (forces single-kind + close/medium)">
-                                      <input type="checkbox" checked={s.lipsync} onChange={(e) => patchShot(i, j, { lipsync: e.target.checked })} /> lip-sync
-                                    </label>
-                                    <span className="flex-1" />
-                                    <span title="named cast in this shot (from the script; edit via rewrite)">{s.characters.join(", ") || "no cast"}</span>
-                                  </div>
-                                  <label className="block text-[9px] text-[var(--color-muted)]">scene (environment - also drives the env still)
-                                    <textarea className={inp} rows={2} value={s.scene} onChange={(e) => patchShot(i, j, { scene: e.target.value })} />
-                                  </label>
-                                  <label className="block text-[9px] text-[var(--color-muted)]">action (ONE continuous motion at real-world speed)
-                                    <textarea className={inp} rows={2} value={s.action} onChange={(e) => patchShot(i, j, { action: e.target.value })} />
-                                  </label>
-                                </div>
-                              ))}
-                              <div className="flex items-center gap-2">
-                                <PrimaryButton onClick={() => recompile(i)} disabled={recompiling || busy}>
-                                  {recompiling ? "recompiling…" : "Recompile prompt"}
-                                </PrimaryButton>
-                                <span className="text-[9px] text-[var(--color-muted)]">
-                                  recompiling re-applies the enforced rules (pace anchors, sky-pin, subject-swap, framing){seg.handEdited ? " and REPLACES your raw edit" : ""}
-                                </span>
-                                <span className="flex-1" />
-                                <GhostButton onClick={() => setShowRaw(!showRaw)}>{showRaw ? "hide raw prompt" : "raw prompt"}</GhostButton>
-                              </div>
-                              {showRaw && (
-                                <div className="space-y-1">
-                                  <textarea className={`${inp} font-mono`} rows={14} value={seg.prompt}
-                                    onChange={(e) => patchSeg(i, { prompt: e.target.value, handEdited: true })} />
-                                  <p className="text-[9px] text-[var(--color-muted)]">
-                                    {seg.handEdited
-                                      ? "⚠ hand-edited - this exact text renders; Recompile discards it. Keep the six-section format and the <Picture/Subject/Audio N> tags."
-                                      : "the compiled prompt - edit it directly for full control (renders verbatim)"}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </>);
                   })}
                 </tbody>
