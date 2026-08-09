@@ -3,7 +3,7 @@ import { api, type LibItem } from "./api";
 import { inp, rid, type RunCtx } from "./ui";
 import { Collapse, StillPick } from "./mvui";
 import { openLightbox } from "./Lightbox";
-import { type Character, type Costume, type Identity, type Wardrobe } from "./mvmodel";
+import { type Character, type Costume, type Identity, type Prop, type Wardrobe } from "./mvmodel";
 
 // ============================================================================
 // H3-era character creator (docs/MINIMAX_H3_PLAN.md "Outfit-layering test").
@@ -38,6 +38,7 @@ const IDENTITY_FIELDS: { key: keyof Identity; label: string; hint: string }[] = 
 ];
 const COSTUME_HINT = "e.g. a floor-length deep crimson velvet evening gown with a fitted bodice, " +
   "a sweetheart neckline, long fitted velvet sleeves and a full heavy skirt";
+const PROP_HINT = "e.g. a matte black 4-string electric bass guitar with a white pickguard and silver hardware";
 
 function composeIdentity(idn?: Identity): string {
   if (!idn) return "";
@@ -124,6 +125,7 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
   const [matchFace, setMatchFace] = useState<Record<string, boolean>>({});
   const [vary, setVary] = useState<Record<string, boolean>>({});
   const [newCostume, setNewCostume] = useState<Record<string, { name: string; desc: string }>>({});
+  const [newProp, setNewProp] = useState<Record<string, { name: string; desc: string }>>({});
   const [llmProvider, setLlmProvider] = useState("ollama");
   useEffect(() => { api.llmProviders().then((p) => {
     const q = p as { claude?: boolean; claude_sub?: boolean };
@@ -158,6 +160,10 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     patch(c, { costumes: (c.costumes || []).map((co) => co.id === coid ? { ...co, ...p } : co) });
   const delCostume = (c: Character, coid: string) =>
     patch(c, { costumes: (c.costumes || []).filter((co) => co.id !== coid) });
+  const setProp = (c: Character, pid: string, p: Partial<Prop>) =>
+    patch(c, { props: (c.props || []).map((pr) => pr.id === pid ? { ...pr, ...p } : pr) });
+  const delProp = (c: Character, pid: string) =>
+    patch(c, { props: (c.props || []).filter((pr) => pr.id !== pid) });
 
   function trackDrafts(key: string, ds: Draft[]) {
     setDrafts((d) => ({ ...d, [key]: ds }));
@@ -225,6 +231,39 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
       trackDrafts(key, r.drafts.map((d) => ({ jobId: d.job_id, seed: d.seed })));
     } catch (e) {
       ctx.setResults([{ id: rid(), title: "Costume reroll failed", status: "error", pct: 0, err: (e as Error).message }]);
+    } finally { setHunting(""); }
+  }
+
+  // ---- props (instruments / signature objects): same server-side flow as costumes ----
+  async function genProp(c: Character) {
+    const np = newProp[c.id];
+    if (!np?.desc?.trim()) {
+      ctx.setResults([{ id: rid(), title: "Describe the prop first", status: "error", pct: 0, err: "Write what the instrument/object is - shape, color, hardware - then generate its still." }]);
+      return;
+    }
+    const key = `${c.id}:prop:new`;
+    setHunting(key);
+    try {
+      const r = await api.characterProp(c.id, { name: np.name || "New prop", desc: np.desc, drafts: 2 }) as
+        { prop: Prop; drafts: { job_id: string; seed: number }[] };
+      await reload();
+      setNewProp((s) => ({ ...s, [c.id]: { name: "", desc: "" } }));
+      trackDrafts(`${c.id}:prop:${r.prop.id}`, r.drafts.map((d) => ({ jobId: d.job_id, seed: d.seed })));
+    } catch (e) {
+      ctx.setResults([{ id: rid(), title: "Prop generation failed", status: "error", pct: 0, err: (e as Error).message }]);
+    } finally { setHunting(""); }
+  }
+  async function rerollProp(c: Character, pr: Prop) {
+    const key = `${c.id}:prop:${pr.id}`;
+    setHunting(key);
+    try {
+      const r = await api.characterProp(c.id, { name: pr.name, desc: pr.desc, drafts: 2 }) as
+        { prop: Prop; drafts: { job_id: string; seed: number }[] };
+      await api.characterSave({ ...c, props: (c.props || []).filter((x) => x.id !== r.prop.id) });
+      await reload();
+      trackDrafts(key, r.drafts.map((d) => ({ jobId: d.job_id, seed: d.seed })));
+    } catch (e) {
+      ctx.setResults([{ id: rid(), title: "Prop reroll failed", status: "error", pct: 0, err: (e as Error).message }]);
     } finally { setHunting(""); }
   }
 
@@ -426,6 +465,48 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                       title={sheetDone ? "render the garment sheet (2 candidates)" : "lock the identity sheet first (step 2)"}
                       className="w-full rounded border border-[var(--color-line)] py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
                       {hunting === `${c.id}:costume:new` ? "rendering garment sheet…" : "+ add outfit (renders 2 candidates)"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* ---- STEP 4: props (instruments / signature objects) ---- */}
+                <div className="space-y-1.5 border-t border-[var(--color-line)] pt-2">
+                  <div className="flex items-center gap-1.5">
+                    <StepTag n={4} done={(c.props || []).some((pr) => pr.stillId)} />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">Instruments & props</span>
+                  </div>
+                  <p className="text-[9px] text-[var(--color-muted)]">
+                    A prop pins an instrument or signature object to ONE design across every render (otherwise each
+                    render invents a new one). Person-free product stills - describe shape, color and hardware.
+                  </p>
+                  {(c.props || []).map((pr) => (
+                    <div key={pr.id} className="rounded border border-[var(--color-line)] p-1.5 space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        {pr.stillId
+                          ? <img src={`/api/media/${pr.stillId}`} onClick={() => openLightbox(`/api/media/${pr.stillId}`)} title="prop still — click to enlarge"
+                              className="h-8 w-8 shrink-0 cursor-zoom-in rounded object-cover" alt="" />
+                          : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-dashed border-[var(--color-line)] text-[8px] text-[var(--color-muted)]">…</span>}
+                        <input className={inp} value={pr.name} onChange={(e) => setProp(c, pr.id, { name: e.target.value })} placeholder="prop name (e.g. bass)" />
+                        <button onClick={() => rerollProp(c, pr)} disabled={busy || !!hunting} className="shrink-0 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50" title="render new candidates of this prop">↻</button>
+                        <button onClick={() => delProp(c, pr.id)} className="px-1 text-[var(--color-muted)] hover:text-red-400" title="delete prop">{"×"}</button>
+                      </div>
+                      <textarea className={inp} rows={2} value={pr.desc} placeholder={PROP_HINT}
+                        onChange={(e) => setProp(c, pr.id, { desc: e.target.value })} />
+                      <DraftStrip drafts={drafts[`${c.id}:prop:${pr.id}`] || []} picked={pr.stillId} busy={hunting === `${c.id}:prop:${pr.id}`}
+                        onPick={(id) => setProp(c, pr.id, { stillId: id })} onReroll={() => rerollProp(c, pr)} onClose={() => closeDrafts(`${c.id}:prop:${pr.id}`)} />
+                    </div>
+                  ))}
+                  <div className="rounded border border-dashed border-[var(--color-line)] p-1.5 space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] text-[var(--color-muted)]">new prop</span>
+                      <input className={inp} value={(newProp[c.id] || { name: "" }).name} placeholder="name (e.g. bass, guitar)"
+                        onChange={(e) => setNewProp((s) => ({ ...s, [c.id]: { ...(s[c.id] || { name: "", desc: "" }), name: e.target.value } }))} />
+                    </div>
+                    <textarea className={inp} rows={2} value={(newProp[c.id] || { desc: "" }).desc} placeholder={PROP_HINT}
+                      onChange={(e) => setNewProp((s) => ({ ...s, [c.id]: { ...(s[c.id] || { name: "", desc: "" }), desc: e.target.value } }))} />
+                    <button onClick={() => genProp(c)} disabled={busy || !!hunting}
+                      className="w-full rounded border border-[var(--color-line)] py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
+                      {hunting === `${c.id}:prop:new` ? "rendering prop still…" : "+ add prop (renders 2 candidates)"}
                     </button>
                   </div>
                 </div>

@@ -2025,8 +2025,8 @@ def mv_h3_compile(body: dict):
     except Exception as e:
         raise HTTPException(500, f"compile failed: {e}")
     return {"prompt": prompt, "picture_map": refs["sheets"], "outfit_map": refs["outfits"],
-            "env_picture": refs["env"], "lipsync": lipsync_any, "shots": seg2["shots"],
-            "kind": seg2["kind"], "cuts": seg2["cuts"]}
+            "prop_map": refs["props"], "env_picture": refs["env"], "lipsync": lipsync_any,
+            "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"]}
 
 
 @app.get("/api/mv/grades")
@@ -3187,8 +3187,10 @@ def characters_upsert(body: dict):
             "method", "notes", "identity", "wardrobes", "appearance",
             # H3-era root+costume model (docs/MINIMAX_H3_PLAN.md "Outfit-layering test"):
             # sheetId = the canonical identity sheet (the ONLY face source, never re-rendered);
-            # costumes = person-free garment stills layered at render time via H3's outfit Subject
-            "sheetId", "costumes", "style")
+            # costumes = person-free garment stills layered at render time via H3's outfit Subject;
+            # props = person-free instrument/object stills (same mechanic - pins e.g. the bassist's
+            # bass to ONE design across renders instead of a fresh invention per render)
+            "sheetId", "costumes", "props", "style")
             if body.get(k) is not None}
     now = time.time()
     with db() as conn:
@@ -3317,6 +3319,64 @@ def character_sheet(cid: str, body: dict):
         r = video_still(dict(_char_sheet_request(identity, base_wear, base + i)))
         drafts.append({"job_id": r["job_id"], "seed": base + i})
     return {"drafts": drafts, "base_seed": base}
+
+
+def _prop_request(desc, seed):
+    # person-free product shot of an instrument/object on a stand - the canonical prop reference
+    # (verified pattern: outfit test 2026-08-09; instruments are H3 "object" subjects)
+    d = desc.rstrip(". ")
+    return {
+        "engine": "krea2", "two_pass": True, "enhancer": True,
+        "width": 1024, "height": 1536, "seed": seed,
+        "layout": {
+            "overview": (f"A professional photoreal studio product photograph of {d}, displayed on a "
+                         f"suitable black stand, no person present"),
+            "background": ("A seamless plain warm-grey studio backdrop, even soft diffused studio "
+                           "lighting, a clean catalogue presentation with the object centered and "
+                           "nothing else in frame, no text, no logos, no person anywhere"),
+            "photo_style": "",
+            "aesthetics": ("photorealistic, true-to-life material detail, professional reference "
+                           "photograph, catalogue clarity"),
+            "lighting": "even soft diffused studio light, gentle falloff, no dramatic shadows",
+            "medium": "photograph",
+            "regions": [
+                {"desc": f"{d}, fully visible, every detail of its shape, materials, hardware and "
+                         f"finish sharply resolved. No person, no hands.",
+                 "x": 0.10, "y": 0.03, "w": 0.80, "h": 0.94},
+            ],
+        },
+    }
+
+
+@app.post("/api/characters/{cid}/prop")
+def character_prop(cid: str, body: dict):
+    """Add a PROP (instrument, weapon, signature object) to a character: renders a person-free
+    product still and attaches the prop entry immediately (stillId = first draft job id).
+    Body: {name, desc, drafts? (2), seed?}. Same flow as /costume; the UI repicks between the
+    drafts via the normal character save (prop.stillId)."""
+    c = _character(cid)
+    if not c:
+        raise HTTPException(404, "character not found")
+    name = (body.get("name") or "").strip()
+    desc = (body.get("desc") or "").strip()
+    if not desc:
+        raise HTTPException(400, "describe the prop/instrument")
+    n = max(1, min(int(body.get("drafts") or 2), 4))
+    base = int(body.get("seed") or 0) or random.randint(0, 2**31 - 1)
+    drafts = []
+    for i in range(n):
+        r = video_still(dict(_prop_request(desc, base + i)))
+        drafts.append({"job_id": r["job_id"], "seed": base + i})
+    entry = {"id": uuid.uuid4().hex, "name": name or "New prop", "desc": desc,
+             "stillId": drafts[0]["job_id"], "created": time.time()}
+    props = (c.get("props") or []) + [entry]
+    with db() as conn:
+        row = conn.execute("SELECT data FROM characters WHERE id=?", (c["id"],)).fetchone()
+        data = json.loads(row["data"] or "{}")
+        data["props"] = props
+        conn.execute("UPDATE characters SET data=?, updated=? WHERE id=?",
+                     (json.dumps(data), time.time(), c["id"]))
+    return {"prop": entry, "drafts": drafts, "base_seed": base}
 
 
 @app.post("/api/characters/{cid}/costume")

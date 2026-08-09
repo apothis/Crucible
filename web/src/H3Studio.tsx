@@ -25,6 +25,7 @@ export type H3Segment = {
   section: string; cuts: { start: number; end: number }[];
   kind: "single" | "scene"; shots: H3Shot[]; lipsync: boolean; soundscape: string;
   prompt: string; picture_map: Record<string, number>; outfit_map: Record<string, number>;
+  prop_map?: Record<string, number>;
   env_picture: number;
   // client-side render state
   envStillId?: string; clipId?: string; clipVariants?: string[];
@@ -63,6 +64,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const d = useDrafts("mvstudio");
   const [segments, setSegments] = d.use<H3Segment[]>("h3segments", []);
   const [castCostume, setCastCostume] = d.use<Record<string, string>>("h3castCostume", {});
+  const [castProp, setCastProp] = d.use<Record<string, string>>("h3castProp", {});   // "" = none
   const [writing, setWriting] = useState(false);
   const [genning, setGenning] = useState("");        // "env:<i>" | "seg:<i>" while submitting
   const [drafts, setDrafts] = useState<Record<number, { jobId: string; seed: number; url?: string; err?: boolean }[]>>({});
@@ -74,14 +76,16 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const patchSeg = (i: number, p: Partial<H3Segment>) =>
     setSegments((prev) => (prev as H3Segment[]).map((s, j) => (j === i ? { ...s, ...p } : s)));
 
-  // the cast payload the script writer + compiler see: identity look, sheet, chosen costume
+  // the cast payload the script writer + compiler see: identity look, sheet, chosen costume + prop
   function castPayload() {
     return h3cast.map((c) => {
       const co = (c.costumes || []).find((x) => x.id === (castCostume[c.id] || (c.costumes || [])[0]?.id));
+      const pr = (c.props || []).find((x) => x.id === (castProp[c.id] ?? (c.props || [])[0]?.id));
       return {
         name: c.name, role: c.role, look: c.appearance || "",
         sheet_id: c.sheetId,
         ...(co?.stillId ? { costume: { name: co.name, desc: co.desc, still_id: co.stillId } } : {}),
+        ...(pr?.stillId && castProp[c.id] !== "" ? { prop: { name: pr.name, desc: pr.desc, still_id: pr.stillId } } : {}),
       };
     });
   }
@@ -153,8 +157,15 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
         return co?.stillId;
       }).filter(Boolean) as string[];
     if (outfits.length !== Object.keys(seg.outfit_map || {}).length) return "a costume still is missing";
+    const props = Object.entries(seg.prop_map || {}).sort((a, b) => a[1] - b[1])
+      .map(([n]) => {
+        const c = byName[n];
+        const pr = (c?.props || []).find((x) => x.id === (castProp[c!.id] ?? (c?.props || [])[0]?.id));
+        return pr?.stillId;
+      }).filter(Boolean) as string[];
+    if (props.length !== Object.keys(seg.prop_map || {}).length) return "a prop still is missing";
     if (!seg.envStillId) return "generate the environment still first";
-    return [...sheets, ...outfits, seg.envStillId];
+    return [...sheets, ...outfits, ...props, seg.envStillId];
   }
 
   async function renderSeg(i: number, mode: "hunt" | "finish", seed?: number) {
@@ -232,6 +243,13 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               <select className="bg-transparent text-[9px] text-[var(--color-muted)]" value={castCostume[c.id] || (c.costumes || [])[0]?.id}
                 onChange={(e) => setCastCostume({ ...castCostume, [c.id]: e.target.value })} title="costume for this video">
                 {(c.costumes || []).map((co) => <option key={co.id} value={co.id}>{co.name}</option>)}
+              </select>
+            )}
+            {(c.props || []).length > 0 && (
+              <select className="bg-transparent text-[9px] text-[var(--color-muted)]" value={castProp[c.id] ?? (c.props || [])[0]?.id}
+                onChange={(e) => setCastProp({ ...castProp, [c.id]: e.target.value })} title="instrument/prop for this video">
+                {(c.props || []).map((pr) => <option key={pr.id} value={pr.id}>{pr.name}</option>)}
+                <option value="">(no prop)</option>
               </select>
             )}
           </span>

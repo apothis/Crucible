@@ -76,6 +76,7 @@ export const api = {
   characterDelete: (id: string) => jmethod("DELETE", `/api/characters/${id}`, {}),
   characterSheet: (id: string, body: unknown) => jpost(`/api/characters/${id}/sheet`, body),
   characterCostume: (id: string, body: unknown) => jpost(`/api/characters/${id}/costume`, body),
+  characterProp: (id: string, body: unknown) => jpost(`/api/characters/${id}/prop`, body),
   mvH3Script: (body: unknown) => jpost("/api/mv/h3_script", body),
   mvH3Compile: (body: unknown) => jpost("/api/mv/h3_compile", body),
   videoH3Ref2V: (body: unknown) => jpost("/api/video/h3_ref2v", body),

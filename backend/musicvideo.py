@@ -897,7 +897,10 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                 chars.append(n)
     outfits = [n for n in chars if (by_name[n].get("costume") or {}).get("still_id")]
     outfit_pic = {n: len(chars) + 1 + i for i, n in enumerate(outfits)}
-    env_pic = len(chars) + len(outfits) + 1
+    # props (instruments/objects) follow the outfits in picture order - same verified mechanic
+    props = [n for n in chars if (by_name[n].get("prop") or {}).get("still_id")]
+    prop_pic = {n: len(chars) + len(outfits) + 1 + i for i, n in enumerate(props)}
+    env_pic = len(chars) + len(outfits) + len(props) + 1
     lead = chars[0] if chars else None
 
     defs, keeps = [], []
@@ -931,6 +934,15 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                         f"preserve the face, hair and wardrobe exactly.")
             keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
                          f"wardrobe remain exactly consistent with <Picture {i + 1}> throughout.")
+    for n in props:
+        pr = by_name[n]["prop"]
+        pp = prop_pic[n]
+        pi = chars.index(n) + 1
+        defs.append(f"<Subject {pp}> is the {(pr.get('name') or 'PROP').upper()} from <Picture {pp}>: "
+                    f"{(pr.get('desc') or 'the object').rstrip('. ')}. <Picture {pp}> shows it alone; "
+                    f"only the object is referenced. <Subject {pi}> plays and holds it.")
+        keeps.append(f"<Subject {pp}>: fully_preserved - its shape, materials, colors and hardware "
+                     f"remain exactly consistent with <Picture {pp}>, played by <Subject {pi}>.")
     env_scene = next((s["scene"] for s in seg["shots"] if s["scene"]), "the environment").rstrip(". ") + "."
     defs.append(f"<Subject {env_pic}> is the ENVIRONMENT from <Picture {env_pic}>: {env_scene} "
                 f"Only the environment and its objects are referenced from <Picture {env_pic}>. "
@@ -997,7 +1009,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
               f"overall_soundscape:\n{sound}\n\n"
               f"non_diegetic_music:\nN/A")
     picture_map = {n: i + 1 for i, n in enumerate(chars)}
-    return prompt, {"sheets": picture_map, "outfits": outfit_pic, "env": env_pic}
+    return prompt, {"sheets": picture_map, "outfits": outfit_pic, "props": prop_pic, "env": env_pic}
 
 
 def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
@@ -1011,5 +1023,6 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
         seg["prompt"], refs = compile_h3_prompt(seg, cast, audio_ref=seg["lipsync"])
         seg["picture_map"] = refs["sheets"]
         seg["outfit_map"] = refs["outfits"]
+        seg["prop_map"] = refs["props"]
         seg["env_picture"] = refs["env"]
     return segs

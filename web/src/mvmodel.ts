@@ -20,6 +20,9 @@ export type Wardrobe = {
 // form). No face is ever rendered, so adding outfits carries zero identity risk; at render time
 // H3 dresses the character via its native outfit Subject (verified 2026-08-09).
 export type Costume = { id: string; name: string; desc: string; stillId?: string; created?: number };
+// A prop = a person-free instrument/object still (the costume mechanic applied to objects):
+// pins e.g. the bassist's bass to ONE design across renders instead of a fresh invention each time.
+export type Prop = { id: string; name: string; desc: string; stillId?: string; created?: number };
 
 export type Character = {
   id: string; name: string; role?: string; kind?: string;
@@ -31,6 +34,7 @@ export type Character = {
   style?: string;               // "h3" once migrated to the new model
   sheetId?: string;             // canonical identity sheet (Sheet-D-style regional render)
   costumes?: Costume[];
+  props?: Prop[];               // instruments / signature objects (person-free stills)
   // legacy single-ref fields (pre-v2 characters); still resolved as a fallback
   refStillId?: string; refStillIds?: string[]; loraName?: string; method?: string; notes?: string;
 };
