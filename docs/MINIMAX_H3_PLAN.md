@@ -664,7 +664,10 @@ blocks)" keeps the entire old flow intact). The H3 panel (`web/src/H3Studio.tsx`
 - Assemble maps rendered segments onto the existing `/api/mv/assemble`.
 State persists in the project drafts (mvstudio.h3segments). Known gaps for the next pass:
 grade picker not yet surfaced in the H3 panel (assembles with the project default), no
-per-segment prompt editor yet (rewrite = regenerate the script), no per-segment upscale hook.
+per-segment upscale hook. PER-SEGMENT PROMPT EDITING ADDED 2026-08-09: an "edit" expansion per
+row - structured fields (scene/action/framing/camera/lipsync per shot) with a server-side
+RECOMPILE (`/api/mv/h3_compile`, re-applies every enforced rule and re-coerces enums), plus a
+raw-prompt override textarea (renders verbatim, flagged hand-edited, discarded on recompile).
 Full LTX code removal stays deferred until the first complete H3 video is user-approved.
 
 ---
