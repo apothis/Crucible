@@ -520,6 +520,26 @@ thing per render, hold the seed and the shot fixed, and carry unchanged sentence
   separate refs; whether the person-free background rule can be dropped (declare the background
   as its own `<Subject>`); `ref_audio_0` voice-timbre lip-sync; `match` vs `max` identity.
 
+#### Phase 2 identity tests - BOTH PASS 2026-08-09 (all [V])
+- **Test A (Sheet D + person-free chapel bg, ref2v hunt of 2, turbo 736p):** identity held in
+  both drafts (Sheet D face/hair/gown), and the environment ref was reconstructed SHARP from a
+  shallow-DOF backdrop still - same windows, pillar, moss, and the lantern in its exact spot.
+  Draft 2 even opened on the ref still's composition and pushed in with a rack-focus feel.
+  Library jobs fe95c842 / 071f7796. First REF2VA run pays the ~21GB model load (~5 min);
+  subsequent drafts ~4 min each.
+- **Test B (bg WITH a different person - blonde woman in red satin at a piano, hall scene):**
+  THE PERSON-FREE BACKGROUND RULE IS DEAD ON THIS LANE. Declaring the bg as an environment
+  `<Subject 2>` + retention_analysis stating the pictured woman "is replaced by <Subject 1> and
+  does not appear" produced, in BOTH drafts, ONLY the Sheet D character - no red satin, no
+  blonde hair, no second figure, no blended features - while the hall (stone, windows,
+  candelabras, drapes, red runner, piano position/angle) survived nearly photographically.
+  Library jobs 43bcb6a3 / 8eacc0be; bg still 4836323b. The MSR-era person-free rule stays in
+  force ONLY for the LTX/MSR lane until it retires (memory: msr-background-must-be-personfree).
+- Photoreal note (user feedback): scene realism tracks the ENVIRONMENT REF's realism - H3
+  reproduces the ref's look faithfully, so bake the anti-AI-gloss language into the STILL's
+  caption (rich Krea2 layout captions with film/lens language rendered noticeably more
+  photographic than the June concept-art-flavored stills).
+
 #### Character sheet for the identity test - DONE 2026-08-08 (all [V])
 - Research (RunDiffusion guide + official ComfyUI tutorial): H3 wants 2-3 COMPATIBLE views -
   a sharp identity portrait, a full-body view, an optional detail close-up - "large, sharp
