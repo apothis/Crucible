@@ -523,6 +523,30 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         </select>
       </Field>
 
+      {/* cast picker: which library characters this video uses (both pipelines' script writers
+          only reference the checked characters) */}
+      {libChars.length > 0 && (
+        <Field label="Cast for this video" hint="only the checked characters are sent to the script writer">
+          <div className="flex flex-wrap gap-1.5">
+            {libChars.map((c) => {
+              const on = inCast(c.id);
+              const ref = c.sheetId || c.identity?.faceRefId || c.identity?.bodyRefId;
+              return (
+                <button key={c.id} onClick={() => toggleCast(c.id)} title={on ? "in this video — click to exclude" : "excluded — click to include"}
+                  className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${on ? "border-[var(--color-accent2)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-muted)] opacity-60"}`}>
+                  {ref
+                    ? <img src={`/api/media/${ref}`} alt="" className={`h-5 w-5 rounded-full object-cover ${on ? "" : "grayscale"}`} />
+                    : <span className="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-[var(--color-line)] text-[8px]">?</span>}
+                  <span>{c.name}</span>
+                  {c.role && <span className="text-[9px] text-[var(--color-muted)]">· {c.role}</span>}
+                  <span>{on ? "✓" : "+"}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+      )}
+
       {pipeline === "h3" && (
         <H3Studio cast={castChars} audioId={audioId} songPayload={songPayload}
           resW={resW} resH={resH} grade={grade} library={library} busy={busy} {...ctx} />
@@ -533,8 +557,8 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       )}
       {pipeline === "ltx" && <>
 
-      {/* cast picker: which library characters this video uses (the script only references these) */}
-      {libChars.length > 0 && (
+      {/* legacy cast picker (superseded by the shared one above) */}
+      {false && libChars.length > 0 && (
         <Field label="Cast for this video" hint="only the checked characters are sent to the script writer">
           <div className="flex flex-wrap gap-1.5">
             {libChars.map((c) => {
