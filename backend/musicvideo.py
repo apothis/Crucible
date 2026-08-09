@@ -779,6 +779,9 @@ Return ONLY a JSON array of EXACTLY {len(segments)} objects, one per segment, IN
   "soundscape": "<the segment's ambient/physical sounds - wind, room tone, cloth, footsteps; short>"}}
 Each shot object:
 {{"type": "performance" | "narrative" | "broll",
+  "location": "<a SHORT stable name for the place, reused EXACTLY (same spelling) every time the
+    video returns there - e.g. 'lighthouse lantern room', 'clifftop edge'. Each named location gets
+    ONE environment reference shared by all its shots, so reuse builds continuity. '' if abstract>",
   "scene": "<the ENVIRONMENT, described as rich flowing prose: location, surfaces, materials, light
     sources, weather, depth layers. Environment-LED (not a person portrait), but people ARE allowed
     in it when the story wants them - the render replaces/controls who appears.>",
@@ -804,6 +807,12 @@ HARD RULES:
   B-roll and narrative belong.
 - LIP-SYNC segments are ALWAYS "kind": "single" (one shot, close or medium framing, the singer
   performing TO CAMERA, mouth visible - never turned away, never silhouette, never wide).
+- INSTRUMENT PERFORMANCE is shot FROM AFAR: solos and any non-singing playing shots (guitar,
+  bass, drums) must be WIDE - full figures in the environment, never close-ups of hands,
+  fretboards or drum sticks. Generated finger movement cannot match the actual notes, and a
+  close-up makes that obvious; distance hides it. (The opposite of the lip-sync rule.)
+- LOCATION CONTINUITY: reuse a small set of named locations across the video (each gets one
+  shared environment reference). Returning to a location = the same "location" string verbatim.
 - "scene" is for connected NON-vocal cuts (B-roll runs, narrative beats, establishing sequences):
   give it one shot per listed internal cut, visually connected (same world, evolving viewpoint).
 - ONE motion per shot. The action is a single continuous thing a real person/scene does at
@@ -845,13 +854,20 @@ def parse_h3_segments(text, segments):
             lipsync = bool(s.get("lipsync"))
             if lipsync and framing == "wide":
                 framing = "medium"
+            stype = s.get("type") if s.get("type") in SHOT_TYPES else "broll"
+            # INSTRUMENT-PERFORMANCE-FROM-AFAR (hard rule, mirrors the writer guidance): generated
+            # finger/stick movement cannot match the actual notes, so non-singing performance shots
+            # never render close - solo-section ones go fully wide
+            if stype == "performance" and not lipsync:
+                framing = "wide" if "solo" in str(g.get("section") or "").lower() else \
+                          ("medium" if framing == "close" else framing)
             camera = str(s.get("camera") or "static").strip().lower()
             if camera not in H3_CAMERA_MOVES:
                 camera = "static"
-            stype = s.get("type") if s.get("type") in SHOT_TYPES else "broll"
             chars = [str(x).strip() for x in (s.get("characters") or [])
                      if x and str(x).strip() not in ("[]", "none", "None", "-", "")]
             shots.append({"type": stype, "framing": framing, "lipsync": lipsync, "camera": camera,
+                          "location": str(s.get("location") or "").strip(),
                           "scene": str(s.get("scene") or "").strip(),
                           "action": str(s.get("action") or "").strip(),
                           "costume": str(s.get("costume") or "").strip(),

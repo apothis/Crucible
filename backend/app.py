@@ -2007,11 +2007,17 @@ def mv_h3_compile(body: dict):
         lipsync = bool(s.get("lipsync"))
         if lipsync and framing == "wide":
             framing = "medium"
+        stype = s.get("type") or "broll"
+        # instrument-performance-from-afar, same coercion as the script parser
+        if stype == "performance" and not lipsync:
+            framing = "wide" if "solo" in str(seg.get("section") or "").lower() else \
+                      ("medium" if framing == "close" else framing)
         camera = str(s.get("camera") or "static").strip().lower()
         if camera not in musicvideo_mod.H3_CAMERA_MOVES:
             camera = "static"
-        shots.append({"type": s.get("type") or "broll", "framing": framing, "lipsync": lipsync,
-                      "camera": camera, "scene": str(s.get("scene") or "").strip(),
+        shots.append({"type": stype, "framing": framing, "lipsync": lipsync,
+                      "camera": camera, "location": str(s.get("location") or "").strip(),
+                      "scene": str(s.get("scene") or "").strip(),
                       "action": str(s.get("action") or "").strip(),
                       "costume": str(s.get("costume") or "").strip(),
                       "characters": [str(x).strip() for x in (s.get("characters") or []) if str(x).strip()]})

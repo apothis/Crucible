@@ -18,7 +18,7 @@ import { type Character } from "./mvmodel";
 
 type H3Shot = {
   type: string; framing: string; lipsync: boolean; camera: string;
-  scene: string; action: string; costume: string; characters: string[];
+  location?: string; scene: string; action: string; costume: string; characters: string[];
 };
 export type H3Segment = {
   start: number; end: number; seconds: number; render_seconds: number; frames: number;
@@ -147,23 +147,48 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     finally { setRecompiling(false); }
   }
 
-  // ---- environment stills (required: every compiled prompt references <Picture env>) ----
-  async function genEnv(i: number) {
+  // ---- environment stills (required: every compiled prompt references <Picture env>).
+  // LOCATION CONTINUITY: segments sharing a named location share ONE env still - a location's
+  // first render is assigned to every segment at that location; re-generating a location's env
+  // updates all of them together. Unnamed locations stay per-segment. ----
+  const locOf = (s: H3Segment) => (s.shots[0]?.location || "").trim().toLowerCase();
+  function assignEnv(jobId: string, loc: string, idx: number) {
+    setSegments((prev) => (prev as H3Segment[]).map((s, j) =>
+      (loc ? locOf(s) === loc : j === idx) ? { ...s, envStillId: jobId } : s));
+  }
+  async function genEnv(i: number, forceNew = false) {
     const seg = segments[i];
     const scene = seg.shots[0]?.scene || "";
+    const loc = locOf(seg);
     if (!scene) { ctx.setResults([{ id: rid(), title: `segment ${i + 1}`, status: "error", pct: 0, err: "No scene description on this segment." }]); return; }
+    // reuse the location's existing still unless a new render is explicitly requested
+    if (!forceNew && loc) {
+      const twin = segments.find((s) => locOf(s) === loc && s.envStillId);
+      if (twin?.envStillId) {
+        assignEnv(twin.envStillId, loc, i);
+        ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: reusing "${seg.shots[0]?.location}" environment`, status: "done", pct: 100 }]);
+        return;
+      }
+    }
     setGenning(`env:${i}`);
     try {
       const r = await api.videoStill(envRequest(scene, Math.floor(Math.random() * 2_000_000_000))) as { job_id: string };
-      patchSeg(i, { envStillId: r.job_id });
-      const card = { id: rid(), title: `segment ${i + 1} environment`, status: "running" as const, pct: 5 };
+      assignEnv(r.job_id, loc, i);
+      const label = loc ? `"${seg.shots[0]?.location}" environment` : `segment ${i + 1} environment`;
+      const card = { id: rid(), title: label, status: "running" as const, pct: 5 };
       ctx.setResults([card]);
       pollJob(r.job_id, card.id, ctx);
     } catch (e) { ctx.setResults([{ id: rid(), title: `segment ${i + 1} environment`, status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setGenning(""); }
   }
   async function genAllEnvs() {
-    for (let i = 0; i < segments.length; i++) if (!segments[i].envStillId) await genEnv(i);
+    const doneLocs = new Set<string>();
+    for (let i = 0; i < segments.length; i++) {
+      const loc = locOf(segments[i]);
+      if (segments[i].envStillId || (loc && doneLocs.has(loc))) continue;
+      await genEnv(i);
+      if (loc) doneLocs.add(loc);
+    }
   }
 
   // refs in the compiled prompt's exact picture order: sheets, outfits, environment
@@ -331,6 +356,12 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           </span>
                         </td>
                         <td className="px-2 py-1.5">
+                          {seg.shots[0]?.location && (
+                            <span className="mb-0.5 inline-block rounded bg-[var(--color-panel2)] px-1 text-[8px] uppercase tracking-wide text-[var(--color-muted)]"
+                              title="named location - its environment still is shared by every segment set here">
+                              {seg.shots[0].location}
+                            </span>
+                          )}
                           {seg.shots.map((s, j) => (
                             <div key={j} className="truncate text-[10px] text-[var(--color-muted)]" title={`${s.scene} — ${s.action}`}>
                               <span className="text-[var(--color-ink)]">{s.characters.join("+") || s.type}</span> {s.framing} {"·"} {s.action.slice(0, 60)}
@@ -339,8 +370,14 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                         </td>
                         <td className="px-2 py-1.5">
                           {seg.envStillId
-                            ? <img src={`/api/media/${seg.envStillId}`} onClick={() => openLightbox(`/api/media/${seg.envStillId}`)}
-                                className="h-9 w-16 cursor-zoom-in rounded object-cover" alt="" title="environment still — click to enlarge" />
+                            ? <div className="space-y-0.5">
+                                <img src={`/api/media/${seg.envStillId}`} onClick={() => openLightbox(`/api/media/${seg.envStillId}`)}
+                                  className="h-9 w-16 cursor-zoom-in rounded object-cover" alt=""
+                                  title={seg.shots[0]?.location ? `"${seg.shots[0].location}" environment (shared) — click to enlarge` : "environment still — click to enlarge"} />
+                                <button onClick={() => genEnv(i, true)} disabled={busy || !!genning}
+                                  title={seg.shots[0]?.location ? "render a NEW environment for this location (updates every segment here)" : "render a new environment"}
+                                  className="block text-[8px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">↻ new env</button>
+                              </div>
                             : <button onClick={() => genEnv(i)} disabled={busy || !!genning}
                                 className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
                                 {genning === `env:${i}` ? "…" : "gen env"}
