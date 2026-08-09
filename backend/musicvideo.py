@@ -706,6 +706,13 @@ H3_CAMERA_MOVES = {
 }
 _H3_SKY_RE = re.compile(r"\b(sky|skies|cloud|clouds|stars?|starlit|moon|moonlit|milky way|sunset|"
                         r"sunrise|dawn|dusk|horizon|aurora|night sky)\b", re.I)
+_H3_STAGE_RE = re.compile(r"\bstage\b", re.I)
+H3_MAX_REFS = 8          # reference pictures per render. The heaviest render VERIFIED clean is 7
+#   pictures + audio at 10s (the band-instruments test, 2026-08-09); 15.08s at 5 pictures collapsed
+#   from the tail, so reference load is a real budget, not a formality. 8 = one step past verified,
+#   which the first full-band script needed (4 people + outfit + 2 instruments + 2 locations = 9).
+#   Over the cap, compile_h3_prompt sheds PROP pictures first (the instrument stays in the text, so
+#   it is described but not identity-locked), then the second environment. Characters are never shed.
 
 
 def h3_seg_seconds(dur):
@@ -996,6 +1003,9 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     [verified Test B], direct-audio-reuse retention [verified lip-sync test], ONE motion + a
     real-world duration anchor per shot, the sky-pin clause when sky words appear, framing stated
     in BOTH summary and detailed_description [SING-2 drift lesson], and the environment-hold line.
+    Also enforced here (so BOTH the script path and the per-segment recompile get them):
+      - the H3_MAX_REFS reference budget (props shed to text first, then the second environment),
+      - the no-lone-singer-on-a-bare-stage fill (background band, text only).
     Returns (prompt_text, picture_map)."""
     by_name = {c.get("name"): c for c in cast if c.get("name")}
     chars = []
@@ -1007,7 +1017,6 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     outfit_pic = {n: len(chars) + 1 + i for i, n in enumerate(outfits)}
     # props (instruments/objects) follow the outfits in picture order - same verified mechanic
     props = [n for n in chars if (by_name[n].get("prop") or {}).get("still_id")]
-    prop_pic = {n: len(chars) + len(outfits) + 1 + i for i, n in enumerate(props)}
     # ENVIRONMENTS, one per distinct LOCATION among the cuts (max 2 - the intercut pattern:
     # performance thread vs story thread). Keys are lowercased location names so the dispatcher
     # can match its location-shared stills; "" = an unnamed per-segment environment.
@@ -1019,6 +1028,15 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     env_locs = env_locs[:2]
     if not env_locs:
         env_locs = [""]
+    # REFERENCE BUDGET (see H3_MAX_REFS): shed props first - the instrument still stays described in
+    # the character's definition, it just is not identity-locked to a picture - then the second
+    # environment. Characters are never shed: they ARE the shot.
+    text_props = []
+    while len(chars) + len(outfits) + len(props) + len(env_locs) > H3_MAX_REFS and props:
+        text_props.insert(0, props.pop())
+    if len(chars) + len(outfits) + len(props) + len(env_locs) > H3_MAX_REFS and len(env_locs) > 1:
+        env_locs = env_locs[:1]
+    prop_pic = {n: len(chars) + len(outfits) + 1 + i for i, n in enumerate(props)}
     env_base = len(chars) + len(outfits) + len(props)
     env_map = {k: env_base + 1 + i for i, k in enumerate(env_locs)}
 
@@ -1032,6 +1050,12 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         c = by_name[n]
         look = (c.get("look") or c.get("description") or "").strip()
         looktxt = f" - {look}" if look else ""
+        # an instrument shed by the reference budget: described in words so it is still the right
+        # instrument, just not picture-locked
+        tp = ""
+        if n in text_props:
+            pr = by_name[n].get("prop") or {}
+            tp = f" {n} plays {(pr.get('desc') or pr.get('name') or 'their instrument').rstrip('. ')}."
         if n in outfit_pic:
             # dressed via the outfit Subject: the sheet is FACE/HAIR ONLY, wardrobe comes from
             # the costume still (the verified wardrobe-not-used + fully_preserved-outfit pair)
@@ -1040,7 +1064,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}. "
                         f"<Picture {i + 1}> is a character reference sheet showing {n} from several "
                         f"views; preserve the face and hair exactly. {n}'s wardrobe in "
-                        f"<Picture {i + 1}> is NOT used in the target video.")
+                        f"<Picture {i + 1}> is NOT used in the target video.{tp}")
             defs.append(f"<Subject {op}> is the OUTFIT from <Picture {op}>: "
                         f"{(co.get('desc') or 'the outfit').rstrip('. ')}. <Picture {op}> shows it "
                         f"on a headless dress form; only the garment is referenced.")
@@ -1055,7 +1079,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             wear = f", wearing {costume}" if costume else ""
             defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}{wear}. "
                         f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
-                        f"preserve the face, hair and wardrobe exactly.")
+                        f"preserve the face, hair and wardrobe exactly.{tp}")
             keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
                          f"wardrobe remain exactly consistent with <Picture {i + 1}> throughout.")
     for n in props:
@@ -1122,8 +1146,21 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             sing = (f" {subj} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
                     f"and breaths matching the vocal exactly, face to camera and clearly visible in "
                     f"{fr_txt[s['framing']]}.")
+        # NO-LONE-SINGER-ON-A-BARE-STAGE net (standing user rule; the first full script put Bob alone
+        # on the stage for 40s across five consecutive cuts). A stage shot wide enough to show the
+        # stage, carrying at most one named character, gets the rest of the band filled in as
+        # BACKGROUND - text only, no reference pictures, so it costs nothing against H3_MAX_REFS and
+        # no identity needs locking for players whose faces never resolve. Close-ups are exempt: the
+        # empty stage is not in frame. A shot that already names 2+ characters is left alone.
+        band = ""
+        if (s["framing"] in ("wide", "medium") and len(s["characters"]) < 2
+                and _H3_STAGE_RE.search((s.get("location") or "") + " " + s["scene"])):
+            band = (" The rest of the band plays behind on the same stage - a guitarist and a bassist "
+                    "at their instruments and a drummer at a kit - set back in the dimmer depth of "
+                    "the frame and softly out of focus, their faces never resolving. The stage is "
+                    "never empty behind the singer.")
         line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic_of(s)}>: "
-                f"{act}.{sing}{anchor}{cam} The environment behind holds completely still.")
+                f"{act}.{sing}{anchor}{cam} The environment behind holds completely still.{band}")
         if _H3_SKY_RE.search(s["scene"] + " " + s["action"]):
             line += (" The sky holds fixed: stars, moon and clouds keep their positions with no "
                      "drift at all, and there is no cloud movement anywhere.")

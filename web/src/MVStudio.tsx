@@ -128,7 +128,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   const [introXfade, setIntroXfade] = d.use("introXfade", 1.5);// intro -> song crossfade seconds
   const [resolution, setResolution] = d.use("resolution", "1280x720"); // PROJECT render resolution (all shots + assembly)
   const [resW, resH] = resolution.split("x").map(Number);
-  const [scriptModel, setScriptModel] = d.use("scriptModel", "claude-sonnet-4-6"); // LLM for the script writer
+  const [scriptModel, setScriptModel] = d.use("scriptModel2", "claude-sonnet-5"); // LLM for the script writer (key versioned so old saves move off 4.6)
   const [grades, setGrades] = useState<string[]>(["none"]);
   const [scripting, setScripting] = useState(false);
   const [scriptInfo, setScriptInfo] = useState<{ aligned: boolean; segs: number; shots: number } | null>(null);
@@ -597,8 +597,9 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
         </GhostButton>
         <select className={inp} style={{ width: "auto" }} value={scriptModel} onChange={(e) => setScriptModel(e.target.value)}
           title="Which Claude model writes the shot list" disabled={scripting}>
+          <option value="claude-sonnet-5">Sonnet 5</option>
+          <option value="claude-opus-5">Opus 5</option>
           <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-          <option value="opus">Opus</option>
         </select>
         {!canScript && <span className="text-[9px] text-[var(--color-muted)]">(open a project with a Song arrangement to script)</span>}
         {!scripting && scriptInfo && (

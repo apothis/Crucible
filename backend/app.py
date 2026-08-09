@@ -1887,11 +1887,12 @@ def mv_script(body: dict):
     if not song or not song.get("sections"):
         raise HTTPException(400, "provide a song with sections, or a project key with a Song arrangement")
     provider = body.get("provider") or llm_mod.best_provider()
-    # Default the script model to Sonnet 4.6 on the Claude paths: at --effort low it matches Opus on
-    # speed but gives more varied, lyric-literal shot direction, and is cheaper. Overridable per-call.
+    # Default the script model to Sonnet 5 on the Claude paths (was Sonnet 4.6): same speed class at
+    # --effort low, stronger long structured-JSON output, which is what the writer emits. Overridable
+    # per-call - the UI picker also offers Opus 5 and Sonnet 4.6.
     model = body.get("model") or ""
     if not model and provider in ("claude_sub", "claude_code", "claude"):
-        model = "claude-sonnet-4-6"
+        model = "claude-sonnet-5"
     claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
     cast = body.get("cast") or []
     n_shots = int(body.get("shots") or 0)
@@ -1956,7 +1957,7 @@ def mv_h3_script(body: dict):
     provider = body.get("provider") or llm_mod.best_provider()
     model = body.get("model") or ""
     if not model and provider in ("claude_sub", "claude_code", "claude"):
-        model = "claude-sonnet-4-6"
+        model = "claude-sonnet-5"          # see /api/mv/script for why Sonnet 5 over 4.6
     claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
     cast = body.get("cast") or []
     try:

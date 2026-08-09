@@ -75,8 +75,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [editIdx, setEditIdx] = useState(-1);        // segment editor open for this row
   const [showRaw, setShowRaw] = useState(false);
   const [recompiling, setRecompiling] = useState(false);
-  // which LLM writes the script (defaults to Claude; "local" = whatever local provider the backend picks)
-  const [scriptLlm, setScriptLlm] = d.use("h3scriptLlm", "claude-sonnet-4-6");
+  // which LLM writes the script (defaults to Claude; "local" = whatever local provider the backend picks).
+  // Key is versioned (h3scriptLlm2) so projects saved with the old Sonnet 4.6 default pick up Sonnet 5.
+  const [scriptLlm, setScriptLlm] = d.use("h3scriptLlm2", "claude-sonnet-5");
 
   const h3cast = cast.filter((c) => c.style === "h3" && c.sheetId);
   const patchSeg = (i: number, p: Partial<H3Segment>) =>
@@ -301,8 +302,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
         <select className="rounded border border-[var(--color-line)] bg-transparent px-1.5 py-0.5 text-[10px] text-[var(--color-muted)]"
           value={scriptLlm} onChange={(e) => setScriptLlm(e.target.value)} disabled={writing}
           title="Which LLM writes the script">
+          <option value="claude-sonnet-5">Claude Sonnet 5</option>
+          <option value="claude-opus-5">Claude Opus 5</option>
           <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-          <option value="opus">Claude Opus</option>
           <option value="local">Local LLM</option>
         </select>
         <PrimaryButton onClick={writeScript} disabled={busy || writing || !audioId}>
