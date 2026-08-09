@@ -79,12 +79,13 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   // the cast payload the script writer + compiler see: identity look, sheet, chosen costume + prop
   function castPayload() {
     return h3cast.map((c) => {
-      const co = (c.costumes || []).find((x) => x.id === (castCostume[c.id] || (c.costumes || [])[0]?.id));
+      const co = (c.costumes || []).find((x) => x.id === (castCostume[c.id] ?? (c.costumes || [])[0]?.id));
       const pr = (c.props || []).find((x) => x.id === (castProp[c.id] ?? (c.props || [])[0]?.id));
       return {
         name: c.name, role: c.role, look: c.appearance || "",
         sheet_id: c.sheetId,
-        ...(co?.stillId ? { costume: { name: co.name, desc: co.desc, still_id: co.stillId } } : {}),
+        // "" selection = "(sheet outfit)": no costume ref, the identity sheet's wardrobe is worn
+        ...(co?.stillId && castCostume[c.id] !== "" ? { costume: { name: co.name, desc: co.desc, still_id: co.stillId } } : {}),
         ...(pr?.stillId && castProp[c.id] !== "" ? { prop: { name: pr.name, desc: pr.desc, still_id: pr.stillId } } : {}),
       };
     });
@@ -153,7 +154,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const outfits = Object.entries(seg.outfit_map || {}).sort((a, b) => a[1] - b[1])
       .map(([n]) => {
         const c = byName[n];
-        const co = (c?.costumes || []).find((x) => x.id === (castCostume[c!.id] || (c?.costumes || [])[0]?.id));
+        if (c && castCostume[c.id] === "") return undefined;   // (sheet outfit) selected after compile
+        const co = (c?.costumes || []).find((x) => x.id === (castCostume[c!.id] ?? (c?.costumes || [])[0]?.id));
         return co?.stillId;
       }).filter(Boolean) as string[];
     if (outfits.length !== Object.keys(seg.outfit_map || {}).length) return "a costume still is missing";
@@ -240,9 +242,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
             {c.sheetId && <img src={`/api/media/${c.sheetId}`} className="h-5 w-9 rounded object-cover" alt="" />}
             {c.name}
             {(c.costumes || []).length > 0 && (
-              <select className="bg-transparent text-[9px] text-[var(--color-muted)]" value={castCostume[c.id] || (c.costumes || [])[0]?.id}
-                onChange={(e) => setCastCostume({ ...castCostume, [c.id]: e.target.value })} title="costume for this video">
+              <select className="bg-transparent text-[9px] text-[var(--color-muted)]" value={castCostume[c.id] ?? (c.costumes || [])[0]?.id}
+                onChange={(e) => setCastCostume({ ...castCostume, [c.id]: e.target.value })} title="costume for this video ((sheet outfit) = wear what the identity sheet shows)">
                 {(c.costumes || []).map((co) => <option key={co.id} value={co.id}>{co.name}</option>)}
+                <option value="">(sheet outfit)</option>
               </select>
             )}
             {(c.props || []).length > 0 && (
@@ -338,7 +341,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           {segDrafts.length > 0 && (
                             <div className="mt-1 flex gap-1">
                               {segDrafts.map((x) => (
-                                <button key={x.jobId} onClick={() => { patchSeg(i, { clipId: x.jobId, clipVariants: [...(seg.clipVariants || []), x.jobId] }); }}
+                                <button key={x.jobId} onClick={() => {
+                                    patchSeg(i, { clipId: x.jobId, clipVariants: [...(seg.clipVariants || []), x.jobId] });
+                                    ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: draft seed ${x.seed} selected`, status: "done", pct: 100 }]);
+                                  }}
                                   title={`use draft seed ${x.seed} (or Finish with this seed for full quality)`}
                                   className={`rounded px-1 py-0.5 text-[8px] ${seg.clipId === x.jobId ? "bg-[var(--color-accent2)] text-black" : "border border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
                                   s{String(x.seed).slice(-3)}

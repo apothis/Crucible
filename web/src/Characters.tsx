@@ -138,6 +138,18 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     setChars(chars.map((x) => x.id === c.id ? next : x));
     persist(next);
   }
+  // "use this" picks confirm explicitly: await the save and post a done/error card to the
+  // results panel (typing edits stay on the silent patch() - a toast per keystroke is noise)
+  async function pickSave(c: Character, p: Partial<Character>, label: string) {
+    const next = { ...c, ...p };
+    setChars(chars.map((x) => x.id === c.id ? next : x));
+    try {
+      await api.characterSave(next);
+      ctx.setResults([{ id: rid(), title: `✓ ${label}`, status: "done", pct: 100 }]);
+    } catch (e) {
+      ctx.setResults([{ id: rid(), title: `${label} - SAVE FAILED`, status: "error", pct: 0, err: (e as Error).message }]);
+    }
+  }
   async function add() {
     const r = await api.characterSave({ name: "New character", kind: "musician", method: "auto", style: "h3" }) as Character;
     await reload(); setEditId(r.id);
@@ -322,10 +334,13 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
     });
   }
   function pickIdentity(c: Character, slot: "face" | "body", jobId: string) {
-    setIdentity(c, slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId });
+    const identity = { ...(c.identity || {}), ...(slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId }) };
+    pickSave(c, { identity }, `${c.name}: ${slot} reference set`);
   }
   function pickWardrobe(c: Character, w: Wardrobe, slot: "face" | "body", jobId: string) {
-    setWardrobe(c, w.id, slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId });
+    const wardrobes = (c.wardrobes || []).map((x) => x.id === w.id
+      ? { ...x, ...(slot === "face" ? { faceRefId: jobId } : { bodyRefId: jobId }) } : x);
+    pickSave(c, { wardrobes }, `${c.name}: "${w.name}" ${slot} ref set`);
   }
   function closeDrafts(key: string) {
     setDrafts((d) => { const n = { ...d }; delete n[key]; return n; });
@@ -423,7 +438,7 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                     {hunting === `${c.id}:sheet` ? "generating 4 sheets…" : c.sheetId ? "↻ generate 4 new candidates" : "generate 4 sheet candidates"}
                   </button>
                   <DraftStrip wide drafts={drafts[`${c.id}:sheet`] || []} picked={c.sheetId} busy={hunting === `${c.id}:sheet`}
-                    onPick={(id) => patch(c, { sheetId: id, style: "h3" })} onReroll={() => genSheet(c)} onClose={() => closeDrafts(`${c.id}:sheet`)} />
+                    onPick={(id) => pickSave(c, { sheetId: id, style: "h3" }, `${c.name}: identity sheet locked`)} onReroll={() => genSheet(c)} onClose={() => closeDrafts(`${c.id}:sheet`)} />
                 </div>
 
                 {/* ---- STEP 3: costumes ---- */}
@@ -450,7 +465,8 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                       <textarea className={inp} rows={2} value={co.desc} placeholder={COSTUME_HINT}
                         onChange={(e) => setCostume(c, co.id, { desc: e.target.value })} />
                       <DraftStrip wide drafts={drafts[`${c.id}:costume:${co.id}`] || []} picked={co.stillId} busy={hunting === `${c.id}:costume:${co.id}`}
-                        onPick={(id) => setCostume(c, co.id, { stillId: id })} onReroll={() => rerollCostume(c, co)} onClose={() => closeDrafts(`${c.id}:costume:${co.id}`)} />
+                        onPick={(id) => pickSave(c, { costumes: (c.costumes || []).map((x) => x.id === co.id ? { ...x, stillId: id } : x) }, `${c.name}: "${co.name}" outfit still set`)}
+                        onReroll={() => rerollCostume(c, co)} onClose={() => closeDrafts(`${c.id}:costume:${co.id}`)} />
                     </div>
                   ))}
                   <div className="rounded border border-dashed border-[var(--color-line)] p-1.5 space-y-1.5">
@@ -493,7 +509,8 @@ export function CharacterLibrary({ chars, setChars, reload, stills, busy, collap
                       <textarea className={inp} rows={2} value={pr.desc} placeholder={PROP_HINT}
                         onChange={(e) => setProp(c, pr.id, { desc: e.target.value })} />
                       <DraftStrip drafts={drafts[`${c.id}:prop:${pr.id}`] || []} picked={pr.stillId} busy={hunting === `${c.id}:prop:${pr.id}`}
-                        onPick={(id) => setProp(c, pr.id, { stillId: id })} onReroll={() => rerollProp(c, pr)} onClose={() => closeDrafts(`${c.id}:prop:${pr.id}`)} />
+                        onPick={(id) => pickSave(c, { props: (c.props || []).map((x) => x.id === pr.id ? { ...x, stillId: id } : x) }, `${c.name}: "${pr.name}" prop still set`)}
+                        onReroll={() => rerollProp(c, pr)} onClose={() => closeDrafts(`${c.id}:prop:${pr.id}`)} />
                     </div>
                   ))}
                   <div className="rounded border border-dashed border-[var(--color-line)] p-1.5 space-y-1.5">
