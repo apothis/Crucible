@@ -520,6 +520,28 @@ thing per render, hold the seed and the shot fixed, and carry unchanged sentence
   separate refs; whether the person-free background rule can be dropped (declare the background
   as its own `<Subject>`); `ref_audio_0` voice-timbre lip-sync; `match` vs `max` identity.
 
+#### Outfit-layering test - PASS 2026-08-09 (all [V]) => the NEW CHARACTER MODEL
+User direction: characters root in FACE + BODY identity, with COSTUMES as swappable layers
+("each char is grounded in their own facial and body shape, but we can create new outfits at
+will"). Verified mechanism: H3's native `outfit` Subject type.
+- Test: Sheet D (<Picture 1>, identity; prompt states its wardrobe is NOT used) + a PERSON-FREE
+  outfit still (<Picture 2>: crimson velvet gown on a headless dress form, library 304d67c0) +
+  environment by TEXT only. Both drafts (a751d17a / b6d4e8db): Sheet D's exact face/hair wearing
+  exactly the referenced gown (cut, neckline, sleeves, color, fabric), no trace of her sheet
+  wardrobe, text-only chapel rendered fine.
+- **THE CHARACTER MODEL (proven):** root = locked identity block (face, body shape, hair,
+  distinguishing details) + ONE canonical identity sheet (regional Krea2 render, Sheet-D style).
+  Costume = outfit description + a person-free garment still (headless dress form, catalogue
+  lighting - cheap, zero identity risk since no face is ever re-rendered). At shot time refs =
+  [identity sheet, outfit still, (environment still)] with "<Subject 1> ... wearing <Subject 2>".
+  The face NEVER gets re-rendered per outfit - the canonical sheet stays the single identity
+  source forever (Krea2 seeds do NOT hold a face across renders; Sheets A-F were six faces).
+- Character creator to be rebuilt on this model (pending card): root identity editor +
+  canonical-sheet generation, costume gallery with add-outfit-at-will, /api/characters schema
+  migration; then old characters removed (user-approved list) and recreated new-style. The MV
+  writer's `costume` field then SELECTS from the character's wardrobe and the compiler adds the
+  outfit ref + declaration.
+
 #### Phase 2: COMPLETE 2026-08-09 - user verdict on the ref2v lane vs MSR
 User, after watching the lip-sync drafts: **"looks really good, much better than msr on non
 closeups, and equal to it on more close shots."** With that, every capability the MV spine needs
