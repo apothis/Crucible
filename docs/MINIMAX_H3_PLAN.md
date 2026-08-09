@@ -650,9 +650,22 @@ Guidance the writer gets: lip-sync => `single`; 2-4 short connected non-vocal cu
 never mix a lip-sync cut into a `scene` segment; every segment carries its own duration on the
 17k+5 frame grid. MV Studio's retake/pick/upscale operate on SEGMENTS (the render unit).
 
-### Phase 5 - retire LTX (only after 1-4 are proven)
-Keep `build_ltx_*` until H3 is user-approved on identity, lip-sync and camera. Then remove the
-LTXDirector paths, or keep `build_ltx_keyframe` alone for N-keyframe shots if we still want them.
+### Phase 5 - UI wiring: DONE 2026-08-09 (first pass); LTX kept behind a toggle
+MV Studio now has a PIPELINE toggle (default **MiniMax H3 (segments)**; "LTX MSR (legacy
+blocks)" keeps the entire old flow intact). The H3 panel (`web/src/H3Studio.tsx`):
+- cast chips from the H3-style characters (sheet thumbnails + per-video costume dropdowns);
+- "Write H3 script" -> `/api/mv/h3_script` (song payload + audio_id + cast with sheets/costumes);
+- segment table: window/section, kind badge (single/scene, lip-sync mark), per-shot content,
+  per-segment ENVIRONMENT still (rich-caption layout render; required - every compiled prompt
+  references it), hunt (2 turbo drafts -> pick -> "finish seed" re-render on the base recipe)
+  or direct finish; lip-sync segments automatically carry
+  `ref_audio_ids=[{id: song, start: seg.start, seconds: render_seconds}]`;
+- refs are uploaded in the compiled prompt's exact picture order (sheets -> outfits -> env);
+- Assemble maps rendered segments onto the existing `/api/mv/assemble`.
+State persists in the project drafts (mvstudio.h3segments). Known gaps for the next pass:
+grade picker not yet surfaced in the H3 panel (assembles with the project default), no
+per-segment prompt editor yet (rewrite = regenerate the script), no per-segment upscale hook.
+Full LTX code removal stays deferred until the first complete H3 video is user-approved.
 
 ---
 

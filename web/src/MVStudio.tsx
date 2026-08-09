@@ -6,6 +6,7 @@ import { MVTimeline } from "./MVTimeline";
 import { ShotTimeline } from "./ShotTimeline";
 import { Num, StillPick, stillLabel } from "./mvui";
 import { CharacterLibrary } from "./Characters";
+import { H3Studio } from "./H3Studio";
 import { ShotEditor } from "./ShotEditor";
 import {
   type Block, type Character, type RenderMode, type Seg, type ScriptShot,
@@ -117,6 +118,9 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   // loads with the standard project Save/Open (top bar) exactly like every other tab - no
   // separate persistence. Characters are global (the shared /api/characters library).
   const d = useDrafts("mvstudio");
+  // PIPELINE: "h3" (MiniMax H3 segments - the default since Phase 5) or "ltx" (the legacy
+  // LTX MSR block timeline, kept until H3 fully replaces it).
+  const [pipeline, setPipeline] = d.use("pipeline", "h3");
   const [audioId, setAudioId] = d.use("audioId", "");          // the song (drives lip-sync windows + assembly mux)
   const [grade, setGrade] = d.use("grade", "none");
   const [transition, setTransition] = d.use("transition", 0);  // crossfade seconds between blocks (0 = hard cut)
@@ -483,13 +487,32 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       songAudioId={audioId} libChars={castChars} onClose={() => setEditing(false)} />;
   }
 
+  const songPayload = canScript && song ? {
+    title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
+    sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })),
+  } : null;
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Pipeline</span>
+        {(["h3", "ltx"] as const).map((p) => (
+          <button key={p} onClick={() => setPipeline(p)}
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] ${pipeline === p ? "border-[var(--color-accent2)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-muted)]"}`}>
+            {p === "h3" ? "MiniMax H3 (segments)" : "LTX MSR (legacy blocks)"}
+          </button>
+        ))}
+      </div>
       <p className="text-[11px] text-[var(--color-muted)]">
-        Build a music video as a timeline of <span className="text-[var(--color-ink)]">LTX MSR blocks</span> -
-        each block holds a character's identity from reference stills and is fully prompt-driven (walk, sing,
-        camera moves), with native single-pass lip-sync. This timeline is part of your project: it saves +
-        loads with <span className="text-[var(--color-ink)]">Save</span> / <span className="text-[var(--color-ink)]">Open</span> in the project bar above.
+        {pipeline === "h3" ? (
+          <>Build the video as <span className="text-[var(--color-ink)]">H3 render segments</span> - identity from character
+          sheets, outfits layered per costume, environments from stills, and lip-sync performed against the actual song.
+          Saves + loads with the project bar above.</>
+        ) : (
+          <>Build a music video as a timeline of <span className="text-[var(--color-ink)]">LTX MSR blocks</span> -
+          each block holds a character's identity from reference stills and is fully prompt-driven, with native
+          single-pass lip-sync. Saves + loads with the project bar above.</>
+        )}
       </p>
 
       {/* song audio (a library track ref - persists in the project drafts) */}
@@ -499,6 +522,16 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
           {audios.map((a) => <option key={a.id} value={a.id}>{(a.params?.title || a.params?.tags || a.mode || a.id).toString().slice(0, 40)}</option>)}
         </select>
       </Field>
+
+      {pipeline === "h3" && (
+        <H3Studio cast={castChars} audioId={audioId} songPayload={songPayload}
+          resW={resW} resH={resH} grade={grade} library={library} busy={busy} {...ctx} />
+      )}
+      {pipeline === "h3" && (
+        <CharacterLibrary chars={libChars} setChars={setLibChars} reload={reloadChars}
+          stills={stills} busy={busy} collapsible {...ctx} />
+      )}
+      {pipeline === "ltx" && <>
 
       {/* cast picker: which library characters this video uses (the script only references these) */}
       {libChars.length > 0 && (
@@ -660,6 +693,7 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
           </label>
         </div>
       )}
+      </>}
     </div>
   );
 }
