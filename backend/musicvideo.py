@@ -829,8 +829,13 @@ HARD RULES:
   bass, drums) must be WIDE - full figures in the environment, never close-ups of hands,
   fretboards or drum sticks. Generated finger movement cannot match the actual notes, and a
   close-up makes that obvious; distance hides it. (The opposite of the lip-sync rule.)
-- LOCATION CONTINUITY: reuse a small set of named locations across the video (each gets one
-  shared environment reference). Returning to a location = the same "location" string verbatim.
+- LOCATION CONTINUITY AND VARIETY: the whole video lives in ABOUT {H3_LOCATIONS} named locations
+  ({H3_LOCATIONS - 1}-{H3_LOCATIONS + 1} is the target; 4 across four minutes read as repetitive).
+  Enough places that the eye keeps moving, few enough that it stays one world. Returning to a
+  location = the same "location" string verbatim, and each named location gets one shared
+  environment reference. Introduce a NEW named location when the lyric moves somewhere the
+  established ones cannot carry, until about {H3_LOCATIONS} exist; after that return to the
+  established set rather than inventing more.
 - "scene" gives one shot per listed internal cut, visually connected (an evolving viewpoint or
   a two-thread intercut). Its cuts may include lip-sync shots.
 - ONE motion per shot. The action is a single continuous thing a real person/scene does at
@@ -1183,6 +1188,10 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
 
 
 H3_BATCH = 8            # segments per writer call (see generate_h3_script_grid)
+H3_LOCATIONS = 6        # named locations targeted across a whole video (user call 2026-08-09: the
+#   first script used 4 over four minutes and read as repetitive). Enforced as guidance in the
+#   writer rules plus a per-batch budget in generate_h3_script_grid - not clamped in code, since
+#   which places a song needs is a creative call, not an arithmetic one.
 
 
 def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, batch=H3_BATCH):
@@ -1204,6 +1213,19 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
         if established:
             note += ("\nLOCATIONS ALREADY ESTABLISHED (reuse these names verbatim where the story "
                      "returns to them): " + ", ".join(sorted(set(established))) + ".")
+        # LOCATION BUDGET, paced across the batches. Without it a batch cannot know how much of the
+        # whole-video allowance is left: the first script (written in one pass) settled into 4
+        # locations for four minutes. The allowance ramps with position so the world builds up
+        # instead of all six places existing by the end of batch 1.
+        have = len(set(established))
+        allow = max(2, round(H3_LOCATIONS * (start + len(chunk)) / max(1, len(segments))))
+        may_add = max(0, allow - have)
+        note += (f"\nLOCATION BUDGET: {have} named location(s) established, about {H3_LOCATIONS} for "
+                 f"the whole video. " + (
+                     f"In THIS batch introduce at most {may_add} NEW named location(s); otherwise "
+                     f"return to the established ones."
+                     if may_add else
+                     "Introduce NO new locations in this batch - reuse the established names."))
         if prev:
             last = prev["shots"][-1]
             note += (f"\nCONTINUING FROM: segment {start} ended at {prev['end']:.1f}s in "
