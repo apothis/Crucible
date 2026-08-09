@@ -2022,22 +2022,23 @@ def mv_h3_compile(body: dict):
                       "costume": str(s.get("costume") or "").strip(),
                       "characters": [str(x).strip() for x in (s.get("characters") or []) if str(x).strip()]})
     lipsync_any = any(s["lipsync"] for s in shots)
+    # lip-sync cuts are allowed inside scenes (2026-08-09); only one-window segments are single
     seg2 = {"start": float(seg.get("start") or 0), "end": float(seg.get("end") or 0),
             "cuts": seg.get("cuts"), "kind": seg.get("kind") or "single",
-            "shots": shots[:1] if lipsync_any or len(seg.get("cuts") or []) == 1 else shots,
-            "lipsync": lipsync_any,
+            "shots": shots, "lipsync": lipsync_any,
             "soundscape": str(seg.get("soundscape") or "").strip()}
-    if seg2["kind"] == "single" or lipsync_any:
+    if seg2["kind"] == "single" or len(seg.get("cuts") or []) == 1:
         seg2["kind"] = "single"
         seg2["cuts"] = [{"start": seg2["start"], "end": seg2["end"]}]
-        seg2["shots"] = shots[:1]
+        keep = next((s for s in shots if s["lipsync"]), shots[0])
+        seg2["shots"] = [keep]
     try:
         prompt, refs = musicvideo_mod.compile_h3_prompt(seg2, cast, audio_ref=lipsync_any)
     except Exception as e:
         raise HTTPException(500, f"compile failed: {e}")
     return {"prompt": prompt, "picture_map": refs["sheets"], "outfit_map": refs["outfits"],
-            "prop_map": refs["props"], "env_picture": refs["env"], "lipsync": lipsync_any,
-            "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"]}
+            "prop_map": refs["props"], "env_map": refs["envs"], "env_picture": refs["env"],
+            "lipsync": lipsync_any, "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"]}
 
 
 @app.get("/api/mv/grades")

@@ -800,34 +800,32 @@ HARD RULES:
   "female bell canto" = the female singer, "warm male" = the male singer, "duet" = both).
   NEVER show a singer mouthing a part sung in the other voice. On duet windows both singers
   may appear - together in one shot or intercut - each singing their own lines.
-- SUNG SECTIONS focus on the LEAD SINGER: while lyrics are being sung, most segments should be
-  the singer performing (lip-sync singles). B-roll IS allowed during singing - use an occasional
-  "scene" segment to breathe (imagery tied to the lyric being sung) - but the singer carries
-  sung sections; never let B-roll dominate a sung section. Instrumental windows are where
-  B-roll and narrative belong.
+- SUNG SECTIONS focus on the SINGERS: B-roll IS allowed during singing - imagery tied to the
+  lyric being sung breathes between singing shots - but never let it dominate a sung section.
+  Instrumental windows are where B-roll and narrative belong.
 - NO MIMED SINGING: any shot that SHOWS a singer singing MUST set "lipsync": true - there is no
-  such thing as an unsynced singing shot (the mouth would visibly not match the vocal). In
-  "scene" segments singers may appear NOT singing - walking, gazing, reaching, standing - never
-  mouthing words. If you want them singing, make it a lip-sync single.
-- LIP-SYNC VOLUME: across each SUNG section, at least about HALF the segments should be
-  lip-sync singles of the correct singer(s); the rest may be scenes. A duet ballad is carried
-  by faces singing, not by B-roll.
-- ONE LOCATION PER SCENE SEGMENT: all cuts inside a "scene" segment happen at that segment's
-  single named location (a scene is continuous coverage of one place). Cross-location montage
-  = separate segments.
+  such thing as an unsynced singing shot (the mouth would visibly not match the vocal). Singers
+  may also appear NOT singing - walking, gazing, reaching - never mouthing words.
+- LIP-SYNC SHOTS may be single segments OR cuts inside a "scene" (e.g. [band wide -> the singer
+  sings medium] is ONE scene). Every lip-sync shot is CLOSE or MEDIUM, the singer performing TO
+  CAMERA, mouth clearly visible - never turned away, never silhouette, never wide.
+- SINGING SHOTS ARE THE PRIORITY: while lyrics are sung, the video is carried by the correct
+  singer's face SINGING - MOST segments in a sung section must contain a lip-sync shot, and a
+  good share of them CLOSE-UPS of the singing face. Singing shots outrank band/stage shots:
+  use band shots as seasoning between them, never instead of them.
+- AT MOST TWO locations per scene segment (intercutting two threads - e.g. performance vs
+  story - is good); name both. Each named location keeps ONE consistent environment.
 - A STAGE location implies the BAND on it (the named musicians playing, plus a drummer at a
   full kit behind). Never put a lone singer on an empty stage - solo moments belong in the
   story locations instead.
-- LIP-SYNC segments are ALWAYS "kind": "single" (one shot, close or medium framing, the singer
-  performing TO CAMERA, mouth visible - never turned away, never silhouette, never wide).
 - INSTRUMENT PERFORMANCE is shot FROM AFAR: solos and any non-singing playing shots (guitar,
   bass, drums) must be WIDE - full figures in the environment, never close-ups of hands,
   fretboards or drum sticks. Generated finger movement cannot match the actual notes, and a
   close-up makes that obvious; distance hides it. (The opposite of the lip-sync rule.)
 - LOCATION CONTINUITY: reuse a small set of named locations across the video (each gets one
   shared environment reference). Returning to a location = the same "location" string verbatim.
-- "scene" is for connected NON-vocal cuts (B-roll runs, narrative beats, establishing sequences):
-  give it one shot per listed internal cut, visually connected (same world, evolving viewpoint).
+- "scene" gives one shot per listed internal cut, visually connected (an evolving viewpoint or
+  a two-thread intercut). Its cuts may include lip-sync shots.
 - ONE motion per shot. The action is a single continuous thing a real person/scene does at
   real-world speed. Never describe multiple movements, weather changes or time passing.
 - Open-sky wide shots are motion-prone: prefer a near foreground anchor in every scene, and keep
@@ -926,11 +924,13 @@ def parse_h3_segments(text, segments):
             shots = [{"type": "broll", "framing": "wide", "lipsync": False, "camera": "static",
                       "scene": "", "action": "", "costume": "", "characters": []}]
         lipsync_any = any(s["lipsync"] for s in shots)
-        if lipsync_any or len(seg["cuts"]) == 1:
+        # lip-sync no longer forces a single segment (design change 2026-08-09): a scene may
+        # carry lip-sync CUTS - the segment's audio window drives them all. Only a one-window
+        # segment is structurally single.
+        if len(seg["cuts"]) == 1:
             kind = "single"
         if kind == "single":
-            # keep the SINGING shot when a scene collapsed because of hidden lip-sync -
-            # shots[:1] would keep whatever cut happened to be first instead
+            # keep the SINGING shot if the writer supplied several for a one-cut window
             keep = next((s for s in shots if s["lipsync"]), shots[0])
             shots = [keep]
             # one shot spans the WHOLE segment - collapse the merged windows so the compiled
@@ -978,7 +978,23 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     # props (instruments/objects) follow the outfits in picture order - same verified mechanic
     props = [n for n in chars if (by_name[n].get("prop") or {}).get("still_id")]
     prop_pic = {n: len(chars) + len(outfits) + 1 + i for i, n in enumerate(props)}
-    env_pic = len(chars) + len(outfits) + len(props) + 1
+    # ENVIRONMENTS, one per distinct LOCATION among the cuts (max 2 - the intercut pattern:
+    # performance thread vs story thread). Keys are lowercased location names so the dispatcher
+    # can match its location-shared stills; "" = an unnamed per-segment environment.
+    env_locs = []
+    for s in seg["shots"]:
+        k = (s.get("location") or "").strip().lower()
+        if k not in env_locs:
+            env_locs.append(k)
+    env_locs = env_locs[:2]
+    if not env_locs:
+        env_locs = [""]
+    env_base = len(chars) + len(outfits) + len(props)
+    env_map = {k: env_base + 1 + i for i, k in enumerate(env_locs)}
+
+    def env_pic_of(s):
+        return env_map.get((s.get("location") or "").strip().lower(), env_map[env_locs[0]])
+    env_pic = env_map[env_locs[0]]                    # the primary environment (first cut's)
     lead = chars[0] if chars else None
 
     defs, keeps = [], []
@@ -1021,14 +1037,22 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                     f"only the object is referenced. <Subject {pi}> plays and holds it.")
         keeps.append(f"<Subject {pp}>: fully_preserved - its shape, materials, colors and hardware "
                      f"remain exactly consistent with <Picture {pp}>, played by <Subject {pi}>.")
-    env_scene = next((s["scene"] for s in seg["shots"] if s["scene"]), "the environment").rstrip(". ") + "."
-    defs.append(f"<Subject {env_pic}> is the ENVIRONMENT from <Picture {env_pic}>: {env_scene} "
-                f"Only the environment and its objects are referenced from <Picture {env_pic}>. "
-                f"Any person who appears in <Picture {env_pic}> is NOT part of the target video "
-                f"and does not appear in it.")
-    keeps.append(f"<Subject {env_pic}>: reference - the environment, its architecture, objects and "
-                 f"lighting remain recognizable from <Picture {env_pic}>; any person shown in "
-                 f"<Picture {env_pic}> is replaced by the defined subjects and does not appear.")
+    for k in env_locs:
+        p = env_map[k]
+        shots_here = [s for s in seg["shots"]
+                      if (s.get("location") or "").strip().lower() == k] or seg["shots"]
+        scene_txt = next((s["scene"] for s in shots_here if s["scene"]),
+                         "the environment").rstrip(". ") + "."
+        disp = next(((s.get("location") or "").strip() for s in shots_here
+                     if (s.get("location") or "").strip()), "")
+        name = f" '{disp}'" if disp else ""
+        defs.append(f"<Subject {p}> is the ENVIRONMENT{name} from <Picture {p}>: {scene_txt} "
+                    f"Only the environment and its objects are referenced from <Picture {p}>. "
+                    f"Any person who appears in <Picture {p}> is NOT part of the target video "
+                    f"and does not appear in it.")
+        keeps.append(f"<Subject {p}>: reference - the environment, its architecture, objects and "
+                     f"lighting remain recognizable from <Picture {p}>; any person shown in "
+                     f"<Picture {p}> is replaced by the defined subjects and does not appear.")
     if audio_ref and lead:
         defs.append(f"<Audio 1> is the song that <Subject 1> (S1) performs in the target video.")
         keeps.append("<Audio 1>: fully_preserved - the target video's soundtrack IS <Audio 1>, "
@@ -1068,7 +1092,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             sing = (f" {subj} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
                     f"and breaths matching the vocal exactly, face to camera and clearly visible in "
                     f"{fr_txt[s['framing']]}.")
-        line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic}>: "
+        line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic_of(s)}>: "
                 f"{act}.{sing}{anchor}{cam} The environment behind holds completely still.")
         if _H3_SKY_RE.search(s["scene"] + " " + s["action"]):
             line += (" The sky holds fixed: stars, moon and clouds keep their positions with no "
@@ -1087,7 +1111,8 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
               f"overall_soundscape:\n{sound}\n\n"
               f"non_diegetic_music:\nN/A")
     picture_map = {n: i + 1 for i, n in enumerate(chars)}
-    return prompt, {"sheets": picture_map, "outfits": outfit_pic, "props": prop_pic, "env": env_pic}
+    return prompt, {"sheets": picture_map, "outfits": outfit_pic, "props": prop_pic,
+                    "envs": env_map, "env": env_pic}
 
 
 def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
@@ -1102,5 +1127,6 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid):
         seg["picture_map"] = refs["sheets"]
         seg["outfit_map"] = refs["outfits"]
         seg["prop_map"] = refs["props"]
+        seg["env_map"] = refs["envs"]
         seg["env_picture"] = refs["env"]
     return segs

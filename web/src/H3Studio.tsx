@@ -26,6 +26,7 @@ export type H3Segment = {
   kind: "single" | "scene"; shots: H3Shot[]; lipsync: boolean; soundscape: string;
   prompt: string; picture_map: Record<string, number>; outfit_map: Record<string, number>;
   prop_map?: Record<string, number>;
+  env_map?: Record<string, number>;   // lowercased location -> env picture number ("" = unnamed)
   env_picture: number;
   // client-side render state
   envStillId?: string; clipId?: string; clipVariants?: string[];
@@ -65,6 +66,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [segments, setSegments] = d.use<H3Segment[]>("h3segments", []);
   const [castCostume, setCastCostume] = d.use<Record<string, string>>("h3castCostume", {});
   const [castProp, setCastProp] = d.use<Record<string, string>>("h3castProp", {});   // "" = none
+  // environment stills keyed by LOCATION (lowercased) - one still per named place, shared by
+  // every segment/cut set there. Unnamed environments stay on the segment (envStillId).
+  const [envByLoc, setEnvByLoc] = d.use<Record<string, string>>("h3envByLoc", {});
   const [writing, setWriting] = useState(false);
   const [genning, setGenning] = useState("");        // "env:<i>" | "seg:<i>" while submitting
   const [drafts, setDrafts] = useState<Record<number, { jobId: string; seed: number; url?: string; err?: boolean }[]>>({});
@@ -147,48 +151,37 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     finally { setRecompiling(false); }
   }
 
-  // ---- environment stills (required: every compiled prompt references <Picture env>).
-  // LOCATION CONTINUITY: segments sharing a named location share ONE env still - a location's
-  // first render is assigned to every segment at that location; re-generating a location's env
-  // updates all of them together. Unnamed locations stay per-segment. ----
-  const locOf = (s: H3Segment) => (s.shots[0]?.location || "").trim().toLowerCase();
-  function assignEnv(jobId: string, loc: string, idx: number) {
-    setSegments((prev) => (prev as H3Segment[]).map((s, j) =>
-      (loc ? locOf(s) === loc : j === idx) ? { ...s, envStillId: jobId } : s));
-  }
-  async function genEnv(i: number, forceNew = false) {
+  // ---- environment stills (required: every compiled prompt references its env pictures).
+  // LOCATION CONTINUITY: one still per named location (envByLoc), shared everywhere that
+  // location appears - including as the second thread of an intercut scene. A segment may
+  // reference up to TWO locations (its env_map); unnamed environments stay per-segment. ----
+  const segLocs = (s: H3Segment): string[] =>
+    s.env_map ? Object.keys(s.env_map).sort((a, b) => s.env_map![a] - s.env_map![b])
+              : [(s.shots[0]?.location || "").trim().toLowerCase()];
+  const locDisplay = (s: H3Segment, loc: string) =>
+    s.shots.find((sh) => (sh.location || "").trim().toLowerCase() === loc)?.location || loc || "environment";
+  const envOf = (s: H3Segment, loc: string) => (loc ? envByLoc[loc] : s.envStillId);
+  async function genEnvLoc(i: number, loc: string, forceNew = false) {
     const seg = segments[i];
-    const scene = seg.shots[0]?.scene || "";
-    const loc = locOf(seg);
-    if (!scene) { ctx.setResults([{ id: rid(), title: `segment ${i + 1}`, status: "error", pct: 0, err: "No scene description on this segment." }]); return; }
-    // reuse the location's existing still unless a new render is explicitly requested
-    if (!forceNew && loc) {
-      const twin = segments.find((s) => locOf(s) === loc && s.envStillId);
-      if (twin?.envStillId) {
-        assignEnv(twin.envStillId, loc, i);
-        ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: reusing "${seg.shots[0]?.location}" environment`, status: "done", pct: 100 }]);
-        return;
-      }
-    }
-    setGenning(`env:${i}`);
+    const shot = seg.shots.find((sh) => (sh.location || "").trim().toLowerCase() === loc) || seg.shots[0];
+    const scene = shot?.scene || "";
+    if (!scene) { ctx.setResults([{ id: rid(), title: `segment ${i + 1}`, status: "error", pct: 0, err: "No scene description for this environment." }]); return; }
+    if (!forceNew && envOf(seg, loc)) return;
+    setGenning(`env:${i}:${loc}`);
     try {
       const r = await api.videoStill(envRequest(scene, Math.floor(Math.random() * 2_000_000_000))) as { job_id: string };
-      assignEnv(r.job_id, loc, i);
-      const label = loc ? `"${seg.shots[0]?.location}" environment` : `segment ${i + 1} environment`;
-      const card = { id: rid(), title: label, status: "running" as const, pct: 5 };
+      if (loc) setEnvByLoc((prev) => ({ ...(prev as Record<string, string>), [loc]: r.job_id }));
+      else patchSeg(i, { envStillId: r.job_id });
+      const card = { id: rid(), title: `"${locDisplay(seg, loc)}" environment`, status: "running" as const, pct: 5 };
       ctx.setResults([card]);
       pollJob(r.job_id, card.id, ctx);
-    } catch (e) { ctx.setResults([{ id: rid(), title: `segment ${i + 1} environment`, status: "error", pct: 0, err: (e as Error).message }]); }
+    } catch (e) { ctx.setResults([{ id: rid(), title: `environment render failed`, status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setGenning(""); }
   }
   async function genAllEnvs() {
-    const doneLocs = new Set<string>();
-    for (let i = 0; i < segments.length; i++) {
-      const loc = locOf(segments[i]);
-      if (segments[i].envStillId || (loc && doneLocs.has(loc))) continue;
-      await genEnv(i);
-      if (loc) doneLocs.add(loc);
-    }
+    for (let i = 0; i < segments.length; i++)
+      for (const loc of segLocs(segments[i]))
+        if (!envOf(segments[i], loc)) await genEnvLoc(i, loc);
   }
 
   // refs in the compiled prompt's exact picture order: sheets, outfits, environment
@@ -212,8 +205,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
         return pr?.stillId;
       }).filter(Boolean) as string[];
     if (props.length !== Object.keys(seg.prop_map || {}).length) return "a prop still is missing";
-    if (!seg.envStillId) return "generate the environment still first";
-    return [...sheets, ...outfits, ...props, seg.envStillId];
+    const envs = segLocs(seg).map((loc) => envOf(seg, loc));
+    if (envs.some((e) => !e)) return "generate the environment still(s) first";
+    return [...sheets, ...outfits, ...props, ...(envs as string[])];
   }
 
   async function renderSeg(i: number, mode: "hunt" | "finish", seed?: number) {
@@ -369,19 +363,26 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           ))}
                         </td>
                         <td className="px-2 py-1.5">
-                          {seg.envStillId
-                            ? <div className="space-y-0.5">
-                                <img src={`/api/media/${seg.envStillId}`} onClick={() => openLightbox(`/api/media/${seg.envStillId}`)}
-                                  className="h-9 w-16 cursor-zoom-in rounded object-cover" alt=""
-                                  title={seg.shots[0]?.location ? `"${seg.shots[0].location}" environment (shared) — click to enlarge` : "environment still — click to enlarge"} />
-                                <button onClick={() => genEnv(i, true)} disabled={busy || !!genning}
-                                  title={seg.shots[0]?.location ? "render a NEW environment for this location (updates every segment here)" : "render a new environment"}
-                                  className="block text-[8px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">↻ new env</button>
-                              </div>
-                            : <button onClick={() => genEnv(i)} disabled={busy || !!genning}
-                                className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
-                                {genning === `env:${i}` ? "…" : "gen env"}
-                              </button>}
+                          <div className="space-y-1">
+                            {segLocs(seg).map((loc) => {
+                              const still = envOf(seg, loc);
+                              return still ? (
+                                <div key={loc} className="space-y-0.5">
+                                  <img src={`/api/media/${still}`} onClick={() => openLightbox(`/api/media/${still}`)}
+                                    className="h-9 w-16 cursor-zoom-in rounded object-cover" alt=""
+                                    title={`"${locDisplay(seg, loc)}" environment${loc ? " (shared)" : ""} — click to enlarge`} />
+                                  <button onClick={() => genEnvLoc(i, loc, true)} disabled={busy || !!genning}
+                                    title={loc ? `render a NEW "${locDisplay(seg, loc)}" environment (updates everywhere it appears)` : "render a new environment"}
+                                    className="block text-[8px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">↻ {locDisplay(seg, loc).slice(0, 12)}</button>
+                                </div>
+                              ) : (
+                                <button key={loc} onClick={() => genEnvLoc(i, loc)} disabled={busy || !!genning}
+                                  className="block rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">
+                                  {genning === `env:${i}:${loc}` ? "…" : `gen ${locDisplay(seg, loc).slice(0, 14)}`}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </td>
                         <td className="px-2 py-1.5">
                           {url
@@ -396,10 +397,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                               className={`rounded border px-1.5 py-0.5 text-[9px] ${editIdx === i ? "border-[var(--color-accent2)] text-[var(--color-accent2)]" : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
                               {editIdx === i ? "close" : "edit"}
                             </button>
-                            <button onClick={() => renderSeg(i, "hunt")} disabled={busy || !!genning || !seg.envStillId}
+                            <button onClick={() => renderSeg(i, "hunt")} disabled={busy || !!genning || segLocs(seg).some((l) => !envOf(seg, l))}
                               title="2 fast turbo drafts to pick a seed"
                               className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">hunt</button>
-                            <button onClick={() => renderSeg(i, "finish")} disabled={busy || !!genning || !seg.envStillId}
+                            <button onClick={() => renderSeg(i, "finish")} disabled={busy || !!genning || segLocs(seg).some((l) => !envOf(seg, l))}
                               title="one full-quality render (base recipe)"
                               className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">finish</button>
                           </div>
