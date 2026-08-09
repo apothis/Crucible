@@ -71,6 +71,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [editIdx, setEditIdx] = useState(-1);        // segment editor open for this row
   const [showRaw, setShowRaw] = useState(false);
   const [recompiling, setRecompiling] = useState(false);
+  // which LLM writes the script (defaults to Claude; "local" = whatever local provider the backend picks)
+  const [scriptLlm, setScriptLlm] = d.use("h3scriptLlm", "claude-sonnet-4-6");
 
   const h3cast = cast.filter((c) => c.style === "h3" && c.sheetId);
   const patchSeg = (i: number, p: Partial<H3Segment>) =>
@@ -95,15 +97,31 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     if (!audioId) { ctx.setResults([{ id: rid(), title: "Pick the song first", status: "error", pct: 0, err: "H3 segments are built from the real audio structure - set the song track above." }]); return; }
     if (!songPayload) { ctx.setResults([{ id: rid(), title: "No song arrangement", status: "error", pct: 0, err: "Open a project with a Song arrangement (the Song tab)." }]); return; }
     setWriting(true);
-    const card = { id: rid(), title: "H3 script (segments)", status: "running" as const, pct: 5 };
+    const card = { id: rid(), title: "H3 script - analyzing audio structure…", status: "running" as const, pct: 3 };
     ctx.setResults([card]);
+    // The call is one synchronous request (audio analysis ~1-2 min, then the writer LLM ~3-8 min),
+    // so real progress isn't available - show STAGED progress with a live elapsed clock instead of
+    // a frozen bar. Time-based pct creeps to 90 and holds until the response lands.
+    const t0 = Date.now();
+    const EXPECT = 7 * 60_000;                       // typical total; bar reaches 90% here
+    const tick = window.setInterval(() => {
+      const el = Date.now() - t0;
+      const mm = Math.floor(el / 60_000), ss = String(Math.floor(el / 1000) % 60).padStart(2, "0");
+      const stage = el < 100_000 ? "analyzing audio structure" : "writer LLM drafting segments";
+      ctx.patch(card.id, {
+        pct: Math.min(90, Math.round((el / EXPECT) * 90)),
+        title: `H3 script - ${stage}… ${mm}:${ss} (usually 4-8 min total)`,
+      });
+    }, 1000);
     try {
-      const r = await api.mvH3Script({ song: songPayload, audio_id: audioId, cast: castPayload() }) as
+      const llm = scriptLlm === "local" ? {} : { provider: "claude_sub", model: scriptLlm };
+      const r = await api.mvH3Script({ song: songPayload, audio_id: audioId, cast: castPayload(), ...llm }) as
         { segments: H3Segment[]; singles: number; scenes: number };
       setSegments(r.segments.map((s) => ({ ...s })));
-      ctx.patch(card.id, { status: "done", pct: 100, err: `${r.segments.length} segments (${r.singles} single / ${r.scenes} scene)` });
-    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
-    finally { setWriting(false); }
+      ctx.patch(card.id, { status: "done", pct: 100, title: "H3 script written",
+        err: `${r.segments.length} segments (${r.singles} single / ${r.scenes} scene)` });
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, title: "H3 script failed", err: (e as Error).message }); }
+    finally { window.clearInterval(tick); setWriting(false); }
   }
 
   // ---- per-segment editing: change the structured shot fields, then RECOMPILE server-side so
@@ -258,8 +276,15 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
           </span>
         ))}
         <span className="flex-1" />
+        <select className="rounded border border-[var(--color-line)] bg-transparent px-1.5 py-0.5 text-[10px] text-[var(--color-muted)]"
+          value={scriptLlm} onChange={(e) => setScriptLlm(e.target.value)} disabled={writing}
+          title="Which LLM writes the script">
+          <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+          <option value="opus">Claude Opus</option>
+          <option value="local">Local LLM</option>
+        </select>
         <PrimaryButton onClick={writeScript} disabled={busy || writing || !audioId}>
-          {writing ? "writing… (analyze + LLM, a few min)" : segments.length ? "↻ rewrite script" : "Write H3 script"}
+          {writing ? "writing…" : segments.length ? "↻ rewrite script" : "Write H3 script"}
         </PrimaryButton>
       </div>
 
