@@ -805,6 +805,19 @@ HARD RULES:
   "scene" segment to breathe (imagery tied to the lyric being sung) - but the singer carries
   sung sections; never let B-roll dominate a sung section. Instrumental windows are where
   B-roll and narrative belong.
+- NO MIMED SINGING: any shot that SHOWS a singer singing MUST set "lipsync": true - there is no
+  such thing as an unsynced singing shot (the mouth would visibly not match the vocal). In
+  "scene" segments singers may appear NOT singing - walking, gazing, reaching, standing - never
+  mouthing words. If you want them singing, make it a lip-sync single.
+- LIP-SYNC VOLUME: across each SUNG section, at least about HALF the segments should be
+  lip-sync singles of the correct singer(s); the rest may be scenes. A duet ballad is carried
+  by faces singing, not by B-roll.
+- ONE LOCATION PER SCENE SEGMENT: all cuts inside a "scene" segment happen at that segment's
+  single named location (a scene is continuous coverage of one place). Cross-location montage
+  = separate segments.
+- A STAGE location implies the BAND on it (the named musicians playing, plus a drummer at a
+  full kit behind). Never put a lone singer on an empty stage - solo moments belong in the
+  story locations instead.
 - LIP-SYNC segments are ALWAYS "kind": "single" (one shot, close or medium framing, the singer
   performing TO CAMERA, mouth visible - never turned away, never silhouette, never wide).
 - INSTRUMENT PERFORMANCE is shot FROM AFAR: solos and any non-singing playing shots (guitar,
@@ -878,9 +891,16 @@ def parse_h3_segments(text, segments):
             if framing not in ("close", "medium", "wide"):
                 framing = "medium"
             lipsync = bool(s.get("lipsync"))
+            stype = s.get("type") if s.get("type") in SHOT_TYPES else "broll"
+            # NO-MIMED-SINGING safety net: a shot whose action shows someone singing MUST be
+            # lip-synced (the 2026-08-09 rewrite hid singing inside scene segments with
+            # lipsync=false - mouths flapping unsynced to the vocal). Forcing lipsync here also
+            # collapses the segment to a synced single via the existing rule below.
+            if (not lipsync and s.get("characters")
+                    and re.search(r"\bsing(s|ing)?\b", str(s.get("action") or ""), re.I)):
+                lipsync = True
             if lipsync and framing == "wide":
                 framing = "medium"
-            stype = s.get("type") if s.get("type") in SHOT_TYPES else "broll"
             # INSTRUMENT-PERFORMANCE-FROM-AFAR (hard rule, mirrors the writer guidance): generated
             # finger/stick movement cannot match the actual notes, so non-singing performance shots
             # never render close - solo-section ones go fully wide
