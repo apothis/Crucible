@@ -807,6 +807,10 @@ HARD RULES:
   "female bell canto" = the female singer, "warm male" = the male singer, "duet" = both).
   NEVER show a singer mouthing a part sung in the other voice. On duet windows both singers
   may appear - together in one shot or intercut - each singing their own lines.
+  The MARKER decides, never the lyric's point of view. If the first verse is marked female and
+  its words address a departed man, the WOMAN is on camera singing it - do not put the man on
+  camera because the lyric is about him. Check every lip-sync shot against the marker for the
+  window it sits in; getting this backwards makes the video look dubbed.
 - SUNG SECTIONS focus on the SINGERS: B-roll IS allowed during singing - imagery tied to the
   lyric being sung breathes between singing shots - but never let it dominate a sung section.
   Instrumental windows are where B-roll and narrative belong.
@@ -1187,6 +1191,132 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                     "envs": env_map, "env": env_pic}
 
 
+# ---- voice-matched casting, enforced in CODE ----------------------------------------------
+# The writer is told whose voice each section is (the section style markers are in its brief), and
+# it still got the first two verses exactly backwards on a real script (2026-08-09): Bob mouthing
+# the "tender female bell canto" verse and Selene the "warm male" one, apparently reasoning from the
+# lyric's point of view (verse 1 addresses the departed, verse 2 answers) instead of the marker.
+# Who sings is not a judgement call - the song says so - so it is decided here, not by the LLM.
+# NOTE: word boundaries matter. "female" CONTAINS "male", so substring tests silently read every
+# female marker as male too.
+_VOICE_FEM = re.compile(r"\bfemale\b|\bwoman\b|\bsoprano\b|\bmezzo\b|\balto\b", re.I)
+_VOICE_MALE = re.compile(r"\bmale\b|\bman\b|\btenor\b|\bbaritone\b|\bbass vocal\b", re.I)
+_VOICE_DUET = re.compile(r"\bduet\b|\bboth\b|\bharmon|\btogether\b|\bunison\b", re.I)
+
+
+def _voice_of(style):
+    """The voice a section style marker calls for: "female" | "male" | "duet" | ""."""
+    s = str(style or "")
+    if _VOICE_DUET.search(s):
+        return "duet"
+    if _VOICE_FEM.search(s):
+        return "female"
+    if _VOICE_MALE.search(s):
+        return "male"
+    return ""
+
+
+def _voice_windows(song):
+    """[{start, end, voice}] for every SUNG section of the song, from the nominal section
+    durations (the same timeline the writer is shown)."""
+    out, t = [], 0.0
+    for s in (song or {}).get("sections") or []:
+        dur = float(s.get("seconds") or 0)
+        lyr = str(s.get("lyrics") or "").strip()
+        sung = bool(lyr) and lyr.lower() != "instrumental"
+        v = _voice_of(s.get("style"))
+        if sung and v:
+            out.append({"start": t, "end": t + dur, "voice": v})
+        t += dur
+    return out
+
+
+def _voice_at(windows, start, end):
+    """The voice of whichever sung window overlaps [start, end] most; empty if none does."""
+    best, best_ov = "", 0.0
+    for w in windows:
+        ov = min(end, w["end"]) - max(start, w["start"])
+        if ov > best_ov:
+            best, best_ov = w["voice"], ov
+    return best
+
+
+def _gender(c):
+    g = str((c or {}).get("gender") or "").strip().lower()
+    return "female" if g.startswith("f") else ("male" if g.startswith("m") else "")
+
+
+# Recasting a shot has to carry the PRONOUNS with the name, or the prompt reads "Selene sings as he
+# holds the railing" and the render gets a contradictory gender cue. Longest forms first; \b already
+# protects "himself"/"herself" from the short patterns. "her" is both object and possessive: followed
+# by a word it is possessive ("her face" -> "his face"), otherwise object ("toward her" -> "him").
+_PRON = {
+    ("male", "female"): [(r"\bhimself\b", "herself"), (r"\bhis\b", "her"), (r"\bhim\b", "her"), (r"\bhe\b", "she")],
+    ("female", "male"): [(r"\bherself\b", "himself"), (r"\bhers\b", "his"),
+                         (r"\bher\b(?=\s+[a-z])", "his"), (r"\bher\b", "him"), (r"\bshe\b", "he")],
+}
+
+
+def _swap_pronouns(text, frm, to):
+    """Rewrite third-person pronouns from one gender to the other, preserving capitalization."""
+    for pat, rep in _PRON.get((frm, to), []):
+        text = re.sub(pat, lambda m, r=rep: r.capitalize() if m.group(0)[0].isupper() else r, text)
+    return text
+
+
+def enforce_voice_casting(segments, song, cast):
+    """Recast any lip-sync shot whose singer is the wrong voice for the section being sung, and
+    fix the shot's prose so the names match. Duet windows and unmarked sections are left alone,
+    as is any shot whose gender has no cast member to swap in. Records what changed on the
+    segment as `voice_fixed` (the UI surfaces the count). Returns the list of fixes."""
+    wins = _voice_windows(song)
+    if not wins:
+        return []
+    singers, named = {}, []
+    for c in sorted(cast or [], key=lambda x: 0 if "singer" in str(x.get("role") or "").lower() else 1):
+        g, n = _gender(c), (c.get("name") or "").strip()
+        if not (g and n):
+            continue
+        named.append(n)
+        singers.setdefault(g, []).append(n)     # singers sort first, so [0] is that voice's lead
+    fixes = []
+    for seg in segments:
+        cuts = seg.get("cuts") or [{"start": seg.get("start", 0), "end": seg.get("end", 0)}]
+        for j, sh in enumerate(seg.get("shots") or []):
+            if not sh.get("lipsync"):
+                continue
+            cut = cuts[j] if j < len(cuts) else cuts[0]
+            need = _voice_at(wins, float(cut.get("start", 0)), float(cut.get("end", 0)))
+            if need not in ("female", "male"):
+                continue                       # duet or unmarked: the writer's choice stands
+            right = (singers.get(need) or [None])[0]
+            if not right:
+                continue                       # nobody of that voice in the cast
+            wrong = [n for n in sh.get("characters") or []
+                     if n in named and n not in (singers.get(need) or [])]
+            if not wrong or right in (sh.get("characters") or []):
+                continue
+            # pronouns only when ONE cast member is in the shot - otherwise a "she" might belong to
+            # somebody else in frame and swapping it would misgender them instead
+            solo = len([n for n in sh.get("characters") or [] if n in named]) == 1
+            for w in wrong:
+                sh["characters"] = [right if n == w else n for n in sh["characters"]]
+                for k in ("action", "scene"):
+                    if sh.get(k):
+                        sh[k] = re.sub(rf"\b{re.escape(w)}\b", right, sh[k])
+                        if solo:
+                            sh[k] = _swap_pronouns(sh[k], "female" if need == "male" else "male", need)
+                fixes.append(f"{cut.get('start', 0):.0f}s {w}->{right} ({need} part)")
+            seen, uniq = set(), []
+            for n in sh["characters"]:
+                if n not in seen:
+                    seen.add(n)
+                    uniq.append(n)
+            sh["characters"] = uniq
+            seg["voice_fixed"] = (seg.get("voice_fixed") or []) + fixes[-len(wrong):]
+    return fixes
+
+
 H3_BATCH = 8            # segments per writer call (see generate_h3_script_grid)
 H3_LOCATIONS = 6        # named locations targeted across a whole video (user call 2026-08-09: the
 #   first script used 4 over four minutes and read as repetitive). Enforced as guidance in the
@@ -1258,6 +1388,9 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
             except Exception:
                 if attempt == 2 and part is None:
                     raise
+        # per batch, not at the end: the next batch's continuity note quotes the previous segment's
+        # last shot, so it should quote the CORRECTED singer
+        enforce_voice_casting(part, song, cast)
         done.extend(part)
         for s in part:
             for sh in s["shots"]:

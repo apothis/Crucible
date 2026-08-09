@@ -1983,7 +1983,9 @@ def mv_h3_script(body: dict):
     return {"segments": segments, "song_title": song.get("title"), "audio_id": audio_id,
             "segments_count": len(segments),
             "singles": sum(1 for s in segments if s["kind"] == "single"),
-            "scenes": sum(1 for s in segments if s["kind"] == "scene")}
+            "scenes": sum(1 for s in segments if s["kind"] == "scene"),
+            # lip-sync shots recast to the voice the song's section markers call for
+            "voice_fixes": sum(len(s.get("voice_fixed") or []) for s in segments)}
 
 
 @app.post("/api/mv/h3_compile")
@@ -2033,13 +2035,47 @@ def mv_h3_compile(body: dict):
         seg2["cuts"] = [{"start": seg2["start"], "end": seg2["end"]}]
         keep = next((s for s in shots if s["lipsync"]), shots[0])
         seg2["shots"] = [keep]
+    # voice-matched casting, same rule the script path enforces (needs the song's section markers -
+    # the UI sends them; without a song payload the writer's/editor's casting stands)
+    voice_fixes = musicvideo_mod.enforce_voice_casting([seg2], body.get("song") or {}, cast)
     try:
         prompt, refs = musicvideo_mod.compile_h3_prompt(seg2, cast, audio_ref=lipsync_any)
     except Exception as e:
         raise HTTPException(500, f"compile failed: {e}")
     return {"prompt": prompt, "picture_map": refs["sheets"], "outfit_map": refs["outfits"],
             "prop_map": refs["props"], "env_map": refs["envs"], "env_picture": refs["env"],
-            "lipsync": lipsync_any, "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"]}
+            "lipsync": lipsync_any, "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"],
+            "voice_fixes": voice_fixes}
+
+
+@app.post("/api/mv/h3_voicefix")
+def mv_h3_voicefix(body: dict):
+    """Recast every lip-sync shot in an EXISTING script to the voice its song section calls for,
+    and recompile the prompts of the segments that changed. The deterministic repair for a script
+    the writer miscast (observed: the two leads swapped for the first two verses) - seconds, versus
+    a full rewrite. Body: {segments, song, cast}. Returns {segments, fixes, fixed_segments}."""
+    segs = body.get("segments") or []
+    cast = body.get("cast") or []
+    song = body.get("song") or {}
+    if not segs:
+        raise HTTPException(400, "segments are required")
+    if not (song.get("sections")):
+        raise HTTPException(400, "the song's sections (with their style markers) are required - "
+                                 "they are what says whose voice sings when")
+    fixes = musicvideo_mod.enforce_voice_casting(segs, song, cast)
+    fixed = 0
+    for seg in segs:
+        if not seg.get("voice_fixed"):
+            continue
+        fixed += 1
+        try:
+            seg["prompt"], refs = musicvideo_mod.compile_h3_prompt(seg, cast, audio_ref=seg.get("lipsync"))
+            seg["picture_map"], seg["outfit_map"] = refs["sheets"], refs["outfits"]
+            seg["prop_map"], seg["env_map"], seg["env_picture"] = refs["props"], refs["envs"], refs["env"]
+            seg["handEdited"] = False
+        except Exception as e:
+            raise HTTPException(500, f"recompile after recasting failed: {e}")
+    return {"segments": segs, "fixes": fixes, "fixed_segments": fixed}
 
 
 @app.get("/api/mv/grades")

@@ -159,7 +159,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const seg = segments[i];
     setRecompiling(true);
     try {
-      const r = await api.mvH3Compile({ segment: seg, cast: castPayload() }) as
+      // the song goes with it: its section markers are what enforce voice-matched casting server-side
+      const r = await api.mvH3Compile({ segment: seg, cast: castPayload(), song: songPayload }) as
         { prompt: string; picture_map: Record<string, number>; outfit_map: Record<string, number>;
           env_picture: number; lipsync: boolean; shots: H3Shot[]; kind: "single" | "scene"; cuts: { start: number; end: number }[] };
       patchSeg(i, { prompt: r.prompt, picture_map: r.picture_map, outfit_map: r.outfit_map,
@@ -322,6 +323,23 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       }
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
     finally { setGenning(""); }
+  }
+
+  // Recast every lip-sync shot to the voice its song section calls for, across the whole existing
+  // script, and recompile whatever changed. Deterministic and free - no writer run.
+  async function fixVoices() {
+    if (!songPayload) { ctx.setResults([{ id: rid(), title: "No song arrangement", status: "error", pct: 0, err: "The song's section markers are what say whose voice sings when." }]); return; }
+    setRecompiling(true);
+    try {
+      const r = await api.mvH3VoiceFix({ segments, song: songPayload, cast: castPayload() }) as
+        { segments: H3Segment[]; fixes: string[]; fixed_segments: number };
+      setSegments(r.segments.map((s) => ({ ...s })));
+      ctx.setResults([{ id: rid(), status: "done", pct: 100,
+        title: r.fixes.length ? `✓ recast ${r.fixes.length} lip-sync shot(s) in ${r.fixed_segments} segment(s)`
+                              : "✓ voice casting already matches the song",
+        err: r.fixes.slice(0, 8).join(", ") || undefined }]);
+    } catch (e) { ctx.setResults([{ id: rid(), title: "voice check failed", status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setRecompiling(false); }
   }
 
   // open a segment in the editor at its first INCOMPLETE stage (the old editor's auto-advance):
@@ -707,6 +725,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               {"·"} {segments.filter((s) => s.clipId).length} rendered
             </span>
             <span className="flex-1" />
+            <GhostButton onClick={fixVoices} disabled={busy || recompiling || !songPayload}>
+              {recompiling ? "checking…" : "Check voice casting"}
+            </GhostButton>
             <GhostButton onClick={genAllEnvs} disabled={busy || !!genning}>Gen missing environments</GhostButton>
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}>Assemble</PrimaryButton>
           </div>

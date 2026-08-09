@@ -1903,10 +1903,14 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
     setDirty(false);
   };
 
-  // publish the arrangement so the Vocal Builder can compose against it
+  // publish the arrangement so the Vocal Builder / MV Studio can compose against it. `style`
+  // must ride along: the per-section style cue carries the vocal-part markers ("female bell
+  // canto", "warm male", "duet") that H3 voice-matched casting is decided by - dropping it here
+  // made the whole downstream chain voice-blind (the writer guessed, and the enforcement code
+  // had no windows to check against).
   useEffect(() => {
     onSong?.({
-      blocks: blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })),
+      blocks: blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics, style: b.style || "" })),
       key: tuning.keyscale, bpm: tuning.bpm, tags,
     });
   }, [blocks, tuning.bpm, tuning.keyscale, tags]);

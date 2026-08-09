@@ -117,7 +117,15 @@ function AppInner() {
     try {
       const p = await api.projectGet(id);
       drafts.replaceAll(p.data?.drafts || {});
-      setSong(p.data?.song ?? null);
+      // Heal saves from before the Song tab published `style`: the published song lost the
+      // per-section style cues (the vocal-part markers H3 voice casting runs on), but the Song
+      // tab's own draft blocks kept them - merge them back by position on open.
+      const song = p.data?.song ?? null;
+      const draftBlocks = (p.data?.drafts?.song as { blocks?: { style?: string }[] } | undefined)?.blocks;
+      if (song?.blocks && Array.isArray(draftBlocks))
+        song.blocks = song.blocks.map((b: SongDraft["blocks"][number], i: number) =>
+          ({ ...b, style: b.style ?? draftBlocks[i]?.style ?? "" }));
+      setSong(song);
       setHandoff(null);
       setResults([]);
       setMode(p.data?.mode || "generate");
