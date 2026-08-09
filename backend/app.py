@@ -1980,6 +1980,55 @@ def mv_h3_script(body: dict):
             "scenes": sum(1 for s in segments if s["kind"] == "scene")}
 
 
+@app.post("/api/mv/h3_compile")
+def mv_h3_compile(body: dict):
+    """Recompile ONE H3 segment's full-references prompt after the user edits its structured
+    fields (scene/action/framing/camera/costume/lipsync per shot, soundscape). Keeps every
+    compiler-enforced rule intact (duration anchors, sky-pin, subject-swap, doubled framing,
+    audio-reuse) - the safe alternative to hand-editing the compiled text.
+    Body: {segment: <the segment object with edited shots>, cast: [<the same cast payload the
+    script writer got>]}. Returns {prompt, picture_map, outfit_map, env_picture, lipsync}."""
+    seg = body.get("segment") or {}
+    cast = body.get("cast") or []
+    shots_in = [s for s in (seg.get("shots") or []) if isinstance(s, dict)]
+    if not shots_in or not seg.get("cuts"):
+        raise HTTPException(400, "segment needs shots and cuts")
+    # normalize enums the same way the parser does, so hand edits cannot smuggle bad values
+    shots = []
+    for s in shots_in[:4]:
+        framing = str(s.get("framing") or "").strip().lower()
+        if framing not in ("close", "medium", "wide"):
+            framing = "medium"
+        lipsync = bool(s.get("lipsync"))
+        if lipsync and framing == "wide":
+            framing = "medium"
+        camera = str(s.get("camera") or "static").strip().lower()
+        if camera not in musicvideo_mod.H3_CAMERA_MOVES:
+            camera = "static"
+        shots.append({"type": s.get("type") or "broll", "framing": framing, "lipsync": lipsync,
+                      "camera": camera, "scene": str(s.get("scene") or "").strip(),
+                      "action": str(s.get("action") or "").strip(),
+                      "costume": str(s.get("costume") or "").strip(),
+                      "characters": [str(x).strip() for x in (s.get("characters") or []) if str(x).strip()]})
+    lipsync_any = any(s["lipsync"] for s in shots)
+    seg2 = {"start": float(seg.get("start") or 0), "end": float(seg.get("end") or 0),
+            "cuts": seg.get("cuts"), "kind": seg.get("kind") or "single",
+            "shots": shots[:1] if lipsync_any or len(seg.get("cuts") or []) == 1 else shots,
+            "lipsync": lipsync_any,
+            "soundscape": str(seg.get("soundscape") or "").strip()}
+    if seg2["kind"] == "single" or lipsync_any:
+        seg2["kind"] = "single"
+        seg2["cuts"] = [{"start": seg2["start"], "end": seg2["end"]}]
+        seg2["shots"] = shots[:1]
+    try:
+        prompt, refs = musicvideo_mod.compile_h3_prompt(seg2, cast, audio_ref=lipsync_any)
+    except Exception as e:
+        raise HTTPException(500, f"compile failed: {e}")
+    return {"prompt": prompt, "picture_map": refs["sheets"], "outfit_map": refs["outfits"],
+            "env_picture": refs["env"], "lipsync": lipsync_any, "shots": seg2["shots"],
+            "kind": seg2["kind"], "cuts": seg2["cuts"]}
+
+
 @app.get("/api/mv/grades")
 def mv_grades():
     """Color-grade looks available for assembly (the Music Video tab picker)."""

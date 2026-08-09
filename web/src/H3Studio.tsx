@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type LibItem } from "./api";
-import { PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
+import { inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
 import { type Character } from "./mvmodel";
@@ -28,7 +28,11 @@ export type H3Segment = {
   env_picture: number;
   // client-side render state
   envStillId?: string; clipId?: string; clipVariants?: string[];
+  handEdited?: boolean;   // raw prompt overridden by hand (a recompile clears this)
 };
+
+const H3_CAMERAS = ["static", "push in", "pull back", "truck left", "truck right",
+  "arc left", "arc right", "tilt up", "crane up"];
 
 const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(Math.max(0, t) % 60)).padStart(2, "0")}`;
 
@@ -62,6 +66,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [writing, setWriting] = useState(false);
   const [genning, setGenning] = useState("");        // "env:<i>" | "seg:<i>" while submitting
   const [drafts, setDrafts] = useState<Record<number, { jobId: string; seed: number; url?: string; err?: boolean }[]>>({});
+  const [editIdx, setEditIdx] = useState(-1);        // segment editor open for this row
+  const [showRaw, setShowRaw] = useState(false);
+  const [recompiling, setRecompiling] = useState(false);
 
   const h3cast = cast.filter((c) => c.style === "h3" && c.sheetId);
   const patchSeg = (i: number, p: Partial<H3Segment>) =>
@@ -92,6 +99,26 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       ctx.patch(card.id, { status: "done", pct: 100, err: `${r.segments.length} segments (${r.singles} single / ${r.scenes} scene)` });
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
     finally { setWriting(false); }
+  }
+
+  // ---- per-segment editing: change the structured shot fields, then RECOMPILE server-side so
+  // the enforced rules (duration anchors, sky-pin, subject-swap, doubled framing) stay intact ----
+  const patchShot = (i: number, j: number, p: Partial<H3Shot>) =>
+    setSegments((prev) => (prev as H3Segment[]).map((s, k) =>
+      k === i ? { ...s, shots: s.shots.map((sh, m) => (m === j ? { ...sh, ...p } : sh)) } : s));
+  async function recompile(i: number) {
+    const seg = segments[i];
+    setRecompiling(true);
+    try {
+      const r = await api.mvH3Compile({ segment: seg, cast: castPayload() }) as
+        { prompt: string; picture_map: Record<string, number>; outfit_map: Record<string, number>;
+          env_picture: number; lipsync: boolean; shots: H3Shot[]; kind: "single" | "scene"; cuts: { start: number; end: number }[] };
+      patchSeg(i, { prompt: r.prompt, picture_map: r.picture_map, outfit_map: r.outfit_map,
+        env_picture: r.env_picture, lipsync: r.lipsync, shots: r.shots, kind: r.kind, cuts: r.cuts,
+        handEdited: false });
+      ctx.setResults([{ id: rid(), title: `segment ${i + 1} recompiled`, status: "done", pct: 100 }]);
+    } catch (e) { ctx.setResults([{ id: rid(), title: `segment ${i + 1} recompile failed`, status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setRecompiling(false); }
   }
 
   // ---- environment stills (required: every compiled prompt references <Picture env>) ----
@@ -242,7 +269,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                   {segments.map((seg, i) => {
                     const url = clipUrl(seg.clipId);
                     const segDrafts = drafts[i] || [];
-                    return (
+                    return (<>
                       <tr key={i} className="border-t border-[var(--color-line)] align-top">
                         <td className="px-1 py-1.5 font-semibold text-[var(--color-muted)]">{i + 1}</td>
                         <td className="px-2 py-1.5 text-[var(--color-muted)]">
@@ -278,6 +305,11 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                         </td>
                         <td className="px-2 py-1.5">
                           <div className="flex flex-wrap gap-1">
+                            <button onClick={() => { setEditIdx(editIdx === i ? -1 : i); setShowRaw(false); }}
+                              title="edit this segment's shots + prompt"
+                              className={`rounded border px-1.5 py-0.5 text-[9px] ${editIdx === i ? "border-[var(--color-accent2)] text-[var(--color-accent2)]" : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                              {editIdx === i ? "close" : "edit"}
+                            </button>
                             <button onClick={() => renderSeg(i, "hunt")} disabled={busy || !!genning || !seg.envStillId}
                               title="2 fast turbo drafts to pick a seed"
                               className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">hunt</button>
@@ -306,7 +338,64 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           )}
                         </td>
                       </tr>
-                    );
+                      {editIdx === i && (
+                        <tr key={`edit-${i}`} className="border-t border-[var(--color-line)] bg-[var(--color-bg)]">
+                          <td colSpan={7} className="px-3 py-2">
+                            <div className="space-y-2">
+                              {seg.shots.map((s, j) => (
+                                <div key={j} className="rounded border border-[var(--color-line)] p-2 space-y-1.5">
+                                  <div className="flex flex-wrap items-center gap-2 text-[9px] text-[var(--color-muted)]">
+                                    <span className="font-semibold uppercase tracking-wide">{seg.kind === "scene" ? `cut ${j + 1}` : "shot"}</span>
+                                    <label className="flex items-center gap-1">framing
+                                      <select className={`${inp} !w-auto`} value={s.framing} onChange={(e) => patchShot(i, j, { framing: e.target.value })}>
+                                        {["close", "medium", "wide"].map((f) => <option key={f} value={f}>{f}</option>)}
+                                      </select>
+                                    </label>
+                                    <label className="flex items-center gap-1">camera
+                                      <select className={`${inp} !w-auto`} value={s.camera} onChange={(e) => patchShot(i, j, { camera: e.target.value })}>
+                                        {H3_CAMERAS.map((cm) => <option key={cm} value={cm}>{cm}</option>)}
+                                      </select>
+                                    </label>
+                                    <label className="flex items-center gap-1" title="the singer performs the lyrics on camera in this shot (forces single-kind + close/medium)">
+                                      <input type="checkbox" checked={s.lipsync} onChange={(e) => patchShot(i, j, { lipsync: e.target.checked })} /> lip-sync
+                                    </label>
+                                    <span className="flex-1" />
+                                    <span title="named cast in this shot (from the script; edit via rewrite)">{s.characters.join(", ") || "no cast"}</span>
+                                  </div>
+                                  <label className="block text-[9px] text-[var(--color-muted)]">scene (environment - also drives the env still)
+                                    <textarea className={inp} rows={2} value={s.scene} onChange={(e) => patchShot(i, j, { scene: e.target.value })} />
+                                  </label>
+                                  <label className="block text-[9px] text-[var(--color-muted)]">action (ONE continuous motion at real-world speed)
+                                    <textarea className={inp} rows={2} value={s.action} onChange={(e) => patchShot(i, j, { action: e.target.value })} />
+                                  </label>
+                                </div>
+                              ))}
+                              <div className="flex items-center gap-2">
+                                <PrimaryButton onClick={() => recompile(i)} disabled={recompiling || busy}>
+                                  {recompiling ? "recompiling…" : "Recompile prompt"}
+                                </PrimaryButton>
+                                <span className="text-[9px] text-[var(--color-muted)]">
+                                  recompiling re-applies the enforced rules (pace anchors, sky-pin, subject-swap, framing){seg.handEdited ? " and REPLACES your raw edit" : ""}
+                                </span>
+                                <span className="flex-1" />
+                                <GhostButton onClick={() => setShowRaw(!showRaw)}>{showRaw ? "hide raw prompt" : "raw prompt"}</GhostButton>
+                              </div>
+                              {showRaw && (
+                                <div className="space-y-1">
+                                  <textarea className={`${inp} font-mono`} rows={14} value={seg.prompt}
+                                    onChange={(e) => patchSeg(i, { prompt: e.target.value, handEdited: true })} />
+                                  <p className="text-[9px] text-[var(--color-muted)]">
+                                    {seg.handEdited
+                                      ? "⚠ hand-edited - this exact text renders; Recompile discards it. Keep the six-section format and the <Picture/Subject/Audio N> tags."
+                                      : "the compiled prompt - edit it directly for full control (renders verbatim)"}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>);
                   })}
                 </tbody>
               </table>
