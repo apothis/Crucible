@@ -925,7 +925,10 @@ def parse_h3_segments(text, segments):
         if lipsync_any or len(seg["cuts"]) == 1:
             kind = "single"
         if kind == "single":
-            shots = shots[:1]
+            # keep the SINGING shot when a scene collapsed because of hidden lip-sync -
+            # shots[:1] would keep whatever cut happened to be first instead
+            keep = next((s for s in shots if s["lipsync"]), shots[0])
+            shots = [keep]
             # one shot spans the WHOLE segment - collapse the merged windows so the compiled
             # duration anchor and any timestamps cover the full render, not just the first cut
             seg["cuts"] = [{"start": seg["start"], "end": seg["end"]}]
