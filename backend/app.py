@@ -1965,7 +1965,12 @@ def mv_h3_script(body: dict):
         if not segs:
             raise ValueError("audio analysis returned no segments")
         total = max((float(s.get("end") or 0) for s in segs), default=0.0)
-        grid = musicvideo_mod.build_shot_grid(segs, a.get("downbeats") or [], total)
+        # H3-tuned grid: ~4.8s windows (vs the LTX default 7s). With 7s windows NO pair fits
+        # inside the measured 10.5s segment ceiling, so every segment degenerates to a single
+        # window and the writer never gets to choose "scene" - the hybrid collapses (observed on
+        # the first real script: 35/35 singles). ~4.8s windows let two-cut scenes (~9.6s) merge.
+        grid = musicvideo_mod.build_shot_grid(segs, a.get("downbeats") or [], total,
+                                              target=4.8, min_shot=2.8)
     except HTTPException:
         raise
     except Exception as e:
