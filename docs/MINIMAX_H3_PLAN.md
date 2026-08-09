@@ -520,6 +520,28 @@ thing per render, hold the seed and the shot fixed, and carry unchanged sentence
   separate refs; whether the person-free background rule can be dropped (declare the background
   as its own `<Subject>`); `ref_audio_0` voice-timbre lip-sync; `match` vs `max` identity.
 
+#### Phase 2: COMPLETE 2026-08-09 - user verdict on the ref2v lane vs MSR
+User, after watching the lip-sync drafts: **"looks really good, much better than msr on non
+closeups, and equal to it on more close shots."** With that, every capability the MV spine needs
+is verified on the reference lane: identity (Sheet D), environment retention, staged backgrounds
+with people (subject-swap), camera direction, pace control, and sung performance against the
+real track. Remaining before LTX/MSR retires: Phase 3 (prompt compiler), Phase 4 (shot model,
+user decision), Phase 5 (wire the UI + retire).
+
+#### ref_audio lip-sync test - PASS 2026-08-09 (all [V])
+- Setup: Sheet D + hall bg (subject-swap) + `<Audio 1>` = a 10s window (80-90s) of the final
+  "Where the Tides Remember" master via ref_audio_ids {id, start, seconds}; retention declared
+  `fully_preserved - the target video's soundtrack IS <Audio 1>` (the node's "direct audio
+  reuse" role). 2 turbo drafts at 243 frames (library 3ae5679e / 43dd6d0f).
+- **The rendered soundtrack IS the song: envelope r = 0.978 / 0.976 vs the real window, at
+  0.00s lag.** The lip animation is therefore generated against the real song timeline =>
+  assembly is master-underneath-at-zero-offset; no separate S2V/InfiniteTalk stage, no offset
+  hunting. Identity + subject-swap held in both drafts.
+- Cost note: 10s + 2 image refs + 1 audio ref = ~13 min/draft on turbo (~90s/step at 736p),
+  vs ~4 min for the 5s 2-ref drafts. Lip-sync shots are the expensive lane; budget accordingly.
+- Framing adherence: draft 1 obeyed "medium close-up"; draft 2 rendered wider than asked -
+  framing language needs reinforcement in the Phase 3 compiler (or a hunt-then-pick on framing).
+
 #### Phase 2 identity tests - BOTH PASS 2026-08-09 (all [V])
 - **Test A (Sheet D + person-free chapel bg, ref2v hunt of 2, turbo 736p):** identity held in
   both drafts (Sheet D face/hair/gown), and the environment ref was reconstructed SHARP from a
