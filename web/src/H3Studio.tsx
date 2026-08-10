@@ -444,7 +444,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       result: !!eseg.clipId,
     };
     const stageLabel: Record<string, string> = {
-      shots: "Shots", prompt: "Prompt", env: "Environment", video: "Video", result: "Result",
+      // "& cast" because the editor opens on the first INCOMPLETE stage, so the per-shot cast
+      // controls are usually a click away and were not findable when this just said "Shots"
+      shots: "Shots & cast", prompt: "Prompt", env: "Environment", video: "Video", result: "Result",
     };
     return (
       <div className="se-root">
