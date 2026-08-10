@@ -753,6 +753,49 @@ def build_h3_segments(grid):
     return segs
 
 
+H3_MIN_CUT_S = 1.5       # a cut shorter than this is not a usable shot, so never create one
+H3_CUT_SNAP_S = 0.6      # a handover this close to an existing boundary is already aligned
+
+
+def split_cuts_at_voice_handovers(segments, song):
+    """Add a cut boundary wherever the singing VOICE changes inside a segment.
+
+    The grid's cuts come from downbeat windows, which know nothing about who is singing: on a real
+    song the female-to-male handover landed 2.9s after segment 5's only internal cut, so the singer
+    on camera changed ~3s before the voice did. A boundary at the handover lets each cut sit inside
+    ONE voice window, which is what makes per-cut casting correct.
+
+    Only timestamps are touched - the segment's own start/end, render_seconds and frame count are
+    untouched, so the frames%17==5 grid is unaffected. Splits are skipped when they would make a cut
+    shorter than H3_MIN_CUT_S, when the boundary already exists (within H3_CUT_SNAP_S), or when the
+    segment already carries the 4 cuts the writer schema allows. A segment that gains a split is
+    marked `voice_split` so it cannot later collapse to a single shot spanning both voices."""
+    wins = _voice_windows(song, segments)
+    if not wins:
+        return []
+    times = sorted({round(w[k], 3) for w in wins for k in ("start", "end")})
+    notes = []
+    for seg in segments:
+        for ht in times:
+            cuts = seg.get("cuts") or []
+            if len(cuts) >= 4:
+                break
+            if not (seg["start"] + H3_MIN_CUT_S <= ht <= seg["end"] - H3_MIN_CUT_S):
+                continue
+            if any(abs(ht - c["start"]) <= H3_CUT_SNAP_S or abs(ht - c["end"]) <= H3_CUT_SNAP_S for c in cuts):
+                continue
+            for idx, c in enumerate(cuts):
+                if c["start"] + H3_MIN_CUT_S <= ht <= c["end"] - H3_MIN_CUT_S:
+                    seg["cuts"] = (cuts[:idx] + [{"start": c["start"], "end": ht},
+                                                 {"start": ht, "end": c["end"]}] + cuts[idx + 1:])
+                    seg["voice_split"] = True
+                    notes.append(f"segment at {seg['start']:.1f}s: cut added at {ht:.1f}s "
+                                 f"({_voice_at(wins, c['start'], ht) or 'none'} -> "
+                                 f"{_voice_at(wins, ht, c['end']) or 'none'})")
+                    break
+    return notes
+
+
 def build_h3_grid_prompt(song, cast, segments, grid=None):
     """Writer prompt for the hybrid model: per SEGMENT the LLM chooses "single" or "scene" and fills
     creative content only (timing is fixed by the segment windows; scene cut times come from the
@@ -766,11 +809,25 @@ def build_h3_grid_prompt(song, cast, segments, grid=None):
     named = [c for c in cast if c.get("name")]
     cast_txt = _fmt_cast(named) if named else "  (no fixed cast - lean scenic/atmospheric)"
 
+    wins_all = _voice_windows(song, grid or segments)
+
     def _win(i, g):
         cuts = ""
         if len(g["cuts"]) > 1:
             cuts = "  internal cuts at " + ", ".join(f"{c['start']:.2f}s" for c in g["cuts"][1:])
-        return f"  Segment {i + 1}: [{g['start']:.2f}-{g['end']:.2f}s] ({g['section']}){cuts}"
+        # spell out the handover: this segment's cut is ALREADY placed on it, and the writer has to
+        # cast each side to the voice singing there
+        hand = ""
+        if g.get("voice_split"):
+            for c in g["cuts"][1:]:
+                a = _voice_at(wins_all, g["start"], c["start"])
+                b = _voice_at(wins_all, c["start"], g["end"])
+                if a != b:
+                    hand = (f"  <<< THE VOICE CHANGES at {c['start']:.2f}s: {a or 'instrumental'} before, "
+                            f"{b or 'instrumental'} after. Cast each cut to the voice singing in it; "
+                            f"this segment must be a \"scene\", never one shot.")
+                    break
+        return f"  Segment {i + 1}: [{g['start']:.2f}-{g['end']:.2f}s] ({g['section']}){cuts}{hand}"
     windows = "\n".join(_win(i, g) for i, g in enumerate(segments))
 
     system = ("You are a music video director working with the MiniMax H3 video model. The video is "
@@ -985,6 +1042,10 @@ def parse_h3_segments(text, segments):
         # segment is structurally single.
         if len(seg["cuts"]) == 1:
             kind = "single"
+        # a segment split at a vocal handover CANNOT be one shot: a single shot spanning the
+        # boundary would have one person mouthing both voices
+        elif seg.get("voice_split"):
+            kind = "scene"
         if kind == "single":
             # keep the SINGING shot if the writer supplied several for a one-cut window
             keep = next((s for s in shots if s["lipsync"]), shots[0])
@@ -1451,6 +1512,8 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
     discarding the whole video. Continuity is preserved by telling each batch what came before
     (locations already established + the previous segment's last shot)."""
     segments = build_h3_segments(grid)
+    # before writing: put a cut boundary on every vocal handover, so no shot straddles two voices
+    split_cuts_at_voice_handovers(segments, song)
     done, established = [], []
     for start in range(0, len(segments), max(1, batch)):
         chunk = segments[start:start + max(1, batch)]
