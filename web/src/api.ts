@@ -80,6 +80,7 @@ export const api = {
   mvH3Script: (body: unknown) => jpost("/api/mv/h3_script", body),
   mvH3Compile: (body: unknown) => jpost("/api/mv/h3_compile", body),
   mvH3VoiceFix: (body: unknown) => jpost("/api/mv/h3_voicefix", body),
+  mvH3VoiceMap: (body: unknown) => jpost("/api/mv/h3_voicemap", body),
   videoH3Ref2V: (body: unknown) => jpost("/api/video/h3_ref2v", body),
   restyle: (fd: FormData) => jform("/api/restyle", fd),
   cover: (fd: FormData) => jform("/api/cover", fd),

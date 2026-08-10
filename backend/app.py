@@ -2051,6 +2051,19 @@ def mv_h3_compile(body: dict):
             "voice_fixes": voice_fixes}
 
 
+@app.post("/api/mv/h3_voicemap")
+def mv_h3_voicemap(body: dict):
+    """Where each VOICE sings, on the real audio timeline - what the per-segment timeline strip in
+    the editor draws so boundaries can be checked and nudged by ear.
+    Body: {song, section_grid?}. Returns {windows:[{start,end,voice}], anchors:[[nominal,real]]}."""
+    song = body.get("song") or {}
+    grid = body.get("section_grid") or None
+    if not song.get("sections"):
+        raise HTTPException(400, "the song's sections (with their style markers) are required")
+    return {"windows": musicvideo_mod._voice_windows(song, grid),
+            "anchors": musicvideo_mod._time_anchors(song, grid) if grid else []}
+
+
 @app.post("/api/mv/h3_voicefix")
 def mv_h3_voicefix(body: dict):
     """Recast every lip-sync shot in an EXISTING script to the voice its song section calls for,

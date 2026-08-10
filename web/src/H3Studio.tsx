@@ -4,6 +4,7 @@ import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } fro
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
 import { type Character } from "./mvmodel";
+import { H3SegTimeline, type VoiceWin } from "./H3SegTimeline";
 
 // ============================================================================
 // MiniMax H3 segment pipeline (Phase 5 - docs/MINIMAX_H3_PLAN.md).
@@ -105,6 +106,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   // throw away renders you have already paid for
   const [drafts, setDrafts] = d.use<Record<number, { jobId: string; seed: number }[]>>("h3drafts", {});
   const [jobState, setJobState] = useState<Record<string, { pct: number; url?: string; err?: string }>>({});
+  // where each voice sings, on the REAL audio timeline - drawn under the segment editor's timeline
+  const [voiceWins, setVoiceWins] = useState<VoiceWin[]>([]);
   const [editIdx, setEditIdx] = useState(-1);        // segment open in the full editor
   const [estep, setEstep] = useState("shots");       // which editor stage is showing
   const [huntN, setHuntN] = useState(2);
@@ -408,12 +411,24 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     finally { setRecompiling(false); }
   }
 
+  // the voice map is per SONG, so fetch it when a segment is opened rather than per render
+  async function loadVoiceMap() {
+    if (!songPayload || !segments.length) { setVoiceWins([]); return; }
+    try {
+      const r = await api.mvH3VoiceMap({ song: songPayload,
+        section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
+        { windows: VoiceWin[] };
+      setVoiceWins(r.windows || []);
+    } catch { setVoiceWins([]); }
+  }
+
   // open a segment in the editor at its first INCOMPLETE stage (the old editor's auto-advance):
   // no scene text yet -> Shots; no background -> Environment; no clip -> Video; else the Result.
   function openSeg(i: number) {
     if (i < 0 || i >= segments.length) return;
     const s = segments[i];
     setEditIdx(i);
+    void loadVoiceMap();
     setEstep(!s.shots.every((x) => x.scene && x.action) ? "shots"
       : !segLocs(s).every((l) => !!envOf(s, l)) ? "env"
       : !s.clipId ? "video" : "result");
@@ -505,6 +520,14 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                     : "One continuous shot spanning the whole segment."} The "scene" text is what renders the environment still; "action" is the motion inside it.
                 </p>
               </div>
+              {/* hear the segment and check the boundaries by ear: every cut time and voice handover
+                  here is inferred, and a drag lands the cut on what you actually hear */}
+              <H3SegTimeline
+                url={library.find((x) => x.id === audioId)?.media_url || undefined}
+                start={eseg.start} end={eseg.end} cuts={eseg.cuts} voices={voiceWins}
+                labels={eseg.shots.map((s) => (s.characters.join(" + ") || "no cast") + (s.lipsync ? " ♪" : ""))}
+                onCutsChange={(c) => patchSeg(i, { cuts: c })}
+                onCommit={() => recompile(i)} />
               {eseg.shots.map((s, j) => (
                 <div key={j} className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-line)] p-2">
                   <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-muted)]">
