@@ -730,12 +730,17 @@ H3_MAX_PEOPLE = 4
 #     the center microphone / plays <Subject 5> on the left / ..."). So the working fix is the
 #     station assignment + uniqueness restrictions compile_h3_prompt now emits, and 4 covers the
 #     full band without changing content. Beyond it, extras become the text-only background band.
-H3_MAX_REFS = 8          # reference pictures per render. The heaviest render VERIFIED clean is 7
-#   pictures + audio at 10s (the band-instruments test, 2026-08-09); 15.08s at 5 pictures collapsed
-#   from the tail, so reference load is a real budget, not a formality. 8 = one step past verified,
-#   which the first full-band script needed (4 people + outfit + 2 instruments + 2 locations = 9).
-#   Over the cap, compile_h3_prompt sheds PROP pictures first (the instrument stays in the text, so
-#   it is described but not identity-locked), then the second environment. Characters are never shed.
+H3_MAX_REFS = 9
+#   Reference pictures per render. NINE is MiniMax's documented input cap for ref_images (checked
+#   2026-08-10), so this is the model's own ceiling rather than a guess. It was 8 - one past our
+#   verified-clean 7 - and that cost us: segment 8's band shot lost the BASS picture to shedding,
+#   leaving the bassist with no instrument while the guitarist held the only one, and H3 duly mixed
+#   the two women up and put Selene's outfit on the guitarist [OBSERVED 2026-08-10]. A full band shot
+#   needs exactly 9 (4 people + outfit + 2 instruments + 2 locations), and instruments are a big part
+#   of what tells the players apart, so shedding them is worse than carrying the ninth picture.
+#   Over the cap, compile_h3_prompt still sheds PROP pictures first (the instrument stays described
+#   in text, and the station line names it), then the second environment. Characters are never shed.
+#   Load is still real: 15.08s at 5 pictures collapsed from the tail, hence H3_SEG_MAX_S.
 
 
 def h3_seg_seconds(dur):
@@ -1328,21 +1333,45 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         here = [n for n in s["characters"] if n in chars]
         if len(here) < 2:
             return ""
-        sides = ["on the left", "on the right", "at the back"]
-        players = [n for n in here if n in prop_pic]
-        centers = [n for n in here if n not in prop_pic]
-        parts = []
-        for k, n in enumerate(centers):
-            if k == 0:
-                parts.append(f"{_stag(n)} " + ("sings at the center microphone" if s["lipsync"]
-                                               else "stands at the center of the frame"))
+        # EVERY person gets a DISTINCT place. Two people sharing "is beside them" is how segment 8
+        # failed: an unplaced man next to an unplaced woman, so H3 chose for itself and merged them.
+        spots = ["at the center of the frame", "on the left", "on the right",
+                 "at the back on the left", "at the back on the right", "furthest back"]
+        # the singer takes the mic; players next (their instrument is what tells them apart), then
+        # anyone else, each on their own spot
+        # centre belongs to the VOCALIST, lip-syncing in this cut or not: a band shot that puts the
+        # guitarist centre and the lead singer off to one side reads as the wrong band (segment 8).
+        singer = None
+        if s["lipsync"]:
+            singer = here[0]
+        else:
+            singer = next((n for n in here if "singer" in str(by_name[n].get("role") or "").lower()
+                           and n not in prop_pic), None)
+        rest = [n for n in here if n != singer]
+        rest.sort(key=lambda n: (0 if (n in prop_pic or (by_name[n].get("prop") or {}).get("desc")) else 1,
+                                 here.index(n)))
+        parts, si = [], 0
+        if singer:
+            parts.append(f"{_stag(singer)} " + ("sings at the center microphone" if s["lipsync"]
+                                                else "stands at the center microphone"))
+            si = 1
+        for n in rest:
+            spot = spots[min(si, len(spots) - 1)]
+            si += 1
+            pr = by_name[n].get("prop") or {}
+            if n in prop_pic:
+                parts.append(f"{_stag(n)} plays <Subject {prop_pic[n]}> {spot}")
+            elif pr.get("desc") or pr.get("name"):
+                # picture shed by the reference budget - still say WHICH instrument, so the person
+                # is identified by what they hold rather than left interchangeable
+                what = (pr.get("name") or "instrument").lower()
+                parts.append(f"{_stag(n)} plays {'their ' + what if what else 'an instrument'} {spot}")
             else:
-                parts.append(f"{_stag(n)} is beside them")
-        for k, n in enumerate(players):
-            parts.append(f"{_stag(n)} plays <Subject {prop_pic[n]}> {sides[min(k, 2)]}")
+                parts.append(f"{_stag(n)} stands {spot}")
         return (" In this shot " + ", ".join(parts) +
-                ". Each of them appears exactly once as their own subject: no one is duplicated, "
-                "and no outfit or instrument moves to another person.")
+                ". Each of them appears exactly once as their own subject, in that one place: no one "
+                "is duplicated, no face is reused for another person, and no outfit or instrument "
+                "moves to anyone else.")
 
     arrangement = _stations(first).replace(" In this shot ", " In the opening shot ", 1)
     summary = (f"{mode_tag} The target video shows {who} inside <Subject {env_pic}>{sings}, "
