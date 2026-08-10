@@ -42,6 +42,22 @@ const H3_STAGES = ["shots", "prompt", "env", "video", "result"];
 // react-hooks purity rule, and these are fire-a-render callbacks, not render-time values
 const randSeed = () => Math.floor(Math.random() * 2_000_000_000);
 
+// Recasting a shot has to carry the PRONOUNS with the name, or the text says "Selene sings as he
+// grips the rail" and the render gets a contradictory gender cue (the backend does the same for
+// voice-matched casting). "her" is both object and possessive: followed by a word it is possessive
+// ("her face" -> "his face"), otherwise object ("toward her" -> "him").
+const PRONOUNS: Record<string, [RegExp, string][]> = {
+  "male>female": [[/\bhimself\b/gi, "herself"], [/\bhis\b/gi, "her"], [/\bhim\b/gi, "her"], [/\bhe\b/gi, "she"]],
+  "female>male": [[/\bherself\b/gi, "himself"], [/\bhers\b/gi, "his"],
+    [/\bher\b(?=\s+[a-z])/gi, "his"], [/\bher\b/gi, "him"], [/\bshe\b/gi, "he"]],
+};
+function swapPronouns(text: string, from: string, to: string) {
+  const rules = PRONOUNS[`${from}>${to}`];
+  if (!rules) return text;                          // same gender, or a gender we do not know
+  return rules.reduce((t, [re, rep]) =>
+    t.replace(re, (m) => (m[0] === m[0].toUpperCase() ? rep[0].toUpperCase() + rep.slice(1) : rep)), text);
+}
+
 function VideoTile({ src }: { src: string }) {
   return <video src={src} muted loop autoPlay playsInline controls preload="auto" className="h-full w-full object-contain" />;
 }
@@ -325,25 +341,37 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     finally { setGenning(""); }
   }
 
-  // Toggle a cast member in/out of one shot. Clicking an unselected chip ADDS them. Removing a
-  // character who is named in the prose, with exactly one other character left in the shot,
-  // treats it as a 1-for-1 swap and renames them in the action/scene text - so "add Selene,
-  // remove Bob" turns "Bob climbs the steps" into "Selene climbs the steps". Any other toggle
-  // leaves the prose alone; recompile picks the cast change up either way.
-  function toggleShotChar(i: number, j: number, name: string) {
+  // ---- per-shot cast editing. The shot's OWN cast is listed as named rows (a dropdown per
+  // person, so picking another name is a 1-for-1 swap in place); everyone else is only reachable
+  // through the "+ add" picker. An earlier version showed every cast member as a chip with the
+  // ones in the shot merely highlighted, which read as "the video's cast" instead of this shot's.
+  // A swap renames the person in the action/scene prose too - "Bob climbs the steps" has to become
+  // "Selene climbs the steps", or the text contradicts the reference picture. ----
+  function swapShotChar(i: number, j: number, from: string, to: string) {
     const s = segments[i].shots[j];
-    if (!s.characters.includes(name)) {
-      patchShot(i, j, { characters: [...s.characters, name] });
-      return;
-    }
-    const left = s.characters.filter((n) => n !== name);
-    const p: Partial<H3Shot> = { characters: left };
-    if (left.length === 1) {
-      const swap = (t: string) => t.split(name).join(left[0]);
-      if (s.action.includes(name)) p.action = swap(s.action);
-      if (s.scene.includes(name)) p.scene = swap(s.scene);
-    }
+    if (!to || from === to) return;
+    const chars = s.characters.map((n) => (n === from ? to : n));
+    const p: Partial<H3Shot> = { characters: chars.filter((n, k) => chars.indexOf(n) === k) };
+    // pronouns only when this is the shot's only character - otherwise a "she" may be someone else
+    const solo = s.characters.length === 1;
+    const gOf = (n: string) => (h3cast.find((c) => c.name === n)?.gender || "").toLowerCase();
+    const rewrite = (t: string) => {
+      let out = t.split(from).join(to);
+      if (solo) out = swapPronouns(out, gOf(from), gOf(to));
+      return out;
+    };
+    if (s.action.includes(from) || solo) p.action = rewrite(s.action);
+    if (s.scene.includes(from) || solo) p.scene = rewrite(s.scene);
     patchShot(i, j, p);
+  }
+  function addShotChar(i: number, j: number, name: string) {
+    const s = segments[i].shots[j];
+    if (!name || s.characters.includes(name)) return;
+    patchShot(i, j, { characters: [...s.characters, name] });
+  }
+  function removeShotChar(i: number, j: number, name: string) {
+    const s = segments[i].shots[j];
+    patchShot(i, j, { characters: s.characters.filter((n) => n !== name) });
   }
 
   // Recast every lip-sync shot to the voice its song section calls for, across the whole existing
@@ -478,19 +506,34 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                     <label className="flex items-center gap-1" title="the singer performs the lyric on camera; recompiling attaches the song window as <Audio 1> and forces close/medium">
                       <input type="checkbox" checked={s.lipsync} onChange={(e) => patchShot(i, j, { lipsync: e.target.checked })} /> lip-sync
                     </label>
-                    <span className="flex-1" />
-                    <span className="text-[9px] uppercase tracking-wide">cast:</span>
-                    {h3cast.map((c) => (
-                      <button key={c.id} onClick={() => toggleShotChar(i, j, c.name)}
-                        title={s.characters.includes(c.name)
-                          ? `remove ${c.name} from this shot (if exactly one other remains, ${c.name} is also renamed to them in the text)`
-                          : `add ${c.name} to this shot`}
-                        className={`rounded-full border px-2 py-0.5 text-[9px] ${s.characters.includes(c.name)
-                          ? "border-[var(--color-accent2)] bg-[#3a2a14] text-[var(--color-accent2)]"
-                          : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
-                        {c.name}
-                      </button>
+                  </div>
+                  {/* who is IN this shot - one row per person, the dropdown swaps them for someone else */}
+                  <div className="flex flex-wrap items-center gap-2 rounded border border-dashed border-[var(--color-line)] px-2 py-1.5">
+                    <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)]">in this shot</span>
+                    {s.characters.length === 0 && (
+                      <span className="text-[10px] text-[var(--color-muted)]">nobody (scenic / b-roll)</span>
+                    )}
+                    {s.characters.map((n) => (
+                      <span key={n} className="flex items-center gap-1 rounded-full border border-[var(--color-accent2)] bg-[#3a2a14] pl-1 pr-0.5 py-0.5">
+                        <select className="bg-transparent text-[10px] text-[var(--color-accent2)] outline-none"
+                          value={n} onChange={(e) => swapShotChar(i, j, n, e.target.value)}
+                          title={`swap ${n} for someone else in this shot (renames them in the text too)`}>
+                          {h3cast.filter((c) => c.name === n || !s.characters.includes(c.name))
+                            .map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                        <button onClick={() => removeShotChar(i, j, n)} title={`take ${n} out of this shot`}
+                          className="px-1 text-[10px] text-[var(--color-accent2)] hover:text-red-400">×</button>
+                      </span>
                     ))}
+                    {h3cast.some((c) => !s.characters.includes(c.name)) && (
+                      <select className={`${inp} !w-auto !text-[10px]`} value=""
+                        onChange={(e) => addShotChar(i, j, e.target.value)}
+                        title="put another character in this shot as well">
+                        <option value="">+ add</option>
+                        {h3cast.filter((c) => !s.characters.includes(c.name))
+                          .map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                    )}
                   </div>
                   <Field label="Location (shared name — one environment still per name, everywhere it appears)">
                     <input className={inp} value={s.location || ""} onChange={(e) => patchShot(i, j, { location: e.target.value })} />
