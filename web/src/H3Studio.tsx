@@ -222,8 +222,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
 
   // ---- job tracking for the editor's candidate tiles. A still's media is /api/media/<job_id>, so
   // all the tile needs is "is it done yet"; the poll stops itself on done/error. ----
-  function track(jobId: string) {
-    if (jobState[jobId]?.url) return;
+  function track(jobId: string, onSettle?: (ok: boolean) => void) {
+    if (jobState[jobId]?.url) { onSettle?.(true); return; }
     setJobState((s) => ({ ...s, [jobId]: { pct: s[jobId]?.pct ?? 2 } }));
     const t = window.setInterval(async () => {
       const j = await api.job(jobId).catch(() => null);
@@ -231,9 +231,11 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       if (j.status === "done" && j.media_url) {
         window.clearInterval(t);
         setJobState((s) => ({ ...s, [jobId]: { pct: 100, url: j.media_url } }));
+        onSettle?.(true);
       } else if (j.status === "error" || j.status === "failed") {
         window.clearInterval(t);
         setJobState((s) => ({ ...s, [jobId]: { pct: 0, err: j.error || "render error" } }));
+        onSettle?.(false);
       } else {
         setJobState((s) => ({ ...s, [jobId]: { pct: j.max ? Math.round((100 * (j.progress || 0)) / j.max) : 5 } }));
       }
@@ -257,13 +259,26 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       for (let k = 0; k < n; k++) {
         const r = await api.videoStill(envRequest(scene, base + k)) as { job_id: string };
         made.push({ jobId: r.job_id, seed: base + k });
-        track(r.job_id);
       }
       const key = envKey(i, loc);
       setEnvCands((prev) => ({ ...(prev as Record<string, { jobId: string; seed: number }[]>),
         [key]: [...made, ...((prev as Record<string, { jobId: string; seed: number }[]>)[key] || [])].slice(0, 9) }));
-      ctx.setResults([{ id: rid(), title: `${n} "${locDisplay(seg, loc)}" candidates rendering`,
-        status: "running", pct: 5, err: "pick one when they land" }]);
+      // ONE card for the batch, driven to completion as the candidates settle. It must reach a
+      // terminal status: App.tsx derives `busy` from "is any result still running", so a card left
+      // running latches busy TRUE for the whole app and silently disables every render button -
+      // which is exactly how "Generate 3 more" became a dead click (2026-08-10).
+      const card = { id: rid(), title: `${n} "${locDisplay(seg, loc)}" candidates`, status: "running" as const, pct: 5 };
+      ctx.setResults([card]);
+      let settled = 0, ok = 0;
+      made.forEach((m) => track(m.jobId, (good) => {
+        settled += 1;
+        ok += good ? 1 : 0;
+        if (settled < made.length) { ctx.patch(card.id, { status: "running", pct: Math.round((100 * settled) / made.length) }); return; }
+        ctx.patch(card.id, ok
+          ? { status: "done", pct: 100, err: `${ok} of ${made.length} rendered - pick one` }
+          : { status: "error", pct: 0, err: "every candidate failed to render" });
+        ctx.onDone();
+      }));
     } catch (e) { ctx.setResults([{ id: rid(), title: "environment render failed", status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setGenning(""); }
   }
@@ -603,7 +618,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                       {!!loc && <span className="text-[10px] text-[var(--color-muted)]">used by {locUsedBy(loc)} segment(s)</span>}
                       <div className="flex-1" />
                       <PrimaryButton onClick={() => genEnvCands(i, loc, 3)} disabled={busy || !!genning}>
-                        {genning === `cand:${i}:${loc}` ? "Submitting…" : cands.length ? "Generate 3 more" : "Generate 3 backgrounds"}
+                        {genning === `cand:${i}:${loc}` ? "Submitting…"
+                          : busy ? "waiting for the current render…"
+                            : cands.length ? "Generate 3 more" : "Generate 3 backgrounds"}
                       </PrimaryButton>
                       <GhostButton onClick={() => genEnvCands(i, loc, 1)} disabled={busy || !!genning}>+1</GhostButton>
                     </div>

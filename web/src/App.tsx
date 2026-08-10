@@ -192,7 +192,7 @@ function AppInner() {
           </div>
           {results.length > 0 && (
             <div className="mt-6 border-t border-[var(--color-line)] pt-5">
-              <Workspace results={results} />
+              <Workspace results={results} onDismiss={(id) => setResults((rs) => rs.filter((r) => r.id !== id))} />
             </div>
           )}
         </section>
@@ -363,7 +363,7 @@ function HowItWorks({ goTo }: { goTo: (m: string) => void }) {
   );
 }
 
-function Workspace({ results }: { results: Result[] }) {
+function Workspace({ results, onDismiss }: { results: Result[]; onDismiss: (id: string) => void }) {
   if (results.length === 0) {
     return (
       <div className="flex h-full flex-col">
@@ -379,18 +379,24 @@ function Workspace({ results }: { results: Result[] }) {
         Workspace {grid && <span className="text-[var(--color-muted)]">· {results.length} takes — audition & compare</span>}
       </h2>
       <div className={grid ? "grid grid-cols-1 gap-3 xl:grid-cols-2" : ""}>
-        {results.map((r) => <ResultCard key={r.id} r={r} />)}
+        {results.map((r) => <ResultCard key={r.id} r={r} onDismiss={onDismiss} />)}
       </div>
     </div>
   );
 }
 
-function ResultCard({ r }: { r: Result }) {
+function ResultCard({ r, onDismiss }: { r: Result; onDismiss?: (id: string) => void }) {
   return (
     <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-4">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-[var(--color-accent2)]">{r.title}</span>
         <span className="text-[10px] text-[var(--color-muted)]">{r.status}</span>
+        {/* escape hatch: `busy` is "is any card still running", so a card that never resolves
+            disables every render button app-wide until a reload. Dismissing it releases that. */}
+        {onDismiss && (
+          <button onClick={() => onDismiss(r.id)} title="dismiss this card (a stuck card keeps the render buttons disabled)"
+            className="text-[11px] leading-none text-[var(--color-muted)] hover:text-red-400">×</button>
+        )}
       </div>
       {r.status === "done" && r.url && r.media === "image" ? (
         <img src={r.url} alt="" onClick={() => openLightbox(r.url!)} title="Click to enlarge" className="w-full cursor-zoom-in rounded-lg" />
