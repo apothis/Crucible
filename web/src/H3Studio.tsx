@@ -325,6 +325,27 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     finally { setGenning(""); }
   }
 
+  // Toggle a cast member in/out of one shot. Clicking an unselected chip ADDS them. Removing a
+  // character who is named in the prose, with exactly one other character left in the shot,
+  // treats it as a 1-for-1 swap and renames them in the action/scene text - so "add Selene,
+  // remove Bob" turns "Bob climbs the steps" into "Selene climbs the steps". Any other toggle
+  // leaves the prose alone; recompile picks the cast change up either way.
+  function toggleShotChar(i: number, j: number, name: string) {
+    const s = segments[i].shots[j];
+    if (!s.characters.includes(name)) {
+      patchShot(i, j, { characters: [...s.characters, name] });
+      return;
+    }
+    const left = s.characters.filter((n) => n !== name);
+    const p: Partial<H3Shot> = { characters: left };
+    if (left.length === 1) {
+      const swap = (t: string) => t.split(name).join(left[0]);
+      if (s.action.includes(name)) p.action = swap(s.action);
+      if (s.scene.includes(name)) p.scene = swap(s.scene);
+    }
+    patchShot(i, j, p);
+  }
+
   // Recast every lip-sync shot to the voice its song section calls for, across the whole existing
   // script, and recompile whatever changed. Deterministic and free - no writer run.
   async function fixVoices() {
@@ -458,7 +479,18 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                       <input type="checkbox" checked={s.lipsync} onChange={(e) => patchShot(i, j, { lipsync: e.target.checked })} /> lip-sync
                     </label>
                     <span className="flex-1" />
-                    <span title="named cast in this shot (set by the script writer)">{s.characters.join(", ") || "no cast"}</span>
+                    <span className="text-[9px] uppercase tracking-wide">cast:</span>
+                    {h3cast.map((c) => (
+                      <button key={c.id} onClick={() => toggleShotChar(i, j, c.name)}
+                        title={s.characters.includes(c.name)
+                          ? `remove ${c.name} from this shot (if exactly one other remains, ${c.name} is also renamed to them in the text)`
+                          : `add ${c.name} to this shot`}
+                        className={`rounded-full border px-2 py-0.5 text-[9px] ${s.characters.includes(c.name)
+                          ? "border-[var(--color-accent2)] bg-[#3a2a14] text-[var(--color-accent2)]"
+                          : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                        {c.name}
+                      </button>
+                    ))}
                   </div>
                   <Field label="Location (shared name — one environment still per name, everywhere it appears)">
                     <input className={inp} value={s.location || ""} onChange={(e) => patchShot(i, j, { location: e.target.value })} />
