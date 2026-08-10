@@ -558,9 +558,12 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
           <GhostButton onClick={() => setEditIdx(-1)}>{"← Segments"}</GhostButton>
           <div className="mt-3 mb-1 text-sm font-semibold text-[var(--color-ink)]">Segment {i + 1}</div>
           <div className="mb-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
-            {fmt(eseg.start)}–{fmt(eseg.end)} {"·"} {eseg.section}<br />
+            {eseg.start.toFixed(2)}–{eseg.end.toFixed(2)}s ({eseg.seconds.toFixed(2)}s) {"·"} {eseg.section}<br />
             {eseg.kind}{eseg.lipsync ? " ♪ lip-sync" : ""}{eseg.kind === "scene" ? ` ×${eseg.shots.length} cuts` : ""}<br />
-            renders {eseg.render_seconds}s / {eseg.frames}f
+            <span title={`H3 renders on its frame grid (frames%17==5), so the render is snapped UP from the ${eseg.seconds.toFixed(2)}s window and the tail past ${eseg.end.toFixed(2)}s is trimmed at assembly - judge drafts on the window, not the tail`}>
+              renders {eseg.render_seconds}s / {eseg.frames}f
+              {eseg.render_seconds - eseg.seconds > 0.05 ? ` (trimmed to ${eseg.seconds.toFixed(2)}s)` : ""}
+            </span>
           </div>
           <div className="se-rail">
             {H3_STAGES.map((s) => (
