@@ -2111,6 +2111,51 @@ def mv_h3_recompile(body: dict):
     return {"segments": segs, "changed": changed, "skipped": skipped, "voice_fixes": voice_fixes}
 
 
+@app.post("/api/mv/h3_snap_edges")
+def mv_h3_snap_edges(body: dict):
+    """Move segment boundaries onto vocal handovers that sit too close to an edge to cut, and
+    recompile the segments whose window moved. This is the repair for "the singer changes half a
+    second before the segment ends": a third shot there would be under a second, so the boundary
+    moves instead and the neighbour absorbs the difference.
+
+    A moved window invalidates that segment's render, so its clipId is cleared (kept in
+    clipVariants, so the take is still reachable) rather than left pointing at a clip of the wrong
+    length. Body: {segments, cast, song, section_grid?}. Returns {segments, moved, recompiled}."""
+    segs = body.get("segments") or []
+    cast = body.get("cast") or []
+    song = body.get("song") or {}
+    if not segs:
+        raise HTTPException(400, "segments are required")
+    if not song.get("sections"):
+        raise HTTPException(400, "the song's sections are required - they say where the voice changes")
+    miss = _missing_cast(segs, cast)
+    if miss:
+        raise HTTPException(400, "not snapping: these characters are in the shots but missing from the "
+                                 f"cast payload - {', '.join(miss)}. The recompile that follows would "
+                                 "strip their identity references.")
+    # anchors come from the section labels, so take the grid BEFORE anything moves
+    grid = body.get("section_grid") or [{"start": s.get("start"), "end": s.get("end"),
+                                        "section": s.get("section")} for s in segs]
+    moved = musicvideo_mod.snap_segment_edges_to_handovers(segs, song, grid=grid)
+    recompiled = []
+    for i, seg in enumerate(segs, 1):
+        if not seg.pop("edge_snapped", False):
+            continue
+        if seg.get("clipId"):
+            seg["clipVariants"] = list(dict.fromkeys((seg.get("clipVariants") or []) + [seg["clipId"]]))
+            seg["clipId"] = None
+            seg["staleClip"] = True
+        try:
+            prompt, refs = musicvideo_mod.compile_h3_prompt(seg, cast, audio_ref=seg.get("lipsync"))
+        except Exception as e:
+            raise HTTPException(500, f"segment {i} failed to compile after snapping: {e}")
+        seg["prompt"] = prompt
+        seg["picture_map"], seg["outfit_map"] = refs["sheets"], refs["outfits"]
+        seg["prop_map"], seg["env_map"], seg["env_picture"] = refs["props"], refs["envs"], refs["env"]
+        recompiled.append(i)
+    return {"segments": segs, "moved": moved, "recompiled": recompiled}
+
+
 @app.post("/api/mv/h3_voicemap")
 def mv_h3_voicemap(body: dict):
     """Where each VOICE sings, on the real audio timeline - what the per-segment timeline strip in

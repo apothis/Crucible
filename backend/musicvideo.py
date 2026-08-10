@@ -714,6 +714,22 @@ H3_CAMERA_MOVES = {
 _H3_SKY_RE = re.compile(r"\b(sky|skies|cloud|clouds|stars?|starlit|moon|moonlit|milky way|sunset|"
                         r"sunrise|dawn|dusk|horizon|aurora|night sky)\b", re.I)
 _H3_STAGE_RE = re.compile(r"\bstage\b", re.I)
+H3_MAX_PEOPLE = 4
+#   Anchored PEOPLE per render - a safety valve, not a hard model limit. Provenance, checked
+#   2026-08-10 against docs + community usage rather than assumed:
+#   - MiniMax's own ref-prompt guide sets NO people limit (its worked example uses 4 subjects);
+#     the input caps are 9 ref images / 3 videos / 3 audios.
+#   - Community prompt collections show multi-person casts working (a family ensemble; a 7-member
+#     group), and their successful prompts carry explicit "no extra people, no duplicated
+#     characters" restrictions - duplication is a KNOWN failure mode countered in prompt text, not
+#     by capping the cast.
+#   - Our own data: 3 people verified clean once; identity merges observed AT 3 in both segment-5
+#     drafts (bassist rendered twice playing bass AND guitar; the guitarist duplicated in place of
+#     Selene wearing Selene's outfit - the close-up cut stayed clean both times). Those shots said
+#     only "the band plays together"; the verified-clean render STATIONED everyone ("sings lead at
+#     the center microphone / plays <Subject 5> on the left / ..."). So the working fix is the
+#     station assignment + uniqueness restrictions compile_h3_prompt now emits, and 4 covers the
+#     full band without changing content. Beyond it, extras become the text-only background band.
 H3_MAX_REFS = 8          # reference pictures per render. The heaviest render VERIFIED clean is 7
 #   pictures + audio at 10s (the band-instruments test, 2026-08-09); 15.08s at 5 pictures collapsed
 #   from the tail, so reference load is a real budget, not a formality. 8 = one step past verified,
@@ -755,6 +771,75 @@ def build_h3_segments(grid):
 
 H3_MIN_CUT_S = 1.5       # a cut shorter than this is not a usable shot, so never create one
 H3_CUT_SNAP_S = 0.6      # a handover this close to an existing boundary is already aligned
+
+
+def snap_segment_edges_to_handovers(segments, song, grid=None):
+    """Move a SEGMENT boundary onto a vocal handover that lands too close to it to cut.
+
+    A handover inside a segment normally gets its own cut. When it sits within H3_MIN_CUT_S of the
+    segment's own start or end, a cut there would be a sub-1.5s shot - so the segment edge itself
+    moves onto the handover and the neighbour absorbs the difference. That is what segment 5 needed:
+    the handover landed 0.37s before its end, leaving Selene lip-syncing over Bob's first words with
+    no room for a third shot. Renders are re-snapped (render_seconds/frames) for both segments, so
+    any clip already rendered for them is invalidated and must be re-rendered.
+
+    Returns notes describing every boundary moved."""
+    wins = _voice_windows(song, grid or segments)
+    if not wins or len(segments) < 2:
+        return []
+    times = sorted({round(w[k], 3) for w in wins for k in ("start", "end")})
+    notes = []
+
+    def resize(seg):
+        seg["seconds"] = round(seg["end"] - seg["start"], 2)
+        seg["render_seconds"], seg["frames"] = h3_seg_seconds(seg["seconds"])
+
+    # The neighbour absorbing the difference gets LONGER, and length is the one axis where H3 is
+    # known to fail (a 15.08s render collapsed from the tail; 10.1s is the longest verified clean).
+    # Frames come in steps of 17, so absorbing a fraction of a second can jump a whole step: allow
+    # at most one step past the measured ceiling, and say so in the note rather than drift silently.
+    grow_cap = H3_SEG_MAX_S + 17 / H3_SEG_FPS
+
+    def prospective(a, b):
+        return h3_seg_seconds(round(b - a, 2))[0]
+
+    for i, seg in enumerate(segments):
+        for ht in times:
+            # a handover just before this segment's END: hand the tail to the next segment
+            if (i + 1 < len(segments) and seg["end"] - H3_MIN_CUT_S < ht < seg["end"]
+                    and ht > seg["start"] + H3_MIN_CUT_S):
+                nxt = segments[i + 1]
+                rs = prospective(ht, nxt["end"])
+                if rs > grow_cap:
+                    continue                       # would push the neighbour past the render ceiling
+                over = f", segment {i + 2} now renders {rs:.2f}s (past the {H3_SEG_MAX_S}s measured ceiling)" \
+                       if rs > H3_SEG_MAX_S else ""
+                notes.append(f"segment {i + 1} end {seg['end']:.2f}s -> {ht:.2f}s (voice change){over}")
+                seg["end"] = ht
+                seg["cuts"][-1]["end"] = ht
+                nxt["start"] = ht
+                nxt["cuts"][0]["start"] = ht
+                seg["edge_snapped"] = nxt["edge_snapped"] = True
+                resize(seg)
+                resize(nxt)
+            # a handover just after this segment's START: hand the head to the previous segment
+            elif (i > 0 and seg["start"] < ht < seg["start"] + H3_MIN_CUT_S
+                    and ht < seg["end"] - H3_MIN_CUT_S):
+                prv = segments[i - 1]
+                rs = prospective(prv["start"], ht)
+                if rs > grow_cap:
+                    continue
+                over = f", segment {i} now renders {rs:.2f}s (past the {H3_SEG_MAX_S}s measured ceiling)" \
+                       if rs > H3_SEG_MAX_S else ""
+                notes.append(f"segment {i + 1} start {seg['start']:.2f}s -> {ht:.2f}s (voice change){over}")
+                seg["start"] = ht
+                seg["cuts"][0]["start"] = ht
+                prv["end"] = ht
+                prv["cuts"][-1]["end"] = ht
+                seg["edge_snapped"] = prv["edge_snapped"] = True
+                resize(seg)
+                resize(prv)
+    return notes
 
 
 def split_cuts_at_voice_handovers(segments, song):
@@ -1093,6 +1178,18 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         for n in s["characters"]:
             if n in by_name and n not in chars:
                 chars.append(n)
+    # PEOPLE CAP (see H3_MAX_PEOPLE): keep the singers first, then instrument holders, then order of
+    # appearance. Everyone dropped is still in the shot as the unresolved background band, so the
+    # frame stays full without giving H3 a fourth identity to confuse.
+    dropped_people = []
+    if len(chars) > H3_MAX_PEOPLE:
+        def _prio(n):
+            sings = any(sh["lipsync"] and n in sh["characters"] for sh in seg["shots"])
+            holds = bool((by_name[n].get("prop") or {}).get("still_id"))
+            return (0 if sings else 1, 0 if holds else 1, chars.index(n))
+        keep = set(sorted(chars, key=_prio)[:H3_MAX_PEOPLE])
+        dropped_people = [n for n in chars if n not in keep]
+        chars = [n for n in chars if n in keep]
     outfits = [n for n in chars if (by_name[n].get("costume") or {}).get("still_id")]
     outfit_pic = {n: len(chars) + 1 + i for i, n in enumerate(outfits)}
     # props (instruments/objects) follow the outfits in picture order - same verified mechanic
@@ -1125,6 +1222,22 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     env_pic = env_map[env_locs[0]]                    # the primary environment (first cut's)
     lead = chars[0] if chars else None
 
+    # PER-SHOT PRESENCE SCOPING (precaution): retention names the shots a person is in instead of
+    # claiming "throughout", and each shot says who is absent. NOTE the observed segment-5 failures
+    # were NOT in the close-up (it stayed clean both times) - they were identity merges INSIDE the
+    # multi-person wide shot; the fix for those is the STATION assignment below. This scoping just
+    # removes a standing contradiction (a subject declared preserved "throughout" a scene they are
+    # absent from for a cut).
+    def _shots_of(n):
+        return [k + 1 for k, sh in enumerate(seg["shots"]) if n in sh["characters"]]
+
+    def _when(n):
+        ks = _shots_of(n)
+        if len(seg["shots"]) == 1 or len(ks) == len(seg["shots"]):
+            return "throughout"
+        return "whenever they are on screen (only " + \
+               " and ".join(f"[Shot {k}]" for k in ks) + ")"
+
     defs, keeps = [], []
     for i, n in enumerate(chars):
         c = by_name[n]
@@ -1149,7 +1262,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                         f"{(co.get('desc') or 'the outfit').rstrip('. ')}. <Picture {op}> shows it "
                         f"on a headless dress form; only the garment is referenced.")
             keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face and hairstyle "
-                         f"remain exactly consistent with <Picture {i + 1}> throughout; the clothing "
+                         f"remain exactly consistent with <Picture {i + 1}> {_when(n)}; the clothing "
                          f"comes from <Picture {op}>, not from <Picture {i + 1}>.")
             keeps.append(f"<Subject {op}>: fully_preserved - the outfit's cut, color and fabric "
                          f"remain exactly consistent with <Picture {op}>, now worn by "
@@ -1161,7 +1274,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                         f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
                         f"preserve the face, hair and wardrobe exactly.{tp}")
             keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
-                         f"wardrobe remain exactly consistent with <Picture {i + 1}> throughout.")
+                         f"wardrobe remain exactly consistent with <Picture {i + 1}> {_when(n)}.")
     for n in props:
         pr = by_name[n]["prop"]
         pp = prop_pic[n]
@@ -1202,19 +1315,52 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     mode_tag = "[reference generation + audio reference]" if (audio_ref and lead) else "[reference generation]"
     sings = (f", singing <Audio 1> directly to the camera in a {first['framing']} framing, lips and "
              f"breathing synchronized to the vocal" if (audio_ref and lead) else "")
+    def _stag(n):
+        base_tag = f"<Subject {chars.index(n) + 1}>"
+        return f"{base_tag} wearing <Subject {outfit_pic[n]}>" if n in outfit_pic else base_tag
+
+    def _stations(s):
+        """Explicit per-person arrangement for a multi-person shot - the verified band render's key
+        ingredient. "The band plays together" left the layout to H3, which duplicated players and
+        moved an outfit between subjects (both segment-5 drafts, 2026-08-10); the one clean band
+        render instead stationed everyone: singer at the mic, each player with their instrument on
+        their own side, drummer behind. Same wording here."""
+        here = [n for n in s["characters"] if n in chars]
+        if len(here) < 2:
+            return ""
+        sides = ["on the left", "on the right", "at the back"]
+        players = [n for n in here if n in prop_pic]
+        centers = [n for n in here if n not in prop_pic]
+        parts = []
+        for k, n in enumerate(centers):
+            if k == 0:
+                parts.append(f"{_stag(n)} " + ("sings at the center microphone" if s["lipsync"]
+                                               else "stands at the center of the frame"))
+            else:
+                parts.append(f"{_stag(n)} is beside them")
+        for k, n in enumerate(players):
+            parts.append(f"{_stag(n)} plays <Subject {prop_pic[n]}> {sides[min(k, 2)]}")
+        return (" In this shot " + ", ".join(parts) +
+                ". Each of them appears exactly once as their own subject: no one is duplicated, "
+                "and no outfit or instrument moves to another person.")
+
+    arrangement = _stations(first).replace(" In this shot ", " In the opening shot ", 1)
     summary = (f"{mode_tag} The target video shows {who} inside <Subject {env_pic}>{sings}, "
-               f"framed {first['framing']} at the start.{only}")
+               f"framed {first['framing']} at the start.{only}{arrangement}")
 
     fr_txt = {"close": "a close-up", "medium": "a medium shot", "wide": "a wide shot"}
     lines = ["The target video uses a cinematic, photorealistic style with natural film-like exposure."]
+    if len(chars) > 1:
+        # Both segment-5 drafts failed exactly this way: a person rendered twice, and one subject
+        # wearing another's outfit. State the constraint instead of hoping it is implied.
+        lines.append("Each defined subject appears EXACTLY ONCE in the video: no person is duplicated, "
+                     "no face is reused for a second character, and every outfit and instrument stays "
+                     "with the one subject it belongs to and is never worn or held by another.")
     t0 = seg["start"]
     for i, (s, cut) in enumerate(zip(seg["shots"], seg["cuts"])):
         cut_dur = round(cut["end"] - cut["start"], 2)
         head = "[Shot 1]" if i == 0 else \
                f"[Shot {i + 1}] At {int((cut['start'] - t0) // 60):02d}:{(cut['start'] - t0) % 60:06.3f}, the camera cuts to"
-        def _stag(n):
-            base_tag = f"<Subject {chars.index(n) + 1}>"
-            return f"{base_tag} wearing <Subject {outfit_pic[n]}>" if n in outfit_pic else base_tag
         subj = " and ".join(_stag(n) for n in s["characters"] if n in chars) or "the scene"
         act = s["action"].rstrip(". ")
         anchor = (f" The movement unfolds at a natural real-world pace, taking the full "
@@ -1245,8 +1391,21 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                     "at their instruments and a drummer at a kit - set back in the dimmer depth of "
                     "the frame and softly out of focus, their faces never resolving. The stage is "
                     "never empty behind the singer.")
+        elif any(n in dropped_people for n in s["characters"]):
+            # players squeezed out by the people cap stay in frame as the unresolved background band
+            band = (" The other band members play their instruments further back in the frame, "
+                    "softly out of focus, their faces never resolving.")
+        stations = _stations(s)
+        # who is NOT here: without this, a scene's other subjects bleed into every cut (the
+        # segment-5 identity merges happened in the multi-person shot; this scoping is the
+        # complementary guard for the other cuts). Named when a cut carries a subset.
+        absent = [n for n in chars if n not in s["characters"]]
+        gone = ""
+        if absent and s["characters"]:
+            gone = (" " + " and ".join(f"<Subject {chars.index(n) + 1}>" for n in absent) +
+                    (" are" if len(absent) > 1 else " is") + " NOT in this shot and must not appear in it.")
         line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic_of(s)}>: "
-                f"{act}.{sing}{anchor}{cam} The environment behind holds completely still.{band}")
+                f"{act}.{stations}{sing}{gone}{anchor}{cam} The environment behind holds completely still.{band}")
         if _H3_SKY_RE.search(s["scene"] + " " + s["action"]):
             line += (" The sky holds fixed: stars, moon and clouds keep their positions with no "
                      "drift at all, and there is no cloud movement anywhere.")
@@ -1512,7 +1671,9 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
     discarding the whole video. Continuity is preserved by telling each batch what came before
     (locations already established + the previous segment's last shot)."""
     segments = build_h3_segments(grid)
-    # before writing: put a cut boundary on every vocal handover, so no shot straddles two voices
+    # before writing: line the segments up with the vocals. Edges first (a handover too close to a
+    # boundary to cut moves the boundary instead), then a cut on every handover left inside one.
+    snap_segment_edges_to_handovers(segments, song)
     split_cuts_at_voice_handovers(segments, song)
     done, established = [], []
     for start in range(0, len(segments), max(1, batch)):

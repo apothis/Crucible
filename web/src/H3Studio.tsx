@@ -31,6 +31,7 @@ export type H3Segment = {
   env_picture: number;
   // client-side render state
   envStillId?: string; clipId?: string; clipVariants?: string[];
+  staleClip?: boolean;   // the segment's window moved after this was rendered - redo the take
   handEdited?: boolean;   // raw prompt overridden by hand (a recompile clears this)
 };
 
@@ -414,6 +415,31 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                               : "✓ voice casting already matches the song",
         err: r.fixes.slice(0, 8).join(", ") || undefined }]);
     } catch (e) { ctx.setResults([{ id: rid(), title: "voice check failed", status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setRecompiling(false); }
+  }
+
+  // Move segment boundaries onto vocal handovers that land too close to an edge to cut - the fix
+  // for "the singer changes in the last half second and the shot keeps lip-syncing".
+  async function snapEdges() {
+    const miss = castMissing();
+    if (miss.length || !songPayload) {
+      ctx.setResults([{ id: rid(), title: "not snapping", status: "error", pct: 0,
+        err: miss.length ? `${miss.join(", ")} missing from the loaded cast - wait for the character library.`
+                         : "no song arrangement, so there is nothing that says where the voice changes." }]);
+      return;
+    }
+    setRecompiling(true);
+    try {
+      const r = await api.mvH3SnapEdges({ segments, cast: castPayload(), song: songPayload,
+        section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
+        { segments: H3Segment[]; moved: string[]; recompiled: number[] };
+      setSegments(r.segments.map((s) => ({ ...s })));
+      const lost = r.segments.filter((s) => s.staleClip).length;
+      ctx.setResults([{ id: rid(), status: "done", pct: 100,
+        title: r.moved.length ? `✓ moved ${r.moved.length} boundary(s) onto the vocals` : "✓ every boundary already lines up",
+        err: [r.moved.join(" {·} "), lost ? `${lost} rendered take(s) need redoing (the old take is still under "takes")` : ""]
+          .filter(Boolean).join(" {·} ").replace(/\{·\}/g, "·") || undefined }]);
+    } catch (e) { ctx.setResults([{ id: rid(), title: "snap failed", status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setRecompiling(false); }
   }
 
@@ -892,6 +918,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
             <GhostButton onClick={fixVoices} disabled={busy || recompiling || !songPayload}>
               {recompiling ? "checking…" : "Check voice casting"}
             </GhostButton>
+            <GhostButton onClick={snapEdges} disabled={busy || recompiling || !songPayload}
+              >{recompiling ? "working…" : "Snap edges to vocals"}</GhostButton>
             <GhostButton onClick={recompileStale} disabled={busy || recompiling}
               >{recompiling ? "recompiling…" : "Recompile out-of-date"}</GhostButton>
             <GhostButton onClick={genAllEnvs} disabled={busy || !!genning}>Gen missing environments</GhostButton>
@@ -963,7 +991,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           {url
                             ? <video src={`${url}#t=0.5`} muted preload="metadata" onClick={() => openLightbox(url)}
                                 className="h-9 w-16 cursor-zoom-in rounded object-cover" title="rendered clip — click to view" />
-                            : <span className="text-[9px] text-[var(--color-muted)]">—</span>}
+                            : seg.staleClip
+                              ? <span className="text-[9px] text-amber-400" title="this segment's window moved, so the old take is the wrong length - re-render it (the take is still listed in the editor's Result stage)">⚠ re-render</span>
+                              : <span className="text-[9px] text-[var(--color-muted)]">—</span>}
                         </td>
                         <td className="px-2 py-1.5">
                           <div className="flex flex-wrap gap-1">
