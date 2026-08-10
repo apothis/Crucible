@@ -2035,6 +2035,11 @@ def mv_h3_compile(body: dict):
         seg2["cuts"] = [{"start": seg2["start"], "end": seg2["end"]}]
         keep = next((s for s in shots if s["lipsync"]), shots[0])
         seg2["shots"] = [keep]
+    miss = _missing_cast([seg2], cast)
+    if miss:
+        raise HTTPException(400, "not recompiling: these characters are in the shots but missing from "
+                                 f"the cast payload - {', '.join(miss)}. Recompiling now would strip "
+                                 "their identity references.")
     # voice-matched casting, same rule the script path enforces (needs the song's section markers -
     # the UI sends them; without a song payload the writer's/editor's casting stands)
     # section_grid = the whole video's [{start, end, section}], needed to map the arrangement's
@@ -2049,6 +2054,61 @@ def mv_h3_compile(body: dict):
             "prop_map": refs["props"], "env_map": refs["envs"], "env_picture": refs["env"],
             "lipsync": lipsync_any, "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"],
             "voice_fixes": voice_fixes}
+
+
+def _missing_cast(segments, cast):
+    """Characters the shots name but the cast payload does not carry. Compiling in that state
+    silently drops their identity references (a UI that fires before the character library has
+    loaded once stripped every subject from 30 segments), so callers must refuse instead."""
+    have = {c.get("name") for c in (cast or []) if c.get("name")}
+    miss = []
+    for s in segments or []:
+        for sh in s.get("shots") or []:
+            for n in sh.get("characters") or []:
+                if n and n not in have and n not in miss:
+                    miss.append(n)
+    return miss
+
+
+@app.post("/api/mv/h3_recompile")
+def mv_h3_recompile(body: dict):
+    """Recompile every segment whose stored prompt no longer matches what the compiler would emit
+    today - the repair for a script written before a compiler rule changed (the no-singing clause,
+    the reference budget, the band fill). Cheap and deterministic: no writer run, no GPU.
+
+    HAND-EDITED prompts are left untouched and reported, since a bulk action must never silently
+    throw away text the user wrote. Voice-matched casting is enforced first, so a refreshed prompt
+    cannot be compiled around stale casting.
+    Body: {segments, cast, song?, section_grid?}. Returns {segments, changed, skipped, voice_fixes}."""
+    segs = body.get("segments") or []
+    cast = body.get("cast") or []
+    song = body.get("song") or {}
+    if not segs:
+        raise HTTPException(400, "segments are required")
+    miss = _missing_cast(segs, cast)
+    if miss:
+        raise HTTPException(400, "not recompiling: these characters are in the shots but missing from "
+                                 f"the cast payload - {', '.join(miss)}. Recompiling now would strip "
+                                 "their identity references. If the page has just loaded, give the "
+                                 "character library a moment and try again.")
+    grid = body.get("section_grid") or segs
+    voice_fixes = (musicvideo_mod.enforce_voice_casting(segs, song, cast, grid=grid)
+                   if song.get("sections") else [])
+    changed, skipped = [], []
+    for i, seg in enumerate(segs, 1):
+        if seg.get("handEdited"):
+            skipped.append(i)
+            continue
+        try:
+            prompt, refs = musicvideo_mod.compile_h3_prompt(seg, cast, audio_ref=seg.get("lipsync"))
+        except Exception as e:
+            raise HTTPException(500, f"segment {i} failed to compile: {e}")
+        if prompt.strip() != (seg.get("prompt") or "").strip():
+            seg["prompt"] = prompt
+            seg["picture_map"], seg["outfit_map"] = refs["sheets"], refs["outfits"]
+            seg["prop_map"], seg["env_map"], seg["env_picture"] = refs["props"], refs["envs"], refs["env"]
+            changed.append(i)
+    return {"segments": segs, "changed": changed, "skipped": skipped, "voice_fixes": voice_fixes}
 
 
 @app.post("/api/mv/h3_voicemap")

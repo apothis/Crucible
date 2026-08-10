@@ -176,6 +176,12 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       k === i ? { ...s, shots: s.shots.map((sh, m) => (m === j ? { ...sh, ...p } : sh)) } : s));
   async function recompile(i: number) {
     const seg = segments[i];
+    const missing = seg.shots.flatMap((s) => s.characters).filter((n) => !h3cast.some((c) => c.name === n));
+    if (missing.length) {
+      ctx.setResults([{ id: rid(), title: `segment ${i + 1} not recompiled - cast not loaded`, status: "error", pct: 0,
+        err: `${[...new Set(missing)].join(", ")} missing from the loaded cast; recompiling would drop their identity references.` }]);
+      return;
+    }
     setRecompiling(true);
     try {
       // the song goes with it (its markers drive voice-matched casting) plus the whole video's
@@ -408,6 +414,45 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                               : "✓ voice casting already matches the song",
         err: r.fixes.slice(0, 8).join(", ") || undefined }]);
     } catch (e) { ctx.setResults([{ id: rid(), title: "voice check failed", status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setRecompiling(false); }
+  }
+
+  // Characters the script names but the loaded cast cannot supply. The character library arrives
+  // async, so anything that recompiles must check first: with an empty cast the compiler happily
+  // emits prompts with no identity references at all.
+  function castMissing(): string[] {
+    const have = new Set(h3cast.map((c) => c.name));
+    const miss = new Set<string>();
+    for (const s of segments) for (const sh of s.shots) for (const n of sh.characters) if (n && !have.has(n)) miss.add(n);
+    return [...miss];
+  }
+
+  // Refresh every stored prompt the compiler would now emit differently - what you need after a
+  // compiler rule changes (the no-singing clause, the reference budget, the band fill) without
+  // paying for a rewrite. Hand-edited prompts are skipped server-side and reported.
+  async function recompileStale() {
+    const miss = castMissing();
+    if (miss.length) {
+      ctx.setResults([{ id: rid(), title: "not recompiling - cast not loaded", status: "error", pct: 0,
+        err: `${miss.join(", ")} are in the script but not in the loaded cast. Recompiling now would strip their identity references - wait for the character library, then retry.` }]);
+      return;
+    }
+    setRecompiling(true);
+    try {
+      const r = await api.mvH3Recompile({ segments, cast: castPayload(), song: songPayload,
+        section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
+        { segments: H3Segment[]; changed: number[]; skipped: number[]; voice_fixes: string[] };
+      setSegments(r.segments.map((s) => ({ ...s })));
+      const bits = [
+        r.changed.length ? `segments ${r.changed.join(", ")}` : "",
+        r.voice_fixes.length ? `${r.voice_fixes.length} shot(s) recast` : "",
+        r.skipped.length ? `skipped hand-edited ${r.skipped.join(", ")}` : "",
+      ].filter(Boolean);
+      ctx.setResults([{ id: rid(), status: "done", pct: 100,
+        title: r.changed.length ? `✓ recompiled ${r.changed.length} out-of-date segment(s)`
+                                : "✓ every prompt is already current",
+        err: bits.join(" {·} ").replace(/\{·\}/g, "·") || undefined }]);
+    } catch (e) { ctx.setResults([{ id: rid(), title: "recompile failed", status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setRecompiling(false); }
   }
 
@@ -847,6 +892,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
             <GhostButton onClick={fixVoices} disabled={busy || recompiling || !songPayload}>
               {recompiling ? "checking…" : "Check voice casting"}
             </GhostButton>
+            <GhostButton onClick={recompileStale} disabled={busy || recompiling}
+              >{recompiling ? "recompiling…" : "Recompile out-of-date"}</GhostButton>
             <GhostButton onClick={genAllEnvs} disabled={busy || !!genning}>Gen missing environments</GhostButton>
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}>Assemble</PrimaryButton>
           </div>

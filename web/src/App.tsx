@@ -406,6 +406,11 @@ function ResultCard({ r, onDismiss }: { r: Result; onDismiss?: (id: string) => v
         <WavePlayer url={r.url} />
       ) : r.status === "error" ? (
         <p className="text-xs text-red-400">{r.err}</p>
+      ) : r.status === "done" ? (
+        // a finished card with no media still often carries detail worth reading ("recompiled
+        // segments 5, 6, 8", "2 of 3 rendered - pick one"); without this branch it fell through to
+        // a pointless full progress bar and the text was never shown at all
+        r.err ? <p className="text-[11px] text-[var(--color-muted)]">{r.err}</p> : null
       ) : (
         <div className="h-2 overflow-hidden rounded-full bg-[var(--color-panel)]">
           <div className="h-full rounded-full bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent2)] transition-all" style={{ width: `${r.pct}%` }} />
