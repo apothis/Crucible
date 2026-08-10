@@ -175,8 +175,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const seg = segments[i];
     setRecompiling(true);
     try {
-      // the song goes with it: its section markers are what enforce voice-matched casting server-side
-      const r = await api.mvH3Compile({ segment: seg, cast: castPayload(), song: songPayload }) as
+      // the song goes with it (its markers drive voice-matched casting) plus the whole video's
+      // section grid, which is what maps the arrangement's nominal times onto the real audio
+      const r = await api.mvH3Compile({ segment: seg, cast: castPayload(), song: songPayload,
+        section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
         { prompt: string; picture_map: Record<string, number>; outfit_map: Record<string, number>;
           env_picture: number; lipsync: boolean; shots: H3Shot[]; kind: "single" | "scene"; cuts: { start: number; end: number }[] };
       patchSeg(i, { prompt: r.prompt, picture_map: r.picture_map, outfit_map: r.outfit_map,

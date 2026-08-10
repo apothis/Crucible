@@ -197,9 +197,13 @@ def retime(in_path, out_path, speed, fps=24):
 SHOT_TYPES = ("performance", "narrative", "broll")
 
 
-def _song_summary(song):
+def _song_summary(song, grid=None):
     """Human-readable song brief for the LLM + total duration (sec). Lyrics are shown line by
-    line under each section's time window so shots can be anchored to the words sung then."""
+    line under each section's time window so shots can be anchored to the words sung then.
+
+    With `grid` (the analysed segments) the windows are stated on the REAL audio timeline instead of
+    the arrangement's nominal one. That matters: the drift reached 12s on a real song, and the writer
+    was anchoring shots to words that are sung several seconds earlier or later than it was told."""
     title = song.get("title") or "Untitled"
     lines = [f"Title: {title}",
              f"Genre/mood tags: {song.get('tags') or ''}"]
@@ -208,6 +212,7 @@ def _song_summary(song):
     if song.get("keyscale"):
         lines.append(f"Key: {song['keyscale']}")
     secs = song.get("sections") or []
+    anchors = _time_anchors(song, grid) if grid else []
     t = 0
     body = []
     for s in secs:
@@ -217,7 +222,9 @@ def _song_summary(song):
         # "duet swell") - essential for voice-matched casting, so surface it to the writer
         style = (s.get("style") or "").strip()
         stag = f" ({style})" if style else ""
-        head = f"  [{t}-{t + dur}s] {s.get('type') or 'section'}{stag}:"
+        w0 = round(_map_time(anchors, t)) if anchors else t
+        w1 = round(_map_time(anchors, t + dur)) if anchors else t + dur
+        head = f"  [{w0}-{w1}s] {s.get('type') or 'section'}{stag}:"
         if lyr:
             body.append(head)
             for ln in lyr.splitlines():
@@ -746,12 +753,15 @@ def build_h3_segments(grid):
     return segs
 
 
-def build_h3_grid_prompt(song, cast, segments):
+def build_h3_grid_prompt(song, cast, segments, grid=None):
     """Writer prompt for the hybrid model: per SEGMENT the LLM chooses "single" or "scene" and fills
     creative content only (timing is fixed by the segment windows; scene cut times come from the
     segment's own audio-grid cuts). The environment may now CONTAIN people (H3's subject-swap
-    replaces them - verified); it must still be environment-LED prose, not a person portrait."""
-    summary, total = _song_summary(song)
+    replaces them - verified); it must still be environment-LED prose, not a person portrait.
+
+    `grid` is the whole video's segments; it puts the lyric windows in the brief on the real audio
+    timeline rather than the arrangement's nominal one (`segments` here is only this batch)."""
+    summary, total = _song_summary(song, grid or segments)
     title = song.get("title") or "Untitled"
     named = [c for c in cast if c.get("name")]
     cast_txt = _fmt_cast(named) if named else "  (no fixed cast - lean scenic/atmospheric)"
@@ -1155,6 +1165,12 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             sing = (f" {subj} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
                     f"and breaths matching the vocal exactly, face to camera and clearly visible in "
                     f"{fr_txt[s['framing']]}.")
+        elif audio_ref and s["characters"]:
+            # The segment carries <Audio 1>, so H3 will happily animate ANYONE on screen as the
+            # singer: segment 5's band-wide cut had Bob mouthing a female vocal purely because he
+            # was in frame. A cut that is not the lip-sync cut has to say so out loud.
+            sing = (" Nobody in this shot is singing: lips stay closed and still, faces calm. The "
+                    "song is only heard here, not performed to camera.")
         # NO-LONE-SINGER-ON-A-BARE-STAGE net (standing user rule; the first full script put Bob alone
         # on the stage for 40s across five consecutive cuts). A stage shot wide enough to show the
         # stage, carrying at most one named character, gets the rest of the band filled in as
@@ -1216,9 +1232,102 @@ def _voice_of(style):
     return ""
 
 
-def _voice_windows(song):
-    """[{start, end, voice}] for every SUNG section of the song, from the nominal section
-    durations (the same timeline the writer is shown)."""
+# ---- reconciling the two timelines -------------------------------------------------------------
+# The arrangement's section durations (the Song tab) are a PLAN; ACE-Step does not render them
+# literally, so the real track's sections sit somewhere else - measured on a real song, between
+# -1.9s and +12.3s away. The segment grid comes from analysing the REAL audio, while the lyrics and
+# the vocal markers come from the plan, and nothing reconciled the two: a handover the plan puts at
+# 42.0s actually lands at ~40.2s, which is why segment 5's singer changed at the wrong moment.
+# Fix: anchor the two timelines wherever they agree on a section label, then interpolate between
+# anchors. Only agreeing labels become anchors, so a plan section the analysis cannot see (our two
+# consecutive verses arrive as ONE "verse") is positioned by interpolation instead of being trusted.
+_SEC_ALIAS = {"start": "intro", "end": "outro", "pre-chorus": "prechorus", "pre chorus": "prechorus"}
+
+
+def _norm_section(name):
+    n = str(name or "").strip().lower()
+    return _SEC_ALIAS.get(n, n)
+
+
+def _audio_sections(segments):
+    """The REAL section spans, merged from the analysis label each segment carries."""
+    out = []
+    for s in segments or []:
+        lab = _norm_section(s.get("section"))
+        if out and out[-1][2] == lab:
+            out[-1][1] = float(s.get("end") or 0)
+        else:
+            out.append([float(s.get("start") or 0), float(s.get("end") or 0), lab])
+    return out
+
+
+def _time_anchors(song, segments):
+    """[(nominal_t, real_t)] where the plan and the analysis agree on a section boundary.
+
+    Uses a longest-common-subsequence alignment of the two LABEL sequences, not a forward walk. A
+    forward walk mis-pairs badly here: consecutive plan sections of the same kind arrive from the
+    analysis as ONE section (our two verses come back as a single 14.1-80.3s "verse"), so a greedy
+    matcher consumes that verse on the first one and pairs the second with the NEXT audio verse a
+    minute later - which mapped a 42.0s handover to 103.5s. Runs of the same label are therefore
+    collapsed on the plan side first, and sections the analysis never saw (pre-chorus, bridge) are
+    simply left unmatched and positioned by interpolation."""
+    groups, t = [], 0.0
+    for s in (song or {}).get("sections") or []:
+        lab = _norm_section(s.get("type"))
+        if groups and groups[-1][1] == lab:
+            pass                                  # same kind as the previous: one group, one anchor
+        else:
+            groups.append((t, lab))
+        t += float(s.get("seconds") or 0)
+    nom_total = t
+    audio = _audio_sections(segments)
+    if not (groups and audio):
+        return []
+    nl = [g[1] for g in groups]
+    al = [a[2] for a in audio]
+    # LCS table over the label sequences
+    m, n = len(nl), len(al)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m - 1, -1, -1):
+        for j in range(n - 1, -1, -1):
+            dp[i][j] = 1 + dp[i + 1][j + 1] if nl[i] == al[j] else max(dp[i + 1][j], dp[i][j + 1])
+    # Seeded with the origin, and every later pair must advance on BOTH axes. Without the seed a
+    # first matched pair like (10.0, 0.0) survived and then prepending the origin left two anchors
+    # sharing a real time - a flat span that mapped a whole plan section onto one instant.
+    anchors, i, j = [(0.0, 0.0)], 0, 0
+    while i < m and j < n:
+        if nl[i] == al[j]:
+            nt, at = groups[i][0], audio[j][0]
+            if nt > anchors[-1][0] and at > anchors[-1][1]:
+                anchors.append((nt, at))
+            i, j = i + 1, j + 1
+        elif dp[i + 1][j] >= dp[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    aud_total = audio[-1][1]
+    if nom_total > anchors[-1][0] and aud_total > anchors[-1][1]:
+        anchors.append((nom_total, aud_total))
+    return anchors
+
+
+def _map_time(anchors, t):
+    """Nominal time -> real-audio time, piecewise linear between anchors."""
+    if not anchors:
+        return t
+    if t <= anchors[0][0]:
+        return anchors[0][1]
+    for (n0, a0), (n1, a1) in zip(anchors, anchors[1:]):
+        if t <= n1:
+            span = n1 - n0
+            return a0 + (a1 - a0) * ((t - n0) / span if span else 0.0)
+    return anchors[-1][1] + (t - anchors[-1][0])
+
+
+def _voice_windows(song, segments=None):
+    """[{start, end, voice}] for every SUNG section. With `segments` (which carry the analysis
+    labels) the windows are mapped onto the REAL audio timeline; without them they stay nominal."""
+    anchors = _time_anchors(song, segments) if segments else []
     out, t = [], 0.0
     for s in (song or {}).get("sections") or []:
         dur = float(s.get("seconds") or 0)
@@ -1226,7 +1335,9 @@ def _voice_windows(song):
         sung = bool(lyr) and lyr.lower() != "instrumental"
         v = _voice_of(s.get("style"))
         if sung and v:
-            out.append({"start": t, "end": t + dur, "voice": v})
+            out.append({"start": _map_time(anchors, t) if anchors else t,
+                        "end": _map_time(anchors, t + dur) if anchors else t + dur,
+                        "voice": v})
         t += dur
     return out
 
@@ -1264,12 +1375,17 @@ def _swap_pronouns(text, frm, to):
     return text
 
 
-def enforce_voice_casting(segments, song, cast):
+def enforce_voice_casting(segments, song, cast, grid=None):
     """Recast any lip-sync shot whose singer is the wrong voice for the section being sung, and
     fix the shot's prose so the names match. Duet windows and unmarked sections are left alone,
     as is any shot whose gender has no cast member to swap in. Records what changed on the
-    segment as `voice_fixed` (the UI surfaces the count). Returns the list of fixes."""
-    wins = _voice_windows(song)
+    segment as `voice_fixed` (the UI surfaces the count). Returns the list of fixes.
+
+    `grid` is the WHOLE video's segments (or any [{start, end, section}] list) and is what maps the
+    arrangement's nominal times onto the real audio - pass it whenever `segments` is only a slice,
+    such as one writer batch or a single segment being recompiled, since section anchors cannot be
+    derived from a fragment."""
+    wins = _voice_windows(song, grid or segments)
     if not wins:
         return []
     singers, named = {}, []
@@ -1370,7 +1486,7 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
         note += (f"\nThese are segments {start + 1}-{start + len(chunk)} of {len(segments)} for the "
                  f"whole video; number your JSON array from 1 for THIS batch only "
                  f"({len(chunk)} objects).")
-        system, prompt = build_h3_grid_prompt(song, cast, chunk)
+        system, prompt = build_h3_grid_prompt(song, cast, chunk, grid=segments)
         prompt += note
         part = None
         for attempt in (1, 2):
@@ -1390,7 +1506,8 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
                     raise
         # per batch, not at the end: the next batch's continuity note quotes the previous segment's
         # last shot, so it should quote the CORRECTED singer
-        enforce_voice_casting(part, song, cast)
+        # `segments` (the whole video) supplies the section anchors - a single batch cannot
+        enforce_voice_casting(part, song, cast, grid=segments)
         done.extend(part)
         for s in part:
             for sh in s["shots"]:

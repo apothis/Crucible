@@ -2037,7 +2037,10 @@ def mv_h3_compile(body: dict):
         seg2["shots"] = [keep]
     # voice-matched casting, same rule the script path enforces (needs the song's section markers -
     # the UI sends them; without a song payload the writer's/editor's casting stands)
-    voice_fixes = musicvideo_mod.enforce_voice_casting([seg2], body.get("song") or {}, cast)
+    # section_grid = the whole video's [{start, end, section}], needed to map the arrangement's
+    # nominal times onto the real audio; one segment cannot supply those anchors
+    voice_fixes = musicvideo_mod.enforce_voice_casting([seg2], body.get("song") or {}, cast,
+                                                      grid=body.get("section_grid") or None)
     try:
         prompt, refs = musicvideo_mod.compile_h3_prompt(seg2, cast, audio_ref=lipsync_any)
     except Exception as e:
