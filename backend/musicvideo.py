@@ -1279,78 +1279,69 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         return "whenever they are on screen (only " + \
                " and ".join(f"[Shot {k}]" for k in ks) + ")"
 
-    def _norepro(n):
-        """Forbid reproducing the reference picture itself. Our sheets are 3-panel grids on a plain
-        studio backdrop, and a seed-hunt draft rendered Bob's sheet VERBATIM - panels, grey backdrop
-        and all - for several seconds mid-clip, with the bassist's sheet appearing too [OBSERVED
-        2026-08-10]. The declarations described the sheet ("showing them from several views") and
-        never said not to draw it, which on a heavy 9-reference render is an invitation."""
-        return (f" The picture is an identity REFERENCE ONLY: never show the sheet itself in the "
-                f"target video - no panel grid, no side-by-side copies of {n}, no plain studio "
-                f"backdrop. {n} appears ONCE, as a living person inside the scene described below.")
-
     defs, keeps = [], []
+    # WORDING IS DELIBERATELY TERSE. The one band render that came back clean was a 4,772-char
+    # prompt; ours had grown to 9,251 - past MiniMax's documented 7,000-char ceiling - because every
+    # fix added another sentence, and the drafts that failed were the long ones. The verified
+    # mechanics all survive here (wardrobe-not-used + outfit fully_preserved, the environment
+    # subject-swap clause, direct audio reuse); they are just said once and said short.
     for i, n in enumerate(chars):
         c = by_name[n]
         look = (c.get("look") or c.get("description") or "").strip()
         looktxt = f" - {look}" if look else ""
-        # an instrument shed by the reference budget: described in words so it is still the right
-        # instrument, just not picture-locked
         tp = ""
-        if n in text_props:
+        if n in text_props:      # instrument shed by the reference budget: keep it named, in words
             pr = by_name[n].get("prop") or {}
-            tp = f" {n} plays {(pr.get('desc') or pr.get('name') or 'their instrument').rstrip('. ')}."
+            tp = f" Plays {(pr.get('desc') or pr.get('name') or 'their instrument').rstrip('. ')}."
         if n in outfit_pic:
-            # dressed via the outfit Subject: the sheet is FACE/HAIR ONLY, wardrobe comes from
-            # the costume still (the verified wardrobe-not-used + fully_preserved-outfit pair)
             co = by_name[n]["costume"]
             op = outfit_pic[n]
-            defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}. "
-                        f"<Picture {i + 1}> is a character reference sheet showing {n} from several "
-                        f"views; preserve the face and hair exactly. {n}'s wardrobe in "
-                        f"<Picture {i + 1}> is NOT used in the target video.{_norepro(n)}{tp}")
+            defs.append(f"<Subject {i + 1}> is {n} from <Picture {i + 1}>{looktxt}. Keep the face and "
+                        f"hair exactly; the clothes come from <Subject {op}>, NOT from "
+                        f"<Picture {i + 1}>.{tp}")
             defs.append(f"<Subject {op}> is the OUTFIT from <Picture {op}>: "
-                        f"{(co.get('desc') or 'the outfit').rstrip('. ')}. <Picture {op}> shows it "
-                        f"on a headless dress form; only the garment is referenced.")
-            keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face and hairstyle "
-                         f"remain exactly consistent with <Picture {i + 1}> {_when(n)}; the clothing "
-                         f"comes from <Picture {op}>, not from <Picture {i + 1}>.")
-            keeps.append(f"<Subject {op}>: fully_preserved - the outfit's cut, color and fabric "
-                         f"remain exactly consistent with <Picture {op}>, now worn by "
-                         f"<Subject {i + 1}> and fitting naturally.")
+                        f"{(co.get('desc') or 'the outfit').rstrip('. ')}. Shown on a dress form; only "
+                        f"the garment is referenced, worn by <Subject {i + 1}>.")
+            keeps.append(f"<Subject {i + 1}>: fully_preserved - face and hair exactly as "
+                         f"<Picture {i + 1}> {_when(n)}; clothes from <Picture {op}>.")
+            keeps.append(f"<Subject {op}>: fully_preserved - cut, colour and fabric as <Picture {op}>, "
+                         f"worn by <Subject {i + 1}>.")
         else:
             costume = next((s["costume"] for s in seg["shots"] if s["costume"] and n in s["characters"]), "")
             wear = f", wearing {costume}" if costume else ""
-            defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}{wear}. "
-                        f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
-                        f"preserve the face, hair and wardrobe exactly.{_norepro(n)}{tp}")
-            keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
-                         f"wardrobe remain exactly consistent with <Picture {i + 1}> {_when(n)}.")
+            defs.append(f"<Subject {i + 1}> is {n} from <Picture {i + 1}>{looktxt}{wear}. Keep the "
+                        f"face, hair and wardrobe exactly.{tp}")
+            keeps.append(f"<Subject {i + 1}>: fully_preserved - face, hair and wardrobe exactly as "
+                         f"<Picture {i + 1}> {_when(n)}.")
     for n in props:
         pr = by_name[n]["prop"]
         pp = prop_pic[n]
         pi = chars.index(n) + 1
         defs.append(f"<Subject {pp}> is the {(pr.get('name') or 'PROP').upper()} from <Picture {pp}>: "
-                    f"{(pr.get('desc') or 'the object').rstrip('. ')}. <Picture {pp}> shows it alone; "
-                    f"only the object is referenced. <Subject {pi}> plays and holds it.")
-        keeps.append(f"<Subject {pp}>: fully_preserved - its shape, materials, colors and hardware "
-                     f"remain exactly consistent with <Picture {pp}>, played by <Subject {pi}>.")
+                    f"{(pr.get('desc') or 'the object').rstrip('. ')}. Held and played by "
+                    f"<Subject {pi}> ONLY.")
+        keeps.append(f"<Subject {pp}>: fully_preserved - shape, materials, colours and hardware as "
+                     f"<Picture {pp}>, played by <Subject {pi}>.")
     for k in env_locs:
         p = env_map[k]
         shots_here = [s for s in seg["shots"]
                       if (s.get("location") or "").strip().lower() == k] or seg["shots"]
         scene_txt = next((s["scene"] for s in shots_here if s["scene"]),
                          "the environment").rstrip(". ") + "."
+        # the PICTURE carries the place; this prose only reinforces it, so keep it to the opening
+        # sentences. Two full scene descriptions were ~800 chars of a prompt that has a 7,000 ceiling.
+        if len(scene_txt) > 300:
+            cut = scene_txt[:300].rsplit(". ", 1)
+            scene_txt = (cut[0] + "." if len(cut) > 1 and len(cut[0]) > 80 else scene_txt[:300].rstrip(", ") + ".")
         disp = next(((s.get("location") or "").strip() for s in shots_here
                      if (s.get("location") or "").strip()), "")
         name = f" '{disp}'" if disp else ""
-        defs.append(f"<Subject {p}> is the ENVIRONMENT{name} from <Picture {p}>: {scene_txt} "
-                    f"Only the environment and its objects are referenced from <Picture {p}>. "
-                    f"Any person who appears in <Picture {p}> is NOT part of the target video "
-                    f"and does not appear in it.")
-        keeps.append(f"<Subject {p}>: reference - the environment, its architecture, objects and "
-                     f"lighting remain recognizable from <Picture {p}>; any person shown in "
-                     f"<Picture {p}> is replaced by the defined subjects and does not appear.")
+        # the subject-swap exclusion is a VERIFIED mechanic (Test B) - shortened, never dropped
+        defs.append(f"<Subject {p}> is the ENVIRONMENT{name} from <Picture {p}>: {scene_txt} Only the "
+                    f"place and its objects are referenced; anyone visible in <Picture {p}> is NOT in "
+                    f"the target video.")
+        keeps.append(f"<Subject {p}>: reference - architecture, objects and lighting recognisable from "
+                     f"<Picture {p}>; its people do not appear.")
     if audio_ref and lead:
         defs.append(f"<Audio 1> is the song that <Subject 1> (S1) performs in the target video.")
         keeps.append("<Audio 1>: fully_preserved - the target video's soundtrack IS <Audio 1>, "
@@ -1485,19 +1476,15 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             else:
                 parts.append(f"{tag} stands {spot}")
                 role_of[n] = f"standing {spot}, holding nothing"
-        out = (" In this shot " + ", ".join(parts) +
-               ". Each of them appears exactly once as their own subject, in that one place: no one "
-               "is duplicated, no face is reused for another person, and no outfit or instrument "
-               "moves to anyone else.")
+        out = " In this shot " + ", ".join(parts) + ", each in that one place."
         # NO-SWAP, spelled out for look-alikes. H3 kept each woman's identity AND wardrobe intact but
         # exchanged their ROLES - Selene ended up playing the guitar on the flank while the guitarist
         # stood at the microphone [OBSERVED 2026-08-10, both drafts]. Naming each one by her visible
         # difference alongside the job she is doing is the thing that was missing.
         pairs = [n for n in same if n in role_of and _distinguish(n)]
         if len(pairs) > 1:
-            bits = [f"{_stag(n)} is {_distinguish(n)} and is the one {role_of[n]}" for n in pairs]
-            out += (" Do NOT exchange them: " + "; ".join(bits) +
-                    ". Keeping each of them in their own role matters as much as their faces.")
+            bits = [f"{_stag(n)} = {_distinguish(n)}, {role_of[n]}" for n in pairs]
+            out += " Do NOT swap them: " + "; ".join(bits) + "."
         return out
 
     arrangement = _stations(first).replace(" In this shot ", " In the opening shot ", 1)
@@ -1509,14 +1496,12 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     if len(chars) > 1:
         # Both segment-5 drafts failed exactly this way: a person rendered twice, and one subject
         # wearing another's outfit. State the constraint instead of hoping it is implied.
-        lines.append("Each defined subject appears EXACTLY ONCE in the video: no person is duplicated, "
-                     "no face is reused for a second character, and every outfit and instrument stays "
-                     "with the one subject it belongs to and is never worn or held by another.")
+        lines.append("Each defined subject appears EXACTLY ONCE: nobody is duplicated, no face is reused "
+                     "for another character, and no outfit or instrument moves to another person.")
     if chars:
         # a draft cut to Bob's reference sheet - grid, grey backdrop and all - for several seconds
-        lines.append("Every frame of the target video is the live scene described below. No reference "
-                     "picture is ever shown: no character sheet, no panel grid or split screen, no "
-                     "plain grey studio backdrop, no portrait line-up. Only the world of the shots.")
+        lines.append("No reference picture is ever shown: no character sheet, no panel grid or split "
+                     "screen, no studio backdrop. Every frame is the live scene described below.")
     t0 = seg["start"]
     for i, (s, cut) in enumerate(zip(seg["shots"], seg["cuts"])):
         cut_dur = round(cut["end"] - cut["start"], 2)
@@ -1524,8 +1509,8 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                f"[Shot {i + 1}] At {int((cut['start'] - t0) // 60):02d}:{(cut['start'] - t0) % 60:06.3f}, the camera cuts to"
         subj = " and ".join(_stag(n) for n in s["characters"] if n in chars) or "the scene"
         act = s["action"].rstrip(". ")
-        anchor = (f" The movement unfolds at a natural real-world pace, taking the full "
-                  f"{cut_dur:.0f} seconds, exactly as it would in real time.")
+        anchor = (f" One continuous movement at natural real-world speed, filling the full "
+                  f"{cut_dur:.0f} seconds.")
         cam = f" {H3_CAMERA_MOVES[s['camera']]}." if s["camera"] != "static" else \
               " The camera holds still."
         sing = ""
@@ -1536,13 +1521,11 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             voc = _vocalists(s)
             vtag = " and ".join(_stag(n) for n in voc) or subj
             quiet = [n for n in s["characters"] if n in chars and n not in voc]
-            sing = (f" {vtag} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
-                    f"and breaths matching the vocal exactly, face to camera and clearly visible in "
-                    f"{fr_txt[s['framing']]}.")
+            sing = (f" {vtag} (S1) sings <Audio 1>, mouth shapes, phrasing and breaths matching the "
+                    f"vocal exactly, face to camera in {fr_txt[s['framing']]}.")
             if quiet:
                 sing += (" " + " and ".join(_stag(n) for n in quiet) +
-                         (" does" if len(quiet) == 1 else " do") +
-                         " NOT sing in this shot: lips closed and still, playing only.")
+                         (" does" if len(quiet) == 1 else " do") + " NOT sing: lips closed.")
         elif audio_ref and s["characters"]:
             # The segment carries <Audio 1>, so H3 will happily animate ANYONE on screen as the
             # singer: segment 5's band-wide cut had Bob mouthing a female vocal purely because he
@@ -1578,8 +1561,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic_of(s)}>: "
                 f"{act}.{stations}{sing}{gone}{anchor}{cam} The environment behind holds completely still.{band}")
         if _H3_SKY_RE.search(s["scene"] + " " + s["action"]):
-            line += (" The sky holds fixed: stars, moon and clouds keep their positions with no "
-                     "drift at all, and there is no cloud movement anywhere.")
+            line += " The sky holds fixed - no drifting stars, moon or clouds."
         lines.append(line)
     detailed = "\n\n".join(lines)
 
