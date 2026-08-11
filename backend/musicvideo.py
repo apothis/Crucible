@@ -699,8 +699,14 @@ H3_SEG_MAX_S = 10.5              # practical ceiling MEASURED 2026-08-09: at the
 #   the IDENTICAL payload at 10.1s is clean end to end. 11-14s is unexplored territory.
 #   362 frames stays as the hard clamp in h3_seg_seconds for explicit long renders.
 H3_CAMERA_MOVES = {
-    # writer vocabulary -> the author's exact phrasing (small amplitude / slow speed is the pace-safe
-    # envelope measured in Phase 1; see the pace rules)
+    # Writer vocabulary -> the author's exact phrasing. TWO TIERS:
+    #  - GENTLE (small amplitude / slow speed) is the pace-safe envelope measured in Phase 1.
+    #  - ASSERTIVE was added 2026-08-10 because the first videos read as static and timid: 27 of 54
+    #    shots were locked off and the rest were nearly all a small push-in. These carry real
+    #    movement while every shot still keeps the duration anchor and sky-pin that actually prevent
+    #    the timelapse failure - amplitude is a different axis from scene pace. [UNVERIFIED: the
+    #    measured envelope covered the gentle tier only, so treat the assertive moves as needing a
+    #    look before a batch of renders leans on them.]
     "static": "The camera holds still",
     "push in": "The camera pushes in with small amplitude at slow speed",
     "pull back": "The camera pulls back with small amplitude at slow speed",
@@ -710,6 +716,23 @@ H3_CAMERA_MOVES = {
     "arc right": "The camera arcs right around the subject with small amplitude at slow speed",
     "tilt up": "The camera tilts up with small amplitude at slow speed",
     "crane up": "The camera cranes up with small amplitude at slow speed",
+    # --- assertive tier ---
+    "push in strong": "The camera pushes in decisively on the subject, closing the distance at a "
+                      "steady moderate speed, the framing tightening as it goes",
+    "pull back reveal": "The camera pulls steadily back at a moderate speed, opening out to reveal "
+                        "the space around the subject",
+    "orbit left": "The camera orbits left around the subject at a steady moderate speed, with clear "
+                  "parallax as nearer and farther elements shift against each other",
+    "orbit right": "The camera orbits right around the subject at a steady moderate speed, with clear "
+                   "parallax as nearer and farther elements shift against each other",
+    "handheld drift": "The camera floats on a subtle handheld drift, breathing slightly around the "
+                      "subject, never locked off",
+    "steadicam follow": "The camera moves with the subject in a smooth steadicam follow, holding them "
+                        "in frame as they go",
+    "crane down": "The camera cranes down at a steady moderate speed, settling toward the subject",
+    "tilt down": "The camera tilts down at a steady moderate speed",
+    "rack focus": "The camera holds position while the focus racks onto the subject, the foreground "
+                  "and background falling soft around them",
 }
 _H3_SKY_RE = re.compile(r"\b(sky|skies|cloud|clouds|stars?|starlit|moon|moonlit|milky way|sunset|"
                         r"sunrise|dawn|dusk|horizon|aurora|night sky)\b", re.I)
@@ -952,8 +975,10 @@ Each shot object:
   "framing": "close" | "medium" | "wide",
   "action": "<what the subject does: EXACTLY ONE continuous motion or performance for the whole shot,
     described plainly. No compound sequences, no 'then'.>",
-  "camera": "static" | "push in" | "pull back" | "truck left" | "truck right" | "arc left" |
-            "arc right" | "tilt up" | "crane up",
+  "camera": gentle: "static" | "push in" | "pull back" | "truck left" | "truck right" |
+            "arc left" | "arc right" | "tilt up" | "crane up"
+            assertive: "push in strong" | "pull back reveal" | "orbit left" | "orbit right" |
+            "handheld drift" | "steadicam follow" | "crane down" | "tilt down" | "rack focus",
   "costume": "<what named characters wear; '' if their reference wardrobe>",
   "characters": [<named cast in this shot; [] if none>],
   "lipsync": <true when the lead singer sings the lyrics ON CAMERA in this shot>}}
@@ -1001,6 +1026,17 @@ HARD RULES:
   a two-thread intercut). Its cuts may include lip-sync shots.
 - ONE motion per shot. The action is a single continuous thing a real person/scene does at
   real-world speed. Never describe multiple movements, weather changes or time passing.
+- CAMERA: give the video some MOVEMENT. The first cut of this video came back 27 shots locked off
+  out of 54, nearly all the rest a small push-in, and it read as flat. So:
+  * Vary the move from shot to shot. Never more than TWO static shots in a row, and do not make
+    "push in" the answer to everything.
+  * Match the energy. Choruses, band shots and the emotional peak take the assertive moves
+    ("orbit left/right", "push in strong", "pull back reveal", "steadicam follow", "crane down").
+    Verses and intimate singing take the quieter ones ("handheld drift", "push in", "rack focus",
+    "tilt up"). "handheld drift" suits a hand-held documentary feel; "rack focus" suits a close-up
+    where you want the eye pulled onto the face without the frame travelling.
+  * "static" is a deliberate choice for a held, still moment - not a default.
+  * Still ONE move per shot: never combine two, and never describe the camera in "action".
 - Open-sky wide shots are motion-prone: prefer a near foreground anchor in every scene, and keep
   sky/stars/clouds INCIDENTAL, not the subject of motion.
 - Framing scale must match the scene: close/medium needs a near foreground anchor for the subject;

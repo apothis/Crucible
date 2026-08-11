@@ -35,8 +35,12 @@ export type H3Segment = {
   handEdited?: boolean;   // raw prompt overridden by hand (a recompile clears this)
 };
 
+// keep in sync with H3_CAMERA_MOVES in backend/musicvideo.py (the compiler drops anything unknown
+// back to "static"). Gentle tier first, then the assertive moves added for more dynamic camerawork.
 const H3_CAMERAS = ["static", "push in", "pull back", "truck left", "truck right",
-  "arc left", "arc right", "tilt up", "crane up"];
+  "arc left", "arc right", "tilt up", "crane up",
+  "push in strong", "pull back reveal", "orbit left", "orbit right", "handheld drift",
+  "steadicam follow", "crane down", "tilt down", "rack focus"];
 // Editor stages, in order - the same gate-then-pay progression as the LTX Shot Editor's rail.
 const H3_STAGES = ["shots", "prompt", "env", "video", "result"];
 
