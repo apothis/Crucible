@@ -530,6 +530,13 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   }
 
   const clipUrl = (id?: string) => (id ? library.find((x) => x.id === id)?.media_url : undefined);
+  // The song's playable URL for the segment timeline. Library AUDIO items carry `audio_url` and leave
+  // `media_url` null (only video/image items set it), so reading media_url alone gave the timeline no
+  // source at all and its play button sat there disabled, doing nothing when clicked.
+  const songUrl = (() => {
+    const it = library.find((x) => x.id === audioId);
+    return it?.audio_url || it?.media_url || undefined;
+  })();
 
   // =====================================================================================
   // SEGMENT EDITOR - the selected segment opens FULL-PAGE, replacing the table, in the same
@@ -601,7 +608,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               {/* hear the segment and check the boundaries by ear: every cut time and voice handover
                   here is inferred, and a drag lands the cut on what you actually hear */}
               <H3SegTimeline
-                url={library.find((x) => x.id === audioId)?.media_url || undefined}
+                url={songUrl}
                 start={eseg.start} end={eseg.end} cuts={eseg.cuts} voices={voiceWins}
                 labels={eseg.shots.map((s) => (s.characters.join(" + ") || "no cast") + (s.lipsync ? " ♪" : ""))}
                 onCutsChange={(c) => patchSeg(i, { cuts: c })}

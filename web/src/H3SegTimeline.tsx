@@ -40,29 +40,25 @@ export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsCha
   const pct = (t: number) => `${Math.min(100, Math.max(0, ((t - start) / span) * 100))}%`;
   const MIN_CUT = 1.5;                // matches H3_MIN_CUT_S server-side
 
-  // one audio element for the strip; playback is clamped to this segment's window
-  useEffect(() => {
-    if (!url) return;
-    const a = new Audio(url);
-    a.preload = "metadata";
-    audio.current = a;
-    const onTime = () => {
-      if (a.currentTime >= end) { a.pause(); a.currentTime = start; setHead(null); setPlaying(false); return; }
-      setHead(a.currentTime);
-    };
-    a.addEventListener("timeupdate", onTime);
-    a.addEventListener("play", () => setPlaying(true));
-    a.addEventListener("pause", () => setPlaying(false));
-    return () => { a.pause(); a.removeEventListener("timeupdate", onTime); audio.current = null; };
-  }, [url, start, end]);
-
+  // The element lives in the DOM (see the <audio> at the end of the render) rather than being built
+  // with `new Audio()`. Three reasons, all learned the hard way:
+  //  - an off-DOM element is invisible and unstoppable: nothing in the page can pause it, which is
+  //    exactly what happened when a debug probe started playing and could not be halted;
+  //  - React owns its lifecycle, so navigating between segments cannot leave orphaned elements still
+  //    fetching (five aborted range requests piled up that way);
+  //  - handlers read `start`/`end` from the current render instead of a closure captured when the
+  //    element was created, so a stale window can no longer pause playback the instant it starts.
   function toggle() {
     const a = audio.current;
-    if (!a) return;
-    if (a.paused) {
-      if (a.currentTime < start || a.currentTime >= end) a.currentTime = start;
-      a.play().catch(() => {});
-    } else a.pause();
+    if (!a || !url) return;
+    if (!a.paused) { a.pause(); return; }
+    // Seek and play SYNCHRONOUSLY inside the click. Waiting for loadedmetadata first (the obvious
+    // way to make the seek "safe") spends the click's user activation, and the browser then rejects
+    // play() - the element sat correctly seeked to the segment start and simply refused to start.
+    // A currentTime set before metadata arrives is queued by the browser and applied on load, so
+    // there is nothing to wait for.
+    if (a.currentTime < start || a.currentTime >= end) a.currentTime = start;
+    a.play().catch((e) => { setPlaying(false); console.error("segment audio play failed:", e); });
   }
   function seekTo(clientX: number) {
     const b = bar.current, a = audio.current;
@@ -179,6 +175,26 @@ export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsCha
           </span>
         )}
       </div>
+
+      {/* The strip's audio, VISIBLE with native controls on purpose:
+          - a hidden (display:none) element gets paused by Chrome "to save power", which rejected
+            play() outright with an AbortError;
+          - and an invisible player is one you cannot stop - the pause here always works, whatever
+            the rest of the strip is doing.
+          The ▶ button above simply drives this element to the segment's window. */}
+      {url && (
+        <audio ref={audio} src={url} preload="metadata" controls
+          className="mt-1.5 h-7 w-full opacity-70 hover:opacity-100"
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => { setPlaying(false); setHead(null); }}
+          onTimeUpdate={() => {
+            const a = audio.current;
+            if (!a) return;
+            if (a.currentTime >= end) { a.pause(); a.currentTime = start; setHead(null); return; }
+            setHead(a.currentTime);
+          }} />
+      )}
     </div>
   );
 }
