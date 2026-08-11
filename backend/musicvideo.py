@@ -1324,6 +1324,31 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         base_tag = f"<Subject {chars.index(n) + 1}>"
         return f"{base_tag} wearing <Subject {outfit_pic[n]}>" if n in outfit_pic else base_tag
 
+    def _is_singer(n):
+        return "singer" in str(by_name[n].get("role") or "").lower()
+
+    def _vocalists(s):
+        """Who actually carries the vocal in this shot: the cast members whose role is a singer,
+        falling back to the first named character when no roles are set."""
+        here = [n for n in s["characters"] if n in chars]
+        return [n for n in here if _is_singer(n)] or here[:1]
+
+    def _distinguish(n):
+        """A short "the woman with long straight black hair" phrase, for shots holding two people of
+        the same sex. Their reference sheets differ, but the shot line is where H3 decides who is
+        who, and two slim women with long dark hair swapped roles when it had only <Subject N> to go
+        on. Hair first (the most visible separator), then eyes."""
+        look = str((by_name[n].get("look") or by_name[n].get("appearance") or ""))
+        g = _gender(by_name[n])
+        who = "the woman" if g == "female" else ("the man" if g == "male" else "the one")
+        hair = re.search(r"((?:long|short|shoulder-length|cropped|chin-length)[^,.;]*hair)", look, re.I)
+        eyes = re.search(r"(\b\w+ eyes)", look, re.I)
+        if hair:
+            return f"{who} with {hair.group(1).strip()}"
+        if eyes:
+            return f"{who} with {eyes.group(1).strip()}"
+        return ""
+
     def _stations(s):
         """Explicit per-person arrangement for a multi-person shot - the verified band render's key
         ingredient. "The band plays together" left the layout to H3, which duplicated players and
@@ -1335,22 +1360,54 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             return ""
         # EVERY person gets a DISTINCT place. Two people sharing "is beside them" is how segment 8
         # failed: an unplaced man next to an unplaced woman, so H3 chose for itself and merged them.
+        # The spot order alternates SIDES (left, right, back-right, back-left) so that when the queue
+        # below alternates genders, two similar-looking people never end up next to each other -
+        # putting the guitarist "on the left" and Selene "at the back on the left" swapped the two
+        # women outright: Selene played the Les Paul and the guitarist stood idle [OBSERVED 08-10].
         spots = ["at the center of the frame", "on the left", "on the right",
-                 "at the back on the left", "at the back on the right", "furthest back"]
-        # the singer takes the mic; players next (their instrument is what tells them apart), then
-        # anyone else, each on their own spot
-        # centre belongs to the VOCALIST, lip-syncing in this cut or not: a band shot that puts the
-        # guitarist centre and the lead singer off to one side reads as the wrong band (segment 8).
-        singer = None
-        if s["lipsync"]:
-            singer = here[0]
+                 "at the back on the right", "at the back on the left", "furthest back"]
+        # WHO HOLDS THE CENTRE.
+        #  - Both singers in one shot: they take it TOGETHER, side by side, even when only one of
+        #    them is singing this window (user rule 2026-08-10). That also keeps the two look-alike
+        #    women apart, since the guitarist ends up out on a flank.
+        #  - Otherwise the vocalist takes it, lip-syncing here or not: a band shot with the guitarist
+        #    centre and the lead singer off to one side reads as the wrong band (segment 8).
+        pair = [n for n in here if _is_singer(n)]
+        centre, singer = [], None
+        if len(pair) > 1:
+            if s["lipsync"]:
+                lead = next((n for n in _vocalists(s) if n in pair), pair[0])
+                pair = [lead] + [n for n in pair if n != lead]
+            a, b = pair[0], pair[1]
+            verb = "sings at the microphone" if s["lipsync"] else "stands at the microphone"
+            centre = [f"{_stag(a)} {verb} and {_stag(b)} stands SIDE BY SIDE immediately beside them, "
+                      f"the two of them together at the centre of the frame, both facing the camera"]
+            rest = [n for n in here if n not in (a, b)]
         else:
-            singer = next((n for n in here if "singer" in str(by_name[n].get("role") or "").lower()
-                           and n not in prop_pic), None)
-        rest = [n for n in here if n != singer]
+            # the VOCALIST takes the mic, not simply the first name listed: on segment 5 the writer
+            # listed the guitarist first, which stationed her at the microphone singing while the
+            # actual singer stood off to the side - contradicting the lip-sync line right after it
+            singer = (_vocalists(s)[0] if s["lipsync"] and _vocalists(s)
+                      else next((n for n in here if _is_singer(n) and n not in prop_pic), None))
+            rest = [n for n in here if n != singer]
         rest.sort(key=lambda n: (0 if (n in prop_pic or (by_name[n].get("prop") or {}).get("desc")) else 1,
                                  here.index(n)))
-        parts, si = [], 0
+        # INTERLEAVE GENDERS so consecutive spots (which alternate sides) separate look-alikes
+        by_g = {}
+        for n in rest:
+            by_g.setdefault(_gender(by_name[n]) or "?", []).append(n)
+        # who needs their distinguishing feature restated - computed BEFORE the interleave below,
+        # which drains these lists (it silently emptied them and no descriptor was ever emitted)
+        same = {n for lst in by_g.values() if len(lst) > 1 for n in lst}
+        if len(by_g) > 1:
+            queues = sorted((list(v) for v in by_g.values()), key=len, reverse=True)
+            woven = []
+            while any(queues):
+                for q in queues:
+                    if q:
+                        woven.append(q.pop(0))
+            rest = woven
+        parts, si = list(centre), (1 if centre else 0)
         if singer:
             parts.append(f"{_stag(singer)} " + ("sings at the center microphone" if s["lipsync"]
                                                 else "stands at the center microphone"))
@@ -1359,15 +1416,16 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             spot = spots[min(si, len(spots) - 1)]
             si += 1
             pr = by_name[n].get("prop") or {}
+            tag = _stag(n) + (f", {_distinguish(n)}," if n in same and _distinguish(n) else "")
             if n in prop_pic:
-                parts.append(f"{_stag(n)} plays <Subject {prop_pic[n]}> {spot}")
+                parts.append(f"{tag} plays <Subject {prop_pic[n]}> {spot}")
             elif pr.get("desc") or pr.get("name"):
                 # picture shed by the reference budget - still say WHICH instrument, so the person
                 # is identified by what they hold rather than left interchangeable
                 what = (pr.get("name") or "instrument").lower()
-                parts.append(f"{_stag(n)} plays {'their ' + what if what else 'an instrument'} {spot}")
+                parts.append(f"{tag} plays {'their ' + what if what else 'an instrument'} {spot}")
             else:
-                parts.append(f"{_stag(n)} stands {spot}")
+                parts.append(f"{tag} stands {spot}")
         return (" In this shot " + ", ".join(parts) +
                 ". Each of them appears exactly once as their own subject, in that one place: no one "
                 "is duplicated, no face is reused for another person, and no outfit or instrument "
@@ -1398,9 +1456,19 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
               " The camera holds still."
         sing = ""
         if s["lipsync"] and audio_ref:
-            sing = (f" {subj} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
+            # ONLY the vocalists sing. This used to name every character in the shot, so a 3-person
+            # lip-sync shot told H3 that the guitarist and bassist were singing the lead too - an
+            # open invitation to put the vocal on the wrong face.
+            voc = _vocalists(s)
+            vtag = " and ".join(_stag(n) for n in voc) or subj
+            quiet = [n for n in s["characters"] if n in chars and n not in voc]
+            sing = (f" {vtag} (S1) sings <Audio 1> with genuine expression, mouth shapes, phrasing "
                     f"and breaths matching the vocal exactly, face to camera and clearly visible in "
                     f"{fr_txt[s['framing']]}.")
+            if quiet:
+                sing += (" " + " and ".join(_stag(n) for n in quiet) +
+                         (" does" if len(quiet) == 1 else " do") +
+                         " NOT sing in this shot: lips closed and still, playing only.")
         elif audio_ref and s["characters"]:
             # The segment carries <Audio 1>, so H3 will happily animate ANYONE on screen as the
             # singer: segment 5's band-wide cut had Bob mouthing a female vocal purely because he
