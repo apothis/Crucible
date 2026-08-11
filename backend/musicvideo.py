@@ -1279,6 +1279,16 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         return "whenever they are on screen (only " + \
                " and ".join(f"[Shot {k}]" for k in ks) + ")"
 
+    def _norepro(n):
+        """Forbid reproducing the reference picture itself. Our sheets are 3-panel grids on a plain
+        studio backdrop, and a seed-hunt draft rendered Bob's sheet VERBATIM - panels, grey backdrop
+        and all - for several seconds mid-clip, with the bassist's sheet appearing too [OBSERVED
+        2026-08-10]. The declarations described the sheet ("showing them from several views") and
+        never said not to draw it, which on a heavy 9-reference render is an invitation."""
+        return (f" The picture is an identity REFERENCE ONLY: never show the sheet itself in the "
+                f"target video - no panel grid, no side-by-side copies of {n}, no plain studio "
+                f"backdrop. {n} appears ONCE, as a living person inside the scene described below.")
+
     defs, keeps = [], []
     for i, n in enumerate(chars):
         c = by_name[n]
@@ -1298,7 +1308,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}. "
                         f"<Picture {i + 1}> is a character reference sheet showing {n} from several "
                         f"views; preserve the face and hair exactly. {n}'s wardrobe in "
-                        f"<Picture {i + 1}> is NOT used in the target video.{tp}")
+                        f"<Picture {i + 1}> is NOT used in the target video.{_norepro(n)}{tp}")
             defs.append(f"<Subject {op}> is the OUTFIT from <Picture {op}>: "
                         f"{(co.get('desc') or 'the outfit').rstrip('. ')}. <Picture {op}> shows it "
                         f"on a headless dress form; only the garment is referenced.")
@@ -1313,7 +1323,7 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             wear = f", wearing {costume}" if costume else ""
             defs.append(f"<Subject {i + 1}> is {n}, the person from <Picture {i + 1}>{looktxt}{wear}. "
                         f"<Picture {i + 1}> is a character reference sheet showing {n} from several views; "
-                        f"preserve the face, hair and wardrobe exactly.{tp}")
+                        f"preserve the face, hair and wardrobe exactly.{_norepro(n)}{tp}")
             keeps.append(f"<Subject {i + 1}>: fully_preserved - {n}'s identity, face, hairstyle and "
                          f"wardrobe remain exactly consistent with <Picture {i + 1}> {_when(n)}.")
     for n in props:
@@ -1432,9 +1442,14 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         by_g = {}
         for n in rest:
             by_g.setdefault(_gender(by_name[n]) or "?", []).append(n)
-        # who needs their distinguishing feature restated - computed BEFORE the interleave below,
-        # which drains these lists (it silently emptied them and no descriptor was ever emitted)
-        same = {n for lst in by_g.values() if len(lst) > 1 for n in lst}
+        # Look-alikes are counted across EVERYONE in the shot, not just the flanking players: the
+        # observed swap was between Selene (centre, beside Bob) and the guitarist (flank), and
+        # computing this over `rest` alone left the two women never compared, so no warning was
+        # emitted for the exact pair that kept trading places.
+        all_g = {}
+        for n in here:
+            all_g.setdefault(_gender(by_name[n]) or "?", []).append(n)
+        same = {n for lst in all_g.values() if len(lst) > 1 for n in lst}
         if len(by_g) > 1:
             queues = sorted((list(v) for v in by_g.values()), key=len, reverse=True)
             woven = []
@@ -1443,10 +1458,15 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                     if q:
                         woven.append(q.pop(0))
             rest = woven
+        role_of = {}
         parts, si = list(centre), (1 if centre else 0)
+        if centre:
+            role_of[pair[0]] = "at the microphone"
+            role_of[pair[1]] = "beside them at the microphone, holding nothing"
         if singer:
             parts.append(f"{_stag(singer)} " + ("sings at the center microphone" if s["lipsync"]
                                                 else "stands at the center microphone"))
+            role_of[singer] = "at the microphone"
             si = 1
         for n in rest:
             spot = spots[min(si, len(spots) - 1)]
@@ -1455,17 +1475,30 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             tag = _stag(n) + (f", {_distinguish(n)}," if n in same and _distinguish(n) else "")
             if n in prop_pic:
                 parts.append(f"{tag} plays <Subject {prop_pic[n]}> {spot}")
+                role_of[n] = f"holding <Subject {prop_pic[n]}> {spot}"
             elif pr.get("desc") or pr.get("name"):
                 # picture shed by the reference budget - still say WHICH instrument, so the person
                 # is identified by what they hold rather than left interchangeable
                 what = (pr.get("name") or "instrument").lower()
                 parts.append(f"{tag} plays {'their ' + what if what else 'an instrument'} {spot}")
+                role_of[n] = f"holding their {what} {spot}"
             else:
                 parts.append(f"{tag} stands {spot}")
-        return (" In this shot " + ", ".join(parts) +
-                ". Each of them appears exactly once as their own subject, in that one place: no one "
-                "is duplicated, no face is reused for another person, and no outfit or instrument "
-                "moves to anyone else.")
+                role_of[n] = f"standing {spot}, holding nothing"
+        out = (" In this shot " + ", ".join(parts) +
+               ". Each of them appears exactly once as their own subject, in that one place: no one "
+               "is duplicated, no face is reused for another person, and no outfit or instrument "
+               "moves to anyone else.")
+        # NO-SWAP, spelled out for look-alikes. H3 kept each woman's identity AND wardrobe intact but
+        # exchanged their ROLES - Selene ended up playing the guitar on the flank while the guitarist
+        # stood at the microphone [OBSERVED 2026-08-10, both drafts]. Naming each one by her visible
+        # difference alongside the job she is doing is the thing that was missing.
+        pairs = [n for n in same if n in role_of and _distinguish(n)]
+        if len(pairs) > 1:
+            bits = [f"{_stag(n)} is {_distinguish(n)} and is the one {role_of[n]}" for n in pairs]
+            out += (" Do NOT exchange them: " + "; ".join(bits) +
+                    ". Keeping each of them in their own role matters as much as their faces.")
+        return out
 
     arrangement = _stations(first).replace(" In this shot ", " In the opening shot ", 1)
     summary = (f"{mode_tag} The target video shows {who} inside <Subject {env_pic}>{sings}, "
@@ -1479,6 +1512,11 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         lines.append("Each defined subject appears EXACTLY ONCE in the video: no person is duplicated, "
                      "no face is reused for a second character, and every outfit and instrument stays "
                      "with the one subject it belongs to and is never worn or held by another.")
+    if chars:
+        # a draft cut to Bob's reference sheet - grid, grey backdrop and all - for several seconds
+        lines.append("Every frame of the target video is the live scene described below. No reference "
+                     "picture is ever shown: no character sheet, no panel grid or split screen, no "
+                     "plain grey studio backdrop, no portrait line-up. Only the world of the shots.")
     t0 = seg["start"]
     for i, (s, cut) in enumerate(zip(seg["shots"], seg["cuts"])):
         cut_dur = round(cut["end"] - cut["start"], 2)
