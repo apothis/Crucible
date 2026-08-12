@@ -1774,6 +1774,12 @@ def enforce_voice_casting(segments, song, cast, grid=None):
         for j, sh in enumerate(seg.get("shots") or []):
             if not sh.get("lipsync"):
                 continue
+            if sh.get("cast_locked"):
+                # Hand-cast by the user: their ear outranks the inferred window. Both inputs here
+                # are approximations (the section markers are nominal times mapped onto the real
+                # audio), so when a person says "this shot is Bob" and the map says female, the
+                # person wins. Without this the swap was undone on every recompile, silently.
+                continue
             cut = cuts[j] if j < len(cuts) else cuts[0]
             need = _voice_at(wins, float(cut.get("start", 0)), float(cut.get("end", 0)))
             if need not in ("female", "male"):

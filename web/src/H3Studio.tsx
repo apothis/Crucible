@@ -20,6 +20,12 @@ import { H3SegTimeline, type VoiceWin } from "./H3SegTimeline";
 type H3Shot = {
   type: string; framing: string; lipsync: boolean; camera: string;
   location?: string; scene: string; action: string; costume: string; characters: string[];
+  // Hand-cast by the user, so voice-matched casting must leave this shot alone. Who sings when is
+  // INFERRED (nominal section markers mapped onto the real audio), and where that inference is
+  // wrong the only correction available is a person's ear - so a manual swap has to outrank it.
+  // Until this existed, recasting a shot appeared to work in the cast row and was then silently
+  // reverted by the next recompile (segment 14: "103s Bob->Selene (female part)").
+  cast_locked?: boolean;
 };
 export type H3Segment = {
   start: number; end: number; seconds: number; render_seconds: number; frames: number;
@@ -33,6 +39,12 @@ export type H3Segment = {
   envStillId?: string; clipId?: string; clipVariants?: string[];
   staleClip?: boolean;   // the segment's window moved after this was rendered - redo the take
   handEdited?: boolean;   // raw prompt overridden by hand (a recompile clears this)
+  // A shot field changed but the prompt has not been recompiled, so the prompt (and any render
+  // fired from it) still describes the OLD shots. Set by every structured edit, cleared by a
+  // recompile. Without this the divergence is invisible: swapping a character in "in this shot"
+  // updates the chip immediately while the compiled text below keeps the previous name, which
+  // reads as "my edit was reverted".
+  promptStale?: boolean;
 };
 
 // keep in sync with H3_CAMERA_MOVES in backend/musicvideo.py (the compiler drops anything unknown
@@ -178,7 +190,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   // the enforced rules (duration anchors, sky-pin, subject-swap, doubled framing) stay intact ----
   const patchShot = (i: number, j: number, p: Partial<H3Shot>) =>
     setSegments((prev) => (prev as H3Segment[]).map((s, k) =>
-      k === i ? { ...s, shots: s.shots.map((sh, m) => (m === j ? { ...sh, ...p } : sh)) } : s));
+      k === i ? { ...s, promptStale: true, shots: s.shots.map((sh, m) => (m === j ? { ...sh, ...p } : sh)) } : s));
   async function recompile(i: number) {
     const seg = segments[i];
     const missing = seg.shots.flatMap((s) => s.characters).filter((n) => !h3cast.some((c) => c.name === n));
@@ -194,11 +206,17 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       const r = await api.mvH3Compile({ segment: seg, cast: castPayload(), song: songPayload,
         section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
         { prompt: string; picture_map: Record<string, number>; outfit_map: Record<string, number>;
-          env_picture: number; lipsync: boolean; shots: H3Shot[]; kind: "single" | "scene"; cuts: { start: number; end: number }[] };
+          env_picture: number; lipsync: boolean; shots: H3Shot[]; kind: "single" | "scene";
+          cuts: { start: number; end: number }[]; voice_fixes?: string[] };
       patchSeg(i, { prompt: r.prompt, picture_map: r.picture_map, outfit_map: r.outfit_map,
         env_picture: r.env_picture, lipsync: r.lipsync, shots: r.shots, kind: r.kind, cuts: r.cuts,
-        handEdited: false });
-      ctx.setResults([{ id: rid(), title: `segment ${i + 1} recompiled`, status: "done", pct: 100 }]);
+        handEdited: false, promptStale: false });
+      // ALWAYS report a recast. Voice-matched casting can overrule who you put in a shot, and
+      // swallowing this line is what made a hand swap look like it "changed itself back".
+      ctx.setResults([{ id: rid(), title: `segment ${i + 1} recompiled`, status: "done", pct: 100,
+        err: r.voice_fixes?.length
+          ? `voice-matched casting overruled your cast: ${r.voice_fixes.join(", ")}. Swap the person again to lock the shot - a hand-cast shot is left alone from then on.`
+          : undefined }]);
     } catch (e) { ctx.setResults([{ id: rid(), title: `segment ${i + 1} recompile failed`, status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setRecompiling(false); }
   }
@@ -349,19 +367,25 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
         body.ref_audio_ids = [{ id: audioId, start: seg.start, seconds: seg.render_seconds }];
       const r = await api.videoH3Ref2V(body) as
         { mode?: string; drafts?: { job_id: string; seed: number }[]; job_id?: string };
-      if (r.drafts) {
+      if (r.drafts && !r.drafts.length) {
+        // an empty drafts array would otherwise blank the results panel and report nothing
+        ctx.patch(card.id, { status: "error", pct: 0, err: "the hunt returned no drafts" });
+      } else if (r.drafts) {
         // keep earlier hunts: a second hunt ADDS seeds to choose between instead of discarding the first
         setDrafts((s) => ({ ...(s as Record<number, { jobId: string; seed: number }[]>),
           [i]: [...r.drafts!.map((x) => ({ jobId: x.job_id, seed: x.seed })),
                 ...((s as Record<number, { jobId: string; seed: number }[]>)[i] || [])].slice(0, 8) }));
-        ctx.patch(card.id, { status: "running", pct: 5 });
-        r.drafts.forEach((x) => {
-          track(x.job_id);
-          const c2 = { id: rid(), title: `segment ${i + 1} draft (seed ${x.seed})`, status: "running" as const, pct: 2 };
-          ctx.setResults([c2]);
-          pollJob(x.job_id, c2.id, ctx);
-        });
-        ctx.patch(card.id, { status: "done", pct: 100, err: `${r.drafts.length} drafts rendering - pick one, then Finish with its seed` });
+        // ONE setResults for the WHOLE batch. ctx.setResults REPLACES the results array, so a card
+        // per draft posted in a loop left only the last one alive - every earlier draft's card was
+        // wiped, and its pollJob then patched an id that no longer existed, which is why a 2-take
+        // hunt only ever showed the second take's bar moving (2026-08-12).
+        const n = r.drafts.length;
+        const cards = r.drafts.map((x, k) => ({
+          id: rid(), title: `segment ${i + 1} draft ${k + 1}/${n} (seed ${x.seed})`,
+          status: "running" as const, pct: 2,
+        }));
+        ctx.setResults(cards);
+        r.drafts.forEach((x, k) => { track(x.job_id); pollJob(x.job_id, cards[k].id, ctx); });
       } else if (r.job_id) {
         track(r.job_id);
         patchSeg(i, { clipId: r.job_id, clipVariants: [...(seg.clipVariants || []), r.job_id] });
@@ -382,7 +406,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const s = segments[i].shots[j];
     if (!to || from === to) return;
     const chars = s.characters.map((n) => (n === from ? to : n));
-    const p: Partial<H3Shot> = { characters: chars.filter((n, k) => chars.indexOf(n) === k) };
+    const p: Partial<H3Shot> = { characters: chars.filter((n, k) => chars.indexOf(n) === k), cast_locked: true };
     // pronouns only when this is the shot's only character - otherwise a "she" may be someone else
     const solo = s.characters.length === 1;
     const gOf = (n: string) => (h3cast.find((c) => c.name === n)?.gender || "").toLowerCase();
@@ -398,11 +422,11 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   function addShotChar(i: number, j: number, name: string) {
     const s = segments[i].shots[j];
     if (!name || s.characters.includes(name)) return;
-    patchShot(i, j, { characters: [...s.characters, name] });
+    patchShot(i, j, { characters: [...s.characters, name], cast_locked: true });
   }
   function removeShotChar(i: number, j: number, name: string) {
     const s = segments[i].shots[j];
-    patchShot(i, j, { characters: s.characters.filter((n) => n !== name) });
+    patchShot(i, j, { characters: s.characters.filter((n) => n !== name), cast_locked: true });
   }
 
   // Recast every lip-sync shot to the voice its song section calls for, across the whole existing
@@ -472,7 +496,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       const r = await api.mvH3Recompile({ segments, cast: castPayload(), song: songPayload,
         section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
         { segments: H3Segment[]; changed: number[]; skipped: number[]; voice_fixes: string[] };
-      setSegments(r.segments.map((s) => ({ ...s })));
+      // every segment the server actually compiled now matches its shots, whether or not the text
+      // came out different; only the hand-edited ones it refused to touch stay flagged
+      setSegments(r.segments.map((s, k) => ({ ...s, promptStale: r.skipped.includes(k + 1) ? s.promptStale : false })));
       const bits = [
         r.changed.length ? `segments ${r.changed.join(", ")}` : "",
         r.voice_fixes.length ? `${r.voice_fixes.length} shot(s) recast` : "",
@@ -605,13 +631,26 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                     : "One continuous shot spanning the whole segment."} The "scene" text is what renders the environment still; "action" is the motion inside it.
                 </p>
               </div>
+              {/* Editing a shot changes only the structured fields - the compiled prompt below is
+                  what actually renders, and it does not follow until recompiled. Say so here, with
+                  the fix in reach, rather than letting a swapped character silently fail to reach
+                  the render. */}
+              {eseg.promptStale && (
+                <div className="flex flex-wrap items-center gap-2 rounded border border-amber-500/60 bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-300">
+                  <span>⚠ These edits are not in the prompt yet — the render would still use the previous shots.</span>
+                  <GhostButton onClick={() => recompile(i)} disabled={recompiling}>
+                    {recompiling ? "Recompiling…" : "Recompile the prompt"}
+                  </GhostButton>
+                  {eseg.handEdited && <span>(the prompt was hand-edited — recompiling discards that edit)</span>}
+                </div>
+              )}
               {/* hear the segment and check the boundaries by ear: every cut time and voice handover
                   here is inferred, and a drag lands the cut on what you actually hear */}
               <H3SegTimeline
                 url={songUrl}
                 start={eseg.start} end={eseg.end} cuts={eseg.cuts} voices={voiceWins}
                 labels={eseg.shots.map((s) => (s.characters.join(" + ") || "no cast") + (s.lipsync ? " ♪" : ""))}
-                onCutsChange={(c) => patchSeg(i, { cuts: c })}
+                onCutsChange={(c) => patchSeg(i, { cuts: c, promptStale: true })}
                 onCommit={() => recompile(i)} />
               {eseg.shots.map((s, j) => (
                 <div key={j} className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-line)] p-2">
@@ -652,6 +691,21 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           className="px-1 text-[10px] text-[var(--color-accent2)] hover:text-red-400">×</button>
                       </span>
                     ))}
+                    {/* A hand-cast shot is exempt from voice-matched casting. Togglable BOTH ways on
+                        purpose: swapping someone locks the shot automatically, but a shot already
+                        holding the right person needs a way to say so without a pointless swap out
+                        and back (which is the only thing that fires the dropdown's change event). */}
+                    {s.lipsync && s.characters.length > 0 && (
+                      <button onClick={() => patchShot(i, j, { cast_locked: !s.cast_locked })}
+                        title={s.cast_locked
+                          ? "hand-cast: the voice-matched casting check leaves this shot alone. Click to unlock it and let the check recast it again."
+                          : "this shot can be recast automatically to match the voice the song's markers say is singing. Click to lock the cast as it is."}
+                        className={`rounded border px-1 py-0.5 text-[9px] ${s.cast_locked
+                          ? "border-amber-500/60 text-amber-300 hover:text-amber-100"
+                          : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                        {s.cast_locked ? "🔒 hand-cast" : "🔓 lock cast"}
+                      </button>
+                    )}
                     {h3cast.some((c) => !s.characters.includes(c.name)) && (
                       <select className={`${inp} !w-auto !text-[10px]`} value=""
                         onChange={(e) => addShotChar(i, j, e.target.value)}
@@ -698,10 +752,15 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               <textarea className={`${inp} font-mono`} rows={22} value={eseg.prompt}
                 onChange={(e) => patchSeg(i, { prompt: e.target.value, handEdited: true })} />
               <div className="se-foot">
-                <GhostButton onClick={() => recompile(i)} disabled={recompiling || busy}>
+                {/* NOT gated on `busy`. Recompiling is a deterministic CPU-only call that never
+                    touches the GPU box, and `busy` is app-wide: one unresolved render card left
+                    anywhere (a timed-out download, a dismissed job) disabled this button silently,
+                    so a character swap could not be written into the prompt and looked reverted. */}
+                <GhostButton onClick={() => recompile(i)} disabled={recompiling}>
                   {recompiling ? "Recompiling…" : "Recompile from the shots"}
                 </GhostButton>
                 <PrimaryButton onClick={() => setEstep("env")}>Next: Environment →</PrimaryButton>
+                {eseg.promptStale && <span className="text-[10px] text-amber-300">⚠ out of date — the shots changed since this was compiled</span>}
                 {eseg.handEdited && <span className="text-[10px] text-amber-400">⚠ hand-edited — keep the six sections and the &lt;Picture/Subject/Audio N&gt; tags</span>}
               </div>
             </div>
@@ -929,13 +988,16 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               {"·"} {segments.filter((s) => s.clipId).length} rendered
             </span>
             <span className="flex-1" />
-            <GhostButton onClick={fixVoices} disabled={busy || recompiling || !songPayload}>
+            {/* the recompile family is CPU-only and deliberately NOT gated on `busy` - see the
+                per-segment Recompile button for why that gate made edits look reverted */}
+            <GhostButton onClick={fixVoices} disabled={recompiling || !songPayload}>
               {recompiling ? "checking…" : "Check voice casting"}
             </GhostButton>
-            <GhostButton onClick={snapEdges} disabled={busy || recompiling || !songPayload}
+            <GhostButton onClick={snapEdges} disabled={recompiling || !songPayload}
               >{recompiling ? "working…" : "Snap edges to vocals"}</GhostButton>
-            <GhostButton onClick={recompileStale} disabled={busy || recompiling}
-              >{recompiling ? "recompiling…" : "Recompile out-of-date"}</GhostButton>
+            <GhostButton onClick={recompileStale} disabled={recompiling}
+              >{recompiling ? "recompiling…" : "Recompile out-of-date"}
+              {segments.some((s) => s.promptStale) ? ` (${segments.filter((s) => s.promptStale).length})` : ""}</GhostButton>
             <GhostButton onClick={genAllEnvs} disabled={busy || !!genning}>Gen missing environments</GhostButton>
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}>Assemble</PrimaryButton>
           </div>
@@ -956,7 +1018,9 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                     const segDrafts = drafts[i] || [];
                     return (<>
                       <tr key={i} className="border-t border-[var(--color-line)] align-top">
-                        <td className="px-1 py-1.5 font-semibold text-[var(--color-muted)]">{i + 1}</td>
+                        <td className="px-1 py-1.5 font-semibold text-[var(--color-muted)]">{i + 1}
+                          {seg.promptStale && <div className="text-[9px] font-normal text-amber-400"
+                            title="the shots were edited but the prompt has not been recompiled - this would render the OLD shots. Use Recompile out-of-date, or open the segment and recompile it.">⚠</div>}</td>
                         <td className="px-2 py-1.5 text-[var(--color-muted)]">
                           {fmt(seg.start)}–{fmt(seg.end)}
                           <div className="text-[9px] opacity-70">{seg.section} {"·"} renders {seg.render_seconds}s</div>

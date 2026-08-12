@@ -2023,6 +2023,10 @@ def mv_h3_compile(body: dict):
                       "scene": str(s.get("scene") or "").strip(),
                       "action": str(s.get("action") or "").strip(),
                       "costume": str(s.get("costume") or "").strip(),
+                      # carried through on purpose: this whitelist rebuilds the shot, and dropping
+                      # the lock here would hand an "unlocked" shot to enforce_voice_casting, which
+                      # would then undo the user's hand casting on every recompile
+                      "cast_locked": bool(s.get("cast_locked")),
                       "characters": [str(x).strip() for x in (s.get("characters") or []) if str(x).strip()]})
     lipsync_any = any(s["lipsync"] for s in shots)
     # lip-sync cuts are allowed inside scenes (2026-08-09); only one-window segments are single
