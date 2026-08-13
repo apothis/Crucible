@@ -693,6 +693,10 @@ def snap_shots_to_structure(shots, seg_bounds, downbeats):
 
 H3_SEG_FPS = 24
 H3_SEG_MIN_S = 124 / 24.0        # 5.17s - shortest trained duration
+H3_PROMPT_MAX = 7000     # MiniMax's documented prompt ceiling (1-7000 chars). Verified-clean band
+#   renders sat near 4,800; a three-cut two-person segment reached 6,938 before the 2026-08-12
+#   duet-staging wording, which pushed it to 7,154. Compile reports over_limit rather than letting
+#   an over-length prompt go out silently.
 H3_SEG_MAX_S = 10.5              # practical ceiling MEASURED 2026-08-09: at the trained max
 #   (15.08s) a heavy-reference render (5 pictures + audio) collapses from the tail - audio
 #   diverges from ~10s (envelope r 0.415 vs 0.975) and the image degrades to noise by ~14s;
@@ -1352,14 +1356,26 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
     who = (f"<Subject 1>" if chars else "the scene")
     if lead and lead in outfit_pic:
         who = f"<Subject 1> wearing <Subject {outfit_pic[lead]}>"
-    only = " They are the only people in the video." if len(chars) > 1 else \
-           (" This is the only person in the video." if chars else "")
+    # NAME the cast. This sentence caps the extras, but it used to say "They are the only people in
+    # the video" straight after naming <Subject 1> alone - a plural with no antecedent, in the one
+    # sentence that describes the whole segment, while a second person the later shots need was not
+    # mentioned anywhere in it. Listing them removes the contradiction and introduces everyone the
+    # segment actually uses before the shots start.
+    only = ((" Only " + " and ".join(f"<Subject {chars.index(n) + 1}>" for n in chars)
+             + " appear; nobody else.") if len(chars) > 1 else
+            (" This is the only person in the video." if chars else ""))
     mode_tag = "[reference generation + audio reference]" if (audio_ref and lead) else "[reference generation]"
     sings = (f", singing <Audio 1> directly to the camera in a {first['framing']} framing, lips and "
              f"breathing synchronized to the vocal" if (audio_ref and lead) else "")
     def _stag(n):
         base_tag = f"<Subject {chars.index(n) + 1}>"
         return f"{base_tag} wearing <Subject {outfit_pic[n]}>" if n in outfit_pic else base_tag
+
+    def _btag(n):
+        """Bare subject tag. Used where the same sentence group has already said what they wear -
+        the outfit is bound in the definitions, the retention list and the shot header, and each
+        extra "wearing <Subject N>" is ~24 chars against a 7,000 ceiling."""
+        return f"<Subject {chars.index(n) + 1}>"
 
     def _is_singer(n):
         return "singer" in str(by_name[n].get("role") or "").lower()
@@ -1425,9 +1441,19 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             # of the two genuinely is not a vocalist in this shot.
             duet = s["lipsync"] and a in _vocalists(s) and b in _vocalists(s)
             if duet:
-                centre = [f"{_stag(a)} and {_stag(b)} BOTH sing into the microphone together, side by "
-                          f"side at the centre of the frame, both facing the camera, both of their "
-                          f"mouths moving with the vocal"]
+                # EACH gets their own side. Saying both are "at the centre of the frame" gives the
+                # two of them one shared position, which leaves the anti-duplication tail ("each in
+                # that one place") with nothing to pin: segment 22 came back with Bob rendered twice,
+                # once on either side of Selene [OBSERVED 2026-08-12]. Everywhere else in this
+                # staging block a person gets exactly one named spot, and that is what stops the
+                # doubling - the pair still reads as centre-frame because they are shoulder to
+                # shoulder and nobody else is there.
+                duo = (f". Exactly one {_gender(by_name[a]) or 'person'} and one "
+                       f"{_gender(by_name[b]) or 'person'} in frame, two people in total"
+                       if len(here) == 2 else "")
+                centre = [f"{_btag(a)} just LEFT of centre and {_btag(b)} just RIGHT of centre, "
+                          f"shoulder to shoulder at one microphone, BOTH singing to camera, both "
+                          f"mouths moving with the vocal{duo}"]
             else:
                 verb = "sings at the microphone" if s["lipsync"] else "stands at the microphone"
                 centre = [f"{_stag(a)} {verb} and {_stag(b)} stands SIDE BY SIDE immediately beside them, "
@@ -1532,7 +1558,11 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             # lip-sync shot told H3 that the guitarist and bassist were singing the lead too - an
             # open invitation to put the vocal on the wrong face.
             voc = _vocalists(s)
-            vtag = " and ".join(_stag(n) for n in voc) or subj
+            # bare subject tags here, no "wearing <Subject N>": the outfit is already bound in the
+            # definitions, the retention list and the shot header, and repeating it a fourth time in
+            # the same paragraph cost ~120 chars a shot against a 7,000 ceiling one segment had
+            # already crossed
+            vtag = " and ".join(f"<Subject {chars.index(n) + 1}>" for n in voc) or subj
             quiet = [n for n in s["characters"] if n in chars and n not in voc]
             # plural agreement matters on a duet: "<Subject 1> and <Subject 2> (S1) sings" reads as
             # one of them singing, which is half of why the second singer stayed still
@@ -1594,7 +1624,11 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
               f"non_diegetic_music:\nN/A")
     picture_map = {n: i + 1 for i, n in enumerate(chars)}
     return prompt, {"sheets": picture_map, "outfits": outfit_pic, "props": prop_pic,
-                    "envs": env_map, "env": env_pic}
+                    "envs": env_map, "env": env_pic, "chars": len(prompt),
+                    # nothing was checking this before, and a wording change quietly took one
+                    # segment to 7,154 - past the documented ceiling, where the request is
+                    # truncated or refused with no sign of it in the app
+                    "over_limit": len(prompt) > H3_PROMPT_MAX}
 
 
 # ---- voice-matched casting, enforced in CODE ----------------------------------------------
