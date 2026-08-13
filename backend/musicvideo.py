@@ -1416,9 +1416,22 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
                 lead = next((n for n in _vocalists(s) if n in pair), pair[0])
                 pair = [lead] + [n for n in pair if n != lead]
             a, b = pair[0], pair[1]
-            verb = "sings at the microphone" if s["lipsync"] else "stands at the microphone"
-            centre = [f"{_stag(a)} {verb} and {_stag(b)} stands SIDE BY SIDE immediately beside them, "
-                      f"the two of them together at the centre of the frame, both facing the camera"]
+            # DO NOT stage the second one as "stands" when they are BOTH carrying the vocal here.
+            # The lip-sync line right below names every vocalist as singing, so the old wording put
+            # two contradictory instructions in one paragraph - "<Subject 2> stands SIDE BY SIDE"
+            # then "<Subject 1> and <Subject 2> sing <Audio 1>" - and H3 followed the concrete
+            # staging verb: the second singer just stood there through the duet [segment 22,
+            # OBSERVED 2026-08-12]. Duet phrasing when both sing, the standing form only when one
+            # of the two genuinely is not a vocalist in this shot.
+            duet = s["lipsync"] and a in _vocalists(s) and b in _vocalists(s)
+            if duet:
+                centre = [f"{_stag(a)} and {_stag(b)} BOTH sing into the microphone together, side by "
+                          f"side at the centre of the frame, both facing the camera, both of their "
+                          f"mouths moving with the vocal"]
+            else:
+                verb = "sings at the microphone" if s["lipsync"] else "stands at the microphone"
+                centre = [f"{_stag(a)} {verb} and {_stag(b)} stands SIDE BY SIDE immediately beside them, "
+                          f"the two of them together at the centre of the frame, both facing the camera"]
             rest = [n for n in here if n not in (a, b)]
         else:
             # the VOCALIST takes the mic, not simply the first name listed: on segment 5 the writer
@@ -1521,8 +1534,12 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
             voc = _vocalists(s)
             vtag = " and ".join(_stag(n) for n in voc) or subj
             quiet = [n for n in s["characters"] if n in chars and n not in voc]
-            sing = (f" {vtag} (S1) sings <Audio 1>, mouth shapes, phrasing and breaths matching the "
-                    f"vocal exactly, face to camera in {fr_txt[s['framing']]}.")
+            # plural agreement matters on a duet: "<Subject 1> and <Subject 2> (S1) sings" reads as
+            # one of them singing, which is half of why the second singer stayed still
+            sing = (f" {vtag} (S1) {'sing' if len(voc) > 1 else 'sings'} <Audio 1>, "
+                    f"{'their mouth shapes' if len(voc) > 1 else 'mouth shapes'}, phrasing and breaths "
+                    f"matching the vocal exactly, "
+                    f"{'both faces' if len(voc) > 1 else 'face'} to camera in {fr_txt[s['framing']]}.")
             if quiet:
                 sing += (" " + " and ".join(_stag(n) for n in quiet) +
                          (" does" if len(quiet) == 1 else " do") + " NOT sing: lips closed.")
