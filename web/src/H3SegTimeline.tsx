@@ -17,6 +17,9 @@ import { useEffect, useRef, useState } from "react";
 export type Cut = { start: number; end: number };
 export type VoiceWin = { start: number; end: number; voice: string };
 
+// matches H3_MIN_CUT_S server-side: a shorter cut is not a usable shot, so never create one
+export const H3_MIN_CUT_S = 1.5;
+
 const VOICE_COLOR: Record<string, string> = {
   female: "#c05fd8", male: "#3f8fd0", duet: "#f0911d",
 };
@@ -38,7 +41,7 @@ export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsCha
   const [drag, setDrag] = useState<number | null>(null);   // index of the boundary being dragged
   const span = Math.max(0.01, end - start);
   const pct = (t: number) => `${Math.min(100, Math.max(0, ((t - start) / span) * 100))}%`;
-  const MIN_CUT = 1.5;                // matches H3_MIN_CUT_S server-side
+  const MIN_CUT = H3_MIN_CUT_S;
 
   // The element lives in the DOM (see the <audio> at the end of the render) rather than being built
   // with `new Audio()`. Three reasons, all learned the hard way:

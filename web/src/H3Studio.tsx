@@ -4,7 +4,7 @@ import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } fro
 import { useDrafts } from "./drafts";
 import { openLightbox } from "./Lightbox";
 import { type Character } from "./mvmodel";
-import { H3SegTimeline, type VoiceWin } from "./H3SegTimeline";
+import { H3SegTimeline, H3_MIN_CUT_S, type VoiceWin } from "./H3SegTimeline";
 
 // ============================================================================
 // MiniMax H3 segment pipeline (Phase 5 - docs/MINIMAX_H3_PLAN.md).
@@ -419,6 +419,54 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     if (s.scene.includes(from) || solo) p.scene = rewrite(s.scene);
     patchShot(i, j, p);
   }
+  // ---- cuts. A "single" segment is one continuous take; a "scene" is 2-4 timestamped cuts rendered
+  // as ONE clip. Turning one into the other used to need a rewrite, but the usual reason for wanting
+  // a second shot is that the singer changes partway through a segment the writer cut as one take -
+  // so it has to be an edit, not a regeneration. The compiler collapses any segment back to a single
+  // shot when it has one cut, so kind and cuts are kept in step here. ----
+  const H3_MAX_SHOTS = 4;      // mv_h3_compile keeps shots_in[:4]
+  function addCut(i: number) {
+    const seg = segments[i];
+    if (seg.shots.length >= H3_MAX_SHOTS) {
+      ctx.setResults([{ id: rid(), title: `segment ${i + 1}`, status: "error", pct: 0,
+        err: `a segment renders at most ${H3_MAX_SHOTS} cuts in one clip.` }]);
+      return;
+    }
+    const cuts = seg.cuts?.length ? seg.cuts : [{ start: seg.start, end: seg.end }];
+    // split the LONGEST cut - the only one guaranteed to have room for two usable shots
+    let k = 0;
+    cuts.forEach((c, m) => { if (c.end - c.start > cuts[k].end - cuts[k].start) k = m; });
+    const c = cuts[k];
+    if (c.end - c.start < 2 * H3_MIN_CUT_S) {
+      ctx.setResults([{ id: rid(), title: `segment ${i + 1}`, status: "error", pct: 0,
+        err: `no room to split: the longest cut is ${(c.end - c.start).toFixed(1)}s and two cuts need ${2 * H3_MIN_CUT_S}s. Move this segment's edges first, or split a neighbour.` }]);
+      return;
+    }
+    // prefer a vocal handover inside the cut: a singer change is nearly always why a second shot is
+    // wanted, and landing the boundary there is what makes the lip-sync line up
+    const inside = voiceWins.map((w) => w.start)
+      .filter((t) => t >= c.start + H3_MIN_CUT_S && t <= c.end - H3_MIN_CUT_S)
+      .sort((a, b) => a - b);
+    const at = Math.round((inside.length ? inside[0] : (c.start + c.end) / 2) * 100) / 100;
+    const nextCuts = [...cuts.slice(0, k), { start: c.start, end: at }, { start: at, end: c.end },
+                      ...cuts.slice(k + 1)];
+    // the new shot starts as a COPY of the one it splits, so its location, scene text and therefore
+    // its environment still stay valid and only the singer/action need changing
+    const src = seg.shots[k] || seg.shots[0];
+    const nextShots = [...seg.shots.slice(0, k + 1), { ...src, cast_locked: false }, ...seg.shots.slice(k + 1)];
+    patchSeg(i, { cuts: nextCuts, shots: nextShots, kind: "scene", promptStale: true });
+  }
+  function removeCut(i: number, j: number) {
+    const seg = segments[i];
+    if (seg.shots.length <= 1) return;
+    const cuts = seg.cuts.map((c) => ({ ...c }));
+    // the removed cut's time goes to a neighbour, so the segment still covers its whole window
+    if (j === 0) cuts[1].start = cuts[0].start;
+    else cuts[j - 1].end = cuts[j].end;
+    cuts.splice(j, 1);
+    const shots = seg.shots.filter((_, m) => m !== j);
+    patchSeg(i, { cuts, shots, kind: cuts.length > 1 ? "scene" : "single", promptStale: true });
+  }
   function addShotChar(i: number, j: number, name: string) {
     const s = segments[i].shots[j];
     if (!name || s.characters.includes(name)) return;
@@ -659,6 +707,11 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                       {eseg.kind === "scene" ? `cut ${j + 1}` : "shot"}
                     </span>
                     {eseg.cuts[j] && <span>{eseg.cuts[j].start.toFixed(1)}–{eseg.cuts[j].end.toFixed(1)}s</span>}
+                    {eseg.shots.length > 1 && (
+                      <button onClick={() => removeCut(i, j)}
+                        title={`delete this cut - its ${((eseg.cuts[j]?.end ?? 0) - (eseg.cuts[j]?.start ?? 0)).toFixed(1)}s goes to the ${j === 0 ? "next" : "previous"} cut`}
+                        className="text-[10px] text-[var(--color-muted)] hover:text-red-400">× delete cut</button>
+                    )}
                     <label className="flex items-center gap-1">framing
                       <select className={`${inp} !w-auto`} value={s.framing} onChange={(e) => patchShot(i, j, { framing: e.target.value })}>
                         {["close", "medium", "wide"].map((f) => <option key={f} value={f}>{f}</option>)}
@@ -725,13 +778,41 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                   <Field label="Action — ONE continuous motion at real-world speed">
                     <textarea className={inp} rows={3} value={s.action} onChange={(e) => patchShot(i, j, { action: e.target.value })} />
                   </Field>
+                  {/* The prose is not rewritten when someone is dropped from a shot (there is no safe
+                      way to edit an arbitrary sentence), so it can end up asking for a person the
+                      compiler then forbids: "Selene and Bob sing together ..." followed by "<Subject 2>
+                      is NOT in this shot". H3 follows the prose, so name the clash and let it be fixed. */}
+                  {(() => {
+                    const stray = h3cast.map((c) => c.name).filter((n) =>
+                      !s.characters.includes(n) &&
+                      new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(`${s.action} ${s.scene}`));
+                    return stray.length ? (
+                      <div className="rounded border border-amber-500/60 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">
+                        ⚠ the text still names {stray.join(", ")}, who {stray.length > 1 ? "are" : "is"} not in this cut.
+                        The prompt would ask for {stray.length > 1 ? "them" : "them"} and forbid {stray.length > 1 ? "them" : "them"} in the same breath - reword the action, or add {stray.length > 1 ? "them" : "them"} back to the cut.
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               ))}
+              {/* add a cut: the way to make a one-take segment into two shots, e.g. when the singer
+                  changes partway through it. Splits on a vocal handover if there is one in range. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <GhostButton onClick={() => addCut(i)} disabled={eseg.shots.length >= H3_MAX_SHOTS}>
+                  + add a cut
+                </GhostButton>
+                <span className="text-[10px] text-[var(--color-muted)]">
+                  {eseg.shots.length >= H3_MAX_SHOTS
+                    ? `${H3_MAX_SHOTS} cuts is the most one clip can render.`
+                    : `splits the longest cut${voiceWins.some((w) => w.start > eseg.start + H3_MIN_CUT_S && w.start < eseg.end - H3_MIN_CUT_S)
+                        ? " on the vocal handover inside it" : " down the middle"}, copying that shot so only the singer and action need changing. Then recompile.`}
+                </span>
+              </div>
               <Field label="Soundscape (sits under the song on lip-sync segments)">
                 <input className={inp} value={eseg.soundscape} onChange={(e) => patchSeg(i, { soundscape: e.target.value })} />
               </Field>
               <div className="se-foot">
-                <PrimaryButton onClick={async () => { await recompile(i); setEstep("prompt"); }} disabled={recompiling || busy}>
+                <PrimaryButton onClick={async () => { await recompile(i); setEstep("prompt"); }} disabled={recompiling}>
                   {recompiling ? "Recompiling…" : "Recompile prompt →"}
                 </PrimaryButton>
                 <span className="text-[10px] text-[var(--color-muted)]">re-applies the enforced rules: pace anchors, sky-pin, subject-swap, reference budget, band fill</span>
