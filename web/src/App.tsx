@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, versionInfo, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, VideoForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
@@ -506,9 +506,33 @@ function libTitle(it: LibItem): string {
 
 // Artwork header — shows a generated cover image when present (future image-gen),
 // else a typed gradient placeholder. Kept compact so the grid stays dense.
+// Has this card been scrolled into view yet? The library renders EVERY item (1062 of them here) and
+// each audio/video card used to mount a real media element immediately. That cost two things at
+// once: 300+ video decoders, and a metadata range request per element - hundreds of them, which
+// saturate the browser's per-origin connection pool so the app's own /api calls queue behind them.
+// The backend stays fast (142ms) while the page stops responding. Media now mounts on first sight
+// and stays mounted, so scrolling back to something playing never tears it down mid-play.
+function useSeen<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || seen) return;
+    // a margin so a card loads just before it is scrolled to, not visibly late
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) { setSeen(true); io.disconnect(); }
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [seen]);
+  // the third value is a manual override, so a card is never stuck without a player if the observer
+  // does not fire (a tab that is not rendering never delivers IntersectionObserver callbacks)
+  return [ref, seen, () => setSeen(true)] as const;
+}
+
 function LibArtwork({ it }: { it: LibItem }) {
   const url = it.params?.artwork_url;
-  if (url) return <img src={url} alt="" className="aspect-[16/9] w-full object-cover" />;
+  if (url) return <img src={url} alt="" loading="lazy" decoding="async" className="aspect-[16/9] w-full object-cover" />;
   return (
     <div className="flex aspect-[16/9] w-full items-center justify-center bg-gradient-to-br from-[#2a1c19] via-[var(--color-panel2)] to-[var(--color-panel)]">
       <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)]">{it.mode}</span>
@@ -540,6 +564,7 @@ function ParamsPanel({ it }: { it: LibItem }) {
 function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, onCompare }: { group: LibItem[]; inTests: boolean } & LibActions) {
   const [vi, setVi] = useState(group.length - 1);
   const [showParams, setShowParams] = useState(false);
+  const [mediaRef, mediaSeen, loadMedia] = useSeen<HTMLDivElement>();
   const it = group[Math.min(vi, group.length - 1)] || group[0];
   const multi = group.length > 1;
   const canBuild = !!(it.params?.from_builder && it.params?.song_meta && onOpenInBuilder);
@@ -569,11 +594,19 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
             ))}
           </div>
         )}
-        {it.media_url && it.mode === "videostill"
-          ? <img src={it.media_url} alt="" onClick={() => openLightbox(it.media_url!)} title="Click to enlarge" className="w-full cursor-zoom-in rounded-lg" />
-          : it.media_url
-          ? <video src={it.media_url} controls loop className="w-full rounded-lg" />
-          : <audio className="h-8 w-full" controls src={it.audio_url} />}
+        {/* the media sits behind a seen-gate: see useSeen above for why. The placeholder keeps the
+            card's height so the layout does not jump - and so the observer does not report every
+            card as visible at once because they all collapsed to nothing. */}
+        <div ref={mediaRef}>
+          {it.media_url && it.mode === "videostill"
+            ? <img src={it.media_url} alt="" loading="lazy" decoding="async" onClick={() => openLightbox(it.media_url!)} title="Click to enlarge" className="w-full cursor-zoom-in rounded-lg" />
+            : !mediaSeen
+            ? <div onClick={loadMedia} title="click to load the player"
+                className={`${it.media_url ? "aspect-video" : "h-8"} flex w-full cursor-pointer items-center justify-center rounded-lg bg-[var(--color-panel)] text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)]`}>▶</div>
+            : it.media_url
+            ? <video src={it.media_url} controls loop preload="metadata" className="w-full rounded-lg" />
+            : <audio className="h-8 w-full" controls preload="metadata" src={it.audio_url} />}
+        </div>
       </div>
     </div>
   );
