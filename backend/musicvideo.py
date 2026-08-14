@@ -1588,10 +1588,17 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         band = ""
         if (s["framing"] in ("wide", "medium") and len(s["characters"]) < 2
                 and _H3_STAGE_RE.search((s.get("location") or "") + " " + s["scene"])):
-            band = (" The rest of the band plays behind on the same stage - a guitarist and a bassist "
-                    "at their instruments and a drummer at a kit - set back in the dimmer depth of "
-                    "the frame and softly out of focus, their faces never resolving. The stage is "
-                    "never empty behind the singer.")
+            # never fill in a role the named character ALREADY plays. This asked for "a guitarist"
+            # in the background of a shot whose only subject IS the guitarist, so her solo came back
+            # with extra people playing guitar and bass behind her [segment 25, OBSERVED 2026-08-12].
+            here_roles = " ".join(str(by_name[n].get("role") or "").lower()
+                                  for n in s["characters"] if n in by_name)
+            fill = [w for k, w in (("guitar", "a guitarist"), ("bass", "a bassist"))
+                    if k not in here_roles]
+            fill.append("a drummer at a kit")     # the kit is never the named subject's instrument
+            band = (f" The rest of the band plays behind on the same stage - {' and '.join(fill)} "
+                    "- set back in the dimmer depth of the frame and softly out of focus, their "
+                    "faces never resolving. The stage is never empty behind the performer.")
         elif any(n in dropped_people for n in s["characters"]):
             # players squeezed out by the people cap stay in frame as the unresolved background band
             band = (" The other band members play their instruments further back in the frame, "

@@ -2057,7 +2057,10 @@ def mv_h3_compile(body: dict):
     return {"prompt": prompt, "picture_map": refs["sheets"], "outfit_map": refs["outfits"],
             "prop_map": refs["props"], "env_map": refs["envs"], "env_picture": refs["env"],
             "lipsync": lipsync_any, "shots": seg2["shots"], "kind": seg2["kind"], "cuts": seg2["cuts"],
-            "voice_fixes": voice_fixes}
+            "voice_fixes": voice_fixes,
+            # length against MiniMax's 7000-char ceiling - this endpoint rebuilds its own response,
+            # so these have to be forwarded explicitly or the guard never reaches the caller
+            "chars": refs.get("chars"), "over_limit": refs.get("over_limit")}
 
 
 def _missing_cast(segments, cast):
@@ -2112,7 +2115,11 @@ def mv_h3_recompile(body: dict):
             seg["picture_map"], seg["outfit_map"] = refs["sheets"], refs["outfits"]
             seg["prop_map"], seg["env_map"], seg["env_picture"] = refs["props"], refs["envs"], refs["env"]
             changed.append(i)
-    return {"segments": segs, "changed": changed, "skipped": skipped, "voice_fixes": voice_fixes}
+    # a bulk recompile is exactly where an over-length prompt would slip through unnoticed
+    over = [i for i, seg in enumerate(segs, 1)
+            if len(seg.get("prompt") or "") > musicvideo_mod.H3_PROMPT_MAX]
+    return {"segments": segs, "changed": changed, "skipped": skipped, "voice_fixes": voice_fixes,
+            "over_limit": over}
 
 
 @app.post("/api/mv/h3_snap_edges")
