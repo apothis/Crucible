@@ -64,6 +64,64 @@ def grade_names():
     return ["none"] + [k for k in GRADES if k != "none"]
 
 
+def audio_match(clip_path, song_path, start, seconds):
+    """How closely a rendered clip's own soundtrack follows the song window it was given, 0..1.
+
+    H3 does not paste <Audio 1> in - it RE-RENDERS the audio, and on a bad seed it re-renders
+    something that drifts from the song, with the lip-sync following the drift rather than the
+    track. Assembly then lays the master song over the top and the mouth no longer matches. This
+    is invisible until you play the finished video, and a seed that looks right can sound wrong:
+    segment 6 seed 432041235 scored 0.36 while every other take of the same shot scored 0.87-0.89
+    [MEASURED 2026-08-15].
+
+    Compares log-RMS envelopes at 100 Hz with +-0.6s of slack, which ignores level, EQ and the
+    ambience H3 adds underneath, and responds to the thing that matters: whether the beats and
+    syllables land at the same instants. Returns None when either side has no usable audio.
+
+    Observed on this project: clean takes 0.87-1.00, drifted takes 0.36-0.40."""
+    try:
+        import numpy as np
+    except Exception:
+        return None
+
+    def pcm(src, ss=None, dur=None):
+        cmd = [_ffmpeg(), "-y", "-loglevel", "error"]
+        if ss is not None:
+            cmd += ["-ss", f"{float(ss):.3f}"]
+        cmd += ["-i", src]
+        if dur is not None:
+            cmd += ["-t", f"{float(dur):.3f}"]
+        cmd += ["-ac", "1", "-ar", "16000", "-f", "s16le", "-"]
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode or len(r.stdout) < 32000:          # under a second of audio is not usable
+            return None
+        return np.frombuffer(r.stdout, dtype="<i2").astype("float32")
+
+    def envelope(x, hop=160):
+        n = len(x) // hop
+        if n < 100:
+            return None
+        e = np.log1p(np.sqrt((x[:n * hop].reshape(n, hop) ** 2).mean(1) + 1e-9))
+        sd = e.std()
+        return (e - e.mean()) / sd if sd > 1e-6 else None
+
+    a = pcm(clip_path)
+    b = pcm(song_path, start, seconds)
+    if a is None or b is None:
+        return None
+    ea, eb = envelope(a), envelope(b)
+    if ea is None or eb is None:
+        return None
+    n, best = min(len(ea), len(eb)), -1.0
+    for lag in range(-60, 61):                              # +-0.6s
+        x = ea[max(0, lag):n + min(0, lag)]
+        y = eb[max(0, -lag):n - max(0, lag)]
+        m = min(len(x), len(y))
+        if m >= 100:
+            best = max(best, float(np.dot(x[:m], y[:m]) / m))
+    return round(min(1.0, max(0.0, best)), 3)
+
+
 def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, grade="none",
              transition=0.0, intro=None):
     """Stitch shot clips into one MP4 (GPU-free, ffmpeg). segments = [{path, dur}]: each clip
@@ -720,6 +778,10 @@ def _h3_safe_render():
 
 
 H3_SEG_SAFE_S, H3_SEG_SAFE_FRAMES = _h3_safe_render()      # 10.125s / 243 frames at 24fps
+
+H3_AUDIO_MIN = 0.70      # envelope-match floor for a usable take (see audio_match). MEASURED on
+#   this project 2026-08-15: every clean take across 25 lip-sync segments scored 0.87-1.00 and the
+#   two drifted takes scored 0.36 and 0.40, so the gap is wide and 0.70 sits in the middle of it.
 H3_CAMERA_MOVES = {
     # Writer vocabulary -> the author's exact phrasing. TWO TIERS:
     #  - GENTLE (small amplitude / slow speed) is the pace-safe envelope measured in Phase 1.

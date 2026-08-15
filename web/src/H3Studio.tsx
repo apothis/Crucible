@@ -134,6 +134,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [jobState, setJobState] = useState<Record<string, { pct: number; url?: string; err?: string }>>({});
   // where each voice sings, on the REAL audio timeline - drawn under the segment editor's timeline
   const [voiceWins, setVoiceWins] = useState<VoiceWin[]>([]);
+  // clip id -> how closely that take's own audio follows the song (see /api/mv/h3_audio_check)
+  const [audioScore, setAudioScore] = useState<Record<string, number | null>>({});
   const [editIdx, setEditIdx] = useState(-1);        // segment open in the full editor
   const [estep, setEstep] = useState("shots");       // which editor stage is showing
   const [huntN, setHuntN] = useState(2);
@@ -394,7 +396,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
           status: "running" as const, pct: 2,
         }));
         ctx.setResults(cards);
-        r.drafts.forEach((x, k) => { track(x.job_id); pollJob(x.job_id, cards[k].id, ctx); });
+        // score each take's audio the moment it lands, so a drifted seed is visible before it is kept
+        r.drafts.forEach((x, k) => { track(x.job_id, () => void checkTakeAudio(i)); pollJob(x.job_id, cards[k].id, ctx); });
       } else if (r.job_id) {
         track(r.job_id);
         patchSeg(i, { clipId: r.job_id, clipVariants: [...(seg.clipVariants || []), r.job_id] });
@@ -598,6 +601,22 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     } catch { setVoiceWins([]); }
   }
 
+  // Score every take of one segment against the song window it was rendered for. Only worth doing
+  // for lip-sync segments - a shot with nobody singing has no lips to go out of step.
+  async function checkTakeAudio(i: number) {
+    const seg = segments[i];
+    const ids = [...new Set([...(drafts[i] || []).map((d) => d.jobId), seg?.clipId,
+                             ...(seg?.clipVariants || [])].filter(Boolean) as string[])];
+    if (!seg?.lipsync || !audioId || !ids.length) return;
+    const pending = ids.filter((id) => audioScore[id] === undefined);
+    if (!pending.length) return;
+    try {
+      const r = await api.mvH3AudioCheck({ clip_ids: pending, audio_id: audioId,
+        start: seg.start, seconds: seg.render_seconds }) as { scores: Record<string, number | null> };
+      setAudioScore((prev) => ({ ...prev, ...r.scores }));
+    } catch { /* a missing score just leaves the take unlabelled */ }
+  }
+
   // open a segment in the editor at its first INCOMPLETE stage (the old editor's auto-advance):
   // no scene text yet -> Shots; no background -> Environment; no clip -> Video; else the Result.
   function openSeg(i: number) {
@@ -605,14 +624,24 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const s = segments[i];
     setEditIdx(i);
     void loadVoiceMap();
+    void checkTakeAudio(i);
     setEstep(!s.shots.every((x) => x.scene && x.action) ? "shots"
       : !segLocs(s).every((l) => !!envOf(s, l)) ? "env"
       : !s.clipId ? "video" : "result");
   }
   function keepDraft(i: number, jobId: string, seed: number) {
     const seg = segments[i];
+    const r = audioScore[jobId];
+    // a drifted take looks fine and only reveals itself once the whole video is assembled, so say
+    // it plainly at the moment it would be locked in rather than leaving it to the score chip
+    if (r !== undefined && r !== null && r < 0.7 &&
+        !window.confirm(`Seed ${seed} scored ${r} for audio match (clean takes are 0.87-1.00).\n\n` +
+          `H3 re-rendered the song differently on this seed and lip-synced to its own version, so ` +
+          `once the master audio is laid over at assembly the mouths will not match the track.\n\n` +
+          `Keep it anyway?`)) return;
     patchSeg(i, { clipId: jobId, clipVariants: [...(seg.clipVariants || []), jobId] });
-    ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: draft seed ${seed} kept`, status: "done", pct: 100 }]);
+    ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: draft seed ${seed} kept`, status: "done", pct: 100,
+      err: r !== undefined && r !== null && r < 0.7 ? `kept despite audio drift (${r})` : undefined }]);
   }
 
   async function assemble() {
@@ -1009,7 +1038,20 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                               : <span className="se-spin">{st?.pct ? `rendering… ${st.pct}%` : "queued…"}</span>}
                         </div>
                         <div className="flex items-center justify-between gap-1 px-2 py-1.5">
-                          <span className="text-[11px] text-[var(--color-muted)]">seed {x.seed}</span>
+                          <span className="text-[11px] text-[var(--color-muted)]">seed {x.seed}
+                            {/* H3 re-renders the audio rather than pasting the reference in, and a
+                                seed that LOOKS right can have drifted away from the song with the
+                                lip-sync following the drift - invisible until the whole video is
+                                cut together. Score it here so a bad seed is rejectable now. */}
+                            {audioScore[x.jobId] !== undefined && audioScore[x.jobId] !== null && (
+                              <span className={audioScore[x.jobId]! < 0.7 ? "ml-1.5 text-red-400" : "ml-1.5 text-[var(--color-muted)]"}
+                                title={audioScore[x.jobId]! < 0.7
+                                  ? `AUDIO DRIFTED (${audioScore[x.jobId]}). H3 re-rendered the song differently on this seed and lip-synced to its own version, so the mouths will not match the real track once assembled. Clean takes score 0.87-1.00. Do not keep this one however good it looks.`
+                                  : `audio follows the song (${audioScore[x.jobId]}) - the lip-sync will match the real track`}>
+                                {audioScore[x.jobId]! < 0.7 ? `⚠ audio ${audioScore[x.jobId]}` : `♪ ${audioScore[x.jobId]}`}
+                              </span>
+                            )}
+                          </span>
                           <div className="flex items-center gap-1">
                             {picked
                               ? <span className="text-[11px] text-[var(--color-accent2)]">✓ in use</span>

@@ -2079,6 +2079,34 @@ def _missing_cast(segments, cast):
     return miss
 
 
+@app.post("/api/mv/h3_audio_check")
+def mv_h3_audio_check(body: dict):
+    """Score how closely each rendered take's own audio follows the song window it was given.
+
+    H3 re-renders the audio rather than pasting the reference in, and on a bad seed it drifts, with
+    the lip-sync following the drift. Assembly then lays the master song over the top and the mouths
+    no longer match - which only shows up once the whole video is cut together, after the GPU time
+    is already spent. Scoring it here makes a bad seed rejectable at the draft stage.
+
+    Body: {clip_ids: [...], audio_id, start, seconds}. Returns {scores: {clip_id: 0..1 | null}}.
+    Clean takes on this project score 0.87-1.00 and drifted ones 0.36-0.40; H3_AUDIO_MIN is the
+    line between them. GPU-free, a second or so per clip."""
+    ids = [os.path.basename(str(c)) for c in (body.get("clip_ids") or []) if c]
+    if not ids:
+        raise HTTPException(400, "clip_ids are required")
+    song = _lib_source_path(body.get("audio_id"))
+    if not song:
+        raise HTTPException(400, "audio_id must be the song track this video is cut to")
+    start = float(body.get("start") or 0)
+    seconds = float(body.get("seconds") or 0) or None
+    scores = {}
+    for cid in ids[:12]:
+        path = os.path.join(LIBRARY, f"{cid}.mp4")
+        scores[cid] = (musicvideo_mod.audio_match(path, song, start, seconds)
+                       if os.path.exists(path) else None)
+    return {"scores": scores, "min_ok": musicvideo_mod.H3_AUDIO_MIN}
+
+
 @app.post("/api/mv/h3_recompile")
 def mv_h3_recompile(body: dict):
     """Recompile every segment whose stored prompt no longer matches what the compiler would emit
