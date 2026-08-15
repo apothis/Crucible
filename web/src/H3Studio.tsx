@@ -51,6 +51,11 @@ export type H3Segment = {
   promptStale?: boolean;
 };
 
+// keep in sync with H3_SEG_MAX_S in backend/musicvideo.py. Past this the render collapses from the
+// tail - the audio drifts away from the song and the lip-sync follows the drift, not the track.
+// Segments cut before 2026-08-15 could exceed it, so this is shown rather than assumed away.
+const H3_SEG_MAX_S = 10.5;
+
 // keep in sync with H3_CAMERA_MOVES in backend/musicvideo.py (the compiler drops anything unknown
 // back to "static"). Gentle tier first, then the assertive moves added for more dynamic camerawork.
 const H3_CAMERAS = ["static", "push in", "pull back", "truck left", "truck right",
@@ -671,6 +676,12 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               renders {eseg.render_seconds}s / {eseg.frames}f
               {eseg.render_seconds - eseg.seconds > 0.05 ? ` (trimmed to ${eseg.seconds.toFixed(2)}s)` : ""}
             </span>
+            {eseg.render_seconds > H3_SEG_MAX_S && (
+              <span className="mt-1 block text-amber-400"
+                title={`Measured 2026-08-09: past ${H3_SEG_MAX_S}s a heavy-reference render collapses from the tail - the audio diverges from the song and the lip-sync follows the divergence. The identical payload at 10.1s is clean. This segment's window needs to come under 10.13s to render on the next frame step down.`}>
+                ⚠ renders past the {H3_SEG_MAX_S}s measured ceiling — audio drift likely
+              </span>
+            )}
           </div>
           <div className="se-rail">
             {H3_STAGES.map((s) => (
@@ -1139,7 +1150,12 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                             title="the shots were edited but the prompt has not been recompiled - this would render the OLD shots. Use Recompile out-of-date, or open the segment and recompile it.">⚠</div>}</td>
                         <td className="px-2 py-1.5 text-[var(--color-muted)]">
                           {fmt(seg.start)}–{fmt(seg.end)}
-                          <div className="text-[9px] opacity-70">{seg.section} {"·"} renders {seg.render_seconds}s</div>
+                          <div className={`text-[9px] ${seg.render_seconds > H3_SEG_MAX_S ? "text-amber-400" : "opacity-70"}`}
+                            title={seg.render_seconds > H3_SEG_MAX_S
+                              ? `past the ${H3_SEG_MAX_S}s measured ceiling - the audio drifts from the song and the lip-sync follows it`
+                              : undefined}>
+                            {seg.section} {"·"} renders {seg.render_seconds}s{seg.render_seconds > H3_SEG_MAX_S ? " ⚠" : ""}
+                          </div>
                         </td>
                         <td className="px-2 py-1.5">
                           <span className={`rounded px-1.5 py-0.5 text-[9px] ${seg.lipsync ? "bg-[#3a2a14] text-[var(--color-accent2)]" : seg.kind === "scene" ? "bg-sky-900/50 text-sky-200" : "bg-slate-700/60 text-slate-300"}`}>

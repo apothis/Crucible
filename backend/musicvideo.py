@@ -702,6 +702,24 @@ H3_SEG_MAX_S = 10.5              # practical ceiling MEASURED 2026-08-09: at the
 #   diverges from ~10s (envelope r 0.415 vs 0.975) and the image degrades to noise by ~14s;
 #   the IDENTICAL payload at 10.1s is clean end to end. 11-14s is unexplored territory.
 #   362 frames stays as the hard clamp in h3_seg_seconds for explicit long renders.
+
+
+def _h3_safe_render():
+    """Longest frame-grid duration that still renders INSIDE the measured ceiling.
+
+    The ceiling was being applied to the WINDOW while h3_seg_seconds snaps the render UP to the
+    next legal frame count, and the grid steps in 17s - so a window of 10.13-10.50s produced a
+    10.833s render, past the ceiling, where the measurement says the audio diverges. Segment 6
+    rendered 10.125s on 08-12 and 10.833s on 08-15 after an edge moved, and its audio started
+    drifting away from the song with the lip-sync following the drift [OBSERVED 2026-08-15].
+    So the real cap on a window is this value, not H3_SEG_MAX_S."""
+    f = 5
+    while (f + 17) / H3_SEG_FPS <= H3_SEG_MAX_S:
+        f += 17
+    return round(f / H3_SEG_FPS, 3), f
+
+
+H3_SEG_SAFE_S, H3_SEG_SAFE_FRAMES = _h3_safe_render()      # 10.125s / 243 frames at 24fps
 H3_CAMERA_MOVES = {
     # Writer vocabulary -> the author's exact phrasing. TWO TIERS:
     #  - GENTLE (small amplitude / slow speed) is the pace-safe envelope measured in Phase 1.
@@ -782,7 +800,8 @@ def h3_seg_seconds(dur):
 
 def build_h3_segments(grid):
     """Merge the audio-structure shot grid ([{start,end,section}]) into SEGMENT windows for the H3
-    hybrid model: greedy within-section merge up to H3_SEG_MAX_S; a window that cannot reach
+    hybrid model: greedy within-section merge up to H3_SEG_SAFE_S (the longest window that still
+    renders inside the measured ceiling); a window that cannot reach
     H3_SEG_MIN_S on its own stays (the render is snapped up and trimmed). Each segment carries its
     member windows as `cuts` so a "scene" segment can place H3 timestamps on the real grid cuts.
     Returns [{start, end, seconds, render_seconds, frames, section, cuts:[{start,end}...]}]."""
@@ -790,7 +809,7 @@ def build_h3_segments(grid):
     for w in grid or []:
         s, e, label = float(w["start"]), float(w["end"]), w.get("section") or "section"
         if (segs and segs[-1]["section"] == label
-                and (e - segs[-1]["start"]) <= H3_SEG_MAX_S):
+                and (e - segs[-1]["start"]) <= H3_SEG_SAFE_S):
             segs[-1]["end"] = e
             segs[-1]["cuts"].append({"start": s, "end": e})
         else:
@@ -828,9 +847,11 @@ def snap_segment_edges_to_handovers(segments, song, grid=None):
 
     # The neighbour absorbing the difference gets LONGER, and length is the one axis where H3 is
     # known to fail (a 15.08s render collapsed from the tail; 10.1s is the longest verified clean).
-    # Frames come in steps of 17, so absorbing a fraction of a second can jump a whole step: allow
-    # at most one step past the measured ceiling, and say so in the note rather than drift silently.
-    grow_cap = H3_SEG_MAX_S + 17 / H3_SEG_FPS
+    # Frames come in steps of 17, so absorbing a fraction of a second can jump a whole step - which
+    # is how segment 6 ended up rendering 10.833s. NEVER grow past the longest snap-safe render:
+    # one step past the ceiling is exactly where the measurement says the audio starts diverging,
+    # and a note about it is no substitute for not doing it.
+    grow_cap = H3_SEG_SAFE_S
 
     def prospective(a, b):
         return h3_seg_seconds(round(b - a, 2))[0]
