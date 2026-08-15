@@ -1381,9 +1381,17 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         return "singer" in str(by_name[n].get("role") or "").lower()
 
     def _vocalists(s):
-        """Who actually carries the vocal in this shot: the cast members whose role is a singer,
-        falling back to the first named character when no roles are set."""
+        """Who actually carries the vocal in this shot: an explicit per-shot pick if there is one,
+        else the cast members whose role is a singer, falling back to the first named character
+        when no roles are set.
+
+        The explicit pick exists because ROLE alone cannot express "both singers are in frame but
+        only one of them is performing this line" - both of them have a singer role, so both were
+        named as singing and both lip-synced, whatever the action prose said [segment 30]."""
         here = [n for n in s["characters"] if n in chars]
+        pick = [n for n in (s.get("singers") or []) if n in here]
+        if pick:
+            return pick
         return [n for n in here if _is_singer(n)] or here[:1]
 
     def _distinguish(n):

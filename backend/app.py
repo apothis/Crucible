@@ -2027,6 +2027,8 @@ def mv_h3_compile(body: dict):
                       # the lock here would hand an "unlocked" shot to enforce_voice_casting, which
                       # would then undo the user's hand casting on every recompile
                       "cast_locked": bool(s.get("cast_locked")),
+                      # who performs the vocal, when it is not simply "everyone with a singer role"
+                      "singers": [str(x).strip() for x in (s.get("singers") or []) if str(x).strip()],
                       "characters": [str(x).strip() for x in (s.get("characters") or []) if str(x).strip()]})
     lipsync_any = any(s["lipsync"] for s in shots)
     # lip-sync cuts are allowed inside scenes (2026-08-09); only one-window segments are single

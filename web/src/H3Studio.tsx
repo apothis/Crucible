@@ -26,6 +26,10 @@ type H3Shot = {
   // Until this existed, recasting a shot appeared to work in the cast row and was then silently
   // reverted by the next recompile (segment 14: "103s Bob->Selene (female part)").
   cast_locked?: boolean;
+  // Who performs the vocal, when that is not simply "everyone in frame with a singer role". Absent
+  // = the role-based default. This is the only way to stage two singers together with one of them
+  // silent, since both carry a singer role and were therefore both told to lip-sync.
+  singers?: string[];
 };
 export type H3Segment = {
   start: number; end: number; seconds: number; render_seconds: number; frames: number;
@@ -467,6 +471,24 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const shots = seg.shots.filter((_, m) => m !== j);
     patchSeg(i, { cuts, shots, kind: cuts.length > 1 ? "scene" : "single", promptStale: true });
   }
+  // Who carries the vocal in a shot. MIRRORS _vocalists() in musicvideo.py: an explicit pick wins,
+  // else everyone whose role says singer, else the first person in the shot. Kept in step so the ♪
+  // marks in the cast row show what the prompt will actually say.
+  const shotSingers = (s: H3Shot): string[] => {
+    const here = s.characters.filter((n) => h3cast.some((c) => c.name === n));
+    const pick = (s.singers || []).filter((n) => here.includes(n));
+    if (pick.length) return pick;
+    const byRole = here.filter((n) => (h3cast.find((c) => c.name === n)?.role || "").toLowerCase().includes("singer"));
+    return byRole.length ? byRole : here.slice(0, 1);
+  };
+  function toggleShotSinger(i: number, j: number, name: string) {
+    const s = segments[i].shots[j];
+    const cur = shotSingers(s);
+    const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...s.characters.filter((n) => cur.includes(n) || n === name)];
+    // a lip-sync shot with nobody singing is a contradiction - turn lip-sync off for that instead
+    if (!next.length) return;
+    patchShot(i, j, { singers: next });
+  }
   function addShotChar(i: number, j: number, name: string) {
     const s = segments[i].shots[j];
     if (!name || s.characters.includes(name)) return;
@@ -740,6 +762,19 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                           {h3cast.filter((c) => c.name === n || !s.characters.includes(c.name))
                             .map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
                         </select>
+                        {/* who actually performs the vocal. Role alone cannot say "both of them are
+                            in frame but only one is singing this line" - both singers have a singer
+                            role, so both lip-synced however the action was worded (segment 30). */}
+                        {s.lipsync && (
+                          <button onClick={() => toggleShotSinger(i, j, n)}
+                            title={shotSingers(s).includes(n)
+                              ? `${n} lip-syncs this line — click so ${n} is in shot but silent`
+                              : `${n} is in shot but silent — click to have ${n} lip-sync this line too`}
+                            className={`px-0.5 text-[10px] ${shotSingers(s).includes(n)
+                              ? "text-[var(--color-accent2)]" : "text-[var(--color-muted)] opacity-50 hover:opacity-100"}`}>
+                            ♪
+                          </button>
+                        )}
                         <button onClick={() => removeShotChar(i, j, n)} title={`take ${n} out of this shot`}
                           className="px-1 text-[10px] text-[var(--color-accent2)] hover:text-red-400">×</button>
                       </span>
