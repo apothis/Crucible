@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, type LibItem } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, rid, pollJob, type RunCtx } from "./ui";
 import { useDrafts } from "./drafts";
@@ -139,6 +139,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [voiceWins, setVoiceWins] = useState<VoiceWin[]>([]);
   // clip id -> how closely that take's own audio follows the song (see /api/mv/h3_audio_check)
   const [audioScore, setAudioScore] = useState<Record<string, number | null>>({});
+  const [upscaling, setUpscaling] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);        // segment open in the full editor
   const [estep, setEstep] = useState("shots");       // which editor stage is showing
   const [huntN, setHuntN] = useState(2);
@@ -652,7 +653,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
 
   // ---- FlashVSR 2x upscale of a segment's chosen take (the same upscaler the LTX lane uses; it
   // auto-chunks long clips server-side). Runs on the box, so it is a real GPU job per segment. ----
-  async function upscaleSeg(i: number) {
+  async function upscaleSeg(i: number, waitForIt = false) {
     const seg = segments[i];
     if (!seg?.clipId) return;
     const card = { id: rid(), title: `segment ${i + 1}: upscaling 2x`, status: "running" as const, pct: 5 };
@@ -660,14 +661,39 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     try {
       const { job_id } = await api.videoFlashvsr({ video_id: seg.clipId, scale: 2 }) as { job_id: string };
       patchSeg(i, { upscaledId: job_id });
-      track(job_id);
       pollJob(job_id, card.id, ctx);
+      // awaiting the SUBMIT only tells us the box accepted the job. For a batch we have to wait for
+      // the render, or the loop posts every job at once (see upscaleAll).
+      if (waitForIt) await new Promise<void>((done) => track(job_id, () => done()));
+      else track(job_id);
     } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
+  // Batch upscale, ACTUALLY one at a time. The first version awaited only the submit, so it fired
+  // all 31 jobs into the ComfyUI queue in a couple of seconds: the box still ran them serially, but
+  // the run was committed up front, could not be stopped from here, and every card claimed to be
+  // running at once [2026-08-15]. `stopUpscale` lets the loop be halted between segments; jobs
+  // already queued on the box have to be cleared there.
+  const stopUpscale = useRef(false);
   async function upscaleAll() {
     const todo = segments.map((_, i) => i).filter((i) => segments[i].clipId && !segments[i].upscaledId);
     if (!todo.length) { ctx.setResults([{ id: rid(), title: "Nothing to upscale", status: "error", pct: 0, err: "Every segment with a take is already upscaled." }]); return; }
-    for (const i of todo) await upscaleSeg(i);
+    const frames = todo.reduce((n, i) => n + (segments[i].frames || 0), 0);
+    if (!window.confirm(`Upscale ${todo.length} segment(s), ${frames} frames in total.\n\n` +
+        `FlashVSR measured 195-237s for a short clip, so expect HOURS for a whole video, one GPU ` +
+        `job at a time. Re-rendering or re-picking a take afterwards discards its upscale.\n\nStart?`)) return;
+    stopUpscale.current = false;
+    setUpscaling(true);
+    try {
+      for (const i of todo) {
+        if (stopUpscale.current) {
+          ctx.setResults([{ id: rid(), title: `Upscaling stopped`, status: "done", pct: 100,
+            err: `stopped before segment ${i + 1}; anything already queued on the box still runs` }]);
+          return;
+        }
+        await upscaleSeg(i, true);
+      }
+      ctx.setResults([{ id: rid(), title: `✓ upscaled ${todo.length} segment(s)`, status: "done", pct: 100 }]);
+    } finally { setUpscaling(false); }
   }
 
   async function assemble() {
@@ -1209,10 +1235,15 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               {segments.some((s) => s.promptStale) ? ` (${segments.filter((s) => s.promptStale).length})` : ""}</GhostButton>
             <GhostButton onClick={genAllEnvs} disabled={busy || !!genning}>Gen missing environments</GhostButton>
             {/* one GPU job per segment, so it names the count rather than starting quietly */}
-            <GhostButton onClick={upscaleAll} disabled={busy || !!genning || !segments.some((s) => s.clipId && !s.upscaledId)}
-              title="FlashVSR 2x every segment that has a take and is not upscaled yet. One GPU job each, run in sequence - do this once the takes are final, since a re-render discards the upscale.">
-              Upscale all 2x{(() => { const n = segments.filter((s) => s.clipId && !s.upscaledId).length; return n ? ` (${n})` : ""; })()}
-            </GhostButton>
+            {upscaling
+              ? <GhostButton onClick={() => { stopUpscale.current = true; }}
+                  title="stop after the segment now rendering. Jobs already queued on the box keep going - clear them there.">
+                  ■ Stop upscaling
+                </GhostButton>
+              : <GhostButton onClick={upscaleAll} disabled={busy || !!genning || !segments.some((s) => s.clipId && !s.upscaledId)}
+                  title="FlashVSR 2x every segment that has a take and is not upscaled yet. ONE GPU JOB AT A TIME, waiting for each - measured at 195-237s for a short clip, so a whole video is hours. Do it once the takes are final: a re-render discards the upscale.">
+                  Upscale all 2x{(() => { const n = segments.filter((s) => s.clipId && !s.upscaledId).length; return n ? ` (${n})` : ""; })()}
+                </GhostButton>}
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}
               title={segments.some((s) => s.upscaledId)
                 ? `assembles at ${resW * 2}x${resH * 2}, using the 2x upscale for the ${segments.filter((s) => s.upscaledId).length} segment(s) that have one`
