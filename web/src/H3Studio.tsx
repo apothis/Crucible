@@ -41,6 +41,9 @@ export type H3Segment = {
   env_picture: number;
   // client-side render state
   envStillId?: string; clipId?: string; clipVariants?: string[];
+  // FlashVSR 2x of the chosen take. Kept alongside clipId rather than replacing it, so the original
+  // stays available and a re-render clears the upscale rather than silently assembling a stale one.
+  upscaledId?: string;
   staleClip?: boolean;   // the segment's window moved after this was rendered - redo the take
   handEdited?: boolean;   // raw prompt overridden by hand (a recompile clears this)
   // A shot field changed but the prompt has not been recompiled, so the prompt (and any render
@@ -400,7 +403,8 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
         r.drafts.forEach((x, k) => { track(x.job_id, () => void checkTakeAudio(i)); pollJob(x.job_id, cards[k].id, ctx); });
       } else if (r.job_id) {
         track(r.job_id);
-        patchSeg(i, { clipId: r.job_id, clipVariants: [...(seg.clipVariants || []), r.job_id] });
+        patchSeg(i, { clipId: r.job_id, clipVariants: [...(seg.clipVariants || []), r.job_id],
+                      upscaledId: undefined });   // 2x of the old take no longer applies
         ctx.patch(card.id, { status: "running", pct: 5 });
         pollJob(r.job_id, card.id, ctx);
       }
@@ -639,9 +643,31 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
           `H3 re-rendered the song differently on this seed and lip-synced to its own version, so ` +
           `once the master audio is laid over at assembly the mouths will not match the track.\n\n` +
           `Keep it anyway?`)) return;
-    patchSeg(i, { clipId: jobId, clipVariants: [...(seg.clipVariants || []), jobId] });
+    // the upscale belongs to the PREVIOUS take, so drop it rather than assemble a 2x of a clip
+    // that is no longer the chosen one
+    patchSeg(i, { clipId: jobId, clipVariants: [...(seg.clipVariants || []), jobId], upscaledId: undefined });
     ctx.setResults([{ id: rid(), title: `✓ segment ${i + 1}: draft seed ${seed} kept`, status: "done", pct: 100,
       err: r !== undefined && r !== null && r < 0.7 ? `kept despite audio drift (${r})` : undefined }]);
+  }
+
+  // ---- FlashVSR 2x upscale of a segment's chosen take (the same upscaler the LTX lane uses; it
+  // auto-chunks long clips server-side). Runs on the box, so it is a real GPU job per segment. ----
+  async function upscaleSeg(i: number) {
+    const seg = segments[i];
+    if (!seg?.clipId) return;
+    const card = { id: rid(), title: `segment ${i + 1}: upscaling 2x`, status: "running" as const, pct: 5 };
+    ctx.setResults([card]);
+    try {
+      const { job_id } = await api.videoFlashvsr({ video_id: seg.clipId, scale: 2 }) as { job_id: string };
+      patchSeg(i, { upscaledId: job_id });
+      track(job_id);
+      pollJob(job_id, card.id, ctx);
+    } catch (e) { ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+  async function upscaleAll() {
+    const todo = segments.map((_, i) => i).filter((i) => segments[i].clipId && !segments[i].upscaledId);
+    if (!todo.length) { ctx.setResults([{ id: rid(), title: "Nothing to upscale", status: "error", pct: 0, err: "Every segment with a take is already upscaled." }]); return; }
+    for (const i of todo) await upscaleSeg(i);
   }
 
   async function assemble() {
@@ -650,9 +676,13 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const card = { id: rid(), title: `Assemble (${ready.length} segments)`, status: "pending" as const, pct: 0 };
     ctx.setResults([card]);
     try {
+      // prefer the upscaled take where one exists, and lift the canvas so a 2x clip is not scaled
+      // back down to the 720p default - mixing sizes is fine, assemble pads each clip to the canvas
+      const up = ready.filter((s) => s.upscaledId).length;
       const { job_id } = await api.mvAssemble({
-        shots: ready.map((s) => ({ clip_id: s.clipId, start: s.start, end: s.end })),
-        audio_id: audioId, grade, width: resW, height: resH,
+        shots: ready.map((s) => ({ clip_id: s.upscaledId || s.clipId, start: s.start, end: s.end })),
+        audio_id: audioId, grade,
+        width: up ? resW * 2 : resW, height: up ? resH * 2 : resH,
       }) as { job_id: string };
       ctx.patch(card.id, { status: "running", pct: 5 });
       pollJob(job_id, card.id, ctx);
@@ -1081,6 +1111,16 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                     <PrimaryButton onClick={() => setEditIdx(-1)}>Use in the video ✓</PrimaryButton>
                     <GhostButton onClick={() => setEstep("video")}>Re-roll options</GhostButton>
                     <GhostButton onClick={() => setEstep("env")}>Change the background</GhostButton>
+                    {/* FlashVSR 2x, the same upscaler the LTX lane uses. Do it LAST: it is a GPU job
+                        per segment and any re-render discards the result. */}
+                    <GhostButton onClick={() => upscaleSeg(i)} disabled={busy || !!genning}
+                      title="FlashVSR 2x upscale of this take (runs on the box; long clips are auto-chunked). Assembly uses the upscale when one exists.">
+                      {eseg.upscaledId ? "Re-upscale 2x" : "Upscale 2x"}
+                    </GhostButton>
+                    {eseg.upscaledId && (
+                      <span className="text-[10px] text-[var(--color-accent2)]"
+                        title="assembly will use this instead of the base take">↑2x ready</span>
+                    )}
                   </div>
                   {(eseg.clipVariants || []).length > 1 && (
                     <div className="flex flex-wrap items-center gap-1">
@@ -1168,7 +1208,15 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               >{recompiling ? "recompiling…" : "Recompile out-of-date"}
               {segments.some((s) => s.promptStale) ? ` (${segments.filter((s) => s.promptStale).length})` : ""}</GhostButton>
             <GhostButton onClick={genAllEnvs} disabled={busy || !!genning}>Gen missing environments</GhostButton>
-            <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}>Assemble</PrimaryButton>
+            {/* one GPU job per segment, so it names the count rather than starting quietly */}
+            <GhostButton onClick={upscaleAll} disabled={busy || !!genning || !segments.some((s) => s.clipId && !s.upscaledId)}
+              title="FlashVSR 2x every segment that has a take and is not upscaled yet. One GPU job each, run in sequence - do this once the takes are final, since a re-render discards the upscale.">
+              Upscale all 2x{(() => { const n = segments.filter((s) => s.clipId && !s.upscaledId).length; return n ? ` (${n})` : ""; })()}
+            </GhostButton>
+            <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}
+              title={segments.some((s) => s.upscaledId)
+                ? `assembles at ${resW * 2}x${resH * 2}, using the 2x upscale for the ${segments.filter((s) => s.upscaledId).length} segment(s) that have one`
+                : `assembles at ${resW}x${resH}`}>Assemble</PrimaryButton>
           </div>
           <div className="overflow-hidden rounded-lg border border-[var(--color-line)]">
             <div className="max-h-[520px] overflow-y-auto">
@@ -1241,8 +1289,15 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                         </td>
                         <td className="px-2 py-1.5">
                           {url
-                            ? <video src={`${url}#t=0.5`} muted preload="metadata" onClick={() => openLightbox(url)}
-                                className="h-9 w-16 cursor-zoom-in rounded object-cover" title="rendered clip — click to view" />
+                            ? <>
+                                <video src={`${url}#t=0.5`} muted preload="metadata" onClick={() => openLightbox(url)}
+                                  className="h-9 w-16 cursor-zoom-in rounded object-cover" title="rendered clip — click to view" />
+                                {seg.upscaledId
+                                  ? <span className="block text-[8px] text-[var(--color-accent2)]" title="FlashVSR 2x - assembly will use this">↑2x</span>
+                                  : <button onClick={() => upscaleSeg(i)} disabled={busy || !!genning}
+                                      title="FlashVSR 2x upscale of this take"
+                                      className="block text-[8px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-50">↑ upscale</button>}
+                              </>
                             : seg.staleClip
                               ? <span className="text-[9px] text-amber-400" title="this segment's window moved, so the old take is the wrong length - re-render it (the take is still listed in the editor's Result stage)">⚠ re-render</span>
                               : <span className="text-[9px] text-[var(--color-muted)]">—</span>}

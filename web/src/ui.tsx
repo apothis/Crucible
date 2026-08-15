@@ -15,18 +15,18 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-export function PrimaryButton({ onClick, disabled, children }: { onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+export function PrimaryButton({ onClick, disabled, children, title }: { onClick: () => void; disabled?: boolean; children: React.ReactNode; title?: string }) {
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button onClick={onClick} disabled={disabled} title={title}
       className="mt-2 w-full rounded-xl bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent2)] py-3 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:opacity-50">
       {children}
     </button>
   );
 }
 
-export function GhostButton({ onClick, children, className = "", disabled }: { onClick: () => void; children: React.ReactNode; className?: string; disabled?: boolean }) {
+export function GhostButton({ onClick, children, className = "", disabled, title }: { onClick: () => void; children: React.ReactNode; className?: string; disabled?: boolean; title?: string }) {
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button onClick={onClick} disabled={disabled} title={title}
       className={`rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-2 text-xs text-[var(--color-muted)] transition hover:text-[var(--color-ink)] disabled:opacity-50 ${className}`}>
       {children}
     </button>
