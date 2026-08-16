@@ -5309,16 +5309,22 @@ def _lib_source_path(pid):
     return None
 
 
-@app.get("/api/export/{pid}")
-def export_audio(pid: str, fmt: str = "mp3"):
-    """Download a library track as MP3 (320k). Already-MP3 files pass through; WAVs are
-    transcoded with ffmpeg. Filename uses the item's note/label when available."""
-    src = _lib_source_path(pid)
-    if not src:
-        raise HTTPException(404, "no audio")
-    # friendly download name: the user-given song title wins (else note/tags/source),
-    # with a "-v2" suffix when the track is one of several versions of that name.
-    name = pid
+def _has_audio_stream(path):
+    """Does this file carry an audio track? A silent video handed to the mp3 path produced a 500
+    with a wall of ffmpeg output instead of a usable message."""
+    import subprocess
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+                              "stream=codec_type", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30)
+        return "audio" in (out.stdout or "")
+    except Exception:
+        return True          # can't tell - let the export try rather than refuse
+
+
+def _export_name(pid):
+    """Friendly download name: the user-given song title wins (else note/tags/source), with a
+    "-v2" suffix when the item is one of several versions of that name."""
     try:
         with db() as conn:
             row = conn.execute("SELECT params,mode,created FROM jobs WHERE id=?", (pid,)).fetchone()
@@ -5327,7 +5333,7 @@ def export_audio(pid: str, fmt: str = "mp3"):
             title = str(pp.get("title") or "").strip()
             raw = title or pp.get("note") or pp.get("tags") or pp.get("source") or pid
             slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(raw)).strip("_")[:48] or pid
-            if title:  # version among same mode + same title (oldest=v1)
+            if title:                       # version among same mode + same title (oldest=v1)
                 with db() as conn:
                     sibs = conn.execute(
                         "SELECT id,params FROM jobs WHERE mode=? AND status='done' ORDER BY created ASC",
@@ -5336,10 +5342,32 @@ def export_audio(pid: str, fmt: str = "mp3"):
                         if str((json.loads(s["params"]) if s["params"] else {}).get("title") or "").strip().lower() == title.lower()]
                 if len(vers) > 1 and pid in vers:
                     slug = f"{slug}-v{vers.index(pid) + 1}"
-            name = slug
+            return slug
     except Exception:
         pass
-    fname = f"{name}.mp3"
+    return pid
+
+
+@app.get("/api/export/{pid}")
+def export_audio(pid: str, fmt: str = "mp3"):
+    """Download a library item. Video/image items come back as themselves; audio as MP3 (320k),
+    already-MP3 passing through and WAVs transcoded. Filename uses the item's note/label.
+
+    Video used to fall through to the audio path: the DB row's stored output IS the .mp4, so
+    ffmpeg was asked to make an MP3 out of a silent clip and the download button 500'd on every
+    video card [2026-08-16]."""
+    pid = os.path.basename(pid)
+    # a rendered clip, still or assembled video - hand back the actual file
+    for ext, ct in _MEDIA_CT.items():
+        mp = os.path.join(LIBRARY, f"{pid}{ext}")
+        if os.path.exists(mp):
+            return FileResponse(mp, media_type=ct, filename=f"{_export_name(pid)}{ext}")
+    src = _lib_source_path(pid)
+    if not src:
+        raise HTTPException(404, "nothing to export for that id")
+    if not _has_audio_stream(src):
+        raise HTTPException(400, "that item has no audio track to export")
+    fname = f"{_export_name(pid)}.mp3"
     headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
     if src.lower().endswith(".mp3"):
         return FileResponse(src, media_type="audio/mpeg", filename=fname)

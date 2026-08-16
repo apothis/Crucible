@@ -580,7 +580,17 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
           <button onClick={() => onOpen(it)} className={`${canBuild ? "" : "ml-auto"} text-[var(--color-muted)] hover:text-[var(--color-accent2)]`} title="Open in workspace">↗</button>
           {onCompare && <button onClick={() => onCompare(it.id)} className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Add to Compare (or drag the card)">⊕</button>}
           <button onClick={() => setShowParams((s) => !s)} className={`${showParams ? "text-[var(--color-accent2)]" : "text-[var(--color-muted)]"} hover:text-[var(--color-accent2)]`} title="Show the exact generation params">ⓘ</button>
-          <a href={`/api/export/${it.id}?fmt=mp3`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Export as MP3 (320k)">⬇</a>
+          {/* the label has to follow the item: this said "Export as MP3 (320k)" on every card,
+              including video, where the download then 500'd trying to make an MP3 of a silent clip */}
+          {(() => {
+            const isStill = it.mode === "videostill" || (!!it.media_url && !it.audio_url && it.mode === "videostill");
+            const isVideo = !!it.media_url && !isStill;
+            return (
+              <a href={`/api/export/${it.id}${isVideo || isStill ? "" : "?fmt=mp3"}`} download
+                className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]"
+                title={isStill ? "Download the still" : isVideo ? "Download the video (MP4)" : "Export as MP3 (320k)"}>⬇</a>
+            );
+          })()}
           <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
           <button onClick={() => { if (confirm("Delete this track permanently?")) onDelete(it.id); }} className="text-[var(--color-muted)] hover:text-red-400" title="Delete">✕</button>
         </div>
