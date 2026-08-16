@@ -25,7 +25,8 @@ const VOICE_COLOR: Record<string, string> = {
 };
 const fmt = (t: number) => `${t.toFixed(1)}s`;
 
-export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsChange, onCommit }: {
+export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsChange, onCommit,
+                               voiceSource, voiceCover }: {
   url?: string;                       // the song's media url (the full track; we play a window of it)
   start: number; end: number;
   cuts: Cut[];
@@ -33,6 +34,8 @@ export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsCha
   labels: string[];                   // one per cut: who is cast in that cut
   onCutsChange: (cuts: Cut[]) => void;   // live, while dragging
   onCommit: () => void;                  // drag released - recompile the segment
+  voiceSource?: string;                  // "measured" | "labels" | "nominal"
+  voiceCover?: number | null;            // share of lyric words placed, when measured
 }) {
   const bar = useRef<HTMLDivElement>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -121,6 +124,16 @@ export function H3SegTimeline({ url, start, end, cuts, voices, labels, onCutsCha
           {head !== null && <span className="text-[var(--color-accent2)]"> {"·"} {fmt(head)}</span>}
         </span>
         <span className="flex-1" />
+        {/* say where the voice bands came from: measured off the vocals, or mapped by section
+            label, which is a guess and was drifting by up to 7s */}
+        {voiceSource && (
+          <span className={`text-[9px] ${voiceSource === "measured" ? "text-[var(--color-muted)]" : "text-amber-400"}`}
+            title={voiceSource === "measured"
+              ? `these bands were measured from the vocals${voiceCover != null ? ` (${Math.round(voiceCover * 100)}% of lyric words placed)` : ""}`
+              : "the vocals could not be measured for this track, so these bands are mapped by section label - treat them as approximate"}>
+            {voiceSource === "measured" ? "measured" : "approx"}
+          </span>
+        )}
         {Object.entries(VOICE_COLOR).map(([v, c]) => (
           <span key={v} className="flex items-center gap-1 text-[9px] text-[var(--color-muted)]">
             <i className="inline-block h-2 w-2 rounded-sm" style={{ background: c }} />{v}

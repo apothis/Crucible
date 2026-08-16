@@ -146,6 +146,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   const [jobState, setJobState] = useState<Record<string, { pct: number; url?: string; err?: string }>>({});
   // where each voice sings, on the REAL audio timeline - drawn under the segment editor's timeline
   const [voiceWins, setVoiceWins] = useState<VoiceWin[]>([]);
+  // whether those windows were MEASURED from the vocals or mapped by section label - the strip says
+  // which, so a nudged boundary is judged against a timeline you know the provenance of
+  const [voiceSource, setVoiceSource] = useState<string>("");
+  const [voiceCover, setVoiceCover] = useState<number | null>(null);
   // clip id -> how closely that take's own audio follows the song (see /api/mv/h3_audio_check)
   const [audioScore, setAudioScore] = useState<Record<string, number | null>>({});
   const [upscaling, setUpscaling] = useState(false);
@@ -608,10 +612,14 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   async function loadVoiceMap() {
     if (!songPayload || !segments.length) { setVoiceWins([]); return; }
     try {
-      const r = await api.mvH3VoiceMap({ song: songPayload,
+      // audio_id lets the server place the windows from the MEASURED vocals instead of guessing by
+      // section label - the same timeline the writer used, so the strip agrees with the script
+      const r = await api.mvH3VoiceMap({ song: songPayload, audio_id: audioId,
         section_grid: segments.map((x) => ({ start: x.start, end: x.end, section: x.section })) }) as
-        { windows: VoiceWin[] };
+        { windows: VoiceWin[]; source?: string; cover?: number };
       setVoiceWins(r.windows || []);
+      setVoiceSource(r.source || "");
+      setVoiceCover(typeof r.cover === "number" ? r.cover : null);
     } catch { setVoiceWins([]); }
   }
 
@@ -825,6 +833,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                 url={songUrl}
                 start={eseg.start} end={eseg.end} cuts={eseg.cuts} voices={voiceWins}
                 labels={eseg.shots.map((s) => (s.characters.join(" + ") || "no cast") + (s.lipsync ? " ♪" : ""))}
+                voiceSource={voiceSource} voiceCover={voiceCover}
                 onCutsChange={(c) => patchSeg(i, { cuts: c, promptStale: true })}
                 onCommit={() => recompile(i)} />
               {eseg.shots.map((s, j) => (

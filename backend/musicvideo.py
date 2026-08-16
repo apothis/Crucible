@@ -265,7 +265,7 @@ def retime(in_path, out_path, speed, fps=24):
 SHOT_TYPES = ("performance", "narrative", "broll")
 
 
-def _song_summary(song, grid=None):
+def _song_summary(song, grid=None, align=None):
     """Human-readable song brief for the LLM + total duration (sec). Lyrics are shown line by
     line under each section's time window so shots can be anchored to the words sung then.
 
@@ -280,7 +280,7 @@ def _song_summary(song, grid=None):
     if song.get("keyscale"):
         lines.append(f"Key: {song['keyscale']}")
     secs = song.get("sections") or []
-    anchors = _time_anchors(song, grid) if grid else []
+    anchors = align_anchors(song, align) or (_time_anchors(song, grid) if grid else [])
     t = 0
     body = []
     for s in secs:
@@ -896,7 +896,7 @@ H3_MIN_CUT_S = 1.5       # a cut shorter than this is not a usable shot, so neve
 H3_CUT_SNAP_S = 0.6      # a handover this close to an existing boundary is already aligned
 
 
-def snap_segment_edges_to_handovers(segments, song, grid=None):
+def snap_segment_edges_to_handovers(segments, song, grid=None, align=None):
     """Move a SEGMENT boundary onto a vocal handover that lands too close to it to cut.
 
     A handover inside a segment normally gets its own cut. When it sits within H3_MIN_CUT_S of the
@@ -907,7 +907,7 @@ def snap_segment_edges_to_handovers(segments, song, grid=None):
     any clip already rendered for them is invalidated and must be re-rendered.
 
     Returns notes describing every boundary moved."""
-    wins = _voice_windows(song, grid or segments)
+    wins = _voice_windows(song, grid or segments, align)
     if not wins or len(segments) < 2:
         return []
     times = sorted({round(w[k], 3) for w in wins for k in ("start", "end")})
@@ -967,7 +967,7 @@ def snap_segment_edges_to_handovers(segments, song, grid=None):
     return notes
 
 
-def split_cuts_at_voice_handovers(segments, song):
+def split_cuts_at_voice_handovers(segments, song, align=None):
     """Add a cut boundary wherever the singing VOICE changes inside a segment.
 
     The grid's cuts come from downbeat windows, which know nothing about who is singing: on a real
@@ -980,7 +980,7 @@ def split_cuts_at_voice_handovers(segments, song):
     shorter than H3_MIN_CUT_S, when the boundary already exists (within H3_CUT_SNAP_S), or when the
     segment already carries the 4 cuts the writer schema allows. A segment that gains a split is
     marked `voice_split` so it cannot later collapse to a single shot spanning both voices."""
-    wins = _voice_windows(song, segments)
+    wins = _voice_windows(song, segments, align)
     if not wins:
         return []
     times = sorted({round(w[k], 3) for w in wins for k in ("start", "end")})
@@ -1006,7 +1006,7 @@ def split_cuts_at_voice_handovers(segments, song):
     return notes
 
 
-def build_h3_grid_prompt(song, cast, segments, grid=None):
+def build_h3_grid_prompt(song, cast, segments, grid=None, align=None):
     """Writer prompt for the hybrid model: per SEGMENT the LLM chooses "single" or "scene" and fills
     creative content only (timing is fixed by the segment windows; scene cut times come from the
     segment's own audio-grid cuts). The environment may now CONTAIN people (H3's subject-swap
@@ -1014,12 +1014,12 @@ def build_h3_grid_prompt(song, cast, segments, grid=None):
 
     `grid` is the whole video's segments; it puts the lyric windows in the brief on the real audio
     timeline rather than the arrangement's nominal one (`segments` here is only this batch)."""
-    summary, total = _song_summary(song, grid or segments)
+    summary, total = _song_summary(song, grid or segments, align)
     title = song.get("title") or "Untitled"
     named = [c for c in cast if c.get("name")]
     cast_txt = _fmt_cast(named) if named else "  (no fixed cast - lean scenic/atmospheric)"
 
-    wins_all = _voice_windows(song, grid or segments)
+    wins_all = _voice_windows(song, grid or segments, align)
 
     def _win(i, g):
         cuts = ""
@@ -1843,6 +1843,47 @@ def _time_anchors(song, segments):
     return anchors
 
 
+H3_ALIGN_MIN_COVER = 0.6    # below this the transcript matched too little of the song to trust
+
+
+def align_anchors(song, align):
+    """[(nominal_t, real_t)] from a MEASURED lyric alignment (backend/lyricalign.py).
+
+    This is the same anchor shape _time_anchors produces from section labels, so it drops straight
+    into _map_time - but the pairs come from where words were actually heard rather than from
+    guessing which analysed section is which planned one. On "Dream of Me" the label mapping and the
+    measurement disagree by up to 7s, and the measurement is the one backed by the audio.
+
+    Returns [] when the alignment is too thin to trust, so callers fall back to the label mapping.
+    """
+    if not align or float(align.get("cover") or 0) < H3_ALIGN_MIN_COVER:
+        return []
+    secs = (song or {}).get("sections") or []
+    nominal, t = [], 0.0
+    for s in secs:
+        nominal.append(t)
+        t += float(s.get("seconds") or 0)
+    # Anchor on section STARTS only, plus the last section's end. Ends are the unreliable half - a
+    # trailing word stretches into whatever silence follows, measured at up to 8s of overshoot - and
+    # anchoring on them actively destroys information: a chorus ending at 86.5s and the next verse
+    # starting at 91.0s both sit at nominal 84s, so the end wins the strictly-increasing test and
+    # the verse's +7s drift disappears. Starts alone came out strictly increasing on both axes.
+    usable = [(nominal[int(m["index"])], float(m["start"]), m)
+              for m in (align.get("sections") or [])
+              if 0 <= int(m.get("index", -1)) < len(secs) and m.get("start") is not None
+              and (m.get("cover") or 0) >= H3_ALIGN_MIN_COVER]
+    pairs = [(0.0, 0.0)]
+    for n, r, _m in usable:
+        if n > pairs[-1][0] and r > pairs[-1][1]:      # _map_time needs both axes increasing
+            pairs.append((round(n, 3), round(r, 3)))
+    if usable:                                          # close the last sung section
+        n, _r, m = usable[-1]
+        ne = n + float(secs[int(m["index"])].get("seconds") or 0)
+        if m.get("end") is not None and ne > pairs[-1][0] and float(m["end"]) > pairs[-1][1]:
+            pairs.append((round(ne, 3), round(float(m["end"]), 3)))
+    return pairs if len(pairs) > 1 else []
+
+
 def _map_time(anchors, t):
     """Nominal time -> real-audio time, piecewise linear between anchors."""
     if not anchors:
@@ -1856,10 +1897,13 @@ def _map_time(anchors, t):
     return anchors[-1][1] + (t - anchors[-1][0])
 
 
-def _voice_windows(song, segments=None):
-    """[{start, end, voice}] for every SUNG section. With `segments` (which carry the analysis
-    labels) the windows are mapped onto the REAL audio timeline; without them they stay nominal."""
-    anchors = _time_anchors(song, segments) if segments else []
+def _voice_windows(song, segments=None, align=None):
+    """[{start, end, voice}] for every SUNG section, on the REAL audio timeline.
+
+    `align` (a lyricalign result) is preferred: its anchors come from where the words were actually
+    heard. Failing that, `segments` maps by matching section LABELS, which is a guess. Neither
+    changes WHO sings - that is the section's own style marker - only WHEN."""
+    anchors = align_anchors(song, align) or (_time_anchors(song, segments) if segments else [])
     out, t = [], 0.0
     for s in (song or {}).get("sections") or []:
         dur = float(s.get("seconds") or 0)
@@ -1907,7 +1951,7 @@ def _swap_pronouns(text, frm, to):
     return text
 
 
-def enforce_voice_casting(segments, song, cast, grid=None):
+def enforce_voice_casting(segments, song, cast, grid=None, align=None):
     """Recast any lip-sync shot whose singer is the wrong voice for the section being sung, and
     fix the shot's prose so the names match. Duet windows and unmarked sections are left alone,
     as is any shot whose gender has no cast member to swap in. Records what changed on the
@@ -1917,7 +1961,7 @@ def enforce_voice_casting(segments, song, cast, grid=None):
     arrangement's nominal times onto the real audio - pass it whenever `segments` is only a slice,
     such as one writer batch or a single segment being recompiled, since section anchors cannot be
     derived from a fragment."""
-    wins = _voice_windows(song, grid or segments)
+    wins = _voice_windows(song, grid or segments, align)
     if not wins:
         return []
     singers, named = {}, []
@@ -1978,7 +2022,8 @@ H3_LOCATIONS = 6        # named locations targeted across a whole video (user ca
 #   which places a song needs is a creative call, not an arithmetic one.
 
 
-def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, batch=H3_BATCH):
+def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, batch=H3_BATCH,
+                            align=None):
     """H3 hybrid script: segments from the audio grid -> writer fills content -> each segment gets
     its compiled full-references prompt attached (prompt, picture_map, env picture index).
 
@@ -1991,8 +2036,8 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
     segments = build_h3_segments(grid)
     # before writing: line the segments up with the vocals. Edges first (a handover too close to a
     # boundary to cut moves the boundary instead), then a cut on every handover left inside one.
-    snap_segment_edges_to_handovers(segments, song)
-    split_cuts_at_voice_handovers(segments, song)
+    snap_segment_edges_to_handovers(segments, song, align=align)
+    split_cuts_at_voice_handovers(segments, song, align=align)
     done, established = [], []
     for start in range(0, len(segments), max(1, batch)):
         chunk = segments[start:start + max(1, batch)]
@@ -2028,7 +2073,7 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
         note += (f"\nThese are segments {start + 1}-{start + len(chunk)} of {len(segments)} for the "
                  f"whole video; number your JSON array from 1 for THIS batch only "
                  f"({len(chunk)} objects).")
-        system, prompt = build_h3_grid_prompt(song, cast, chunk, grid=segments)
+        system, prompt = build_h3_grid_prompt(song, cast, chunk, grid=segments, align=align)
         prompt += note
         part = None
         for attempt in (1, 2):

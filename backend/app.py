@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from . import comfy
 from . import video as video_mod
 from . import musicvideo as musicvideo_mod
+from . import lyricalign as lyricalign_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -60,6 +61,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _WEB_DIST = os.path.join(ROOT, "web", "dist")
 FRONTEND = _WEB_DIST if os.path.isdir(_WEB_DIST) else os.path.join(ROOT, "frontend")
 LIBRARY = os.path.join(ROOT, "library")
+# Whisper transcripts behind the lyric alignment. Derived data, keyed by track + model
+# size, so it lives in the scratch tree rather than the library.
+LYRIC_CACHE = os.path.join(ROOT, ".mvwork", "lyricalign")
 STEMS_DIR = os.path.join(LIBRARY, "stems")
 # Curated "gold standard" reference masters for the Master tool's gold mode — the user
 # drops a few well-mastered tracks they own here (named by vibe/genre); gitignored.
@@ -1976,8 +1980,23 @@ def mv_h3_script(body: dict):
         raise
     except Exception as e:
         raise HTTPException(502, f"audio structure analysis failed: {e}")
+    # WHERE THE LYRICS ACTUALLY ARE. The Song tab's block seconds are what ACE-Step was asked for,
+    # not what it delivered - measured drift of up to 7s on "Dream of Me" - and everything the
+    # writer does with lyrics hangs off them. Measured once per track and cached; a failure here is
+    # never fatal, the writer just falls back to mapping by section label and says so.
+    align, align_note = None, "not attempted"
     try:
-        segments = musicvideo_mod.generate_h3_script_grid(song, cast, provider, model, claude_model, grid)
+        align = lyricalign_mod.align_song(ap, song.get("sections") or [], cache_dir=LYRIC_CACHE)
+        align_note = (f"measured ({align['cover'] * 100:.0f}% of lyric words placed)"
+                      if align.get("cover", 0) >= musicvideo_mod.H3_ALIGN_MIN_COVER
+                      else f"too thin to use ({align.get('cover', 0) * 100:.0f}% matched) - "
+                           f"falling back to section labels")
+    except Exception as e:
+        align_note = f"failed ({e}) - falling back to section labels"
+        print(f"[mv/h3_script] lyric alignment {align_note}")
+    try:
+        segments = musicvideo_mod.generate_h3_script_grid(song, cast, provider, model, claude_model,
+                                                          grid, align=align)
     except Exception as e:
         raise HTTPException(500, f"h3 script generation failed: {e}")
     return {"segments": segments, "song_title": song.get("title"), "audio_id": audio_id,
@@ -1985,7 +2004,10 @@ def mv_h3_script(body: dict):
             "singles": sum(1 for s in segments if s["kind"] == "single"),
             "scenes": sum(1 for s in segments if s["kind"] == "scene"),
             # lip-sync shots recast to the voice the song's section markers call for
-            "voice_fixes": sum(len(s.get("voice_fixed") or []) for s in segments)}
+            "voice_fixes": sum(len(s.get("voice_fixed") or []) for s in segments),
+            # whether the timeline came from MEASURING the vocals or from guessing by section label
+            "lyric_alignment": align_note,
+            "lyric_cover": (align or {}).get("cover")}
 
 
 @app.post("/api/mv/h3_compile")
@@ -2197,17 +2219,40 @@ def mv_h3_snap_edges(body: dict):
     return {"segments": segs, "moved": moved, "recompiled": recompiled}
 
 
+def _lyric_align(audio_id, song):
+    """Measured lyric timeline for a track, or None. Cached per track+model, so only the first call
+    per song pays the transcription (~100s for 4 minutes on CPU). Never raises: an alignment we
+    could not compute just means the caller maps by section label instead."""
+    if not audio_id:
+        return None
+    ap = _lib_source_path(audio_id)
+    if not ap:
+        return None
+    try:
+        return lyricalign_mod.align_song(ap, (song or {}).get("sections") or [], cache_dir=LYRIC_CACHE)
+    except Exception as e:
+        print(f"[mv] lyric alignment unavailable: {e}")
+        return None
+
+
 @app.post("/api/mv/h3_voicemap")
 def mv_h3_voicemap(body: dict):
     """Where each VOICE sings, on the real audio timeline - what the per-segment timeline strip in
     the editor draws so boundaries can be checked and nudged by ear.
-    Body: {song, section_grid?}. Returns {windows:[{start,end,voice}], anchors:[[nominal,real]]}."""
+    Pass `audio_id` to place the windows from the MEASURED vocals rather than by matching section
+    labels - the strip then draws the handovers the writer actually used.
+    Body: {song, section_grid?, audio_id?}. Returns {windows, anchors, source}."""
     song = body.get("song") or {}
     grid = body.get("section_grid") or None
     if not song.get("sections"):
         raise HTTPException(400, "the song's sections (with their style markers) are required")
-    return {"windows": musicvideo_mod._voice_windows(song, grid),
-            "anchors": musicvideo_mod._time_anchors(song, grid) if grid else []}
+    align = _lyric_align(body.get("audio_id"), song)
+    anchors = musicvideo_mod.align_anchors(song, align)
+    return {"windows": musicvideo_mod._voice_windows(song, grid, align),
+            "anchors": anchors or (musicvideo_mod._time_anchors(song, grid) if grid else []),
+            # so the UI can say which timeline it is drawing rather than implying measurement
+            "source": "measured" if anchors else ("labels" if grid else "nominal"),
+            "cover": (align or {}).get("cover")}
 
 
 @app.post("/api/mv/h3_voicefix")
