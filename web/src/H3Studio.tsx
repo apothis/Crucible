@@ -139,6 +139,10 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   // already scales every clip onto the output canvas, so 1080p means "upscale 2x, then downscale on
   // the way out" - which is supersampling and looks better than a native 1080p pass would.
   const [outRes, setOutRes] = d.use<string>("h3outRes", "1920x1080");
+  // "crop" fills the canvas and cuts the overflow instead of padding to it. Defaults to the old
+  // padding behaviour; crop is what YouTube wants, since it refuses to be told about baked-in bars
+  // and simply adds its own around them.
+  const [outFit, setOutFit] = d.use<string>("h3outFit", "pad");
   const [jobState, setJobState] = useState<Record<string, { pct: number; url?: string; err?: string }>>({});
   // where each voice sings, on the REAL audio timeline - drawn under the segment editor's timeline
   const [voiceWins, setVoiceWins] = useState<VoiceWin[]>([]);
@@ -713,7 +717,7 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
       const { job_id } = await api.mvAssemble({
         shots: ready.map((s) => ({ clip_id: s.upscaledId || s.clipId, start: s.start, end: s.end })),
         audio_id: audioId, grade,
-        width: ow || resW, height: oh || resH,
+        width: ow || resW, height: oh || resH, fit: outFit,
       }) as { job_id: string };
       ctx.patch(card.id, { status: "running", pct: 5 });
       pollJob(job_id, card.id, ctx);
@@ -1263,6 +1267,11 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                 <option value="1920x1104">1080p wide (no bars, native aspect)</option>
                 <option value="2560x1440">1440p (16:9, thin side bars)</option>
                 <option value="2560x1472">1440p wide (no bars, native aspect)</option>
+              </select>
+              <select className={`${inp} !w-auto !text-[10px]`} value={outFit} onChange={(e) => setOutFit(e.target.value)}
+                title="How each clip meets the canvas. FIT pads with black bars; FILL scales up and crops the overflow - on a 16:9 canvas that costs ~2% of the height and leaves no bars, which is what YouTube asks for.">
+                <option value="pad">fit (bars)</option>
+                <option value="crop">fill (crop ~2%)</option>
               </select>
             </label>
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}

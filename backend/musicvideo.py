@@ -123,24 +123,35 @@ def audio_match(clip_path, song_path, start, seconds):
 
 
 def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, grade="none",
-             transition=0.0, intro=None):
+             transition=0.0, intro=None, fit="pad"):
     """Stitch shot clips into one MP4 (GPU-free, ffmpeg). segments = [{path, dur}]: each clip
     is scaled+padded to width x height, set to a common fps, and fitted to exactly `dur`
     seconds (long clips trimmed; short clips hold their last frame). Concatenated in order,
     then the full song audio is muxed over the result (replacing per-clip audio). `grade` =
     a key in GRADES, applied identically to every segment for a consistent look. `transition`
     (seconds, 0 = hard cut) = crossfade duration blended between consecutive clips (ffmpeg
-    xfade); opt-in, default 0 keeps the original hard-cut concat path verbatim."""
+    xfade); opt-in, default 0 keeps the original hard-cut concat path verbatim.
+    `fit`: "pad" (default) letterboxes to the canvas; "crop" fills it and cuts the overflow."""
     ff = _ffmpeg()
     grade_chain = GRADES.get(grade or "none", "")
     work = tempfile.mkdtemp(prefix="mvasm_")
     try:
         durs = [max(0.1, s["dur"]) for s in segments]
+        # fit="pad" (default, unchanged): letterbox/pillarbox to the canvas.
+        # fit="crop": fill the canvas and cut the overflow. H3 renders 1.739:1, so ANY 16:9 canvas
+        # pillarboxes it - and baked-in bars are the one thing YouTube tells you never to upload,
+        # because the player then adds its own around them. Cropping 2% of the height gives a true
+        # 16:9 frame with no bars anywhere. Built ONCE here: the intro pre-roll reuses it, and as a
+        # loop-local it would have been whatever the last segment left behind (or unbound with none).
+        fitchain = (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                    f"crop={width}:{height}"
+                    if fit == "crop" else
+                    f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2")
         norm = []
         for i, seg in enumerate(segments):
             o = os.path.join(work, f"seg{i:03d}.mp4")
-            vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                  f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},"
+            vf = (f"{fitchain},setsar=1,fps={fps},"
                   f"tpad=stop_mode=clone:stop_duration=3600")
             if grade_chain:
                 vf += "," + grade_chain
@@ -195,8 +206,7 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
             # pre-roll VIDEO = the opening clip (its own audio is dropped; the wind comes from a
             # dedicated track if given, else the clip's audio).
             introf = os.path.join(work, "intro.mp4")
-            ivf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                   f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},"
+            ivf = (f"{fitchain},setsar=1,fps={fps},"
                    f"tpad=stop_mode=clone:stop_duration=3600")
             if grade_chain:
                 ivf += "," + grade_chain

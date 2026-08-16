@@ -2289,7 +2289,10 @@ def mv_assemble(body: dict):
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:
         musicvideo_mod.assemble(segs, audio, out, width=width, height=height, grade=grade,
-                                transition=transition, intro=intro)
+                                transition=transition, intro=intro,
+                                # "crop" fills the canvas instead of padding to it - what you want
+                                # for YouTube, which tells you never to upload baked-in bars
+                                fit=("crop" if str(body.get("fit") or "") == "crop" else "pad"))
     except Exception as e:
         raise HTTPException(500, f"assembly failed: {e}")
     save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade, "transition": transition}, out)
