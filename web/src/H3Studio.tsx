@@ -134,6 +134,11 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
   // seed-hunt drafts per segment index - persisted so closing the editor (or the project) does not
   // throw away renders you have already paid for
   const [drafts, setDrafts] = d.use<Record<number, { jobId: string; seed: number }[]>>("h3drafts", {});
+  // FINAL video size, separate from the project render resolution. FlashVSR's scale is an INTEGER
+  // factor, so a 1280x736 take upscales to 2560x1472 and there is no 1.5x to reach 1080p. Assembly
+  // already scales every clip onto the output canvas, so 1080p means "upscale 2x, then downscale on
+  // the way out" - which is supersampling and looks better than a native 1080p pass would.
+  const [outRes, setOutRes] = d.use<string>("h3outRes", "1920x1080");
   const [jobState, setJobState] = useState<Record<string, { pct: number; url?: string; err?: string }>>({});
   // where each voice sings, on the REAL audio timeline - drawn under the segment editor's timeline
   const [voiceWins, setVoiceWins] = useState<VoiceWin[]>([]);
@@ -702,13 +707,13 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
     const card = { id: rid(), title: `Assemble (${ready.length} segments)`, status: "pending" as const, pct: 0 };
     ctx.setResults([card]);
     try {
-      // prefer the upscaled take where one exists, and lift the canvas so a 2x clip is not scaled
-      // back down to the 720p default - mixing sizes is fine, assemble pads each clip to the canvas
-      const up = ready.filter((s) => s.upscaledId).length;
+      // prefer the upscaled take where one exists; the canvas is the OUTPUT picker, not the render
+      // resolution, so a 2x take can be delivered at 1080p without a second upscale pass
+      const [ow, oh] = outRes.split("x").map(Number);
       const { job_id } = await api.mvAssemble({
         shots: ready.map((s) => ({ clip_id: s.upscaledId || s.clipId, start: s.start, end: s.end })),
         audio_id: audioId, grade,
-        width: up ? resW * 2 : resW, height: up ? resH * 2 : resH,
+        width: ow || resW, height: oh || resH,
       }) as { job_id: string };
       ctx.patch(card.id, { status: "running", pct: 5 });
       pollJob(job_id, card.id, ctx);
@@ -1244,10 +1249,22 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
                   title="FlashVSR 2x every segment that has a take and is not upscaled yet. ONE GPU JOB AT A TIME, waiting for each - measured at 195-237s for a short clip, so a whole video is hours. Do it once the takes are final: a re-render discards the upscale.">
                   Upscale all 2x{(() => { const n = segments.filter((s) => s.clipId && !s.upscaledId).length; return n ? ` (${n})` : ""; })()}
                 </GhostButton>}
+            {/* the FINAL size. Separate from the project render resolution because FlashVSR only
+                does integer factors: 1280x736 -> 2560x1472, with no 1.5x to land on 1080p. */}
+            <label className="flex items-center gap-1 text-[10px] text-[var(--color-muted)]"
+              title="Size of the finished video. The takes render at 1280x736 and a 2x upscale gives 2560x1472, so 1080p is that downscaled on the way out - which looks better than upscaling straight to 1080p.">
+              output
+              <select className={`${inp} !w-auto !text-[10px]`} value={outRes} onChange={(e) => setOutRes(e.target.value)}>
+                <option value="1280x720">720p</option>
+                <option value="1920x1080">1080p</option>
+                <option value="2560x1440">1440p</option>
+              </select>
+            </label>
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}
-              title={segments.some((s) => s.upscaledId)
-                ? `assembles at ${resW * 2}x${resH * 2}, using the 2x upscale for the ${segments.filter((s) => s.upscaledId).length} segment(s) that have one`
-                : `assembles at ${resW}x${resH}`}>Assemble</PrimaryButton>
+              title={(() => {
+                const up = segments.filter((s) => s.upscaledId).length;
+                return `assembles at ${outRes}` + (up ? `, using the 2x upscale for ${up} segment(s)` : " from the base takes");
+              })()}>Assemble</PrimaryButton>
           </div>
           <div className="overflow-hidden rounded-lg border border-[var(--color-line)]">
             <div className="max-h-[520px] overflow-y-auto">
