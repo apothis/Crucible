@@ -1421,9 +1421,16 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         if n in outfit_pic:
             co = by_name[n]["costume"]
             op = outfit_pic[n]
+            # SAY WHAT THE SHEET IS WEARING IS WRONG, not just where the clothes come from. An
+            # identity sheet shows the character dressed, and when that garment is the same KIND as
+            # the chosen outfit the model keeps the sheet's: Selene's sheet is a black lace gown and
+            # her "gothic dress" is also a black lace gown, so the render came back in the sheet's
+            # V-neck with none of the outfit's high collar, leather belt or buckle [OBSERVED
+            # 2026-08-16]. The picture alone did not win; the words have to back it.
             defs.append(f"<Subject {i + 1}> is {n} from <Picture {i + 1}>{looktxt}. Keep the face and "
-                        f"hair exactly; the clothes come from <Subject {op}>, NOT from "
-                        f"<Picture {i + 1}>.{tp}")
+                        f"hair exactly. IGNORE the clothing worn in <Picture {i + 1}> completely - it "
+                        f"is the wrong outfit and must not appear; {n} wears <Subject {op}> instead."
+                        f"{tp}")
             defs.append(f"<Subject {op}> is the OUTFIT from <Picture {op}>: "
                         f"{(co.get('desc') or 'the outfit').rstrip('. ')}. Shown on a dress form; only "
                         f"the garment is referenced, worn by <Subject {i + 1}>.")
@@ -1741,8 +1748,21 @@ def compile_h3_prompt(seg, cast, audio_ref=False):
         if absent and s["characters"]:
             gone = (" " + " and ".join(f"<Subject {chars.index(n) + 1}>" for n in absent) +
                     (" are" if len(absent) > 1 else " is") + " NOT in this shot and must not appear in it.")
+        # NAME the garment in the shot, not just its tag. "<Subject 1> wearing <Subject 2>" leaves
+        # the model to read the outfit off the picture, and when the identity sheet is wearing
+        # something similar it keeps that instead. Once per shot, for the people actually in it.
+        worn = ""
+        here_out = [n for n in s["characters"] if n in outfit_pic]
+        if here_out:
+            bits = []
+            for n in here_out:
+                d = str((by_name[n].get("costume") or {}).get("desc") or "").rstrip(". ")
+                if d:
+                    bits.append(f"{_btag(n)} is dressed in {d}")
+            if bits:
+                worn = " " + "; ".join(bits) + "."
         line = (f"{head} {fr_txt[s['framing']].capitalize()} of {subj} in <Subject {env_pic_of(s)}>: "
-                f"{act}.{stations}{sing}{gone}{anchor}{cam} The environment behind holds completely still.{band}")
+                f"{act}.{worn}{stations}{sing}{gone}{anchor}{cam} The environment behind holds completely still.{band}")
         if _H3_SKY_RE.search(s["scene"] + " " + s["action"]):
             line += " The sky holds fixed - no drifting stars, moon or clouds."
         lines.append(line)
