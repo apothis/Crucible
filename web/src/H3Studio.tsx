@@ -1255,9 +1255,14 @@ export function H3Studio({ cast, audioId, songPayload, resW, resH, grade, librar
               title="Size of the finished video. The takes render at 1280x736 and a 2x upscale gives 2560x1472, so 1080p is that downscaled on the way out - which looks better than upscaling straight to 1080p.">
               output
               <select className={`${inp} !w-auto !text-[10px]`} value={outRes} onChange={(e) => setOutRes(e.target.value)}>
-                <option value="1280x720">720p</option>
-                <option value="1920x1080">1080p</option>
-                <option value="2560x1440">1440p</option>
+                {/* H3 renders 1280x736 (1.739:1), so every 16:9 canvas fits-and-pads and leaves
+                    thin side bars - 1878x1080 inside 1920x1080. The x1104 sizes are the exact
+                    aspect (1.5x and 2x of native), which fill the frame with no bars. */}
+                <option value="1280x720">720p (16:9, thin side bars)</option>
+                <option value="1920x1080">1080p (16:9, thin side bars)</option>
+                <option value="1920x1104">1080p wide (no bars, native aspect)</option>
+                <option value="2560x1440">1440p (16:9, thin side bars)</option>
+                <option value="2560x1472">1440p wide (no bars, native aspect)</option>
               </select>
             </label>
             <PrimaryButton onClick={assemble} disabled={busy || !segments.some((s) => s.clipId)}
