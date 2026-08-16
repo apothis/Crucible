@@ -2074,6 +2074,36 @@ def enforce_voice_casting(segments, song, cast, grid=None, align=None):
     return fixes
 
 
+def enforce_lipsync_windows(segments, song, align, anchors=None):
+    """Turn lip-sync OFF for any cut with no words sung in it. Returns what changed.
+
+    The writer reaches for "sings the final line to camera" at the end of a section because it reads
+    well, and nothing contradicted it: on "Dream of Me" it put a lip-sync performance in the outro
+    (230.6-240.0s, after the last sung word at 230.6) and in the 5s tail of the bridge. The compiled
+    prompt then told H3 "sings <Audio 1>, mouth shapes matching the vocal exactly" over instrumental
+    audio, so the mouth moves to nothing - the same failure as singing the wrong part, from the
+    other side.
+
+    Only runs on a MEASURED alignment. Approximate line times are not a good enough reason to
+    overrule the writer, and a section's last line often runs past its nominal end."""
+    if not align or float(align.get("cover") or 0) < H3_ALIGN_MIN_COVER:
+        return []
+    fixes = []
+    for i, seg in enumerate(segments, 1):
+        cuts = seg.get("cuts") or [{"start": seg.get("start", 0), "end": seg.get("end", 0)}]
+        for j, sh in enumerate(seg.get("shots") or []):
+            if not sh.get("lipsync"):
+                continue
+            cut = cuts[j] if j < len(cuts) else cuts[0]
+            words, _ = lyric_lines_at(song, float(cut["start"]), float(cut["end"]), align, anchors)
+            if not words:
+                sh["lipsync"] = False
+                fixes.append(f"segment {i} cut {j + 1} ({cut['start']:.1f}-{cut['end']:.1f}s): "
+                             f"lip-sync off, nothing is sung there")
+        seg["lipsync"] = any(s.get("lipsync") for s in (seg.get("shots") or []))
+    return fixes
+
+
 H3_BATCH = 8            # segments per writer call (see generate_h3_script_grid)
 H3_LOCATIONS = 6        # named locations targeted across a whole video (user call 2026-08-09: the
 #   first script used 4 over four minutes and read as repetitive). Enforced as guidance in the
@@ -2153,7 +2183,10 @@ def generate_h3_script_grid(song, cast, provider, model, claude_model, grid, bat
         # per batch, not at the end: the next batch's continuity note quotes the previous segment's
         # last shot, so it should quote the CORRECTED singer
         # `segments` (the whole video) supplies the section anchors - a single batch cannot
-        enforce_voice_casting(part, song, cast, grid=segments)
+        enforce_voice_casting(part, song, cast, grid=segments, align=align)
+        # and drop lip-sync where nothing is sung, before the prompt is compiled around it
+        enforce_lipsync_windows(part, song, align,
+                                align_anchors(song, align) or _time_anchors(song, segments))
         done.extend(part)
         for s in part:
             for sh in s["shots"]:
