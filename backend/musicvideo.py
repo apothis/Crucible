@@ -295,10 +295,18 @@ def _song_summary(song, grid=None, align=None):
         head = f"  [{w0}-{w1}s] {s.get('type') or 'section'}{stag}:"
         if lyr:
             body.append(head)
+            # per-line times when the vocals were measured: the writer can then hang a shot on one
+            # LINE rather than on a 28-second section
+            timed = {}
+            if align and float(align.get("cover") or 0) >= H3_ALIGN_MIN_COVER:
+                for l in (align.get("lines") or []):
+                    if l.get("block") == secs.index(s) and l.get("ok") and l.get("start") is not None:
+                        timed[l["text"]] = float(l["start"])
             for ln in lyr.splitlines():
                 ln = ln.strip()
                 if ln:
-                    body.append(f'      "{ln}"')
+                    at = timed.get(ln)
+                    body.append(f'      [{at:.1f}s] "{ln}"' if at is not None else f'      "{ln}"')
         else:
             body.append(head + " (instrumental - no lyrics)")
         t += dur
@@ -1020,6 +1028,9 @@ def build_h3_grid_prompt(song, cast, segments, grid=None, align=None):
     cast_txt = _fmt_cast(named) if named else "  (no fixed cast - lean scenic/atmospheric)"
 
     wins_all = _voice_windows(song, grid or segments, align)
+    # the same timeline the windows above were placed on, so the per-segment lyric lines agree
+    anchors_all = align_anchors(song, align) or (_time_anchors(song, grid or segments)
+                                                 if (grid or segments) else [])
 
     def _win(i, g):
         cuts = ""
@@ -1037,7 +1048,22 @@ def build_h3_grid_prompt(song, cast, segments, grid=None, align=None):
                             f"{b or 'instrumental'} after. Cast each cut to the voice singing in it; "
                             f"this segment must be a \"scene\", never one shot.")
                     break
-        return f"  Segment {i + 1}: [{g['start']:.2f}-{g['end']:.2f}s] ({g['section']}){cuts}{hand}"
+        # THE WORDS SUNG IN THIS WINDOW. The direction has always said "read the lyric lines sung in
+        # its window", but the writer was only ever given the segment's time range and a separate
+        # section-by-section lyric list, so it had to work out the overlap itself against a timeline
+        # that was drifting by up to 7s. Spell them out instead.
+        head = f"  Segment {i + 1}: [{g['start']:.2f}-{g['end']:.2f}s] ({g['section']}){cuts}{hand}"
+        sung, measured = lyric_lines_at(song, g["start"], g["end"], align, anchors_all)
+        if not sung:
+            return head + "\n      (no words sung here - instrumental)"
+        tag = "" if measured else " approx"
+        # a line straddling a boundary shows in BOTH segments, which invites illustrating it twice.
+        # Mark the carried-over ones so the writer hangs its shot on a line that starts here.
+        out = []
+        for t, txt in sung:
+            cont = " cont." if t < g["start"] - 0.05 else ""
+            out.append(f'      [{t:.1f}s{tag}{cont}] "{txt}"')
+        return head + "\n" + "\n".join(out)
     windows = "\n".join(_win(i, g) for i, g in enumerate(segments))
 
     system = ("You are a music video director working with the MiniMax H3 video model. The video is "
@@ -1047,8 +1073,10 @@ def build_h3_grid_prompt(song, cast, segments, grid=None, align=None):
 
 DIRECTION:
 - The song is titled "{title}". Make the TITLE the central visual theme of the whole video.
-- For each segment, read the lyric lines sung in its window and make the visuals ILLUSTRATE those
-  exact words. Instrumental windows: advance the story or show atmosphere.
+- Each segment below LISTS the lyric lines sung in its window, with the time each line starts. Make
+  that segment's visuals ILLUSTRATE those exact words. A line marked "cont." began in the previous
+  segment and is only finishing here - build the shot around the lines that START in this window.
+  Segments marked instrumental: advance the story or show atmosphere.
 
 Characters (keep each visually consistent wherever they appear):
 {cast_txt}
@@ -1882,6 +1910,37 @@ def align_anchors(song, align):
         if m.get("end") is not None and ne > pairs[-1][0] and float(m["end"]) > pairs[-1][1]:
             pairs.append((round(ne, 3), round(float(m["end"]), 3)))
     return pairs if len(pairs) > 1 else []
+
+
+def lyric_lines_at(song, start, end, align=None, anchors=None):
+    """The lyric lines sung inside [start, end] on the REAL timeline, as [(t, text)] plus whether
+    those times were measured.
+
+    Measured line times come from lyricalign. Without them each section's mapped window is split
+    evenly across its lines - which is a guess, but it is the same guess the writer was left to make
+    unaided, and it is now at least stated rather than implied."""
+    out = []
+    if align and float(align.get("cover") or 0) >= H3_ALIGN_MIN_COVER:
+        for l in (align.get("lines") or []):
+            if l.get("start") is None or not l.get("ok"):
+                continue
+            if float(l["end"]) > start and float(l["start"]) < end:
+                out.append((float(l["start"]), l["text"]))
+        return sorted(out), True
+    t = 0.0
+    for s in (song or {}).get("sections") or []:
+        dur = float(s.get("seconds") or 0)
+        lines = [x.strip() for x in str(s.get("lyrics") or "").split("\n") if x.strip()]
+        if lines and str(lines[0]).lower() != "instrumental":
+            w0 = _map_time(anchors, t) if anchors else t
+            w1 = _map_time(anchors, t + dur) if anchors else t + dur
+            step = (w1 - w0) / len(lines)
+            for k, ln in enumerate(lines):
+                a, b = w0 + k * step, w0 + (k + 1) * step
+                if b > start and a < end:
+                    out.append((a, ln))
+        t += dur
+    return sorted(out), False
 
 
 def _map_time(anchors, t):
