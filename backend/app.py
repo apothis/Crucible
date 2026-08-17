@@ -807,10 +807,24 @@ def video_still(p: dict):
             p["enhancer"] = bool(CFG.get("still_krea2_enhancer", True))
         if "seed_variance" not in p:
             p["seed_variance"] = bool(CFG.get("still_krea2_seed_variance", True))
+    # init_still_id (krea2 only) = run the workflow's IMAGE TO IMAGE path over an existing library
+    # still instead of generating from noise. img2img on ONE image at denoise 0.40: it re-renders
+    # what it is given, so it polishes or restyles a still - it cannot place referenced people.
+    init_name = None
+    if p.get("init_still_id"):
+        ip = _lib_image_path(p["init_still_id"])
+        if not ip:
+            raise HTTPException(400, "init_still_id must reference a generated still in the library")
+        if (p.get("engine") or "").lower() != "krea2":
+            raise HTTPException(400, "init_still_id is a krea2 path - pass engine='krea2'")
+        with open(ip, "rb") as f:
+            init_name = C.upload_audio(f.read(), os.path.basename(ip))
     try:
-        graph, resolved = video_mod.build_still(p)
+        graph, resolved = video_mod.build_still(p, init_image=init_name)
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
+    if p.get("init_still_id"):
+        resolved["init_still_id"] = os.path.basename(str(p["init_still_id"]))
     return _submit_video(graph, resolved, "videostill")
 
 

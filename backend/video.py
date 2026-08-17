@@ -44,6 +44,13 @@ KREA2_T2I = {"sampler": "er_sde", "scheduler": "simple", "steps": 8, "cfg": 1.0,
 # decode -> ImageResize+ (lanczos, keep proportion) -> VAEEncode; pass2 (KSampler 265) =
 # euler/simple/4/cfg1/denoise 0.3. Both passes use the turbo LoRA @ 0.2.
 KREA2_COMBO_P1 = {"sampler": "er_sde", "scheduler": "simple", "steps": 8, "cfg": 1.0, "denoise": 1.0}
+# "IMAGE TO IMAGE" group, read off KREA2_ULTRA_WORKFLOW-V2.json (node 116 inside subgraph 06153499):
+# LoadImage -> ImageResize+ (1024 long edge, lanczos, keep proportion) -> VAEEncode -> KSampler
+# euler/simple/8/cfg1/DENOISE 0.40 -> VAEDecode. It is img2img on ONE image, not reference
+# conditioning: it re-renders what it is given, so it polishes or restyles a still, it cannot place
+# two referenced people in a new scene.
+KREA2_I2I = {"sampler": "euler", "scheduler": "simple", "steps": 8, "cfg": 1.0, "denoise": 0.40,
+             "resize": 1024}
 KREA2_COMBO_P2 = {"sampler": "euler", "scheduler": "simple", "steps": 4, "cfg": 1.0, "denoise": 0.3}
 # Photorealism emphasis appended to EVERY Krea2 prompt (user: "emphasize photorealism in all prompts").
 # Tasteful, scene-safe cues per Krea2 prompting guidance (real medium + true-to-life detail) - NOT the
@@ -165,7 +172,7 @@ def _seed(p):
 
 
 # ---------------------------------------------------------------- Z-Image still
-def build_krea2_still(p):
+def build_krea2_still(p, init_image=None):
     """Text-to-image photoreal still on Krea 2 Ultra (turbo). FAITHFUL port of AItrepreneur's
     KREA2_ULTRA_WORKFLOW v2 (numbers verbatim - see the KREA2_* constants above). Qwen3-VL-4B CLIP
     (type "krea2") + Qwen-Image VAE; NO ModelSamplingAuraFlow (unlike Z-Image); negative is a
@@ -177,6 +184,10 @@ def build_krea2_still(p):
       - two_pass=True ("TWO TIMES COMBO"): turbo LoRA @0.2 on BOTH passes; pass1 er_sde/8/denoise1
         on EmptySD3LatentImage -> VAEDecode -> ImageResize+ (lanczos, keep proportion) -> VAEEncode
         -> pass2 euler/4/denoise0.3. Quality path; ~2x slower.
+
+    A third path, IMAGE TO IMAGE, runs when `init_image` (an uploaded image name on ComfyUI) is
+    given: resize -> VAEEncode -> KSampler at denoise 0.40. Single image, img2img - it re-renders
+    what it is handed, so it is for polishing/restyling a still, NOT for placing referenced people.
 
     p: {prompt, seed?, width?, height?, steps?(override pass-1 steps), cfg?, two_pass?(bool),
     turbo_lora?(bool, force the turbo LoRA on the single pass too), lora?/lora_strength? (a trained
@@ -268,6 +279,34 @@ def build_krea2_still(p):
             src = ["40", 0]
         return src
 
+    # ---- IMAGE TO IMAGE: re-render an existing still through Krea2 (workflow's third path) ----
+    if init_image:
+        model_src = _model_chain(bool(p.get("turbo_lora")))
+        s = KREA2_I2I
+        steps = int(p.get("steps", s["steps"]))
+        den = float(p.get("denoise", s["denoise"]))
+        long_edge = int(p.get("resize", s["resize"]))
+        g.update({
+            "7": {"class_type": "LoadImage", "inputs": {"image": init_image}},
+            # the workflow resizes BEFORE encoding (keep proportion, so the aspect survives)
+            "11": {"class_type": "ImageResize+",
+                   "inputs": {"image": ["7", 0], "width": long_edge, "height": long_edge,
+                              "interpolation": "lanczos", "method": "keep proportion",
+                              "condition": "always", "multiple_of": 0}},
+            "12": {"class_type": "VAEEncode", "inputs": {"pixels": ["11", 0], "vae": ["3", 0]}},
+            "8": {"class_type": "KSampler",
+                  "inputs": {"model": model_src, "seed": seed, "steps": steps, "cfg": cfg,
+                             "sampler_name": s["sampler"], "scheduler": s["scheduler"],
+                             "positive": pos_src, "negative": ["6", 0],
+                             "latent_image": ["12", 0], "denoise": den}},
+            "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+            "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "videogen/still"}},
+        })
+        return g, {"seed": seed, "steps": steps, "cfg": cfg, "denoise": den, "prompt": prompt,
+                   "lora": p.get("lora"), "engine": "krea2", "mode": "img2img",
+                   "init_image": init_image, "resize": long_edge, "enhancer": enhancer,
+                   "seed_variance": seed_variance, "kind": "image"}
+
     if not two_pass:
         model_src = _model_chain(bool(p.get("turbo_lora")))
         s = KREA2_T2I
@@ -321,12 +360,13 @@ def build_krea2_still(p):
                "layout": layout or None, "kind": "image"}
 
 
-def build_still(p):
+def build_still(p, init_image=None):
     """Text-to-image photoreal still. Engine selectable: "zimage" (Z-Image Turbo, default) or
     "krea2" (Krea 2 Ultra). p: {prompt, negative?, seed?, width?, height?, steps?, cfg?, engine?}.
+    `init_image` (krea2 only) runs the workflow's IMAGE TO IMAGE path over an uploaded image.
     Output: SaveImage -> videogen/still."""
     if (p.get("engine") or "").lower() == "krea2":
-        return build_krea2_still(p)
+        return build_krea2_still(p, init_image=init_image)
     seed = _seed(p)
     w = int(p.get("width", 1024))
     h = int(p.get("height", 1024))
