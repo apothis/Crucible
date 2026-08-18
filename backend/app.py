@@ -5544,7 +5544,8 @@ def music3_write(p: dict):
                 claude_model=CFG.get("claude_model", "claude-3-5-sonnet-latest"))
     try:
         if writer == "skill":
-            r = music3_writer.write_skill(**args)
+            r = music3_writer.write_skill(**args, pick_family=(p.get("family") or ""),
+                                          pick_templates=(p.get("templates") or None))
         else:
             r = music3_writer.write_ours(**args)
     except Exception as e:
@@ -5557,6 +5558,20 @@ def music3_write(p: dict):
 def music3_writer_status():
     from . import music3_writer
     return {"skill_installed": music3_writer.available(), "provider": llm_mod.best_provider()}
+
+
+@app.get("/api/music3/references")
+def music3_references(family: str = ""):
+    """The skill's style families, or the cards inside one. Pinning references by hand is the only
+    way to make a skill rewrite reproducible: auto-routing chose a different template trio on two
+    consecutive runs of the same brief."""
+    from . import music3_writer
+    if not music3_writer.available():
+        raise HTTPException(400, "the caption-rewriter skill is not installed")
+    try:
+        return {"cards": music3_writer.cards(family)} if family else {"families": music3_writer.families()}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/music3/generate")

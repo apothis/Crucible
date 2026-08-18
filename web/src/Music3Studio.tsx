@@ -62,21 +62,46 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
   const [prop, setProp] = useState<null | {
     writer: string; provider: string; fields: Record<string, string>;
     before: Record<string, string>; changed: string[];
-    families?: string[]; templates?: string[];
+    families?: string[]; templates?: string[]; auto_routed?: boolean;
   }>(null);
+
+  // Reference pinning. Auto-routing is the default, but it is NOT reproducible: the same brief
+  // picked a different template trio on two consecutive runs, which makes an A/B meaningless.
+  // Pinning is how you hold the references still while changing something else.
+  type Card = { id: string; style: string; secondary: string; tempo_key: string; mood: string; vocal: string; palette: string; template: string };
+  const [refsOpen, setRefsOpen] = useState(false);
+  const [fams, setFams] = useState<{ file: string; label: string; cards: number }[]>([]);
+  const [family, setFamily] = d.use("family", "");
+  const [cards, setCards] = useState<Card[]>([]);
+  const [pinned, setPinned] = d.use<string[]>("pinned", []);
 
   useEffect(() => {
     api.music3Schema().then(setSchema).catch(() => setSchema(null));
     api.music3Available().then(setAvail).catch(() => setAvail({ available: false, reason: "backend unreachable" }));
     api.projects().then(setProjects).catch(() => setProjects([]));
     api.music3WriterStatus().then(setWs).catch(() => setWs(null));
+    api.music3References().then((r) => setFams(r.families || [])).catch(() => setFams([]));
   }, []);
+
+  useEffect(() => {
+    if (!family) { setCards([]); return; }
+    api.music3References(family).then((r) => setCards(r.cards || [])).catch(() => setCards([]));
+  }, [family]);
+
+  const togglePin = (t: string) =>
+    setPinned(pinned.includes(t) ? pinned.filter((x) => x !== t)
+                                 : pinned.length >= 3 ? pinned : [...pinned, t]);
 
   async function runWriter(writer: "ours" | "skill") {
     setWriting(writer);
     setProp(null);
     try {
-      const r = await api.music3Write({ writer, brief, fields, lyrics });
+      const r = await api.music3Write({
+        writer, brief, fields, lyrics,
+        // only meaningful for the skill writer; harmless on ours
+        family: family || undefined,
+        templates: pinned.length ? pinned : undefined,
+      });
       setProp(r);
       setNote(r.changed.length
         ? `${writer === "skill" ? "MiniMax skill" : "our writer"} proposed ${r.changed.length} field change(s) - review below`
@@ -246,9 +271,62 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
           </GhostButton>
           {ws && <span className="text-[10px] text-[var(--color-muted)]">via {ws.provider}</span>}
         </div>
-        <div className="mt-1 text-[10px] text-[var(--color-muted)]">
-          Neither writer overwrites anything. Changes arrive as a proposal you accept field by field.
+        <div className="mt-2 rounded bg-[#0e1015] p-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
+          <b className="text-[var(--color-ink)]">Two writers, and you can mix them.</b> Run one, accept
+          the fields you like, run the other, accept from that. Anything you accept becomes the
+          "existing fields" the next writer is told to improve rather than replace, so you can build
+          one caption out of both. <b className="text-[var(--color-ink)]">Our writer</b> knows what we
+          measured on this box: guitars in Primary, metal production language, absolute negatives
+          stated absolutely, and how to force a guitar solo.
+          <b className="text-[var(--color-ink)]"> MiniMax's skill</b> knows their 1000-caption library
+          and is stronger on genre vocabulary. Nothing is ever overwritten: changes arrive as a
+          proposal with <i>use this</i> / <i>keep mine</i> per field.
         </div>
+
+        {/* ---- reference pinning ---- */}
+        <div className="mt-2">
+          <GhostButton onClick={() => setRefsOpen(!refsOpen)}
+            title="choose which of the skill's 1000 reference captions it may look at">
+            {refsOpen ? "hide" : "choose"} references{pinned.length ? ` (${pinned.length} pinned)` : family ? " (family pinned)" : " (auto)"}
+          </GhostButton>
+        </div>
+        {refsOpen && (
+          <div className="mt-2 rounded border border-[var(--color-line)] p-2">
+            <div className="text-[10px] leading-relaxed text-[var(--color-muted)]">
+              Left alone, the skill routes itself. That is convenient but <b>not reproducible</b>: the
+              same brief picked a different template trio on two consecutive runs. Pin a family, or up
+              to three specific references, to hold them still across an A/B.
+            </div>
+            <select className={inp + " mt-2"} value={family}
+              onChange={(e) => { setFamily(e.target.value); setPinned([]); }}>
+              <option value="">auto-route (let the skill choose)</option>
+              {fams.map((f) => <option key={f.file} value={f.file}>{f.label} ({f.cards})</option>)}
+            </select>
+            {cards.length > 0 && (
+              <div className="mt-2 max-h-56 overflow-auto">
+                {cards.map((c) => {
+                  const on = pinned.includes(c.template);
+                  return (
+                    <button key={c.template} onClick={() => togglePin(c.template)}
+                      title={`${c.mood}\n\nPalette: ${c.palette}`}
+                      className={`mb-1 block w-full rounded border p-1 text-left text-[10px] ${
+                        on ? "border-[var(--color-accent2)] bg-[var(--color-accent2)]/10"
+                           : "border-[var(--color-line)] hover:border-[var(--color-muted)]"}`}>
+                      <div className="text-[var(--color-ink)]">{on ? "✓ " : ""}{c.style}</div>
+                      <div className="text-[var(--color-muted)]">{c.tempo_key} {"·"} {c.vocal}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {pinned.length > 0 && (
+              <div className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-accent2)]">
+                <span>{pinned.length}/3 pinned; routing and selection are both skipped</span>
+                <GhostButton onClick={() => setPinned([])}>clear</GhostButton>
+              </div>
+            )}
+          </div>
+        )}
 
         {prop && (
           <div className="mt-3 rounded border border-[var(--color-accent2)]/40 bg-[#0e1015] p-2">
@@ -263,11 +341,13 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
             {/* What the skill based its answer on. SKILL.md says to keep this hidden unless asked;
                 here it is always shown, because knowing which templates informed a caption is the
                 difference between judging the result and guessing at it. */}
-            {(prop.families?.length || prop.templates?.length) && (
+            {(prop.families?.length || prop.templates?.length) ? (
               <div className="mt-1 text-[10px] text-[var(--color-muted)]">
-                family {prop.families?.join(", ")} {"·"} references {prop.templates?.join(", ") || "none"}
+                {prop.auto_routed ? "auto-routed to" : "pinned"} {prop.families?.join(", ") || "(no family)"}
+                {" · references "}{prop.templates?.join(", ") || "none"}
+                {prop.auto_routed && <span className="text-amber-400"> {"·"} auto-routing varies run to run; pin these to reproduce this caption</span>}
               </div>
-            )}
+            ) : null}
             {prop.changed.length === 0 && (
               <div className="mt-2 text-[10px] text-[var(--color-muted)]">Every proposed change has been dealt with.</div>
             )}

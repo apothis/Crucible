@@ -40,6 +40,45 @@ def _read(*parts):
         return f.read()
 
 
+def families():
+    """The style families, with the count of cards in each. Named from the index filenames rather
+    than the router table so the list cannot drift from what is actually on disk."""
+    out = []
+    for f in sorted(os.listdir(os.path.join(SKILL_DIR, "references"))):
+        if not f.startswith("index-") or not f.endswith(".md"):
+            continue
+        text = _read("references", f)
+        title = next((l.lstrip("# ").strip() for l in text.split("\n") if l.startswith("#")), f)
+        out.append({"file": f, "label": title, "cards": len(_cards_from(text))})
+    return out
+
+
+def _cards_from(text):
+    """Parse an index's markdown table. Columns, in order:
+    ID | Style | Secondary routes | Tempo / key | Mood arc | Vocal cue | Core palette | Template"""
+    cards = []
+    for line in text.split("\n"):
+        if not line.startswith("|"):
+            continue
+        cols = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cols) < 8 or cols[0] in ("ID", "---") or set(cols[0]) <= {"-", ":"}:
+            continue
+        tmpl = re.search(r"templates/([A-Za-z0-9._-]+\.txt)", cols[7])
+        cards.append({
+            "id": cols[0].strip("`"), "style": cols[1], "secondary": cols[2],
+            "tempo_key": cols[3], "mood": cols[4], "vocal": cols[5], "palette": cols[6],
+            "template": tmpl.group(1) if tmpl else "",
+        })
+    return [c for c in cards if c["template"]]
+
+
+def cards(family):
+    family = os.path.basename(family)
+    if not (family.startswith("index-") and family.endswith(".md")):
+        raise ValueError("not a family index filename")
+    return _cards_from(_read("references", family))
+
+
 def _json(text, want_list=False):
     """Pull the first JSON value out of a model reply. Fenced blocks and a sentence of preamble are
     both common enough that failing on them would just mean retrying by hand."""
@@ -68,8 +107,34 @@ def _brief(brief, song_fields, lyrics):
     return "\n\n".join(x for x in out if x)
 
 
-_FIELD_SPEC = ("Return ONLY a JSON object with exactly these keys, every value a plain string:\n"
-               + json.dumps(_KEYS, indent=1))
+# NOT JSON. The field values are prose, and the guidance asks the model to write phrases like
+# "no drums whatsoever" in quotes, which it then echoes into the values - unescaped double quotes
+# inside a JSON string, which is a hard parse failure with no useful recovery. A line-delimiter
+# format cannot be broken by any punctuation the prose contains.
+_FIELD_SPEC = (
+    "Return the caption as delimited blocks and NOTHING else. One block per field, in this order, "
+    "each opening with a line that is exactly '### ' followed by the field name, then the field's "
+    "text on the following lines. Use no other headings, no JSON, no commentary, no markdown "
+    "emphasis. Leave a field's text empty if it genuinely has nothing to say.\n\n"
+    + "\n".join(f"### {k}" for k in _KEYS))
+
+
+def _blocks(text):
+    """Parse the '### Field name' format back into a field dict. Unknown headings are ignored rather
+    than guessed at, and a missing field simply stays empty."""
+    out, cur = {}, None
+    for line in (text or "").replace("\r\n", "\n").split("\n"):
+        m = re.match(r"^\s{0,3}#{2,4}\s*(.+?)\s*:?\s*$", line)
+        key = m.group(1).strip() if m else None
+        if key and key in _KEYS:
+            cur = key
+            out[cur] = []
+        elif cur is not None:
+            out[cur].append(line)
+    parsed = {k: "\n".join(v).strip() for k, v in out.items()}
+    if not parsed:
+        raise ValueError(f"no '### Field' blocks in model reply: {(text or '')[:300]}")
+    return parsed
 
 
 # ---------------- our writer ----------------
@@ -93,10 +158,25 @@ What has been MEASURED on this setup, which you must follow:
    Embellishments ("the intro", "the first verse", "the bridge", "the final chorus"). A caption
    saying "the intro has no drums whatsoever" measured 16 dB less kick than one that did not.
    This is the only per-section control that exists.
-5. Where several singers are wanted, name them "Singer A (Female)" and "Singer B (Male)" in
+5. State absolute negatives absolutely: "no drums whatsoever", "no guitars at all", "the drums drop
+   out entirely" rather than "piano-led" or "sparse". NOT PROVEN, unlike the rest of this list. It
+   is house style on the reasoning that an implied absence is weaker than a stated one, and a
+   caption that stated it did get a bare intro - but a caption using the same phrase got a busy
+   one, so the phrasing is clearly not sufficient on its own. Do not treat this as a measured rule.
+6. Where several singers are wanted, name them "Singer A (Female)" and "Singer B (Male)" in
    Vocal Gender & Timbre, then assign them per named section in the arrangement fields.
-6. Guitar solos: describe the solo in Embellishments against the named section that holds it.
-7. There is NO per-section timing. Never write durations, bar counts or timestamps.
+7. GUITAR SOLOS need the same treatment, and are otherwise reliably lost. Measured: three captions
+   all described a guitar solo in Embellishments, the canonical placement, and all three produced a
+   13-21 second instrumental section with NO solo in it. Getting the section is easy; getting a
+   solo in it is not. So for a solo, do all of these:
+     - in Embellishments, anchor it to the named section ("the instrumental break", "after the
+       second chorus") AND say the lead guitar carries the melody there;
+     - state the exclusion: no vocals in that section, and the orchestra or synths accompany
+       rather than take the melodic lead;
+     - name the technique concretely (legato runs, sweep-picked arpeggios, alternate picking);
+     - name the lead guitar in Primary as the instrument that takes the melodic lead in the
+       instrumental break, not only as the riff instrument.
+8. There is NO per-section timing. Never write durations, bar counts or timestamps.
 8. Aim for 250 to 450 words across all fields combined. Concrete musical changes, not adjectives.
 
 Write in English. Do not invent an exact BPM or key if the brief does not imply one; leave that part
@@ -107,7 +187,7 @@ def write_ours(brief, fields=None, lyrics="", provider="", model="", claude_mode
     prompt = _brief(brief, fields, lyrics) + "\n\n" + _FIELD_SPEC
     raw = llm.complete(provider or llm.best_provider(), model, _OURS_SYSTEM, prompt,
                        claude_model, timeout=240)
-    out = _json(raw)
+    out = _blocks(raw)
     return {"fields": {k: str(out.get(k, "") or "").strip() for k in _KEYS},
             "writer": "ours", "provider": provider or llm.best_provider()}
 
@@ -158,14 +238,37 @@ def _templates(brief_text, families, provider, model, claude_model):
     return picked
 
 
-def write_skill(brief, fields=None, lyrics="", provider="", model="", claude_model=""):
+def write_skill(brief, fields=None, lyrics="", provider="", model="", claude_model="",
+                pick_family="", pick_templates=None):
+    """`pick_family` / `pick_templates` override the routing and selection calls. Auto-routing is
+    convenient but NOT reproducible - the same brief picked a different template trio on two
+    consecutive runs - so pinning the references is the only way to hold them steady across an A/B."""
     if not available():
         raise RuntimeError("the music-caption-rewriter skill is not installed under backend/skills/")
     provider = provider or llm.best_provider()
     brief_text = _brief(brief, fields, lyrics)
 
-    families = _families(brief_text, provider, model, claude_model)
-    templates = _templates(brief_text, families, provider, model, claude_model)
+    if pick_templates:
+        chosen, fams, routed = [], [], False
+        for n in pick_templates[:3]:
+            n = os.path.basename(str(n).strip())
+            if not n.endswith(".txt"):
+                n += ".txt"
+            if os.path.exists(os.path.join(SKILL_DIR, "templates", n)):
+                chosen.append(n)
+        if not chosen:
+            raise ValueError("none of the chosen templates exist")
+        templates = chosen
+        fams = [os.path.basename(pick_family)] if pick_family else []
+    elif pick_family:
+        fams = [os.path.basename(pick_family)]
+        templates = _templates(brief_text, fams, provider, model, claude_model)
+        routed = False
+    else:
+        fams = _families(brief_text, provider, model, claude_model)
+        templates = _templates(brief_text, fams, provider, model, claude_model)
+        routed = True
+    families = fams
     refs = "\n\n=====\n\n".join(f"TEMPLATE {t}\n{_read('templates', t)}" for t in templates)
 
     system = (_read("SKILL.md")
@@ -176,7 +279,7 @@ def write_skill(brief, fields=None, lyrics="", provider="", model="", claude_mod
                 "copy their sentences, key, BPM, instruments or section order.")
     prompt = f"{refs}\n\n---\n\n{brief_text}\n\n{_FIELD_SPEC}"
     raw = llm.complete(provider, model, system, prompt, claude_model, timeout=300)
-    out = _json(raw)
+    out = _blocks(raw)
     return {"fields": {k: str(out.get(k, "") or "").strip() for k in _KEYS},
-            "writer": "skill", "provider": provider,
+            "writer": "skill", "provider": provider, "auto_routed": routed,
             "families": families, "templates": templates}
