@@ -5528,6 +5528,37 @@ def music3_preview(p: dict):
             "over_limit": approx > music3_mod.MAX_PROMPT_TOKENS}
 
 
+@app.post("/api/music3/write")
+def music3_write(p: dict):
+    """Author or rewrite the caption fields. writer="ours" uses what we measured on this box;
+    writer="skill" runs MiniMax's vendored music-caption-rewriter by its own method.
+
+    Returns the NEW fields alongside the ones sent in, so the UI can show a per-field before/after
+    and accept a rewrite field by field rather than all or nothing."""
+    from . import music3_writer
+    writer = (p.get("writer") or "ours").lower()
+    before = p.get("fields") or {}
+    args = dict(brief=(p.get("brief") or ""), fields=before, lyrics=(p.get("lyrics") or ""),
+                provider=p.get("provider") or llm_mod.best_provider(),
+                model=p.get("model") or "",
+                claude_model=CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+    try:
+        if writer == "skill":
+            r = music3_writer.write_skill(**args)
+        else:
+            r = music3_writer.write_ours(**args)
+    except Exception as e:
+        raise HTTPException(500, f"{writer} writer failed: {e}")
+    changed = [k for k, v in r["fields"].items() if (v or "").strip() != (before.get(k) or "").strip()]
+    return {**r, "before": before, "changed": changed}
+
+
+@app.get("/api/music3/writer_status")
+def music3_writer_status():
+    from . import music3_writer
+    return {"skill_installed": music3_writer.available(), "provider": llm_mod.best_provider()}
+
+
 @app.post("/api/music3/generate")
 def music3_generate(p: dict):
     caption = (music3_mod.assemble_caption(p["fields"]) if p.get("fields")

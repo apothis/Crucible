@@ -54,11 +54,52 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
   const [showCaption, setShowCaption] = useState(false);
   const [captionText, setCaptionText] = useState("");
 
+  // Writers. A rewrite is never applied straight over the fields: it lands here as a proposal and
+  // is accepted field by field, so a good Primary is not lost to a worse Vocal FX.
+  const [brief, setBrief] = d.use("brief", "");
+  const [writing, setWriting] = useState("");
+  const [ws, setWs] = useState<{ skill_installed: boolean; provider: string } | null>(null);
+  const [prop, setProp] = useState<null | {
+    writer: string; provider: string; fields: Record<string, string>;
+    before: Record<string, string>; changed: string[];
+    families?: string[]; templates?: string[];
+  }>(null);
+
   useEffect(() => {
     api.music3Schema().then(setSchema).catch(() => setSchema(null));
     api.music3Available().then(setAvail).catch(() => setAvail({ available: false, reason: "backend unreachable" }));
     api.projects().then(setProjects).catch(() => setProjects([]));
+    api.music3WriterStatus().then(setWs).catch(() => setWs(null));
   }, []);
+
+  async function runWriter(writer: "ours" | "skill") {
+    setWriting(writer);
+    setProp(null);
+    try {
+      const r = await api.music3Write({ writer, brief, fields, lyrics });
+      setProp(r);
+      setNote(r.changed.length
+        ? `${writer === "skill" ? "MiniMax skill" : "our writer"} proposed ${r.changed.length} field change(s) - review below`
+        : `${writer === "skill" ? "MiniMax skill" : "our writer"} returned nothing different`);
+    } catch (e) {
+      setNote(`${writer} writer failed: ${e}`);
+    } finally {
+      setWriting("");
+    }
+  }
+
+  const acceptField = (k: string) => {
+    if (!prop) return;
+    setFields({ ...fields, [k]: prop.fields[k] });
+    setProp({ ...prop, changed: prop.changed.filter((c) => c !== k) });
+  };
+  const acceptAll = () => {
+    if (!prop) return;
+    const next = { ...fields };
+    prop.changed.forEach((k) => { next[k] = prop.fields[k]; });
+    setFields(next);
+    setProp(null);
+  };
 
   // Size the caption as it is typed. The box hard-fails above 5000 tokens, and finding that out at
   // submit time costs a round trip and reads as an unexplained error.
@@ -184,6 +225,72 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
           </span>
         </div>
         {note && <div className="mt-2 text-[11px] text-[var(--color-accent2)]">{note}</div>}
+      </div>
+
+      {/* ---- writers ---- */}
+      <div className="rounded border border-[var(--color-line)] p-3">
+        <SectionTitle>Write the caption</SectionTitle>
+        <textarea className={inp + " mt-2 min-h-[64px] text-[11px]"} rows={3} value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+          placeholder="Brief in plain words: what the song is, the singers, the feel, anything that must or must not be in it. Both writers work from this plus whatever fields are already filled." />
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <GhostButton onClick={() => runWriter("ours")} disabled={!!writing}
+            title="our writer: one pass, carrying what we measured on this box (guitars as Primary, metal production language, per-section naming)">
+            {writing === "ours" ? "writing…" : "Write with our writer"}
+          </GhostButton>
+          <GhostButton onClick={() => runWriter("skill")} disabled={!!writing || !ws?.skill_installed}
+            title={ws?.skill_installed
+              ? "MiniMax's own caption-rewriter: routes to a style family, compares cards, reads only the templates it picks (1000 available)"
+              : "the vendored skill is missing from backend/skills/"}>
+            {writing === "skill" ? "routing, picking, writing…" : "Rewrite with MiniMax skill"}
+          </GhostButton>
+          {ws && <span className="text-[10px] text-[var(--color-muted)]">via {ws.provider}</span>}
+        </div>
+        <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+          Neither writer overwrites anything. Changes arrive as a proposal you accept field by field.
+        </div>
+
+        {prop && (
+          <div className="mt-3 rounded border border-[var(--color-accent2)]/40 bg-[#0e1015] p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-[var(--color-accent2)]">
+                {prop.writer === "skill" ? "MiniMax skill" : "our writer"} {"·"} {prop.changed.length} change(s) left
+              </span>
+              <span className="flex-1" />
+              <GhostButton onClick={acceptAll} disabled={!prop.changed.length}>accept all</GhostButton>
+              <GhostButton onClick={() => setProp(null)}>discard</GhostButton>
+            </div>
+            {/* What the skill based its answer on. SKILL.md says to keep this hidden unless asked;
+                here it is always shown, because knowing which templates informed a caption is the
+                difference between judging the result and guessing at it. */}
+            {(prop.families?.length || prop.templates?.length) && (
+              <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+                family {prop.families?.join(", ")} {"·"} references {prop.templates?.join(", ") || "none"}
+              </div>
+            )}
+            {prop.changed.length === 0 && (
+              <div className="mt-2 text-[10px] text-[var(--color-muted)]">Every proposed change has been dealt with.</div>
+            )}
+            {prop.changed.map((k) => (
+              <div key={k} className="mt-2 border-t border-[var(--color-line)] pt-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-[var(--color-ink)]">{k}</span>
+                  <span className="flex-1" />
+                  <GhostButton onClick={() => acceptField(k)}>use this</GhostButton>
+                  <GhostButton onClick={() => setProp({ ...prop, changed: prop.changed.filter((c) => c !== k) })}>keep mine</GhostButton>
+                </div>
+                {(prop.before[k] || "").trim() && (
+                  <div className="mt-1 rounded bg-red-950/20 p-1 text-[10px] leading-relaxed text-red-200/70">
+                    <span className="mr-1 opacity-60">now</span>{prop.before[k]}
+                  </div>
+                )}
+                <div className="mt-1 rounded bg-emerald-950/20 p-1 text-[10px] leading-relaxed text-emerald-200/80">
+                  <span className="mr-1 opacity-60">proposed</span>{prop.fields[k] || "(empty)"}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ---- caption fields ---- */}
