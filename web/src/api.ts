@@ -42,6 +42,13 @@ export const api = {
   setBucket: (id: string, bucket: string) => jpost(`/api/library/${id}/bucket`, { bucket }),
   job: (id: string) => jget(`/api/job/${id}`),
   generate: (p: unknown) => jpost("/api/generate", p),
+  // MiniMax Music 3 - a second generation engine, deliberately not sharing the ACE song form
+  // (Music 3 wants a 4000+ char structured caption; ACE wants ~10-12 tag phrases).
+  music3Available: () => jget("/api/music3/available"),
+  music3Schema: () => jget("/api/music3/schema"),
+  music3FromSong: (song: unknown) => jpost("/api/music3/from_song", { song }),
+  music3Preview: (p: unknown) => jpost("/api/music3/preview", p),
+  music3Generate: (p: unknown) => jpost("/api/music3/generate", p),
   videoStill: (p: unknown) => jpost("/api/video/still", p),
   videoI2V: (p: unknown) => jpost("/api/video/i2v", p),
   videoLipsync: (p: unknown) => jpost("/api/video/lipsync", p),

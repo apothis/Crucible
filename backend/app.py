@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import comfy
+from . import music3 as music3_mod
 from . import video as video_mod
 from . import musicvideo as musicvideo_mod
 from . import lyricalign as lyricalign_mod
@@ -272,16 +273,26 @@ def on_complete(pid):
         for _, out in h[pid].get("outputs", {}).items():
             for a in out.get("audio", []):
                 data = C.view_bytes(a["filename"], a.get("subfolder", ""), a.get("type", "output"))
-                path = os.path.join(LIBRARY, f"{pid}.mp3")
+                # Keep the format the graph actually produced. Every ACE graph saves MP3, so this
+                # is a no-op for them, but Music 3 saves lossless FLAC and hardcoding .mp3 here
+                # wrote FLAC bytes into a .mp3 name - which then plays, and silently lies about
+                # what it is. /api/export?fmt=mp3 does the 320k conversion on demand instead.
+                ext = os.path.splitext(a["filename"])[1].lower() or ".mp3"
+                if ext not in (".mp3", ".wav", ".flac", ".opus"):
+                    ext = ".mp3"
+                path = os.path.join(LIBRARY, f"{pid}{ext}")
                 with open(path, "wb") as f:
                     f.write(data)
-                try:                                  # auto-fix ACE end-burst/clipping (only when needed)
-                    fixed = postfx_mod.tidy_ending(path)
-                    if fixed and fixed != path:
-                        os.remove(path)
-                        path = fixed
-                except Exception:
-                    pass
+                # ACE-specific end-burst/clipping fix. Never run it on another engine's output:
+                # Music 3 ends its own way and this would be a silent, unasked-for edit.
+                if JOBS.get(pid, {}).get("mode") != "music3":
+                    try:                              # auto-fix ACE end-burst/clipping (only when needed)
+                        fixed = postfx_mod.tidy_ending(path)
+                        if fixed and fixed != path:
+                            os.remove(path)
+                            path = fixed
+                    except Exception:
+                        pass
                 if JOBS.get(pid, {}).get("mode") == "extend":   # close the model's brief seam silence
                     try:
                         postfx_mod.close_seam_gap(path)
@@ -5357,7 +5368,7 @@ async def beats_upload(file: UploadFile = File(...)):
 
 def _lib_source_path(pid):
     """Absolute path to a library item's audio (by id, or the stored DB path)."""
-    for ext in (".mp3", ".wav"):
+    for ext in (".mp3", ".wav", ".flac"):
         p = os.path.join(LIBRARY, f"{pid}{ext}")
         if os.path.exists(p):
             return p
@@ -5426,6 +5437,12 @@ def export_audio(pid: str, fmt: str = "mp3"):
         raise HTTPException(404, "nothing to export for that id")
     if not _has_audio_stream(src):
         raise HTTPException(400, "that item has no audio track to export")
+    # fmt=original hands back the master untouched. Music 3 masters are lossless FLAC, and
+    # transcoding one to MP3 just to download it would throw away the reason for keeping it.
+    if fmt in ("original", "source", "flac", "wav"):
+        ext = os.path.splitext(src)[1].lower()
+        ct = {".flac": "audio/flac", ".wav": "audio/wav", ".mp3": "audio/mpeg"}.get(ext, "application/octet-stream")
+        return FileResponse(src, media_type=ct, filename=f"{_export_name(pid)}{ext}")
     fname = f"{_export_name(pid)}.mp3"
     headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
     if src.lower().endswith(".mp3"):
@@ -5439,6 +5456,103 @@ def export_audio(pid: str, fmt: str = "mp3"):
     except Exception as e:
         raise HTTPException(500, f"mp3 export failed: {e}")
     return Response(content=out.stdout, media_type="audio/mpeg", headers=headers)
+
+
+# ==================== MiniMax Music 3 (second generation engine) ====================
+# Deliberately separate from /api/generate. Music 3 wants a 4000+ character structured caption
+# where ACE-Step wants ~10-12 tag phrases, so sharing a form would produce bad prompts for both.
+
+@app.get("/api/music3/available")
+def music3_available():
+    """Whether the box can actually run this: the nodes ship with ComfyUI 0.33+, but the 14.3GB of
+    weights are a separate download and their absence otherwise surfaces as a validation error
+    several seconds after pressing Generate."""
+    try:
+        nodes = C.has_node("MiniMaxMusic3TextEncode") and C.has_node("EmptyMiniMaxMusic3LatentAudio")
+    except Exception as e:
+        return {"available": False, "reason": f"ComfyUI unreachable: {e}"}
+    if not nodes:
+        return {"available": False, "reason": "ComfyUI has no MiniMax Music 3 nodes (needs 0.33.0+)"}
+    try:
+        unets = set(C.models("diffusion_models"))
+        clips = set(C.models("text_encoders"))
+        vaes = set(C.models("vae"))
+    except Exception as e:
+        return {"available": False, "reason": f"could not list models: {e}"}
+    missing = [n for n, have in ((music3_mod.MODELS["unet"], unets),
+                                 (music3_mod.MODELS["clip"], clips),
+                                 (music3_mod.MODELS["vae"], vaes))
+               if n not in have]
+    if missing:
+        return {"available": False, "reason": "missing weights: " + ", ".join(missing)}
+    return {"available": True}
+
+
+@app.get("/api/music3/schema")
+def music3_schema():
+    """Caption field list, per-field guidance and the documented section tags. Served rather than
+    duplicated in the UI so the guidance has one home."""
+    return {
+        "fields": [{"key": k, "group": g, "help": h} for k, g, h in music3_mod.CAPTION_FIELDS],
+        "groups": music3_mod.GROUP_ORDER,
+        "tags": music3_mod.SECTION_TAGS,
+        "defaults": music3_mod.DEFAULTS,
+        "max_seconds": music3_mod.MAX_SECONDS,
+    }
+
+
+@app.post("/api/music3/from_song")
+def music3_from_song(p: dict):
+    """Convert a Song tab arrangement into caption fields + bare-tag lyrics.
+
+    The per-block style strings are compiled into the caption's progression fields, NOT into the
+    lyric tags - measured: anything after the section name inside brackets gets sung aloud."""
+    song = p.get("song") or {}
+    if not (song.get("blocks") or []):
+        raise HTTPException(400, "that project has no song arrangement to import")
+    return {"fields": music3_mod.song_to_fields(song), "lyrics": music3_mod.song_to_lyrics(song)}
+
+
+@app.post("/api/music3/preview")
+def music3_preview(p: dict):
+    """Assemble the caption and report its size, so the 5000-token ceiling is visible while
+    authoring rather than as a failure at submit time."""
+    caption = (music3_mod.assemble_caption(p["fields"]) if p.get("fields")
+               else (p.get("caption") or ""))
+    lyrics = p.get("lyrics") or ""
+    # Rough: the real count needs the model's tokenizer, which lives on the box. ~4 chars/token is
+    # close enough to warn on, and the backend re-checks nothing the box will not catch itself.
+    approx = (len(caption) + len(lyrics)) // 4
+    return {"caption": caption, "chars": len(caption), "approx_tokens": approx,
+            "token_limit": music3_mod.MAX_PROMPT_TOKENS,
+            "over_limit": approx > music3_mod.MAX_PROMPT_TOKENS}
+
+
+@app.post("/api/music3/generate")
+def music3_generate(p: dict):
+    caption = (music3_mod.assemble_caption(p["fields"]) if p.get("fields")
+               else (p.get("caption") or ""))
+    if not caption.strip():
+        raise HTTPException(400, "a caption is required (Music 3 has nothing else to go on)")
+    seed = int(p.get("seed") or random.randint(1, 2**31 - 1))
+    try:
+        graph, resolved = music3_mod.build_graph({**p, "caption": caption, "seed": seed})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    resolved["title"] = (p.get("title") or "").strip()
+    resolved["note"] = (p.get("note") or "").strip()
+    resolved["fields"] = p.get("fields") or {}
+    try:
+        res = submit_comfy(graph)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "music3")
+    save_job(pid)
+    return {"job_id": pid, "seed": seed}
 
 
 # ==================== Metal LoRA training (drives the box engine pipeline) ====================

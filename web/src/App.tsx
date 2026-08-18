@@ -6,6 +6,7 @@ import { SoloBuilderForm } from "./SoloBuilder";
 import { ImportForm } from "./Import";
 import { LoraTrainingForm } from "./LoraTraining";
 import { MVStudioForm } from "./MVStudio";
+import { Music3StudioForm } from "./Music3Studio";
 import { CharactersForm } from "./Characters";
 import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
@@ -37,12 +38,13 @@ const MODES = [
   { id: "video", label: "Video" },
   { id: "mvstudio", label: "MV Studio" },
   { id: "characters", label: "Characters" },
+  { id: "music3", label: "Music 3" },
   { id: "loratrain", label: "Train LoRA" },
 ] as const;
 
 // Grouped navigation (replaces the flat tab row) — by workflow stage.
 const GROUPS: { name: string; modes: string[] }[] = [
-  { name: "Create", modes: ["generate", "song", "restyle", "repaint", "layer"] },
+  { name: "Create", modes: ["generate", "song", "music3", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master", "shape", "deglitch", "compare"] },
@@ -264,6 +266,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "mix": return <MixForm {...p} />;
     case "video": return <VideoForm {...p} library={library} />;
     case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
+    case "music3": return <Music3StudioForm {...p} song={song} />;
     case "characters": return <CharactersForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
