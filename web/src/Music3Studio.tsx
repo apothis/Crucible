@@ -475,6 +475,13 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
             <input className={inp} value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="random" />
           </Field>
           <Field label="Takes"><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+          {/* Promoted out of the advanced panel: measured over 12 takes, cfg is the one knob that
+              changed how reliably the song came out with the STRUCTURE the caption asked for.
+              At 2.6 every seed produced an intro, where 1.7 collapsed one seed to no intro at all.
+              It did not help guitar solos. Default stays at the template's 1.7. */}
+          <Field label="cfg_scale" hint="1.7 is the template default. Higher tightens adherence to the caption: 2.6 gave a proper intro at every seed where 1.7 lost one. It did not improve solos.">
+            <input className={inp} value={cfgScale} onChange={(e) => setCfgScale(e.target.value)} />
+          </Field>
         </div>
 
         <div className="mt-2">
@@ -482,9 +489,6 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
         </div>
         {showAdv && (
           <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-            <Field label="cfg_scale" hint="template default 1.7; higher tightens caption adherence">
-              <input className={inp} value={cfgScale} onChange={(e) => setCfgScale(e.target.value)} />
-            </Field>
             <Field label="top_k" hint="template default 50">
               <input className={inp} value={topK} onChange={(e) => setTopK(e.target.value)} />
             </Field>
