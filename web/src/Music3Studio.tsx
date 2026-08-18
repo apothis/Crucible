@@ -22,15 +22,18 @@ import { useDrafts } from "./drafts";
 // Per-section direction belongs in the progression fields, addressed by section name.
 // ---------------------------------------------------------------------------------------------
 
-type Props = { cfg: Config; busy: boolean; song: SongDraft | null } & RunCtx;
+type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string } & RunCtx;
 type SchemaField = { key: string; group: string; help: string };
 type Schema = {
   fields: SchemaField[]; groups: string[]; tags: string[];
   defaults: Record<string, number | boolean | string>; max_seconds: number;
 };
 
-export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
+export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }: Props) {
   const d = useDrafts("music3");
+  // The Song page's draft carries the actual song title; the canonical SongDraft passed down as
+  // `song` does not. Read it so an import can name the render after the song.
+  const [songPageTitle] = useDrafts("song").use("title", "");
   const [schema, setSchema] = useState<Schema | null>(null);
   const [avail, setAvail] = useState<{ available: boolean; reason?: string } | null>(null);
 
@@ -70,6 +73,7 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
   // Pinning is how you hold the references still while changing something else.
   type Card = { id: string; style: string; secondary: string; tempo_key: string; mood: string; vocal: string; palette: string; template: string };
   const [refsOpen, setRefsOpen] = useState(false);
+  const [writerHelp, setWriterHelp] = useState(false);
   const [fams, setFams] = useState<{ file: string; label: string; cards: number }[]>([]);
   const [family, setFamily] = d.use("family", "");
   const [cards, setCards] = useState<Card[]>([]);
@@ -140,13 +144,23 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
   const set = (k: string, v: string) => setFields({ ...fields, [k]: v });
   const filled = useMemo(() => Object.values(fields).filter((v) => (v || "").trim()).length, [fields]);
 
-  async function importSong(s: SongDraft | null, label: string) {
+  async function importSong(s: SongDraft | null, label: string, titleGuess?: string) {
     if (!s || !(s.blocks || []).length) { setNote(`${label} has no song arrangement`); return; }
     try {
       const r = await api.music3FromSong(s);
-      setFields({ ...fields, ...r.fields });
+      // Merge only the NON-EMPTY imported values: song_to_fields returns every key, most blank,
+      // and spreading them wholesale would wipe fields the user already wrote by hand.
+      const incoming = Object.fromEntries(
+        Object.entries(r.fields as Record<string, string>).filter(([, v]) => (v || "").trim()));
+      const next = { ...fields, ...incoming };
+      setFields(next);
       setLyrics(r.lyrics);
-      setNote(`imported ${label}: ${(s.blocks || []).length} sections. Per-section style cues went into the progression fields, not the tags.`);
+      if (titleGuess?.trim()) setTitle(titleGuess.trim());
+      const got = schema ? Object.values(next).filter((v) => (v || "").trim()).length : 0;
+      const total = schema?.fields.length ?? 13;
+      setNote(`imported ${label}: ${(s.blocks || []).length} sections, ${got}/${total} caption fields seeded. `
+        + `The empty fields are not optional padding - a sparse caption is what lost the genre in testing. `
+        + `Run a writer (step 2, right) to fill them; style cues went into the progression fields, not the tags.`);
     } catch (e) {
       setNote(`import failed: ${e}`);
     }
@@ -170,7 +184,9 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
         key: canon.key, bpm: canon.bpm,
         tags: page.tags || canon.tags || "",
       } as SongDraft;
-      await importSong(merged, p?.name || "project");
+      // the render title comes from the song's own title, falling back to the project name
+      const t = ((page as { title?: string }).title || p?.name || "").trim();
+      await importSong(merged, p?.name || "project", t);
     } catch (e) {
       setNote(`could not read that project: ${e}`);
     }
@@ -233,9 +249,9 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
 
       {/* ---- start from an existing song ---- */}
       <div className="rounded border border-[var(--color-line)] p-3">
-        <SectionTitle>Start from a song</SectionTitle>
+        <SectionTitle>1 {"·"} Song</SectionTitle>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <GhostButton onClick={() => importSong(song, "the loaded song")} disabled={!song?.blocks?.length}
+          <GhostButton onClick={() => importSong(song, "the loaded song", songPageTitle || projectName)} disabled={!song?.blocks?.length}
             title={song?.blocks?.length ? "fill the caption and lyrics from the song currently loaded" : "no song loaded"}>
             Import loaded song
           </GhostButton>
@@ -252,9 +268,67 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
         {note && <div className="mt-2 text-[11px] text-[var(--color-accent2)]">{note}</div>}
       </div>
 
+      {/* On a wide window the four working areas pair up: caption beside its writers,
+          lyrics beside the render controls. The single-column stack only ever filled
+          the left third of a large browser window. */}
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="space-y-4">
+      {/* ---- caption fields ---- */}
+      <div className="rounded border border-[var(--color-line)] p-3">
+        <div className="flex items-center justify-between">
+          <SectionTitle>2 {"·"} Caption</SectionTitle>
+          <div className="flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
+            <span className={filled < schema.fields.length ? "text-amber-400" : ""}
+              title={filled < schema.fields.length
+                ? "empty fields weaken the caption - measured: a sparse caption lost the genre entirely. The writers can fill them."
+                : "every field has content"}>
+              {filled}/{schema.fields.length} fields</span>
+            {preview && (
+              <span className={preview.over_limit ? "text-red-400" : ""}>
+                {preview.chars} chars {"·"} ~{preview.approx_tokens}/{preview.token_limit} tokens
+              </span>
+            )}
+            <GhostButton onClick={() => setShowCaption(!showCaption)}>
+              {showCaption ? "hide" : "show"} assembled
+            </GhostButton>
+          </div>
+        </div>
+
+        {showCaption && (
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-[#0e1015] p-2 text-[10px] text-[var(--color-muted)]">
+            {captionText || "(empty)"}
+          </pre>
+        )}
+
+        {schema.groups.map((group) => (
+          <div key={group} className="mt-3">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-accent2)]">{group}</div>
+            {schema.fields.filter((f) => f.group === group).map((f) => (
+              <div key={f.key} className="mb-2">
+                <div className="flex items-baseline gap-2">
+                  <label className="text-[11px] text-[var(--color-ink)]">{f.key}</label>
+                  <button onClick={() => setOpenHelp(openHelp === f.key ? null : f.key)}
+                    title="what belongs in this field"
+                    className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent2)]">
+                    {openHelp === f.key ? "hide help" : "?"}
+                  </button>
+                </div>
+                {openHelp === f.key && (
+                  <div className="my-1 rounded bg-[#0e1015] p-2 text-[10px] leading-relaxed text-[var(--color-muted)]">{f.help}</div>
+                )}
+                <textarea className={inp + " min-h-[52px] text-[11px]"} rows={2}
+                  value={fields[f.key] || ""} onChange={(e) => set(f.key, e.target.value)}
+                  placeholder={(f.help.split(". ")[0] || "").slice(0, 110)} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      </div>
+      <div className="space-y-4">
       {/* ---- writers ---- */}
       <div className="rounded border border-[var(--color-line)] p-3">
-        <SectionTitle>Write the caption</SectionTitle>
+        <SectionTitle>2 {"·"} Caption writers</SectionTitle>
         <textarea className={inp + " mt-2 min-h-[64px] text-[11px]"} rows={3} value={brief}
           onChange={(e) => setBrief(e.target.value)}
           placeholder="Brief in plain words: what the song is, the singers, the feel, anything that must or must not be in it. Both writers work from this plus whatever fields are already filled." />
@@ -271,7 +345,10 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
           </GhostButton>
           {ws && <span className="text-[10px] text-[var(--color-muted)]">via {ws.provider}</span>}
         </div>
-        <div className="mt-2 rounded bg-[#0e1015] p-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
+        <div className="mt-2">
+          <GhostButton onClick={() => setWriterHelp(!writerHelp)}>{writerHelp ? "hide" : "how the writers work"}</GhostButton>
+        </div>
+        {writerHelp && <div className="mt-2 rounded bg-[#0e1015] p-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
           <b className="text-[var(--color-ink)]">Two writers, and you can mix them.</b> Run one, accept
           the fields you like, run the other, accept from that. Anything you accept becomes the
           "existing fields" the next writer is told to improve rather than replace, so you can build
@@ -281,7 +358,7 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
           <b className="text-[var(--color-ink)]"> MiniMax's skill</b> knows their 1000-caption library
           and is stronger on genre vocabulary. Nothing is ever overwritten: changes arrive as a
           proposal with <i>use this</i> / <i>keep mine</i> per field.
-        </div>
+        </div>}
 
         {/* ---- reference pinning ---- */}
         <div className="mt-2">
@@ -372,57 +449,14 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
           </div>
         )}
       </div>
-
-      {/* ---- caption fields ---- */}
-      <div className="rounded border border-[var(--color-line)] p-3">
-        <div className="flex items-center justify-between">
-          <SectionTitle>Caption</SectionTitle>
-          <div className="flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
-            <span>{filled}/{schema.fields.length} fields</span>
-            {preview && (
-              <span className={preview.over_limit ? "text-red-400" : ""}>
-                {preview.chars} chars {"·"} ~{preview.approx_tokens}/{preview.token_limit} tokens
-              </span>
-            )}
-            <GhostButton onClick={() => setShowCaption(!showCaption)}>
-              {showCaption ? "hide" : "show"} assembled
-            </GhostButton>
-          </div>
-        </div>
-
-        {showCaption && (
-          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-[#0e1015] p-2 text-[10px] text-[var(--color-muted)]">
-            {captionText || "(empty)"}
-          </pre>
-        )}
-
-        {schema.groups.map((group) => (
-          <div key={group} className="mt-3">
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-accent2)]">{group}</div>
-            {schema.fields.filter((f) => f.group === group).map((f) => (
-              <div key={f.key} className="mb-2">
-                <div className="flex items-baseline gap-2">
-                  <label className="text-[11px] text-[var(--color-ink)]">{f.key}</label>
-                  <button onClick={() => setOpenHelp(openHelp === f.key ? null : f.key)}
-                    title="what belongs in this field"
-                    className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent2)]">
-                    {openHelp === f.key ? "hide help" : "?"}
-                  </button>
-                </div>
-                {openHelp === f.key && (
-                  <div className="my-1 rounded bg-[#0e1015] p-2 text-[10px] leading-relaxed text-[var(--color-muted)]">{f.help}</div>
-                )}
-                <textarea className={inp + " min-h-[52px] text-[11px]"} rows={2}
-                  value={fields[f.key] || ""} onChange={(e) => set(f.key, e.target.value)} />
-              </div>
-            ))}
-          </div>
-        ))}
+      </div>
       </div>
 
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="space-y-4">
       {/* ---- lyrics + tags ---- */}
       <div className="rounded border border-[var(--color-line)] p-3">
-        <SectionTitle>Lyrics and sections</SectionTitle>
+        <SectionTitle>3 {"·"} Lyrics</SectionTitle>
         <div className="mt-2 flex flex-wrap items-center gap-1">
           {schema.tags.map((t) => (
             <GhostButton key={t} onClick={() => insertTag(t)} title={`append a bare [${t}] section`}>
@@ -462,10 +496,11 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
           Undocumented but real: <code>{" ^ "}</code> (spaces either side) becomes a line break.
         </div>
       </div>
-
+      </div>
+      <div className="space-y-4">
       {/* ---- render ---- */}
       <div className="rounded border border-[var(--color-line)] p-3">
-        <SectionTitle>Render</SectionTitle>
+        <SectionTitle>4 {"·"} Render</SectionTitle>
         <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
           <Field label="Title"><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
           <Field label="Max seconds" hint={`ceiling only, up to ${schema.max_seconds}; it often stops short`}>
@@ -511,6 +546,8 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, ...ctx }: Props) {
             button also offers 320k MP3.
           </span>
         </div>
+      </div>
+      </div>
       </div>
     </div>
   );

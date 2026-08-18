@@ -188,8 +188,8 @@ function AppInner() {
 
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          <div className={mode === "compare" || mode === "mvstudio" ? "w-full" : "max-w-2xl"}>
-            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} {...ctx} />
+          <div className={mode === "compare" || mode === "mvstudio" || mode === "music3" ? "w-full" : "max-w-2xl"}>
+            {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} projectName={current?.name} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
           {results.length > 0 && (
@@ -243,7 +243,7 @@ function Sidebar({ mode, setMode, openGroups, setOpenGroups }: {
   );
 }
 
-function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, library, compare, setCompare, ...ctx }: { mode: string; cfg: Config; busy: boolean; song: SongDraft | null; setSong: (s: SongDraft) => void; goTo: (m: string) => void; handoff: { tags?: string; lyrics?: string } | null; setHandoff: (h: { tags?: string; lyrics?: string } | null) => void; library: LibItem[]; compare: string[]; setCompare: (f: (ids: string[]) => string[]) => void } & RunCtx) {
+function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, library, compare, setCompare, projectName, ...ctx }: { mode: string; cfg: Config; busy: boolean; song: SongDraft | null; setSong: (s: SongDraft) => void; goTo: (m: string) => void; handoff: { tags?: string; lyrics?: string } | null; setHandoff: (h: { tags?: string; lyrics?: string } | null) => void; library: LibItem[]; compare: string[]; setCompare: (f: (ids: string[]) => string[]) => void; projectName?: string } & RunCtx) {
   const p = { cfg, busy, ...ctx };
   switch (mode) {
     case "generate": return <GenerateForm {...p} handoff={handoff} clearHandoff={() => setHandoff(null)} />;
@@ -266,7 +266,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "mix": return <MixForm {...p} />;
     case "video": return <VideoForm {...p} library={library} />;
     case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
-    case "music3": return <Music3StudioForm {...p} song={song} />;
+    case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} />;
     case "characters": return <CharactersForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
