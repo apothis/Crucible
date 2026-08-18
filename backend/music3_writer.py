@@ -197,6 +197,42 @@ def write_ours(brief, fields=None, lyrics="", provider="", model="", claude_mode
             "writer": "ours", "provider": provider or llm.best_provider()}
 
 
+# ---------------- lyrics (both writer paths) ----------------
+
+_LYRICS_SYSTEM = """You write song lyrics for MiniMax Music 3 in a metal-focused studio.
+
+Hard rules, all measured on this setup:
+- Structure the song with BARE section tags, one per line, chosen from: [Intro], [Verse],
+  [Pre-Chorus], [Chorus], [Post-Chorus], [Bridge], [Instrumental], [Solo], [Outro].
+  A tag carries NOTHING but the section name: anything after it inside the brackets gets SUNG.
+- No stage directions. Parentheses are sung as backing-vocal lines, so "(guitar solo begins)"
+  would be performed as words. Use parentheses only for words a backing vocal should sing.
+- [Intro], [Instrumental], [Solo] and [Outro] normally carry no lyric lines. Use [Solo] for a
+  guitar solo section - it is the reliable trigger for one.
+- Follow the section order implied by the caption fields when they describe one; otherwise use a
+  conventional shape (intro, verse, pre-chorus, chorus, verse, pre-chorus, chorus, solo, bridge,
+  final chorus, outro).
+- Write in English unless the brief says otherwise. No titles, no commentary, no markdown:
+  return ONLY the lyrics, starting with the first section tag."""
+
+
+def write_lyrics(brief, fields=None, provider="", model="", claude_model=""):
+    """Draft full lyrics from the brief plus whatever caption fields exist. Callers only invoke
+    this when the lyrics box is EMPTY - existing lyrics are never rewritten, matching the ACE
+    writer's contract."""
+    ctx = [f"BRIEF: {(brief or '').strip()}"]
+    for k in ("Basic Attributes", "Global Emotional Progression", "Vocal Gender & Timbre"):
+        v = ((fields or {}).get(k) or "").strip()
+        if v:
+            ctx.append(f"{k}: {v}")
+    raw = llm.complete(provider or llm.best_provider(), model, _LYRICS_SYSTEM,
+                       "\n\n".join(ctx), claude_model, timeout=240)
+    t = re.sub(r"^```[a-z]*|```$", "", (raw or "").strip(), flags=re.M).strip()
+    # anything before the first tag is preamble the model was told not to write
+    i = t.find("[")
+    return t[i:] if i > 0 else t
+
+
 # ---------------- MiniMax's skill ----------------
 
 _ROUTE_SYSTEM = """You are routing a music brief to a style family, following the routing contract

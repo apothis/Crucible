@@ -5551,7 +5551,18 @@ def music3_write(p: dict):
     except Exception as e:
         raise HTTPException(500, f"{writer} writer failed: {e}")
     changed = [k for k, v in r["fields"].items() if (v or "").strip() != (before.get(k) or "").strip()]
-    return {**r, "before": before, "changed": changed}
+    out = {**r, "before": before, "changed": changed}
+    # Lyrics are drafted ONLY when the box arrived empty - populated lyrics are never rewritten
+    # (same contract as the ACE writer). Shared step for both writer paths: the skill's own rules
+    # forbid lyric content in its output, so lyric writing is its own call either way.
+    if not (p.get("lyrics") or "").strip() and p.get("write_lyrics", True):
+        try:
+            out["lyrics"] = music3_writer.write_lyrics(
+                p.get("brief") or "", r["fields"],
+                provider=args["provider"], model=args["model"], claude_model=args["claude_model"])
+        except Exception:
+            pass   # lyrics are a bonus on top of the caption; their failure should not sink it
+    return out
 
 
 @app.get("/api/music3/writer_status")

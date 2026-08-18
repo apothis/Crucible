@@ -66,6 +66,7 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
     writer: string; provider: string; fields: Record<string, string>;
     before: Record<string, string>; changed: string[];
     families?: string[]; templates?: string[]; auto_routed?: boolean;
+    lyrics?: string;   // drafted only when the lyrics box was empty; never a rewrite
   }>(null);
 
   // Reference pinning. Auto-routing is the default, but it is NOT reproducible: the same brief
@@ -107,9 +108,11 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
         templates: pinned.length ? pinned : undefined,
       });
       setProp(r);
+      const who = writer === "skill" ? "MiniMax skill" : "our writer";
+      const extra = r.lyrics ? " It also drafted lyrics (the box was empty) - accept or discard them below." : "";
       setNote(r.changed.length
-        ? `${writer === "skill" ? "MiniMax skill" : "our writer"} proposed ${r.changed.length} field change(s) - review below`
-        : `${writer === "skill" ? "MiniMax skill" : "our writer"} returned nothing different`);
+        ? `${who} proposed ${r.changed.length} field change(s) - review below.${extra}`
+        : `${who} returned nothing different.${extra}`);
     } catch (e) {
       setNote(`${writer} writer failed: ${e}`);
     } finally {
@@ -127,6 +130,8 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
     const next = { ...fields };
     prop.changed.forEach((k) => { next[k] = prop.fields[k]; });
     setFields(next);
+    // the guard repeats at accept time: if lyrics were typed while the writer ran, keep them
+    if (prop.lyrics && !lyrics.trim()) setLyrics(prop.lyrics);
     setProp(null);
   };
 
@@ -331,7 +336,7 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
         <SectionTitle>2 {"·"} Caption writers</SectionTitle>
         <textarea className={inp + " mt-2 min-h-[64px] text-[11px]"} rows={3} value={brief}
           onChange={(e) => setBrief(e.target.value)}
-          placeholder="Brief in plain words: what the song is, the singers, the feel, anything that must or must not be in it. Both writers work from this plus whatever fields are already filled." />
+          placeholder="Brief in plain words: what the song is, the singers, the feel, anything that must or must not be in it. Both writers work from this plus whatever fields are already filled. If the lyrics box is empty they also draft lyrics; populated lyrics are never touched." />
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <GhostButton onClick={() => runWriter("ours")} disabled={!!writing}
             title="our writer: one pass, carrying what we measured on this box (guitars as Primary, metal production language, per-section naming)">
@@ -425,7 +430,19 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
                 {prop.auto_routed && <span className="text-amber-400"> {"·"} auto-routing varies run to run; pin these to reproduce this caption</span>}
               </div>
             ) : null}
-            {prop.changed.length === 0 && (
+            {prop.lyrics && !lyrics.trim() && (
+              <div className="mt-2 border-t border-[var(--color-line)] pt-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-[var(--color-ink)]">Lyrics</span>
+                  <span className="text-[10px] text-[var(--color-muted)]">drafted because the box was empty - existing lyrics are never rewritten</span>
+                  <span className="flex-1" />
+                  <GhostButton onClick={() => { setLyrics(prop.lyrics || ""); setProp({ ...prop, lyrics: undefined }); }}>use these</GhostButton>
+                  <GhostButton onClick={() => setProp({ ...prop, lyrics: undefined })}>discard</GhostButton>
+                </div>
+                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-emerald-950/20 p-1 text-[10px] leading-relaxed text-emerald-200/80">{prop.lyrics}</pre>
+              </div>
+            )}
+            {prop.changed.length === 0 && !prop.lyrics && (
               <div className="mt-2 text-[10px] text-[var(--color-muted)]">Every proposed change has been dealt with.</div>
             )}
             {prop.changed.map((k) => (
