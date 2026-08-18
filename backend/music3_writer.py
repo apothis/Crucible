@@ -165,17 +165,22 @@ What has been MEASURED on this setup, which you must follow:
    one, so the phrasing is clearly not sufficient on its own. Do not treat this as a measured rule.
 6. Where several singers are wanted, name them "Singer A (Female)" and "Singer B (Male)" in
    Vocal Gender & Timbre, then assign them per named section in the arrangement fields.
-7. GUITAR SOLOS need the same treatment, and are otherwise reliably lost. Measured: three captions
-   all described a guitar solo in Embellishments, the canonical placement, and all three produced a
-   13-21 second instrumental section with NO solo in it. Getting the section is easy; getting a
-   solo in it is not. So for a solo, do all of these:
-     - in Embellishments, anchor it to the named section ("the instrumental break", "after the
-       second chorus") AND say the lead guitar carries the melody there;
-     - state the exclusion: no vocals in that section, and the orchestra or synths accompany
-       rather than take the melodic lead;
-     - name the technique concretely (legato runs, sweep-picked arpeggios, alternate picking);
-     - name the lead guitar in Primary as the instrument that takes the melodic lead in the
-       instrumental break, not only as the riff instrument.
+7. GUITAR SOLOS. Measured across 18 takes (6 caption variants x seeds 7/8/9). What actually works:
+     - the section itself was NEVER the problem: every variant produced a 13-39s instrumental
+       stretch, including ones that barely mentioned a solo;
+     - the reliable trigger for the model to PLAY something soloistic there is the lyric tag
+       [Solo] rather than [Instrumental]. That is one word and it worked 3 times out of 3;
+     - in Embellishments, use the corpus's HANDOVER framing rather than describing technique:
+       "an extended guitar solo section where the lead electric guitar takes the lead outright,
+       trading phrases with the orchestral strings before the full ensemble returns". This was
+       the best-sounding variant and held a clean structure at every seed;
+     - name the lead guitar in Primary as taking the melodic lead in the instrumental break, not
+       only as the riff instrument.
+   What did NOT work, so do not bother: explicitly forbidding a keyboard or synth solo. A caption
+   that said "there is no keyboard solo, no synth solo and no organ solo anywhere in this song"
+   scored exactly the same as one that did not. The remaining failure is TIMBRE - the model plays
+   the solo but often on a synth voice - and it stays at roughly one take in three whatever the
+   caption says. Write the solo well and expect to hunt seeds for the tone.
 8. There is NO per-section timing. Never write durations, bar counts or timestamps.
 8. Aim for 250 to 450 words across all fields combined. Concrete musical changes, not adjectives.
 
