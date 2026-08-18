@@ -261,13 +261,14 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
             Import loaded song
           </GhostButton>
           <select className={inp} value={importFrom} onChange={(e) => importProject(e.target.value)}
-            title="load any saved project's arrangement into this form">
-            <option value="">or pick a project…</option>
+            title="copies that project's song arrangement into this caption - it does NOT switch projects; use the top-bar Open for that">
+            <option value="">or copy a song from another project…</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <span className="text-[10px] text-[var(--color-muted)]">
-            sections and per-block style cues come across; seconds do not, because Music 3 has no
-            per-section timing at all.
+            This copies a song INTO the caption below - it never switches projects (the top-bar Open
+            does that, and also restores a project's saved Music 3 caption). Sections and per-block
+            style cues come across; seconds do not, because Music 3 has no per-section timing at all.
           </span>
         </div>
         {note && <div className="mt-2 text-[11px] text-[var(--color-accent2)]">{note}</div>}
