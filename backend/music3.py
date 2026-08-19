@@ -65,16 +65,23 @@ CAPTION_FIELDS = [
      "means wall of sound, guitars panned hard left and right, HEAVILY COMPRESSED. Asking for "
      "'preserved dynamic range' here steers straight out of metal and into cinematic pop."),
     ("Vocal Gender & Timbre", "Vocal Details",
-     "Open with 'Singer A (Female).' or 'Singer A (Male).' then the timbre. Add 'Singer B (...)' "
-     "for a duet."),
+     "Prose, not a tag list. The corpus frame (770/1000 official templates): 'Singer A (Female). "
+     "The vocalist possesses a powerful, clear soprano timbre with a bright, resonant quality "
+     "capable of soaring over dense instrumentation. Her tone shifts from X in the verses to Y in "
+     "the choruses.' Anchor on a register noun (soprano/mezzo/alto/tenor/baritone). 'bel canto', "
+     "'coloratura', 'classically trained' appear in ZERO templates and derail the voice."),
     ("Vocal Style", "Vocal Details",
-     "Delivery and how it changes across the song. State the negatives too: 'clean singing "
-     "throughout, no growls and no screams' actually holds."),
+     "Delivery per named section, and vibrato lives HERE ('utilizing controlled vibrato', 'with "
+     "strong vibrato'). Use 'operatic' as an adjective on a behaviour: 'a powerful, operatic "
+     "projection in the choruses'. State the negatives too: 'clean singing throughout, no growls "
+     "and no screams' actually holds."),
     ("Harmony/Backing Vocals", "Vocal Details",
      "Stacks, choir, gang vocals, and WHERE they appear. 'A full mixed choir joins on the final "
-     "chorus only' is the kind of instruction that lands."),
+     "chorus only' is the kind of instruction that lands. To keep a lead unstacked: 'No harmony "
+     "or backing vocals are present; the track relies entirely on the solo lead vocal.'"),
     ("Vocal FX", "Vocal Details",
-     "Reverb, delay, compression, saturation on the voice."),
+     "Reverb, delay, compression, saturation on the voice. Never vibrato here (it is a Vocal "
+     "Style word, 0/1000 templates put it in FX)."),
     ("Primary", "Arrangement",
      "The genre-defining instrument, and nothing else. Put the guitars here for rock and metal. "
      "Whatever is described first becomes the centre of the mix: describing the orchestra first "

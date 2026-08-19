@@ -234,7 +234,10 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
 
   if (!schema) return <div className="text-sm text-[var(--color-muted)]">loading Music 3 schema…</div>;
 
-  const tagsInLyrics = (lyrics.match(/\[[^\]]+\]/g) || []);
+  const allBrackets = (lyrics.match(/\[[^\]]+\]/g) || []);
+  // A bracketed vocal attribution ([female vocal], [male vocal]) is a working casting lever, not
+  // a section: keep it out of the section count and the loaded-tag warning.
+  const tagsInLyrics = allBrackets.filter((t) => !/\bvocals?\b/i.test(t));
   // A tag is "loaded" when it carries direction as well as a name. Match a comma, a colon, or a
   // SPACED hyphen - a bare hyphen would flag [Pre-Chorus], which is a documented tag name.
   const loadedTags = tagsInLyrics.filter((t) => /[,:]|\s-\s/.test(t.slice(1, -1)));
@@ -500,10 +503,10 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
             These look like stage directions: {stageDirections.slice(0, 3).join(" ")}
             {stageDirections.length > 3 && ` (+${stageDirections.length - 3} more)`}
             <div className="mt-1 text-[10px] text-amber-200/80">
-              Parentheses here are LYRICS, not directions. Verified against our own render: the
-              shipped template's "(rain on the window)" came back sung. Move instrument and
-              arrangement notes into Embellishments or Groove &amp; Foundation Progression, and keep
-              parentheses for words you actually want a backing vocal to sing.
+              Parentheses are unreliable BOTH ways: sometimes obeyed as direction, sometimes sung
+              (our render sang the shipped template's "(rain on the window)"). Only write words
+              here that are acceptable to hear sung; instrument and arrangement notes belong in
+              Embellishments or Groove &amp; Foundation Progression instead.
             </div>
           </div>
         )}
@@ -512,6 +515,9 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
           placeholder={"[Intro]\n\n[Verse]\nyour words here\n\n[Chorus]\n…"} />
         <div className="mt-1 text-[10px] text-[var(--color-muted)]">
           Undocumented but real: <code>{" ^ "}</code> (spaces either side) becomes a line break.
+          Casting lever: a one-or-two-word bracketed vocal attribution on its own line directly
+          under a section tag works, e.g. <code>[Chorus]</code> then <code>[female vocal]</code>.
+          Keep it that short; anything longer risks being sung.
         </div>
       </div>
       </div>

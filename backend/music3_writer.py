@@ -164,8 +164,31 @@ What has been MEASURED on this setup, which you must follow:
    caption that stated it did get a bare intro - but a caption using the same phrase got a busy
    one, so the phrasing is clearly not sufficient on its own. Do not treat this as a measured rule.
 6. Where several singers are wanted, name them "Singer A (Female)" and "Singer B (Male)" in
-   Vocal Gender & Timbre, then assign them per named section in the arrangement fields.
-7. GUITAR SOLOS. Measured across 18 takes (6 caption variants x seeds 7/8/9). What actually works:
+   Vocal Gender & Timbre, then assign them per named section in Vocal Style prose ("Singer B
+   enters in the bridge", "both vocalists layer their parts in the final chorus"). Casting can be
+   reinforced from the lyrics side with a short bracketed vocal attribution line (see the lyric
+   rules), but the caption assignment comes first.
+7. VOCAL GRAMMAR. Measured against the official 1000-template caption corpus this model was
+   aligned to (backend/skills/music-caption-rewriter/templates/):
+     - the vocal fields are PROSE SENTENCES, never a comma list of tags. The corpus frame, used
+       in 770 of 1000 templates, is: 'Singer A (Female). The vocalist possesses a <two or three
+       adjectives> <register noun> timbre with a <quality> capable of <function in the mix>.
+       Her tone shifts from <X> in the <softer sections> to <Y> in the <heavier sections>.';
+     - anchor the voice on a register noun (soprano, mezzo-soprano, alto, tenor, baritone,
+       bass): 929 of 1000 corpus timbre lines contain one;
+     - adjectives the corpus actually uses: clear, resonant, breathy, powerful, smooth, bright,
+       warm, gritty, raspy, rich;
+     - these phrases appear in ZERO corpus templates and are known here to derail the voice:
+       "bel canto", "coloratura", "classically trained", "operatic soprano". Use "operatic"
+       only as an adjective on a section-anchored behaviour: "a powerful, operatic projection
+       in the choruses", "an operatic belt";
+     - vibrato belongs in Vocal Style (279 corpus uses), not Timbre (13) and never Vocal FX (0):
+       "with strong vibrato", "utilizing controlled vibrato";
+     - to keep a lead unstacked, use the corpus form in Harmony/Backing Vocals: "No harmony or
+       backing vocals are present; the track relies entirely on the solo lead vocal.";
+     - the model has no speaker conditioning, so the exact voice character stays partly a seed
+       lottery however well the fields are written. Write the grammar right, expect rerolls.
+8. GUITAR SOLOS. Measured across 18 takes (6 caption variants x seeds 7/8/9). What actually works:
      - the section itself was NEVER the problem: every variant produced a 13-39s instrumental
        stretch, including ones that barely mentioned a solo;
      - the reliable trigger for the model to PLAY something soloistic there is the lyric tag
@@ -181,8 +204,8 @@ What has been MEASURED on this setup, which you must follow:
    scored exactly the same as one that did not. The remaining failure is TIMBRE - the model plays
    the solo but often on a synth voice - and it stays at roughly one take in three whatever the
    caption says. Write the solo well and expect to hunt seeds for the tone.
-8. There is NO per-section timing. Never write durations, bar counts or timestamps.
-8. Aim for 250 to 450 words across all fields combined. Concrete musical changes, not adjectives.
+9. There is NO per-section timing. Never write durations, bar counts or timestamps.
+10. Aim for 250 to 450 words across all fields combined. Concrete musical changes, not adjectives.
 
 Write in English. Do not invent an exact BPM or key if the brief does not imply one; leave that part
 out rather than guessing. Never quote the lyrics."""
@@ -205,8 +228,14 @@ Hard rules, all measured on this setup:
 - Structure the song with BARE section tags, one per line, chosen from: [Intro], [Verse],
   [Pre-Chorus], [Chorus], [Post-Chorus], [Bridge], [Instrumental], [Solo], [Outro].
   A tag carries NOTHING but the section name: anything after it inside the brackets gets SUNG.
-- No stage directions. Parentheses are sung as backing-vocal lines, so "(guitar solo begins)"
-  would be performed as words. Use parentheses only for words a backing vocal should sing.
+- ONE exception: a section tag may be followed on ITS OWN NEXT LINE by a short bracketed vocal
+  attribution of one or two words, e.g. [female vocal] or [male vocal]. This works as a casting
+  lever. Use it only when the caption names more than one singer, or when a section must switch
+  voice; never more than two words, never anything but the voice.
+- Parentheses are UNRELIABLE in both directions: sometimes performed as sung backing-vocal
+  lines, sometimes silently obeyed as direction. So never put a stage direction in parentheses
+  ("(guitar solo begins)" may be sung), and never rely on parentheses to guarantee a sung
+  backing line either. Use them only for words that are acceptable to hear sung.
 - [Intro], [Instrumental], [Solo] and [Outro] normally carry no lyric lines. Use [Solo] for a
   guitar solo section - it is the reliable trigger for one.
 - Follow the section order implied by the caption fields when they describe one; otherwise use a
