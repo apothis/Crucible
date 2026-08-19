@@ -186,6 +186,33 @@ def save_job(pid):
              j.get("audio_file"), j["status"], j.get("error")))
 
 
+def _keep_lossless(jid, *src_paths):
+    """Finish-chain output rule: flac in, flac out. The processing endpoints all write a lossless
+    {jid}.wav; when every source was itself lossless AND at least one was .flac, that wav is
+    transcoded (bit-exact) to {jid}.flac so a Music 3 master stays lossless-and-compact through
+    deglitch/master/shape/tone/mix. Every other flow keeps its .wav exactly as before - changing
+    the default output for existing mp3/wav chains was deliberately avoided."""
+    import subprocess
+    wav = os.path.join(LIBRARY, f"{jid}.wav")
+    exts = [os.path.splitext(sp or "")[1].lower() for sp in src_paths if sp]
+    if not exts or ".flac" not in exts or any(e not in (".flac", ".wav") for e in exts):
+        return wav
+    fl = os.path.join(LIBRARY, f"{jid}.flac")
+    try:
+        r = subprocess.run(["ffmpeg", "-y", "-i", wav, "-c:a", "flac", fl],
+                           capture_output=True, timeout=600)
+        if r.returncode == 0 and os.path.exists(fl) and os.path.getsize(fl) > 0:
+            os.remove(wav)
+            return fl
+    except Exception:
+        pass
+    try:
+        os.remove(fl)
+    except Exception:
+        pass
+    return wav
+
+
 def save_done_row(jid, mode, params, audio_path, bucket=""):
     with db() as conn:
         conn.execute(
@@ -2518,7 +2545,7 @@ async def cover(file: UploadFile = File(None), params: str = Form(...),
             data = await file.read()
             label = file.filename or "upload"
         elif job_id:
-            src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+            src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                         if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
             if not src:
                 raise HTTPException(404, "source track not found")
@@ -2617,7 +2644,7 @@ async def _resolve_edit_source(file, job_id, trim_tail=False):
         data = await file.read()
         label = file.filename
     elif job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "source track not found in the library")
@@ -2662,7 +2689,7 @@ async def _source_bytes(file, job_id):
     if file is not None:
         return await file.read(), (file.filename or "src.wav")
     if job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "source track not found")
@@ -2777,7 +2804,7 @@ async def transcribe(file: UploadFile = File(None), params: str = Form("{}"), jo
             with open(src, "wb") as f:
                 f.write(await file.read())
         elif job_id:
-            src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+            src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                         if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
             if not src:
                 raise HTTPException(404, "source track not found")
@@ -2944,7 +2971,7 @@ async def layer(file: UploadFile = File(None), params: str = Form(...),
             with open(srcp, "wb") as f:
                 f.write(data)
         elif job_id:
-            s = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+            s = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                       if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
             if not s:
                 raise HTTPException(404, "backing track not found")
@@ -3098,7 +3125,7 @@ async def layer_isolate(file: UploadFile = File(None), params: str = Form(...), 
             f.write(await file.read())
         src_label = file.filename
     elif job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "source track not found")
@@ -3203,7 +3230,7 @@ def set_library_bucket(jid: str, body: dict):
 def delete_library_item(jid: str):
     jid = os.path.basename(jid)  # guard against path traversal
     removed = []
-    for ext in (".mp3", ".wav") + MEDIA_EXTS:
+    for ext in (".mp3", ".wav", ".flac") + MEDIA_EXTS:
         p = os.path.join(LIBRARY, jid + ext)
         if os.path.exists(p):
             os.remove(p)
@@ -3811,7 +3838,7 @@ async def stems_separate(mode: str = Form("vocals"),
         with open(inp, "wb") as f:
             f.write(await file.read())
     elif job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "library track not found")
@@ -3942,7 +3969,7 @@ async def tone_apply(preset: str = Form("tighten_highgain"),
             f.write(await file.read())
         src_label = file.filename
     elif job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "library track not found")
@@ -3981,7 +4008,7 @@ async def tone_apply(preset: str = Form("tighten_highgain"),
     jid = uuid.uuid4().hex
     with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
         f.write(wav)
-    save_done_row(jid, "tone", {"source": src_label, "preset": preset}, os.path.join(LIBRARY, f"{jid}.wav"))
+    save_done_row(jid, "tone", {"source": src_label, "preset": preset}, _keep_lossless(jid, src))
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}",
             "guitar_url": f"/api/stem/{sid}/guitar_tone.wav", "preset": preset}
 
@@ -3996,7 +4023,7 @@ def _stash_input(work, label, file_bytes=None, filename=None, job_id=None):
             f.write(file_bytes)
         return p, (filename or "upload")
     if job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, f"library track not found: {job_id}")
@@ -4133,6 +4160,7 @@ async def master_apply(job_id: str = Form(None),
         raise HTTPException(500, f"mastering failed: {e}")
     shutil.rmtree(work, ignore_errors=True)
     params["title"] = _source_master_title(job_id, tgt_label)   # name it after the song
+    out = _keep_lossless(jid, tgt)
     save_done_row(jid, "master", params, out)
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
 
@@ -4203,7 +4231,7 @@ async def guitar_render_amp(midi: UploadFile = File(None),
     # if mixing onto a backing and no explicit duration, match the backing length
     backing_path = None
     if backing_job_id:
-        backing_path = next((os.path.join(LIBRARY, backing_job_id + e) for e in (".wav", ".mp3")
+        backing_path = next((os.path.join(LIBRARY, backing_job_id + e) for e in (".wav", ".mp3", ".flac")
                              if os.path.exists(os.path.join(LIBRARY, backing_job_id + e))), None)
         if backing_path and not duration:
             try:
@@ -4709,6 +4737,7 @@ async def shape_track(params: str = Form(...), ref_file: UploadFile = File(None)
         raise HTTPException(500, f"shape failed: {e}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    out_path = _keep_lossless(out_jid, src)
     orig_title = _solo_orig_title(pid)
     save_done_row(out_jid, "master",
                   {"title": f"{orig_title} (shaped)", "source": orig_title,
@@ -4753,6 +4782,7 @@ def deglitch_track(body: dict):
                                             max_click_ms=max_click_ms, repair=repair)
     except Exception as e:
         raise HTTPException(500, f"de-glitch failed: {e}")
+    out_path = _keep_lossless(out_jid, src)
     orig_title = _solo_orig_title(pid)
     save_done_row(out_jid, "master",
                   {"title": f"{orig_title} (de-glitched)", "source": orig_title,
@@ -4773,7 +4803,9 @@ async def import_upload(file: UploadFile = File(...), title: str = Form(None)):
         raise HTTPException(400, "empty file")
     iid = uuid.uuid4().hex
     ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext in (".mp3", ".wav"):
+    # .flac passes through untouched: transcoding a lossless import to mp3 threw away
+    # exactly the quality the finish chain is built to preserve
+    if ext in (".mp3", ".wav", ".flac"):
         out = os.path.join(LIBRARY, iid + ext)
         with open(out, "wb") as f:
             f.write(data)
@@ -4907,7 +4939,7 @@ async def import_extract(file: UploadFile = File(None), import_id: str = Form(No
             f.write(await file.read())
         save_done_row(src_id, "source", {"source": file.filename or "upload"}, raw)
     elif import_id:
-        raw = next((os.path.join(LIBRARY, import_id + e) for e in (".mp3", ".wav")
+        raw = next((os.path.join(LIBRARY, import_id + e) for e in (".mp3", ".wav", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, import_id + e))), None)
         if not raw:
             raise HTTPException(404, "fetched audio not found (re-fetch the URL)")
@@ -5008,7 +5040,7 @@ def mix_tracks(body: dict):
     with open(os.path.join(LIBRARY, f"{jid}.wav"), "wb") as f:
         f.write(wav)
     save_done_row(jid, "mix", {"sources": [t.get("src") for t in tracks]},
-                  os.path.join(LIBRARY, f"{jid}.wav"))
+                  _keep_lossless(jid, *[_lib_source_path(str(t.get("src") or "")) for t in tracks]))
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
 
 
@@ -5212,7 +5244,7 @@ async def soulx_prep(name: str = Form(...), language: str = Form("English"),
             raise HTTPException(404, f"stem not found: {ex}")
         fname = "vocal.wav"
     elif job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".wav", ".mp3", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "library track not found")
@@ -5252,7 +5284,7 @@ async def voiceswap(voice: str = Form(...), job_id: str = Form(None),
         with open(inp, "wb") as f:
             f.write(await file.read())
     elif job_id:
-        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav")
+        src = next((os.path.join(LIBRARY, job_id + e) for e in (".mp3", ".wav", ".flac")
                     if os.path.exists(os.path.join(LIBRARY, job_id + e))), None)
         if not src:
             raise HTTPException(404, "source song not found")
@@ -5311,7 +5343,7 @@ def get_stem(sid: str, name: str):
 
 @app.get("/api/audio/{pid}")
 def audio(pid: str):
-    for ext, mt in ((".mp3", "audio/mpeg"), (".wav", "audio/wav")):
+    for ext, mt in ((".mp3", "audio/mpeg"), (".wav", "audio/wav"), (".flac", "audio/flac")):
         path = os.path.join(LIBRARY, f"{pid}{ext}")
         if os.path.exists(path):
             return FileResponse(path, media_type=mt)
@@ -5319,7 +5351,8 @@ def audio(pid: str):
     with db() as conn:
         row = conn.execute("SELECT audio FROM jobs WHERE id=?", (pid,)).fetchone()
     if row and row["audio"] and os.path.exists(row["audio"]):
-        mt = "audio/wav" if row["audio"].endswith(".wav") else "audio/mpeg"
+        mt = {".wav": "audio/wav", ".flac": "audio/flac"}.get(
+            os.path.splitext(row["audio"])[1].lower(), "audio/mpeg")
         return FileResponse(row["audio"], media_type=mt)
     raise HTTPException(404, "no audio")
 

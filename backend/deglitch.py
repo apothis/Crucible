@@ -180,7 +180,7 @@ def deglitch_file(in_path, out_path, threshold=14.0, max_click_ms=2.0,
     # WAV must NOT be quantized to PCM16 across the whole track); float for lossy sources.
     out_subtype = "FLOAT"
     try:
-        if in_path.lower().endswith(".wav"):
+        if in_path.lower().endswith((".wav", ".flac")):
             out_subtype = sf.info(in_path).subtype or "FLOAT"
     except Exception:
         out_subtype = "FLOAT"

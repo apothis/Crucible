@@ -69,7 +69,7 @@ export function VocalBuilderForm({ busy, song, ...ctx }: Props) {
   useEffect(() => { if (!voice && voices.length) setVoice(voices[0]); }, [voices]);
   useEffect(() => {
     api.library().then((l: LibItem[]) => {
-      const f = l.filter((it) => ["vocal", "generate", "voiceswap"].includes(it.mode));
+      const f = l.filter((it) => ["vocal", "generate", "music3", "voiceswap"].includes(it.mode));
       setRefs(f.map((it) => ({ id: it.id, label: trackLabel(it, f) })));
     }).catch(() => {});
   }, [score]);

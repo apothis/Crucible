@@ -86,7 +86,7 @@ export function SoloBuilderForm(_props: Props) {
 
   useEffect(() => {
     api.library().then((l: LibItem[]) =>
-      setTracks(l.filter((it) => ["generate", "song", "restyle", "cover", "mix", "source"].includes(it.mode)))
+      setTracks(l.filter((it) => ["generate", "music3", "song", "restyle", "cover", "mix", "source"].includes(it.mode)))
     ).catch(() => {});
     api.soloOptions().then(setOpts).catch(() => {});
   }, []);

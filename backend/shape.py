@@ -213,7 +213,7 @@ def process_file(in_path, out_path, config, ref_path=None):
     data, sr = sf.read(in_path, dtype="float32", always_2d=True)
     out_subtype = "FLOAT"
     try:
-        if in_path.lower().endswith(".wav"):
+        if in_path.lower().endswith((".wav", ".flac")):
             out_subtype = sf.info(in_path).subtype or "FLOAT"
     except Exception:
         out_subtype = "FLOAT"

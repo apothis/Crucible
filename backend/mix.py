@@ -13,7 +13,7 @@ def _resolve(url: str, library: str, stems_dir: str) -> str:
     parts = url.strip("/").split("/")
     if url.startswith("/api/audio/"):
         jid = parts[-1]
-        for ext in (".wav", ".mp3"):
+        for ext in (".wav", ".mp3", ".flac"):
             p = os.path.join(library, jid + ext)
             if os.path.exists(p):
                 return p

@@ -341,7 +341,7 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
 
 export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const d = useDrafts("restyle");
-  const tracks = useLibrary((it) => ["source", "generate", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
+  const tracks = useLibrary((it) => ["source", "generate", "music3", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
   const [mode, setMode] = d.use<"reimagine" | "cover">("mode", "reimagine");
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
@@ -475,7 +475,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
 
 function EditForm({ cfg, busy, mode, ...ctx }: FormProps & { mode: "repaint" | "extend" }) {
   const d = useDrafts(mode);
-  const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "repaint", "extend", "voiceswap", "source"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "song", "restyle", "cover", "mix", "repaint", "extend", "voiceswap", "source"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [tags, setTags] = d.use("tags", "");
@@ -597,7 +597,7 @@ const LAYER_TRACKS = ["vocals", "drums", "bass", "guitar", "keyboard", "strings"
 
 export function LayerForm({ cfg, busy, ...ctx }: FormProps) {
   const d = useDrafts("layer");
-  const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "repaint", "layer", "voiceswap", "source"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "song", "restyle", "cover", "mix", "repaint", "layer", "voiceswap", "source"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [track, setTrack] = d.use("track", "guitar");
@@ -896,7 +896,7 @@ function RepoRow({ repo, onInstall }: { repo: any; onInstall: (b: any) => void }
 export function SwapForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("swap");
   const { voices, status } = useVoices();
-  const songs = useLibrary((it) => (it.mode === "generate" || it.mode === "restyle") && !it.params.instrumental);
+  const songs = useLibrary((it) => (it.mode === "generate" || it.mode === "restyle" || it.mode === "music3") && !it.params.instrumental);
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [voice, setVoice] = d.use("voice", "");
@@ -940,7 +940,7 @@ export function SwapForm({ busy, ...ctx }: FormProps) {
 
 export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
   const d = useDrafts("stems");
-  const tracks = useLibrary((it) => ["generate", "restyle", "cover", "voiceswap", "mix", "song", "layer", "source"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "restyle", "cover", "voiceswap", "mix", "song", "layer", "source"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = d.use("mode", "vocals");
@@ -997,7 +997,7 @@ export function StemsForm({ cfg, busy, ...ctx }: FormProps) {
 
 export function ToneForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("tone");
-  const tracks = useLibrary((it) => ["generate", "restyle", "song", "mix", "tone"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "restyle", "song", "mix", "tone"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = d.use("preset", "tighten_highgain");
@@ -1268,7 +1268,7 @@ export function GuitarForm({ cfg, busy, song, ...ctx }: FormProps & { song?: Son
 
 export function BackingForm({ cfg, busy, ...ctx }: FormProps) {
   const d = useDrafts("backing");
-  const tracks = useLibrary((it) => ["generate", "song", "restyle", "cover", "mix", "source"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "song", "restyle", "cover", "mix", "source"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [engine, setEngine] = d.use<"demucs" | "roformer">("engine", "demucs");
@@ -1317,7 +1317,7 @@ type MasterOpts = { reference: boolean; gold: boolean; auto: boolean; gold_refs:
 
 export function MasterForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("master");
-  const targets = useLibrary((it) => ["generate", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source", "master"].includes(it.mode));
+  const targets = useLibrary((it) => ["generate", "music3", "song", "mix", "tone", "restyle", "cover", "voiceswap", "source", "master"].includes(it.mode));
   const refs = useLibrary(() => true);  // any track can be a reference, esp. imported "source" songs
   const [opts, setOpts] = useState<MasterOpts | null>(null);
   const [mode, setMode] = d.use<"auto" | "gold" | "reference">("mode", "auto");
@@ -1475,7 +1475,7 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
 
 export function DeglitchForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("deglitch");
-  const tracks = useLibrary((it) => ["generate", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   const [threshold, setThreshold] = d.use("threshold", "14");
   const [repair, setRepair] = d.use<"ar" | "spline">("repair", "ar");
@@ -1546,7 +1546,7 @@ export function DeglitchForm({ busy, ...ctx }: FormProps) {
 
 export function ShapeForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("shape");
-  const tracks = useLibrary((it) => ["generate", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));
+  const tracks = useLibrary((it) => ["generate", "music3", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));
   const [job, setJob] = d.use("job", "");
   // De-harsh
   const [dhOn, setDhOn] = d.use("dhOn", true);
@@ -1841,7 +1841,7 @@ export function SongForm({ cfg, busy, onSong, onSendToGenerate, ...ctx }: FormPr
   const tuning = useTuning("song", cfg, expert, true, !!cfg.acestep); // engine-aware (model picker) when on the ACE engine; duration computed from blocks
 
   // ── Analyze a reference track → fill this arrangement (RESEARCH §17 P1, Mac-side) ──
-  const refTracks = useLibrary((it) => ["source", "generate", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
+  const refTracks = useLibrary((it) => ["source", "generate", "music3", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
   const [refJob, setRefJob] = useState("");
   const [refFile, setRefFile] = useState<File | null>(null);
   const [refLyrics, setRefLyrics] = useState(false);

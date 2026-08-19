@@ -478,6 +478,7 @@ function hhmm(epoch?: number): string {
 const LIB_SECTIONS = [
   { key: "song", label: "Songs" },
   { key: "generate", label: "Generated" },
+  { key: "music3", label: "Music 3" },
   { key: "vocal", label: "Vocals" },
   { key: "voiceswap", label: "Voice swaps" },
   { key: "mix", label: "Mixes" },
