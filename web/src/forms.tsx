@@ -527,7 +527,7 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
         <>
           <Slider label="Remix strength (how far from the source)" value={m3Strength} set={setM3Strength} min={0.6} max={0.95} step={0.01} />
           <p className="-mt-2 text-[11px] text-[var(--color-muted)]">
-            Measured band (AIPLAY Studio, at 15 steps): <b>0.85 = a genuine remix</b> — its shape, your sound · 0.80 = a variation of the same song · 0.60 = effectively a copy · 0.90+ = the reference is ignored. The band is narrow; start at 0.85.
+            <b>Stay at 0.85.</b> Measured on our rig with the seed held fixed: 0.85 renders clean, 0.75 is garbled — and every take at 0.6–0.8 garbled too. Lower values pull harder on a starting point the model can't reconcile, so "closer to the source" is not currently reachable, only 0.90+ (reference ignored). Even at 0.85 some seeds garble: re-roll the seed, the take is deterministic per seed.
           </p>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Render title" hint="blank = source title + (remix)">
