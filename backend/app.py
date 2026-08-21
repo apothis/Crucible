@@ -5618,6 +5618,34 @@ def music3_references(family: str = ""):
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/music3/encode_ref")
+def music3_encode_ref(p: dict):
+    """Encode a library track into a Music 3 flow latent and stage it in ComfyUI's input dir.
+
+    Runs on the Mac (torch CPU/MPS; the box has no exec API and ComfyUI refuses to encode for
+    this VAE). First use downloads the 292MB DAV encoder from HuggingFace, so the first call is
+    slow; after that a 3-4 minute track takes on the order of a minute. The returned `latent`
+    name goes into /generate's `audio_ref`, and one encode is reusable across any number of
+    takes and strengths - the strength dial trims the sampler schedule, not the latent."""
+    src = (p.get("src") or "").strip()
+    path = _lib_source_path(src) if src else None
+    if not path:
+        raise HTTPException(404, "source track not found")
+    from . import dav_encoder
+    try:
+        blob, info = dav_encoder.encode_to_latent(path, float(p.get("max_seconds") or 0))
+    except Exception as e:
+        raise HTTPException(500, f"encode failed: {e}")
+    # Content-hash name: re-encoding the same audio overwrites the same file instead of
+    # littering the input dir, and two different refs can never collide (_audio_name rule).
+    name = f"m3ref_{hashlib.md5(blob).hexdigest()[:16]}.latent"
+    try:
+        uploaded = C.upload_audio(blob, name)
+    except Exception as e:
+        raise HTTPException(502, f"staging the latent on the box failed: {e}")
+    return {"latent": uploaded, **info}
+
+
 @app.post("/api/music3/generate")
 def music3_generate(p: dict):
     caption = (music3_mod.assemble_caption(p["fields"]) if p.get("fields")

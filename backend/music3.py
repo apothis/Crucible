@@ -33,6 +33,14 @@ MAX_PROMPT_TOKENS = 5000
 DEFAULTS = {
     "seconds": 210.0, "cfg_scale": 1.7, "top_k": 50, "steps": 30,
     "sampler": "euler", "scheduler": "simple", "tiled_decode": True,
+    # schedule "template" = the shipped KSampler graph exactly as before. "shift5" = AIPLAY
+    # Studio's measured alternative: euler over a shift-5 flow schedule at 15 steps, which they
+    # measured ~2x closer to the converged solution than euler/simple@30 in half the time.
+    # Switchable per render; "template" stays the default until our own ears agree.
+    "schedule": "template", "shift": 5.0, "shift5_steps": 15,
+    # Audio-reference strength (AIPLAY's measured band, at 15 steps / shift 5):
+    # 0.60 a copy, 0.80 a variation of the same song, 0.85 a genuine remix, 0.90+ ignored.
+    "ref_denoise": 0.85,
 }
 MODELS = {
     "unet": "minimax_music3_dit_fp16.safetensors",
@@ -249,10 +257,35 @@ def song_to_fields(song):
 
 # ---------------- the graph ----------------
 
+def shift_sigmas(steps, shift):
+    """The shift-N flow schedule, AIPLAY Studio's shiftSigmas verbatim: sigma(t) = s*t/(1+(s-1)*t)
+    over a linear t from 1 to 0. Fed through the stock ManualSigmas node."""
+    out = []
+    for i in range(steps + 1):
+        t = 1 - i / steps
+        out.append(0.0 if i == steps else (shift * t) / (1 + (shift - 1) * t))
+    return out
+
+
 def build_graph(p):
     """Params -> (ComfyUI API graph, resolved params). Mirrors the shipped template
     audio_minimax_music_3.json; the template's main node is a subgraph, which a raw /prompt post
-    cannot carry, so it is expanded here."""
+    cannot carry, so it is expanded here.
+
+    Optional deviations, each defaulting to the template's exact behaviour:
+      mix_seed  - noise seed for the sampler only. The encoder seed picks the COMPOSITION (the
+                  AR token trajectory); this picks the RENDER of it. Because ComfyUI caches node
+                  outputs in its long-lived process, holding seed and changing only mix_seed
+                  skips the whole AR stage: AIPLAY measured re-rolls at 15 s vs 50 s.
+      flow_cfg  - sampler guidance only (cfg_scale keeps steering the composition). One dial
+                  driving both only ever samples the diagonal of that plane.
+      schedule  - "template" (KSampler euler/simple) or "shift5" (euler over shift-5 sigmas,
+                  default 15 steps).
+      audio_ref - a .latent filename in ComfyUI's input dir (see dav_encoder.py). The sampler
+                  then starts from that real recording instead of zeros, keeping only the tail
+                  of the schedule (ref_denoise of it). Forces the shift5 path, where the
+                  strength band was measured. The latent's length sets the duration.
+    """
     caption = (p.get("caption") or "").strip()
     lyrics = (p.get("lyrics") or "").strip()
     if not caption:
@@ -260,15 +293,28 @@ def build_graph(p):
 
     seconds = max(1.0, min(float(p.get("seconds") or DEFAULTS["seconds"]), MAX_SECONDS))
     seed = int(p.get("seed") or 0)
+    audio_ref = (p.get("audio_ref") or "").strip()
+    schedule = (p.get("schedule") or DEFAULTS["schedule"]).strip().lower()
+    if audio_ref:
+        schedule = "shift5"
+    if schedule not in ("template", "shift5"):
+        raise ValueError(f"unknown schedule {schedule!r} (template or shift5)")
+    default_steps = DEFAULTS["shift5_steps"] if schedule == "shift5" else DEFAULTS["steps"]
     r = {
         "caption": caption, "lyrics": lyrics, "seconds": seconds, "seed": seed,
+        "mix_seed": int(p.get("mix_seed") or 0) or seed,
         "cfg_scale": float(p.get("cfg_scale") or DEFAULTS["cfg_scale"]),
         "top_k": int(p.get("top_k") or DEFAULTS["top_k"]),
-        "steps": int(p.get("steps") or DEFAULTS["steps"]),
+        "steps": int(p.get("steps") or default_steps),
         "sampler": p.get("sampler") or DEFAULTS["sampler"],
         "scheduler": p.get("scheduler") or DEFAULTS["scheduler"],
         "tiled_decode": bool(p.get("tiled_decode", DEFAULTS["tiled_decode"])),
+        "schedule": schedule,
     }
+    r["flow_cfg"] = float(p.get("flow_cfg") or 0) or r["cfg_scale"]
+    if audio_ref:
+        r["audio_ref"] = audio_ref
+        r["ref_denoise"] = min(0.99, max(0.05, float(p.get("ref_denoise") or DEFAULTS["ref_denoise"])))
 
     decode = ({"class_type": "VAEDecodeAudioTiled",
                "inputs": {"samples": ["7", 0], "vae": ["3", 0], "tile_size": 1536, "overlap": 64}}
@@ -285,15 +331,6 @@ def build_graph(p):
               "inputs": {"clip": ["2", 0], "caption": caption, "lyrics": lyrics, "seed": seed,
                          "max_duration": seconds, "cfg_scale": r["cfg_scale"], "top_k": r["top_k"]}},
         "5": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["4", 0]}},
-        # seconds is LINKED from the encoder rather than set to `seconds`: the model decides its own
-        # length inside the ceiling, and the latent has to match the conditioning it actually made.
-        "6": {"class_type": "EmptyMiniMaxMusic3LatentAudio",
-              "inputs": {"seconds": ["4", 1], "batch_size": 1}},
-        "7": {"class_type": "KSampler",
-              "inputs": {"model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0],
-                         "latent_image": ["6", 0], "seed": seed, "steps": r["steps"],
-                         "cfg": r["cfg_scale"], "sampler_name": r["sampler"],
-                         "scheduler": r["scheduler"], "denoise": 1.0}},
         "8": decode,
         # FLAC, not MP3. The ACE graphs all save MP3 and the library historically assumed that, but
         # Music 3 decodes to genuine 44.1kHz (verified: no brick wall at 16kHz, so the bandwidth is
@@ -302,4 +339,40 @@ def build_graph(p):
         "9": {"class_type": "SaveAudio",
               "inputs": {"audio": ["8", 0], "filename_prefix": "audio/music3"}},
     }
+
+    # The starting latent. Normally empty, with seconds LINKED from the encoder rather than set:
+    # the model decides its own length inside the ceiling, and the latent has to match the
+    # conditioning it actually made. With an audio reference, the encoded latent of a real song -
+    # its length then sets the duration, which is what you want: a remix runs as long as its source.
+    if audio_ref:
+        graph["6"] = {"class_type": "LoadLatent", "inputs": {"latent": audio_ref}}
+    else:
+        graph["6"] = {"class_type": "EmptyMiniMaxMusic3LatentAudio",
+                      "inputs": {"seconds": ["4", 1], "batch_size": 1}}
+
+    if schedule == "template":
+        # The shipped template's sampler, byte-identical to before when mix_seed/flow_cfg are
+        # left to follow seed/cfg_scale - which keeps ComfyUI's node cache valid across the change.
+        graph["7"] = {"class_type": "KSampler",
+                      "inputs": {"model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0],
+                                 "latent_image": ["6", 0], "seed": r["mix_seed"],
+                                 "steps": r["steps"], "cfg": r["flow_cfg"],
+                                 "sampler_name": r["sampler"], "scheduler": r["scheduler"],
+                                 "denoise": 1.0}}
+    else:
+        sig = shift_sigmas(r["steps"], DEFAULTS["shift"])
+        if audio_ref:
+            # Keep only the TAIL of the schedule, so the flow starts partway down and less of
+            # the reference is destroyed. Done with arithmetic here rather than a custom node.
+            keep = max(1, round(r["steps"] * r["ref_denoise"]))
+            sig = sig[-(keep + 1):]
+        graph["10"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": r["sampler"]}}
+        graph["11"] = {"class_type": "ManualSigmas",
+                       "inputs": {"sigmas": ", ".join(f"{v:.6f}" for v in sig)}}
+        graph["7"] = {"class_type": "SamplerCustom",
+                      "inputs": {"model": ["1", 0], "add_noise": True,
+                                 "noise_seed": r["mix_seed"], "cfg": r["flow_cfg"],
+                                 "positive": ["4", 0], "negative": ["5", 0],
+                                 "sampler": ["10", 0], "sigmas": ["11", 0],
+                                 "latent_image": ["6", 0]}}
     return graph, r

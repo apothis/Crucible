@@ -45,8 +45,17 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
   const [count, setCount] = d.use("count", "1");
   const [cfgScale, setCfgScale] = d.use("cfgScale", "1.7");
   const [topK, setTopK] = d.use("topK", "50");
-  const [steps, setSteps] = d.use("steps", "30");
+  const [steps, setSteps] = d.use("steps", "");
   const [tiled, setTiled] = d.use("tiled", true);
+  // The seed picks the COMPOSITION (the AR token trajectory); the mix seed picks the RENDER of
+  // it. Blank = follow the seed, which is the shipped-template behaviour. Holding the seed and
+  // changing only the mix seed re-renders the same performance and skips the whole AR stage via
+  // ComfyUI's node cache (AIPLAY measured 15s vs 50s).
+  const [mixSeed, setMixSeed] = d.use("mixSeed", "");
+  const [flowCfg, setFlowCfg] = d.use("flowCfg", "");
+  // "template" = the shipped graph exactly (euler/simple, 30 steps). "shift5" = AIPLAY's
+  // measured alternative (euler over shift-5 sigmas, 15 steps) - switch freely per render.
+  const [schedule, setSchedule] = d.use<"template" | "shift5">("schedule", "template");
   const [showAdv, setShowAdv] = useState(false);
   const [openHelp, setOpenHelp] = useState<string | null>(null);
 
@@ -212,16 +221,25 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
     // One setResults for all cards: it REPLACES the array, so setting it per-iteration inside the
     // loop wipes every card but the last, which is exactly how the seed-hunt progress bar broke.
     ctx.setResults(cards);
+    // With a mix seed set, takes vary the RENDER while the composition holds: the seed is
+    // pinned (a random one is drawn once if blank) and mix_seed+i walks the re-rolls. Without
+    // one, takes vary the seed as before.
+    const mixRolls = mixSeed.trim() !== "";
+    const baseSeed = seed.trim() ? parseInt(seed)
+      : mixRolls ? Math.floor(Math.random() * 2 ** 31) : undefined;
     for (let i = 0; i < n; i++) {
       try {
         const r = await api.music3Generate({
           fields, lyrics, title,
           seconds: parseFloat(seconds) || 210,
           // blank seed = a fresh random one per take, which is what a seed hunt wants
-          seed: seed.trim() ? parseInt(seed) + i : undefined,
+          seed: baseSeed === undefined ? undefined : mixRolls ? baseSeed : baseSeed + i,
+          ...(mixRolls ? { mix_seed: parseInt(mixSeed) + i } : {}),
+          ...(flowCfg.trim() ? { flow_cfg: parseFloat(flowCfg) } : {}),
+          schedule,
           cfg_scale: parseFloat(cfgScale) || 1.7,
           top_k: parseInt(topK) || 50,
-          steps: parseInt(steps) || 30,
+          ...(steps.trim() ? { steps: parseInt(steps) } : {}),
           tiled_decode: tiled,
         });
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
@@ -547,17 +565,34 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
           <GhostButton onClick={() => setShowAdv(!showAdv)}>{showAdv ? "hide" : "show"} sampler settings</GhostButton>
         </div>
         {showAdv && (
+          <>
+          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <Field label="Mix seed" hint="blank = follow Seed (the default). Set it to re-render the SAME composition with new sound: the Seed picks the performance, this picks the render. With Takes > 1, takes then re-roll the mix while the composition holds - and skipping the composition stage makes those re-rolls several times faster.">
+              <input className={inp} value={mixSeed} onChange={(e) => setMixSeed(e.target.value)} placeholder="= seed" />
+            </Field>
+            <Field label="Render cfg" hint="blank = follow cfg_scale (the default). cfg_scale steers the composition; this steers the render. Splitting them samples off the diagonal - e.g. composition at 2.6 for structure with the render kept at 1.7.">
+              <input className={inp} value={flowCfg} onChange={(e) => setFlowCfg(e.target.value)} placeholder="= cfg_scale" />
+            </Field>
+            <Field label="Schedule" hint="template = the shipped graph (euler/simple). shift-5 = AIPLAY Studio's measured alternative, ~2x closer to converged at half the time on their rig - unproven on ours until we A/B it. Switch freely per render.">
+              <select className={inp} value={schedule} onChange={(e) => setSchedule(e.target.value as "template" | "shift5")}>
+                <option value="template">template (default, 30 steps)</option>
+                <option value="shift5">shift-5 (15 steps)</option>
+              </select>
+            </Field>
+            <Field label="steps" hint={schedule === "shift5" ? "blank = 15 (the shift-5 default)" : "blank = 30 (the template default)"}>
+              <input className={inp} value={steps} onChange={(e) => setSteps(e.target.value)}
+                placeholder={schedule === "shift5" ? "15" : "30"} />
+            </Field>
+          </div>
           <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
             <Field label="top_k" hint="template default 50">
               <input className={inp} value={topK} onChange={(e) => setTopK(e.target.value)} />
-            </Field>
-            <Field label="steps" hint="template default 30">
-              <input className={inp} value={steps} onChange={(e) => setSteps(e.target.value)} />
             </Field>
             <Field label="Tiled decode" hint="lower VRAM on long songs; small risk of seams at tile boundaries, so turn it off if you hear one">
               <input type="checkbox" checked={tiled} onChange={(e) => setTiled(e.target.checked)} />
             </Field>
           </div>
+          </>
         )}
 
         <div className="mt-3 flex items-center gap-2">

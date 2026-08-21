@@ -49,6 +49,8 @@ export const api = {
   music3FromSong: (song: unknown) => jpost("/api/music3/from_song", { song }),
   music3Preview: (p: unknown) => jpost("/api/music3/preview", p),
   music3Generate: (p: unknown) => jpost("/api/music3/generate", p),
+  music3EncodeRef: (src: string, maxSeconds?: number) =>
+    jpost("/api/music3/encode_ref", { src, max_seconds: maxSeconds || 0 }),
   music3Write: (p: unknown) => jpost("/api/music3/write", p),          // writer:"ours"|"skill"
   music3WriterStatus: () => jget("/api/music3/writer_status"),
   music3References: (family?: string) =>

@@ -342,7 +342,18 @@ export function GenerateForm({ cfg, busy, handoff, clearHandoff, ...ctx }: FormP
 export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const d = useDrafts("restyle");
   const tracks = useLibrary((it) => ["source", "generate", "music3", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
-  const [mode, setMode] = d.use<"reimagine" | "cover">("mode", "reimagine");
+  const [mode, setMode] = d.use<"reimagine" | "cover" | "music3">("mode", "reimagine");
+  // Music 3 remix reads the caption from the Music 3 tab's draft store: the caption drives the
+  // COMPOSITION (via the AR stage), the source recording drives the render's shape. Editing the
+  // caption happens in that tab; this one just points at it, so there is exactly one caption.
+  const m3 = useDrafts("music3");
+  const [m3Fields] = m3.use<Record<string, string>>("fields", {});
+  const [m3Lyrics] = m3.use("lyrics", "");
+  const [m3Strength, setM3Strength] = d.use("m3Strength", 0.85);
+  const [m3Seed, setM3Seed] = d.use("m3Seed", "");
+  // One encode per source track, cached by library id: the strength dial trims the sampler
+  // schedule, not the latent, so re-runs at a new strength must not re-encode.
+  const [refCache, setRefCache] = d.use<Record<string, { latent: string; seconds: number; si_sdr_db: number }>>("refCache", {});
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [amount, setAmount] = d.use("amount", 0.7);
@@ -363,6 +374,39 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const tuning = useTuning("restyle", cfg, expert, false, !!cfg.acestep, !!cfg.acestep, "acestep-v15-xl-sft");
   const applyPreset = (p: Preset) => setTags(p.tags);  // suggest style via tags; bpm/key stay the user's
   const isCover = mode === "cover";
+  const isM3 = mode === "music3";
+  const m3FieldCount = Object.values(m3Fields).filter((v) => (v || "").trim()).length;
+
+  async function runM3() {
+    if (!job) return fail(ctx, "Pick a library track (uploads: import it first, then pick it here).");
+    if (!m3FieldCount) return fail(ctx, "Write a caption in the Music 3 tab first - it composes the remix.");
+    const id = rid();
+    const src = tracks.find((t) => t.id === job);
+    const srcTitle = src ? trackLabel(src, tracks) : "track";
+    ctx.setResults([{ id, title: `${srcTitle} (remix)`, status: "pending", pct: 0 }]);
+    try {
+      let ref = refCache[job];
+      if (!ref) {
+        ctx.patch(id, { title: `${srcTitle} (remix) - encoding reference on the Mac… (first ever use also downloads the 292MB encoder)` });
+        ref = await api.music3EncodeRef(job);
+        setRefCache((c) => ({ ...c, [job]: ref }));
+      }
+      if (ref.si_sdr_db < 15) {
+        ctx.patch(id, { title: `${srcTitle} (remix) - ⚠ reference encoded poorly (${ref.si_sdr_db} dB), continuing anyway` });
+      }
+      const r = await api.music3Generate({
+        fields: m3Fields, lyrics: m3Lyrics,
+        title: `${srcTitle} (remix)`,
+        audio_ref: ref.latent, ref_denoise: m3Strength,
+        // Pace the composition to the source: the latent's length sets the render duration,
+        // so the AR stage should be writing a song of about that length too.
+        seconds: Math.min(360, Math.ceil(ref.seconds)),
+        seed: m3Seed.trim() ? parseInt(m3Seed) : undefined,
+      });
+      ctx.patch(id, { title: `${srcTitle} (remix)`, status: "running", pct: 5 });
+      pollJob(r.job_id, id, ctx);
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
 
   async function transcribeLyrics() {
     if (transcribing) return;
@@ -415,41 +459,64 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   return (
     <div className="space-y-4">
       <div className="flex gap-1.5">
-        {([["reimagine", "Reimagine"], ["cover", "Cover (keep structure)"]] as const).map(([m, label]) => (
+        {([["reimagine", "Reimagine"], ["cover", "Cover (keep structure)"], ["music3", "Music 3 remix"]] as const).map(([m, label]) => (
           <button key={m} onClick={() => setMode(m)}
             className={`flex-1 rounded-lg border py-1.5 text-sm ${mode === m ? "border-[var(--color-accent)] bg-[#2a1c19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] text-[var(--color-muted)]"}`}>{label}</button>
         ))}
       </div>
       <p className="text-xs text-[var(--color-muted)]">
-        {isCover
+        {isM3
+          ? "Music 3 remix: encode a real recording into the model's own latent and start the render from it. The Music 3 tab's caption composes the song; the source recording shapes it - \"that song's shape, your caption's sound\"."
+          : isCover
           ? "Cover: keep the song's structure/melody, change the timbre/genre from the tags (+ optional timbre reference) — e.g. map a non-metal track to metal. Base/SFT."
           : (cfg.acestep
               ? "Reimagine: transform the source toward the target style — runs the engine cover task at low strength (higher amount = freer / more change)."
               : "Reimagine: audio→audio by denoise amount — higher transforms more, further from the source.")}
       </p>
-      <p className="text-[11px] text-amber-400/80">⚠ Experimental — ACE-Step's cover/remix shifts overall style/genre, but exact melody fidelity and vocal re-singing are weak (an engine limitation). Best for instrumental/style transforms; for a genre change use a low strength (~0.4).</p>
-      <ModeToggle expert={expert} setExpert={setExpert} />
-      <Field label="Source track" hint="a library track (incl. imported songs) or upload">
+      {!isM3 && <p className="text-[11px] text-amber-400/80">⚠ Experimental — ACE-Step's cover/remix shifts overall style/genre, but exact melody fidelity and vocal re-singing are weak (an engine limitation). Best for instrumental/style transforms; for a genre change use a low strength (~0.4).</p>}
+      {!isM3 && <ModeToggle expert={expert} setExpert={setExpert} />}
+      <Field label="Source track" hint={isM3 ? "a library track — to remix an outside file, Import it first so it has a library entry" : "a library track (incl. imported songs) or upload"}>
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
           <option value="">— pick a library track —</option>
           {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
         </select>
       </Field>
-      <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setJob(""); }} /></Field>
+      {!isM3 && <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setJob(""); }} /></Field>}
+      {isM3 && (
+        <>
+          <div className={`rounded border p-2 text-xs ${m3FieldCount ? "border-[var(--color-line)] text-[var(--color-muted)]" : "border-amber-600/50 bg-amber-950/30 text-amber-300"}`}>
+            {m3FieldCount
+              ? <>Composing from the Music 3 tab's caption ({m3FieldCount}/13 fields filled{m3Lyrics.trim() ? ", with its lyrics" : ", instrumental-style: its lyrics box is empty"}). Edit it there; this remix renders it over the source's shape.</>
+              : <>The Music 3 tab's caption is empty. Write one there first — the caption is what composes the remix; the source only shapes it.</>}
+          </div>
+          <Slider label="Remix strength (how far from the source)" value={m3Strength} set={setM3Strength} min={0.6} max={0.95} step={0.01} />
+          <p className="-mt-2 text-[11px] text-[var(--color-muted)]">
+            Measured band (AIPLAY Studio, at 15 steps): <b>0.85 = a genuine remix</b> — its shape, your sound · 0.80 = a variation of the same song · 0.60 = effectively a copy · 0.90+ = the reference is ignored. The band is narrow; start at 0.85.
+          </p>
+          <Field label="Seed" hint="blank = random. The composition seed; the source latent replaces the noise start.">
+            <input className={inp} value={m3Seed} onChange={(e) => setM3Seed(e.target.value)} placeholder="random" />
+          </Field>
+          {refCache[job] && (
+            <p className="text-[11px] text-[var(--color-muted)]">
+              Reference already encoded for this track ({refCache[job].seconds}s, round-trip {refCache[job].si_sdr_db} dB) — re-runs and strength changes reuse it.
+            </p>
+          )}
+        </>
+      )}
       {isCover
         ? <>
             <Slider label="Cover strength (lower = freer to change genre)" value={coverStrength} set={setCoverStrength} min={0.1} max={1.0} step={0.05} />
             <p className="-mt-2 text-[11px] text-[var(--color-muted)]">Big genre change (e.g. pop → metal): try ~0.3–0.5. Keep it close to the original: ~0.7–0.9.{!cfg.acestep && " (Needs the ACE-Step engine — acestep_host — for true strength control; otherwise falls back to the basic ComfyUI cover.)"}</p>
             <Field label="Timbre reference (optional)" hint="a clip whose instrument/voice character the cover should adopt"><input className={inp} type="file" accept="audio/*" onChange={(e) => setTimbre(e.target.files?.[0] ?? null)} /></Field>
           </>
-        : <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />}
-      {cfg.acestep && (
+        : !isM3 && <Slider label="Restyle amount (higher = more change)" value={amount} set={setAmount} min={0.2} max={0.95} step={0.05} />}
+      {cfg.acestep && !isM3 && (
         <>
           <Slider label="Melody retention (keep the original tune)" value={melodyRetention} set={setMelodyRetention} min={0} max={1} step={0.05} />
           <p className="-mt-2 text-[11px] text-[var(--color-muted)]">0 = pure style transfer (ignores the source melody) · <b>0.1–0.25 = keep the melody while changing style (recommended)</b> · higher = stick closely to the tune. This is the knob that makes covers actually track the source.</p>
         </>
       )}
-      <PresetBar genres={cfg.genres} onApply={applyPreset} />
+      {!isM3 && <PresetBar genres={cfg.genres} onApply={applyPreset} />}
       {isCover && (
         <div>
           <div className="flex items-center gap-2">
@@ -466,9 +533,11 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
           <p className="mt-1 text-[11px] text-[var(--color-muted)]">Pulls the words from your source audio (isolate vocal → Whisper) into the Lyrics box below. RoFormer gives a cleaner vocal (better on dense mixes) but uses the 3090; Demucs runs on the Mac. You can also just type/paste.</p>
         </div>
       )}
-      <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />
-      {tuning.node}
-      <PrimaryButton onClick={run} disabled={busy}>{busy ? (isCover ? "Covering…" : "Restyling…") : (isCover ? "Cover" : "Restyle")}</PrimaryButton>
+      {!isM3 && <PromptFields {...{ tags, setTags, instrumental, setInstrumental, lyrics, setLyrics }} />}
+      {!isM3 && tuning.node}
+      <PrimaryButton onClick={isM3 ? runM3 : run} disabled={busy}>
+        {busy ? (isM3 ? "Remixing…" : isCover ? "Covering…" : "Restyling…") : (isM3 ? "Remix" : isCover ? "Cover" : "Restyle")}
+      </PrimaryButton>
     </div>
   );
 }
