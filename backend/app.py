@@ -5619,31 +5619,86 @@ def music3_references(family: str = ""):
 
 
 @app.post("/api/music3/encode_ref")
-def music3_encode_ref(p: dict):
-    """Encode a library track into a Music 3 flow latent and stage it in ComfyUI's input dir.
+async def music3_encode_ref(request: Request):
+    """Encode audio into a Music 3 flow latent, ON THE BOX, staged in ComfyUI's input dir.
 
-    Runs on the Mac (torch CPU/MPS; the box has no exec API and ComfyUI refuses to encode for
-    this VAE). First use downloads the 292MB DAV encoder from HuggingFace, so the first call is
-    slow; after that a 3-4 minute track takes on the order of a minute. The returned `latent`
-    name goes into /generate's `audio_ref`, and one encode is reusable across any number of
-    takes and strengths - the strength dial trims the sampler schedule, not the latent."""
-    src = (p.get("src") or "").strip()
-    path = _lib_source_path(src) if src else None
-    if not path:
+    Source: JSON {src: library id} or multipart {file: upload}. The audio is uploaded to
+    ComfyUI's input dir, then the :5080 helper's /dav/encode runs the encode on the 3090 in a
+    SUBPROCESS that exits when done - so every byte of RAM and VRAM it used is released by
+    process termination, nothing stays resident. A few seconds of GPU; the helper's first call
+    fetches the 292MB encoder weights onto the box. There is deliberately no Mac fallback: a
+    full-length CPU encode measured 9m54s for a 4-minute track, and without the box there is
+    nothing to render the latent with anyway. The returned `latent` name goes into /generate's
+    `audio_ref`; one encode is reusable across any number of takes and strengths."""
+    if not LORA_UPLOAD_HOST:
+        raise HTTPException(400, "lora_upload_host not set - the box helper (:5080) does the encoding")
+    path, cleanup = None, None
+    max_seconds = 0.0
+    ctype = (request.headers.get("content-type") or "")
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        up = form.get("file")
+        if up is None:
+            raise HTTPException(400, "multipart needs a `file`")
+        suffix = os.path.splitext(getattr(up, "filename", "") or "ref")[1] or ".bin"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(await up.read())
+            path = cleanup = f.name
+        max_seconds = float(form.get("max_seconds") or 0)
+    else:
+        p = await request.json()
+        max_seconds = float(p.get("max_seconds") or 0)
+        src = (p.get("src") or "").strip()
+        path = _lib_source_path(src) if src else None
+    if not path or not os.path.isfile(path):
         raise HTTPException(404, "source track not found")
-    from . import dav_encoder
+
     try:
-        blob, info = dav_encoder.encode_to_latent(path, float(p.get("max_seconds") or 0))
-    except Exception as e:
-        raise HTTPException(500, f"encode failed: {e}")
-    # Content-hash name: re-encoding the same audio overwrites the same file instead of
-    # littering the input dir, and two different refs can never collide (_audio_name rule).
-    name = f"m3ref_{hashlib.md5(blob).hexdigest()[:16]}.latent"
-    try:
-        uploaded = C.upload_audio(blob, name)
-    except Exception as e:
-        raise HTTPException(502, f"staging the latent on the box failed: {e}")
-    return {"latent": uploaded, **info}
+        with open(path, "rb") as f:
+            audio = f.read()
+        stem = f"m3ref_{hashlib.md5(audio).hexdigest()[:16]}"
+        try:
+            in_name = C.upload_audio(audio, stem + os.path.splitext(path)[1].lower())
+        except Exception as e:
+            raise HTTPException(502, f"uploading the source audio to the box failed: {e}")
+        try:
+            r = requests.post(f"http://{LORA_UPLOAD_HOST}/dav/encode",
+                              json={"input_name": in_name, "out_name": stem + ".latent",
+                                    "max_seconds": max_seconds}, timeout=1800)
+        except Exception as e:
+            raise HTTPException(502, f"box helper unreachable at {LORA_UPLOAD_HOST}: {e}")
+        if r.status_code == 404:
+            raise HTTPException(502, "the box helper predates /dav/encode - restart it "
+                                     "(the run_lora_upload.bat window) to pick up the update")
+        if not r.ok:
+            raise HTTPException(502, f"box encode failed: {r.text[:400]}")
+        info = r.json()
+        return {"latent": info.pop("latent", stem + ".latent"), "where": "box", **info}
+    finally:
+        if cleanup:
+            try:
+                os.unlink(cleanup)
+            except OSError:
+                pass
+
+
+@app.post("/api/music3/fetch_lyrics")
+def music3_fetch_lyrics(p: dict):
+    """Online lyrics for a known song (LRCLIB then lyrics.ovh - the exact chain LoRA training
+    captioning uses; never transcription). Artist/title explicit, or resolved from a library
+    track's tags/filename via `src`."""
+    from . import lyrics_fetch
+    artist = (p.get("artist") or "").strip()
+    title = (p.get("title") or "").strip()
+    path = _lib_source_path((p.get("src") or "").strip()) if p.get("src") else None
+    artist, title = lyrics_fetch.resolve_artist_title(path=path, artist=artist or None,
+                                                      title=title or None)
+    if not (artist and title):
+        raise HTTPException(400, "need an artist and title (could not resolve them from the track)")
+    ly, source = lyrics_fetch.fetch_online(artist, title)
+    if not ly:
+        raise HTTPException(404, f"no lyrics found online for {artist} - {title}")
+    return {"lyrics": ly, "source": source, "artist": artist, "title": title}
 
 
 @app.post("/api/music3/generate")

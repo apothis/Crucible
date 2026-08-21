@@ -51,6 +51,7 @@ import re
 import base64
 import datetime
 import fnmatch
+import json
 import py_compile
 import shutil
 import subprocess
@@ -621,6 +622,69 @@ def comfy_restart(body: dict = Body(default={})):
             time.sleep(2)
     return {"killed": killed, "skipped_non_python": skipped, "launcher": bat,
             "relaunched": True, "up": _comfy_up(COMFY_PORT), "waited_seconds": waited}
+
+
+DAV_ENCODER_FILE = "minimax_music3_dav_encoder.safetensors"
+DAV_ENCODER_URL = ("https://huggingface.co/SimpleTuner/MiniMax-Music-3-Encoder/resolve/main/"
+                   "audio_vae/diffusion_pytorch_model.safetensors")
+
+
+def _comfy_app():
+    """(portable_dir, app_dir, embedded_python) for the ComfyUI install, or (None, None, None)."""
+    d, _bat = _comfy_launcher()
+    if not d:
+        return None, None, None
+    app_dir = os.path.join(d, "ComfyUI")
+    py = os.path.join(d, "python_embeded", "python.exe")
+    if not (os.path.isfile(os.path.join(app_dir, "main.py")) and os.path.isfile(py)):
+        return None, None, None
+    return d, app_dir, py
+
+
+@app.post("/dav/encode")
+def dav_encode(body: dict = Body(...)):
+    """Encode an audio file already in ComfyUI's input dir into a Music 3 .latent, on this
+    box's GPU, writing the .latent back into the same input dir where the stock LoadLatent
+    node reads it. Body: {token?, input_name, out_name?, max_seconds?}.
+
+    Runs backend-deployed dav_encode_box.py under ComfyUI's own embedded python (torch cu130,
+    av, torchaudio - nothing to install). First call fetches the 292MB encoder weights into
+    ComfyUI models\\vae via curl. The encode itself is chunked, a few seconds of GPU."""
+    _auth(body or {})
+    portable, app_dir, py = _comfy_app()
+    if not py:
+        raise HTTPException(404, "ComfyUI portable install not found (set MG_COMFY_DIR)")
+    script = os.path.join(portable, "dav_encode_box.py")
+    if not os.path.isfile(script):
+        raise HTTPException(404, f"dav_encode_box.py not deployed at {script} (fs/write it there)")
+
+    name = os.path.basename(str(body.get("input_name") or ""))
+    src = os.path.join(app_dir, "input", name)
+    if not (name and os.path.isfile(src)):
+        raise HTTPException(404, f"input audio not found: {src}")
+    out_name = os.path.basename(str(body.get("out_name") or "")) or (os.path.splitext(name)[0] + ".latent")
+    out = os.path.join(app_dir, "input", out_name)
+
+    ckpt = os.path.join(app_dir, "models", "vae", DAV_ENCODER_FILE)
+    if not os.path.isfile(ckpt):
+        tmp = ckpt + ".part"
+        r = subprocess.run(["curl", "-L", "-C", "-", "-o", tmp, DAV_ENCODER_URL],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not os.path.isfile(tmp):
+            raise HTTPException(502, f"encoder download failed: {(r.stderr or '')[-300:]}")
+        os.replace(tmp, ckpt)
+
+    args = [py, script, src, out, ckpt]
+    if body.get("max_seconds"):
+        args.append(str(float(body["max_seconds"])))
+    r = subprocess.run(args, capture_output=True, text=True, timeout=900)
+    lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+    if r.returncode != 0 or not lines:
+        raise HTTPException(500, f"encode failed: {(r.stderr or r.stdout or '')[-500:]}")
+    try:
+        return json.loads(lines[-1])
+    except Exception:
+        raise HTTPException(500, f"encode output unparseable: {lines[-1][:300]}")
 
 
 if __name__ == "__main__":

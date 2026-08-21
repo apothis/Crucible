@@ -343,17 +343,30 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const d = useDrafts("restyle");
   const tracks = useLibrary((it) => ["source", "generate", "music3", "song", "restyle", "cover", "mix", "voiceswap"].includes(it.mode));
   const [mode, setMode] = d.use<"reimagine" | "cover" | "music3">("mode", "reimagine");
-  // Music 3 remix reads the caption from the Music 3 tab's draft store: the caption drives the
-  // COMPOSITION (via the AR stage), the source recording drives the render's shape. Editing the
-  // caption happens in that tab; this one just points at it, so there is exactly one caption.
-  const m3 = useDrafts("music3");
-  const [m3Fields] = m3.use<Record<string, string>>("fields", {});
-  const [m3Lyrics] = m3.use("lyrics", "");
+  // Music 3 remix carries its OWN caption fields and lyrics (a remix usually wants different
+  // words and framing than whatever is drafted in the Music 3 tab). The Music 3 tab's draft is
+  // read only as a copy SOURCE, one button for the caption and one for the lyrics.
+  const m3Tab = useDrafts("music3");
+  const [m3TabFields] = m3Tab.use<Record<string, string>>("fields", {});
+  const [m3TabLyrics] = m3Tab.use("lyrics", "");
+  const [m3Fields, setM3Fields] = d.use<Record<string, string>>("m3Fields", {});
+  const [m3Lyrics, setM3Lyrics] = d.use("m3Lyrics", "");
   const [m3Strength, setM3Strength] = d.use("m3Strength", 0.85);
   const [m3Seed, setM3Seed] = d.use("m3Seed", "");
-  // One encode per source track, cached by library id: the strength dial trims the sampler
-  // schedule, not the latent, so re-runs at a new strength must not re-encode.
-  const [refCache, setRefCache] = d.use<Record<string, { latent: string; seconds: number; si_sdr_db: number }>>("refCache", {});
+  const [m3Title, setM3Title] = d.use("m3Title", "");
+  const [m3Schema, setM3Schema] = useState<{ fields: { key: string; group: string; help: string }[]; groups: string[] } | null>(null);
+  const [m3ShowCaption, setM3ShowCaption] = useState(true);
+  // Online lyric fetch (LRCLIB then lyrics.ovh - the same chain training captioning uses).
+  const [lyArtist, setLyArtist] = d.use("lyArtist", "");
+  const [lyTitle, setLyTitle] = d.use("lyTitle", "");
+  const [lyBusy, setLyBusy] = useState("");
+  const [lyNote, setLyNote] = useState("");
+  // One encode per source, cached by library id (or name:size for uploads): the strength dial
+  // trims the sampler schedule, not the latent, so re-runs at a new strength must not re-encode.
+  const [refCache, setRefCache] = d.use<Record<string, { latent: string; seconds: number; si_sdr_db: number; where?: string }>>("refCache", {});
+  useEffect(() => {
+    if (mode === "music3" && !m3Schema) api.music3Schema().then(setM3Schema).catch(() => {});
+  }, [mode]);
   const [job, setJob] = d.use("job", "");
   const [file, setFile] = useState<File | null>(null);
   const [amount, setAmount] = d.use("amount", 0.7);
@@ -377,33 +390,61 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
   const isM3 = mode === "music3";
   const m3FieldCount = Object.values(m3Fields).filter((v) => (v || "").trim()).length;
 
+  async function fetchLyricsOnline() {
+    if (lyBusy) return;
+    setLyBusy("searching…");
+    try {
+      const r = await api.music3FetchLyrics({
+        artist: lyArtist.trim() || undefined,
+        title: lyTitle.trim() || undefined,
+        src: !lyArtist.trim() && !lyTitle.trim() && job ? job : undefined,
+      });
+      setM3Lyrics(r.lyrics || "");
+      setLyArtist(r.artist || lyArtist);
+      setLyTitle(r.title || lyTitle);
+      setLyBusy("");
+      setLyNote(`Loaded from ${r.source} (${r.artist} - ${r.title}). Online lyrics come UNTAGGED - add [Verse]/[Chorus] section tags before rendering, or the model paces blind.`);
+    } catch (e) {
+      setLyBusy("");
+      setLyNote("Fetch failed: " + (e as Error).message);
+    }
+  }
+
   async function runM3() {
-    if (!job) return fail(ctx, "Pick a library track (uploads: import it first, then pick it here).");
-    if (!m3FieldCount) return fail(ctx, "Write a caption in the Music 3 tab first - it composes the remix.");
+    if (!file && !job) return fail(ctx, "Pick a library track or a file to remix.");
+    if (!m3FieldCount) return fail(ctx, "Write a caption (or copy one from the Music 3 tab) - it composes the remix.");
     const id = rid();
     const src = tracks.find((t) => t.id === job);
-    const srcTitle = src ? trackLabel(src, tracks) : "track";
-    ctx.setResults([{ id, title: `${srcTitle} (remix)`, status: "pending", pct: 0 }]);
+    const srcTitle = file ? file.name.replace(/\.[^.]+$/, "") : src ? trackLabel(src, tracks) : "track";
+    const cacheKey = file ? `${file.name}:${file.size}` : job;
+    const outTitle = m3Title.trim() || `${srcTitle} (remix)`;
+    ctx.setResults([{ id, title: outTitle, status: "pending", pct: 0 }]);
     try {
-      let ref = refCache[job];
+      let ref = refCache[cacheKey];
       if (!ref) {
-        ctx.patch(id, { title: `${srcTitle} (remix) - encoding reference on the Mac… (first ever use also downloads the 292MB encoder)` });
-        ref = await api.music3EncodeRef(job);
-        setRefCache((c) => ({ ...c, [job]: ref }));
+        ctx.patch(id, { title: `${outTitle} - encoding reference on the box GPU… (the helper's first ever encode also downloads the 292MB encoder)` });
+        if (file) {
+          const fd = new FormData();
+          fd.append("file", file);
+          ref = await api.music3EncodeRefFile(fd);
+        } else {
+          ref = await api.music3EncodeRef(job);
+        }
+        setRefCache((c) => ({ ...c, [cacheKey]: ref }));
       }
       if (ref.si_sdr_db < 15) {
-        ctx.patch(id, { title: `${srcTitle} (remix) - ⚠ reference encoded poorly (${ref.si_sdr_db} dB), continuing anyway` });
+        ctx.patch(id, { title: `${outTitle} - ⚠ reference encoded poorly (${ref.si_sdr_db} dB), continuing anyway` });
       }
       const r = await api.music3Generate({
         fields: m3Fields, lyrics: m3Lyrics,
-        title: `${srcTitle} (remix)`,
+        title: outTitle,
         audio_ref: ref.latent, ref_denoise: m3Strength,
         // Pace the composition to the source: the latent's length sets the render duration,
         // so the AR stage should be writing a song of about that length too.
         seconds: Math.min(360, Math.ceil(ref.seconds)),
         seed: m3Seed.trim() ? parseInt(m3Seed) : undefined,
       });
-      ctx.patch(id, { title: `${srcTitle} (remix)`, status: "running", pct: 5 });
+      ctx.patch(id, { title: outTitle, status: "running", pct: 5 });
       pollJob(r.job_id, id, ctx);
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
   }
@@ -475,32 +516,78 @@ export function RestyleForm({ cfg, busy, ...ctx }: FormProps) {
       </p>
       {!isM3 && <p className="text-[11px] text-amber-400/80">⚠ Experimental — ACE-Step's cover/remix shifts overall style/genre, but exact melody fidelity and vocal re-singing are weak (an engine limitation). Best for instrumental/style transforms; for a genre change use a low strength (~0.4).</p>}
       {!isM3 && <ModeToggle expert={expert} setExpert={setExpert} />}
-      <Field label="Source track" hint={isM3 ? "a library track — to remix an outside file, Import it first so it has a library entry" : "a library track (incl. imported songs) or upload"}>
+      <Field label="Source track" hint="a library track (incl. imported songs) or upload">
         <select className={inp} value={job} onChange={(e) => { setJob(e.target.value); if (e.target.value) setFile(null); }}>
           <option value="">— pick a library track —</option>
           {tracks.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, tracks)}</option>)}
         </select>
       </Field>
-      {!isM3 && <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setJob(""); }} /></Field>}
+      <Field label="…or upload" hint="overrides the picker"><input className={inp} type="file" accept="audio/*" onChange={(e) => { setFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setJob(""); }} /></Field>
       {isM3 && (
         <>
-          <div className={`rounded border p-2 text-xs ${m3FieldCount ? "border-[var(--color-line)] text-[var(--color-muted)]" : "border-amber-600/50 bg-amber-950/30 text-amber-300"}`}>
-            {m3FieldCount
-              ? <>Composing from the Music 3 tab's caption ({m3FieldCount}/13 fields filled{m3Lyrics.trim() ? ", with its lyrics" : ", instrumental-style: its lyrics box is empty"}). Edit it there; this remix renders it over the source's shape.</>
-              : <>The Music 3 tab's caption is empty. Write one there first — the caption is what composes the remix; the source only shapes it.</>}
-          </div>
           <Slider label="Remix strength (how far from the source)" value={m3Strength} set={setM3Strength} min={0.6} max={0.95} step={0.01} />
           <p className="-mt-2 text-[11px] text-[var(--color-muted)]">
             Measured band (AIPLAY Studio, at 15 steps): <b>0.85 = a genuine remix</b> — its shape, your sound · 0.80 = a variation of the same song · 0.60 = effectively a copy · 0.90+ = the reference is ignored. The band is narrow; start at 0.85.
           </p>
-          <Field label="Seed" hint="blank = random. The composition seed; the source latent replaces the noise start.">
-            <input className={inp} value={m3Seed} onChange={(e) => setM3Seed(e.target.value)} placeholder="random" />
-          </Field>
-          {refCache[job] && (
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Render title" hint="blank = source title + (remix)">
+              <input className={inp} value={m3Title} onChange={(e) => setM3Title(e.target.value)} placeholder="(remix)" />
+            </Field>
+            <Field label="Seed" hint="blank = random. The composition seed; the source latent replaces the noise start.">
+              <input className={inp} value={m3Seed} onChange={(e) => setM3Seed(e.target.value)} placeholder="random" />
+            </Field>
+          </div>
+          {refCache[file ? `${file.name}:${file.size}` : job] && (
             <p className="text-[11px] text-[var(--color-muted)]">
-              Reference already encoded for this track ({refCache[job].seconds}s, round-trip {refCache[job].si_sdr_db} dB) — re-runs and strength changes reuse it.
+              Reference already encoded for this source ({refCache[file ? `${file.name}:${file.size}` : job].seconds}s, round-trip {refCache[file ? `${file.name}:${file.size}` : job].si_sdr_db} dB) — re-runs and strength changes reuse it.
             </p>
           )}
+
+          {/* ---- caption: the remix's own 13 fields ---- */}
+          <div className="rounded border border-[var(--color-line)] p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Caption</span>
+              <span className={`text-[11px] ${m3FieldCount ? "text-[var(--color-muted)]" : "text-amber-400"}`}>{m3FieldCount}/13 fields — composes the remix; the source only shapes it</span>
+              <span className="flex-1" />
+              <GhostButton onClick={() => { const src = Object.fromEntries(Object.entries(m3TabFields).filter(([, v]) => (v || "").trim())); if (!Object.keys(src).length) { setLyNote("The Music 3 tab's caption is empty - nothing to copy."); return; } setM3Fields(src); }}>copy caption from Music 3 tab</GhostButton>
+              <GhostButton onClick={() => setM3ShowCaption(!m3ShowCaption)}>{m3ShowCaption ? "hide" : "show"}</GhostButton>
+            </div>
+            {m3ShowCaption && m3Schema && m3Schema.groups.map((g) => (
+              <div key={g} className="mt-2">
+                <div className="text-[11px] uppercase tracking-wide text-[var(--color-muted)]">{g}</div>
+                {m3Schema.fields.filter((f) => f.group === g).map((f) => (
+                  <Field key={f.key} label={f.key} hint={undefined}>
+                    <textarea className={inp + " min-h-[38px] text-xs"} rows={2} title={f.help}
+                      value={m3Fields[f.key] || ""} placeholder={f.help.slice(0, 90) + "…"}
+                      onChange={(e) => setM3Fields((cur) => ({ ...cur, [f.key]: e.target.value }))} />
+                  </Field>
+                ))}
+              </div>
+            ))}
+            {m3ShowCaption && !m3Schema && <div className="mt-2 text-xs text-[var(--color-muted)]">loading caption schema…</div>}
+          </div>
+
+          {/* ---- lyrics: own box, copyable from the Music 3 tab, or fetched online ---- */}
+          <div className="rounded border border-[var(--color-line)] p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Lyrics</span>
+              <span className="text-[11px] text-[var(--color-muted)]">{m3Lyrics.trim() ? "sung by the new composition" : "empty = instrumental-style remix"}</span>
+              <span className="flex-1" />
+              <GhostButton onClick={() => { if (!m3TabLyrics.trim()) { setLyNote("The Music 3 tab's lyrics box is empty - nothing to copy."); return; } setM3Lyrics(m3TabLyrics); }}>copy lyrics from Music 3 tab</GhostButton>
+            </div>
+            <div className="mt-2 flex items-end gap-2">
+              <Field label="Artist" hint="for the online lookup"><input className={inp} value={lyArtist} onChange={(e) => setLyArtist(e.target.value)} placeholder="from file tags" /></Field>
+              <Field label="Song title" hint="for the online lookup"><input className={inp} value={lyTitle} onChange={(e) => setLyTitle(e.target.value)} placeholder="from file tags" /></Field>
+              <GhostButton onClick={fetchLyricsOnline}>{lyBusy || "fetch lyrics online"}</GhostButton>
+            </div>
+            <p className="mt-1 text-[11px] text-[var(--color-muted)]">
+              LRCLIB → lyrics.ovh, the same sources training captioning uses. Blank artist/title = resolve them from the picked library track's file tags.
+            </p>
+            {lyNote && <p className="mt-1 text-[11px] text-amber-300">{lyNote}</p>}
+            <textarea className={inp + " mt-2 min-h-[140px] font-mono text-[11px]"} rows={8}
+              value={m3Lyrics} onChange={(e) => setM3Lyrics(e.target.value)}
+              placeholder={"[Verse]\nyour words here\n\n[Chorus]\n…"} />
+          </div>
         </>
       )}
       {isCover

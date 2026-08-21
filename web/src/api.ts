@@ -51,6 +51,9 @@ export const api = {
   music3Generate: (p: unknown) => jpost("/api/music3/generate", p),
   music3EncodeRef: (src: string, maxSeconds?: number) =>
     jpost("/api/music3/encode_ref", { src, max_seconds: maxSeconds || 0 }),
+  music3EncodeRefFile: (fd: FormData) => jform("/api/music3/encode_ref", fd),
+  music3FetchLyrics: (p: { artist?: string; title?: string; src?: string }) =>
+    jpost("/api/music3/fetch_lyrics", p),
   music3Write: (p: unknown) => jpost("/api/music3/write", p),          // writer:"ours"|"skill"
   music3WriterStatus: () => jget("/api/music3/writer_status"),
   music3References: (family?: string) =>
