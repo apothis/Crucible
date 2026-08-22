@@ -40,13 +40,13 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
   const [fields, setFields] = d.use<Record<string, string>>("fields", {});
   const [lyrics, setLyrics] = d.use("lyrics", "");
   const [title, setTitle] = d.use("title", "");
-  const [seconds, setSeconds] = d.use("seconds", "210");
+  const [seconds, setSeconds] = d.use("seconds", "360");
   const [seed, setSeed] = d.use("seed", "");
   const [count, setCount] = d.use("count", "1");
   const [cfgScale, setCfgScale] = d.use("cfgScale", "1.7");
   const [topK, setTopK] = d.use("topK", "50");
   const [steps, setSteps] = d.use("steps", "");
-  const [tiled, setTiled] = d.use("tiled", true);
+  const [tiled, setTiled] = d.use("tiled", false);
   // The seed picks the COMPOSITION (the AR token trajectory); the mix seed picks the RENDER of
   // it. Blank = follow the seed, which is the shipped-template behaviour. Holding the seed and
   // changing only the mix seed re-renders the same performance and skips the whole AR stage via
@@ -231,7 +231,7 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
       try {
         const r = await api.music3Generate({
           fields, lyrics, title,
-          seconds: parseFloat(seconds) || 210,
+          seconds: parseFloat(seconds) || 360,
           // blank seed = a fresh random one per take, which is what a seed hunt wants
           seed: baseSeed === undefined ? undefined : mixRolls ? baseSeed : baseSeed + i,
           ...(mixRolls ? { mix_seed: parseInt(mixSeed) + i } : {}),

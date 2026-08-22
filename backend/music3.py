@@ -29,10 +29,14 @@ MAX_SECONDS = 360.0
 MAX_PROMPT_TOKENS = 5000
 
 # Sampler defaults are the shipped ComfyUI template's, not ours. Deviating from them is a change
-# worth making deliberately, so they live in one place.
+# worth making deliberately, so they live in one place. Deliberate deviations so far:
+#   seconds 360 (template 210)   - it is a ceiling, not a target; the model stops when the song
+#                                  ends, so the max just stops truncating longer songs.
+#   tiled_decode False (template True) - tiling is an OOM guard for small cards; the 3090's 24GB
+#                                  decodes full-length untiled fine, and untiled has no seams.
 DEFAULTS = {
-    "seconds": 210.0, "cfg_scale": 1.7, "top_k": 50, "steps": 30,
-    "sampler": "euler", "scheduler": "simple", "tiled_decode": True,
+    "seconds": 360.0, "cfg_scale": 1.7, "top_k": 50, "steps": 30,
+    "sampler": "euler", "scheduler": "simple", "tiled_decode": False,
     # schedule "template" = the shipped KSampler graph exactly as before. "shift5" = AIPLAY
     # Studio's measured alternative: euler over a shift-5 flow schedule at 15 steps, which they
     # measured ~2x closer to the converged solution than euler/simple@30 in half the time.
