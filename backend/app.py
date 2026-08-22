@@ -175,11 +175,37 @@ def init_db():
             id TEXT PRIMARY KEY, name TEXT, created REAL, updated REAL, data TEXT)""")
 
 
+def _next_take(mode, title, conn):
+    """Stable per-song take number: max existing 'take' among same-mode rows sharing the
+    title (case-insensitive), + 1. Numbers are assigned once at first save and NEVER
+    reused, so deleting take 1 leaves 2..N labeled 2..N — positional renumbering made
+    library version management impossible (deletes appeared to hit the wrong take)."""
+    t = title.strip().lower()
+    mx = 0
+    for r in conn.execute("SELECT params FROM jobs WHERE mode=?", (mode,)):
+        try:
+            p = json.loads(r["params"] or "{}")
+        except Exception:
+            continue
+        if str(p.get("title") or "").strip().lower() == t:
+            try:
+                mx = max(mx, int(p.get("take") or 0))
+            except (TypeError, ValueError):
+                pass
+    return mx + 1
+
+
 def save_job(pid):
     j = JOBS.get(pid)
     if not j:
         return
     with db() as conn:
+        p = j["params"]
+        title = str(p.get("title") or "").strip()
+        # Numbered on COMPLETION, not submission: failed takes never render in the
+        # library, so letting them consume numbers would show gaps for no visible reason.
+        if title and j["status"] == "done" and not p.get("take"):
+            p["take"] = _next_take(j["mode"], title, conn)
         conn.execute(
             "REPLACE INTO jobs(id,created,mode,params,audio,status,error) VALUES(?,?,?,?,?,?,?)",
             (pid, j["created"], j["mode"], json.dumps(j["params"]),
@@ -215,6 +241,9 @@ def _keep_lossless(jid, *src_paths):
 
 def save_done_row(jid, mode, params, audio_path, bucket=""):
     with db() as conn:
+        title = str(params.get("title") or "").strip()
+        if title and not params.get("take"):
+            params["take"] = _next_take(mode, title, conn)
         conn.execute(
             "REPLACE INTO jobs(id,created,mode,params,audio,status,error,bucket) VALUES(?,?,?,?,?,?,?,?)",
             (jid, time.time(), mode, json.dumps(params), audio_path, "done", None, bucket))
@@ -2508,7 +2537,9 @@ def _acestep_poll(pid, task_id, mode, phases=1):
         out = _save_engine_audio(pid, files[0])
         with LOCK:
             base = dict(JOBS[pid]["params"])
-            JOBS[pid]["params"]["take"] = 1
+            # 'take' is the song-lifetime take number assigned by save_job/save_done_row
+            # (stable, never reused). The extras must NOT inherit the primary's number.
+            base.pop("take", None)
             JOBS[pid]["audio_file"] = out
             JOBS[pid]["status"] = "done"
         save_job(pid)
@@ -2516,7 +2547,7 @@ def _acestep_poll(pid, task_id, mode, phases=1):
             try:
                 jid = uuid.uuid4().hex
                 o2 = _save_engine_audio(jid, fr)
-                p2 = dict(base); p2["take"] = i
+                p2 = dict(base)
                 save_done_row(jid, mode, p2, o2)
             except Exception:
                 pass

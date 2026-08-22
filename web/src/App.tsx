@@ -605,9 +605,11 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
         {showParams && <ParamsPanel it={it} />}
         {multi && (
           <div className="flex flex-wrap gap-1">
+            {/* label = the take number stamped at generation time (stable across deletes;
+                never reused), falling back to position for legacy unnumbered rows */}
             {group.map((g, i) => (
               <button key={g.id} onClick={() => setSelId(g.id)} title={hhmm(g.created)}
-                className={`rounded px-1.5 py-0.5 text-[10px] ${g.id === it.id ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>v{i + 1}</button>
+                className={`rounded px-1.5 py-0.5 text-[10px] ${g.id === it.id ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>v{Number(g.params?.take) || i + 1}</button>
             ))}
           </div>
         )}

@@ -252,7 +252,8 @@ export function versionInfo(it: LibItem, all: LibItem[]): { v: number; total: nu
     .filter((x) => x.mode === it.mode && songTitle(x).toLowerCase() === t)
     .sort((a, b) => a.created - b.created);
   if (sibs.length < 2) return null;
-  const v = sibs.findIndex((x) => x.id === it.id) + 1;
+  // prefer the take number stamped at generation time (stable across deletes)
+  const v = Number(it.params?.take) || sibs.findIndex((x) => x.id === it.id) + 1;
   return { v, total: sibs.length };
 }
 
