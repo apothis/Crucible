@@ -566,10 +566,13 @@ function ParamsPanel({ it }: { it: LibItem }) {
 // One card per "group" (a song + its versions, or a single track). Versions share a base
 // title; chips switch which take the card shows/acts on (newest selected by default).
 function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, onCompare }: { group: LibItem[]; inTests: boolean } & LibActions) {
-  const [vi, setVi] = useState(group.length - 1);
+  // Selection is tracked by item ID, never by index: versions renumber whenever one is
+  // deleted or a new take arrives, and an index kept across that pointed the delete
+  // button at the wrong take. An id that left the group falls back to the newest.
+  const [selId, setSelId] = useState<string | null>(null);
   const [showParams, setShowParams] = useState(false);
   const [mediaRef, mediaSeen, loadMedia] = useSeen<HTMLDivElement>();
-  const it = group[Math.min(vi, group.length - 1)] || group[0];
+  const it = group.find((g) => g.id === selId) || group[group.length - 1] || group[0];
   const multi = group.length > 1;
   const canBuild = !!(it.params?.from_builder && it.params?.song_meta && onOpenInBuilder);
   return (
@@ -603,8 +606,8 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
         {multi && (
           <div className="flex flex-wrap gap-1">
             {group.map((g, i) => (
-              <button key={g.id} onClick={() => setVi(i)} title={hhmm(g.created)}
-                className={`rounded px-1.5 py-0.5 text-[10px] ${i === Math.min(vi, group.length - 1) ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>v{i + 1}</button>
+              <button key={g.id} onClick={() => setSelId(g.id)} title={hhmm(g.created)}
+                className={`rounded px-1.5 py-0.5 text-[10px] ${g.id === it.id ? "bg-[var(--color-accent)] text-white" : "bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>v{i + 1}</button>
             ))}
           </div>
         )}
@@ -756,7 +759,10 @@ function Library({ items, onOpenInBuilder, ...a }: { items: LibItem[] } & LibAct
         <p className="text-xs text-[var(--color-muted)]">Nothing matches.</p>
       ) : (
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(190px,1fr))]">
-          {groups.map((g) => <LibCard key={g[g.length - 1].id} group={g} inTests={inTests} onOpenInBuilder={onOpenInBuilder} {...a} />)}
+          {/* Keyed by the OLDEST member: keying by the newest meant every freshly finished
+              render changed the key, remounting the card and silently resetting the version
+              selection to the newest take right before a delete. */}
+          {groups.map((g) => <LibCard key={g[0].id} group={g} inTests={inTests} onOpenInBuilder={onOpenInBuilder} {...a} />)}
         </div>
       )}
     </div>
