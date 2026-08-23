@@ -8,6 +8,7 @@ import { LoraTrainingForm } from "./LoraTraining";
 import { MVStudioForm } from "./MVStudio";
 import { Music3StudioForm } from "./Music3Studio";
 import { CharactersForm } from "./Characters";
+import { YouTubeForm } from "./YouTube";
 import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
@@ -38,6 +39,7 @@ const MODES = [
   { id: "video", label: "Video" },
   { id: "mvstudio", label: "MV Studio" },
   { id: "characters", label: "Characters" },
+  { id: "youtube", label: "YouTube" },
   { id: "music3", label: "Music 3" },
   { id: "loratrain", label: "Train LoRA" },
 ] as const;
@@ -48,7 +50,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master", "shape", "deglitch", "compare"] },
-  { name: "Video", modes: ["video", "mvstudio", "characters"] },
+  { name: "Video", modes: ["video", "mvstudio", "characters", "youtube"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
@@ -268,6 +270,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
     case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} />;
     case "characters": return <CharactersForm {...p} library={library} />;
+    case "youtube": return <YouTubeForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;
@@ -442,6 +445,7 @@ function libDesc(it: LibItem): string {
     return "Vocal Builder · " + parts.join(" · ");
   }
   if (it.mode === "musicvideo") return `music video: ${p.title || "?"} (${p.shots || "?"} shots)`;
+  if (it.mode === "ytvideo") return `youtube video: ${p.title || "?"} (${p.res || "1080p"})`;
   if (it.mode === "videostill") return `still: ${p.prompt ? String(p.prompt).slice(0, 40) : "?"}`;
   if (it.mode === "videoclip") return `i2v clip${p.length ? ` · ${p.length}f` : ""}${p.prompt ? " · " + String(p.prompt).slice(0, 28) : ""}`;
   if (it.mode === "videolipsync") return `lip-sync${p.length ? ` · ${p.length}f` : ""}${p.audio_id ? " · " + String(p.audio_id).slice(0, 10) : ""}`;
@@ -499,6 +503,7 @@ const LIB_SECTIONS = [
   { key: "videoclip", label: "Video clips" },
   { key: "videolipsync", label: "Lip-sync clips" },
   { key: "musicvideo", label: "Music videos" },
+  { key: "ytvideo", label: "YouTube videos" },
 ];
 
 type LibActions = { onOpen: (it: LibItem) => void; onDelete: (id: string) => void; onBucket: (id: string, b: string) => void; onOpenInBuilder?: (it: LibItem) => void; onCompare?: (id: string) => void };

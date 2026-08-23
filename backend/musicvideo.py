@@ -251,6 +251,43 @@ def assemble(segments, audio_path, out_path, width=1280, height=720, fps=24, gra
     return out_path
 
 
+def _ffprobe():
+    return shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+
+
+def audio_duration(path):
+    """Duration of an audio file in seconds via ffprobe (0.0 when unreadable)."""
+    try:
+        r = subprocess.run([_ffprobe(), "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", path], capture_output=True, text=True, timeout=60)
+        return float((r.stdout or "").strip())
+    except (ValueError, subprocess.SubprocessError, OSError):
+        return 0.0
+
+
+def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1):
+    """One cover still + the full song -> an upload-ready static MP4 (the YouTube
+    "art track" shape). GPU-free ffmpeg on the Mac: the image loops at `fps` (1 fps
+    makes the video stream nearly free next to the audio), scaled and padded onto a
+    width x height canvas, x264 -tune stillimage, AAC 320k, +faststart. The length
+    comes from ffprobe on the audio and is passed as an explicit -t: the classic
+    -loop/-shortest pairing can keep muxing past the audio end (interleave quirk),
+    and an explicit duration sidesteps it."""
+    dur = audio_duration(audio_path)
+    if dur <= 0:
+        raise ValueError("could not read the audio duration")
+    vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+          f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    subprocess.run([_ffmpeg(), "-y", "-loglevel", "error",
+                    "-loop", "1", "-framerate", str(fps), "-i", image_path,
+                    "-i", audio_path, "-map", "0:v", "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage",
+                    "-pix_fmt", "yuv420p", "-vf", vf, "-r", str(fps),
+                    "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart",
+                    "-t", f"{dur:.3f}", out_path], check=True)
+    return out_path
+
+
 def retime(in_path, out_path, speed, fps=24):
     """Speed up (or down) a clip, GPU-free. speed > 1 = faster/shorter (fixes uniform slow-motion
     by scaling the whole clip back to natural speed). Re-encodes at `fps`; drops any per-clip

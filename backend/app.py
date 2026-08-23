@@ -250,7 +250,7 @@ def save_done_row(jid, mode, params, audio_path, bucket=""):
 
 
 # ---------------- WebSocket progress listener ----------------
-VIDEO_MODES = {"videostill", "videoclip", "videolipsync", "musicvideo"}   # produce image/mp4, not audio
+VIDEO_MODES = {"videostill", "videoclip", "videolipsync", "musicvideo", "ytvideo"}   # produce image/mp4, not audio
 MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mkv")
 _MEDIA_CT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4",
@@ -2422,6 +2422,174 @@ def mv_assemble(body: dict):
     except Exception as e:
         raise HTTPException(500, f"assembly failed: {e}")
     save_done_row(jid, "musicvideo", {"shots": len(segs), "title": (body.get("title") or "music video"), "grade": grade, "transition": transition}, out)
+    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
+# ---------------- YouTube static video (cover art + song -> upload-ready MP4) ----------------
+# The YouTube tab: Krea2 renders cover-art candidates WITH the song title as literal text in the
+# image (the Ideogram4 builder's type="text" elements), the user picks one, and ffmpeg muxes the
+# pick with the full track into a static video ready to upload (musicvideo.still_video).
+YT_COVER_W, YT_COVER_H = 1920, 1080
+
+
+@app.post("/api/youtube/concepts")
+def youtube_concepts(body: dict):
+    """Cover-art concepts authored by the LLM from the song itself (title + tags + lyrics).
+    Body: {song?: {title,tags,sections[{lyrics}]}, OR project? (key), title?, n?, provider?,
+    model?}. Returns {concepts: [{name, overview, background, aesthetics, lighting,
+    palette[], title_style}], provider} - each concept plugs straight into /api/youtube/cover."""
+    song = body.get("song")
+    if not song and body.get("project"):
+        r = _resolve_project(body["project"])
+        if r:
+            song = _project_song_view(json.loads(r["data"] or "{}"))
+    song = song or {}
+    title = str(body.get("title") or song.get("title") or "").strip() or "Untitled"
+    tags = str(song.get("tags") or body.get("tags") or "").strip()
+    lyrics = "\n".join((s.get("lyrics") or "").strip()
+                       for s in (song.get("sections") or []) if (s.get("lyrics") or "").strip())[:1500]
+    # optional freeform visual direction (the tab's "visual notes" + the Music 3 song brief)
+    notes = str(body.get("notes") or "").strip()[:1200]
+    n = max(2, min(6, int(body.get("n") or 4)))
+    provider = body.get("provider") or llm_mod.best_provider()
+    model = body.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-5"          # see /api/mv/script for why Sonnet 5
+    system = ("You are an art director designing ALBUM COVER ART for a static YouTube music "
+              "video. The image doubles as the THUMBNAIL, so its whole job is to be a "
+              "dramatic hook that makes people click: one bold instantly-readable subject, "
+              "high stakes or scale, strong contrast and a clear focal point that still "
+              "reads at postage-stamp size. Output STRICT JSON ONLY (no prose, no markdown "
+              "fences). The art is rendered by a photoreal image model from rich prose "
+              "fields; the song title is typeset into the image separately, so describe the "
+              "SCENE, not the lettering (lettering style goes only in title_style).")
+    prompt = f"""Song title: "{title}"
+Genre/mood tags: {tags or "(none given)"}
+Lyrics (may be empty):
+{lyrics or "(none)"}
+Visual direction from the user (if present, weigh it heavily - it describes what the art
+should show):
+{notes or "(none)"}
+
+Write {n} DISTINCT cover-art concepts for this song, each a different visual direction
+(e.g. one literal scene from the lyrics, one symbolic/iconic object, one landscape/mood,
+one character-driven). EVERY concept must be a DRAMATIC CLICK-HOOK: a frozen peak moment
+(mid-strike, mid-collapse, mid-ignition), extreme scale or peril, weather and light doing
+something violent or uncanny - never a calm generic mood piece. One dominant subject with
+empty-ish space in the upper band where the title will sit. Photoreal, cinematic, no text
+or letters described in the scene itself. Return ONLY a JSON array of {n} objects, each:
+{{"name": "<2-4 word label>",
+  "overview": "<2-4 flowing sentences describing the whole cover image - subject, scene, composition, camera/lens, atmosphere. Rich, concrete prose.>",
+  "background": "<1-3 sentences on the setting/backdrop with real materials, depth layers, believable light falloff>",
+  "aesthetics": "<comma phrases: photoreal/cinematic/texture cues; avoid 8k/masterpiece gloss>",
+  "lighting": "<one sentence of motivated lighting>",
+  "palette": ["#RRGGBB", 3-5 hex colors for the whole image],
+  "title_style": "<one sentence: the title lettering's typography, material and color so it stays legible over this scene>"}}"""
+    claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
+    try:
+        text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=300)
+        m = re.search(r"\[.*\]", text, re.S)
+        raw = json.loads(m.group(0) if m else text)
+    except Exception as e:
+        raise HTTPException(500, f"concept generation failed ({provider}): {e}")
+    concepts = []
+    for c in raw if isinstance(raw, list) else []:
+        if not isinstance(c, dict):
+            continue
+        concepts.append({
+            "name": str(c.get("name") or f"Concept {len(concepts) + 1}").strip(),
+            "overview": str(c.get("overview") or "").strip(),
+            "background": str(c.get("background") or "").strip(),
+            "aesthetics": str(c.get("aesthetics") or "").strip(),
+            "lighting": str(c.get("lighting") or "").strip(),
+            "palette": [str(x) for x in (c.get("palette") or []) if str(x).startswith("#")][:5],
+            "title_style": str(c.get("title_style") or "").strip(),
+        })
+    concepts = [c for c in concepts if c["overview"]][:n]
+    if not concepts:
+        raise HTTPException(500, "the LLM returned no usable concepts - try again")
+    return {"concepts": concepts, "provider": provider}
+
+
+@app.post("/api/youtube/cover")
+def youtube_cover(p: dict):
+    """Render ONE cover-art candidate with the song title typeset INTO the image.
+    Krea2-only: the title is a type="text" element on the Ideogram4 builder path (the
+    layout param), which is also the only Krea2 path proven safe on this stack - so the
+    engine is forced to krea2 regardless of the still_engine default. p: {title,
+    artist?, concept: {overview, background?, aesthetics?, lighting?, palette?,
+    title_style?}, seed?, width?, height?, two_pass?}. Returns the async still job
+    ({job_id, seed, media_url}) - poll /api/job/{job_id}."""
+    title = str(p.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "title is required (it is rendered into the artwork)")
+    c = p.get("concept") or {}
+    overview = str(c.get("overview") or "").strip()
+    if not overview:
+        raise HTTPException(400, "concept.overview is required (Krea2 needs rich global fields)")
+    artist = str(p.get("artist") or "").strip()
+    background = str(c.get("background") or "").strip() or overview
+    tstyle = (str(c.get("title_style") or "").strip()
+              or "bold weathered metal album lettering with high contrast against the scene")
+    regions = [
+        # full-canvas scene region (the verified rich-caption recipe, see H3Studio.envRequest)
+        {"type": "obj", "text": "", "palette": [],
+         "desc": background + " Rendered with true-to-life photographic detail.",
+         "x": 0.02, "y": 0.02, "w": 0.96, "h": 0.96},
+        # the title as LITERAL text: the Ideogram4 builder's type="text" element renders the
+        # `text` string; `desc` carries the typography
+        {"type": "text", "text": title, "palette": [],
+         "desc": f"the song title in large {tstyle}, centered, fully legible, correctly spelled",
+         "x": 0.10, "y": 0.07, "w": 0.80, "h": 0.16},
+    ]
+    if artist:
+        regions.append({"type": "text", "text": artist, "palette": [],
+                        "desc": "the artist name in smaller lettering matching the title style, centered, legible",
+                        "x": 0.25, "y": 0.85, "w": 0.50, "h": 0.07})
+    layout = {
+        "overview": overview,
+        "background": background,
+        "photo_style": "",
+        "aesthetics": (str(c.get("aesthetics") or "").strip()
+                       or "photorealistic, cinematic, dramatic high-contrast album-cover composition, "
+                          "one bold focal subject, true-to-life detail, atmospheric"),
+        "lighting": (str(c.get("lighting") or "").strip()
+                     or "dramatic motivated lighting with deep soft shadows and a strong key on the subject"),
+        "medium": "photograph",
+        "palette": [str(x) for x in (c.get("palette") or [])][:5],
+        "regions": regions,
+    }
+    req = {"engine": "krea2", "two_pass": bool(p.get("two_pass", True)), "layout": layout,
+           "width": int(p.get("width") or YT_COVER_W), "height": int(p.get("height") or YT_COVER_H)}
+    if p.get("seed") is not None:
+        req["seed"] = int(p["seed"])
+    return video_still(req)
+
+
+@app.post("/api/youtube/render")
+def youtube_render(body: dict):
+    """Mux a picked cover still + a library track into an upload-ready static MP4
+    (GPU-free ffmpeg on the Mac: 1 fps x264 stillimage + AAC 320k + faststart).
+    Body: {image_id, audio_id, title?, res?: "1080p"|"4k"}. Synchronous - returns
+    {job_id, media_url, status: "done"}; download via GET /api/export/{job_id}."""
+    img = _lib_image_path(body.get("image_id") or "")
+    if not img:
+        raise HTTPException(400, "image_id must reference a generated still in the library")
+    audio = _lib_source_path(os.path.basename(str(body.get("audio_id") or "")))
+    if not audio:
+        raise HTTPException(400, "audio_id must reference a library track")
+    res = str(body.get("res") or "1080p").lower()
+    w, h = (3840, 2160) if res in ("4k", "2160p") else (1920, 1080)
+    title = str(body.get("title") or "").strip()
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.mp4")
+    try:
+        musicvideo_mod.still_video(img, audio, out, width=w, height=h)
+    except Exception as e:
+        raise HTTPException(500, f"render failed: {e}")
+    save_done_row(jid, "ytvideo", {"title": title or "youtube video", "res": res,
+                                   "image_id": os.path.basename(str(body.get("image_id") or "")),
+                                   "audio_id": os.path.basename(str(body.get("audio_id") or ""))}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
 
 
