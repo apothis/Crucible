@@ -2456,13 +2456,15 @@ def youtube_concepts(body: dict):
     if not model and provider in ("claude_sub", "claude_code", "claude"):
         model = "claude-sonnet-5"          # see /api/mv/script for why Sonnet 5
     system = ("You are an art director designing ALBUM COVER ART for a static YouTube music "
-              "video. The image doubles as the THUMBNAIL, so its whole job is to be a "
-              "dramatic hook that makes people click: one bold instantly-readable subject, "
-              "high stakes or scale, strong contrast and a clear focal point that still "
-              "reads at postage-stamp size. Output STRICT JSON ONLY (no prose, no markdown "
-              "fences). The art is rendered by a photoreal image model from rich prose "
-              "fields; the song title is typeset into the image separately, so describe the "
-              "SCENE, not the lettering (lettering style goes only in title_style).")
+              "video. It must be a gorgeous, richly detailed cinematic image at full size - "
+              "the viewer stares at it for the whole song - AND work as a dramatic hook "
+              "that makes people click when it appears as the thumbnail: one bold subject, "
+              "high stakes or scale, strong contrast, a clear focal point that reads "
+              "instantly. Drama is the emphasis, not a small-size design constraint. "
+              "Output STRICT JSON ONLY (no prose, no markdown fences). The art is rendered "
+              "by a photoreal image model from rich prose fields; the song title is typeset "
+              "into the image separately, so describe the SCENE, not the lettering "
+              "(lettering style goes only in title_style).")
     prompt = f"""Song title: "{title}"
 Genre/mood tags: {tags or "(none given)"}
 Lyrics (may be empty):
