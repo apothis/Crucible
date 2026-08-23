@@ -2606,6 +2606,7 @@ def youtube_wordmark_options():
     saved global wordmark choice (app_config.json `yt_wordmark`, merged over defaults)."""
     return {"fonts": wordmark_mod.available_fonts(),
             "treatments": list(wordmark_mod.TREATMENTS.keys()),
+            "positions": wordmark_mod.POSITIONS,
             "current": _yt_wordmark_cfg()}
 
 

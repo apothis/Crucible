@@ -115,21 +115,36 @@ def preview_png(text, font_id, treatment, width=640, height=160):
     return buf.getvalue()
 
 
+# Placement grid: "<vertical>" or "<vertical>-<horizontal>". Vertical: top (below the
+# in-model title band, which ends ~23% down), middle, bottom. Horizontal: left, center
+# (default), right. e.g. "bottom", "bottom-right", "top-left", "middle".
+POSITIONS = ["top", "top-left", "top-right", "middle", "middle-left", "middle-right",
+             "bottom", "bottom-left", "bottom-right"]
+
+
 def stamp(image_path, out_path, text, font_id, treatment, position="bottom", scale=0.40):
     """Composite the wordmark onto a cover still -> out_path (PNG). `scale` = wordmark
     width as a fraction of the image width (also capped to 16% of the image height so a
-    tall face never dominates). position: "bottom" (default) or "top" - top sits below
-    the in-model title band (which ends ~23% down the canvas)."""
+    tall face never dominates). `position` is a POSITIONS grid slot."""
     img = Image.open(image_path).convert("RGBA")
     wm = render_wordmark(text, font_id, treatment, height=260)
     scale = min(0.9, max(0.1, float(scale)))
     f = min((img.width * scale) / wm.width, (img.height * 0.16) / wm.height)
     wm = wm.resize((max(1, round(wm.width * f)), max(1, round(wm.height * f))), Image.LANCZOS)
-    x = (img.width - wm.width) // 2
-    if str(position) == "top":
+    parts = str(position or "bottom").split("-")
+    vert, horiz = parts[0], (parts[1] if len(parts) > 1 else "center")
+    if horiz == "left":
+        x = round(img.width * 0.06)
+    elif horiz == "right":
+        x = round(img.width * 0.94) - wm.width
+    else:
+        x = (img.width - wm.width) // 2
+    if vert == "top":
         y = round(img.height * 0.24)
+    elif vert == "middle":
+        y = (img.height - wm.height) // 2
     else:
         y = round(img.height * 0.93) - wm.height
-    img.alpha_composite(wm, (x, max(0, y)))
+    img.alpha_composite(wm, (max(0, x), max(0, y)))
     img.convert("RGB").save(out_path, format="PNG")
     return out_path

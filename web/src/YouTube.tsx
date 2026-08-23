@@ -60,8 +60,13 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // wordmark picker (global config; fetched, saved back on every change)
   const [wmFonts, setWmFonts] = useState<{ id: string; label: string }[]>([]);
   const [wmTreatments, setWmTreatments] = useState<string[]>([]);
+  const [wmPositions, setWmPositions] = useState<string[]>([]);
   const [wm, setWm] = useState<Wordmark | null>(null);
   const [wmOpen, setWmOpen] = useState(false);
+  // per-cover placement overrides ("" = use the saved global) - placement depends on the
+  // artwork (keep the wordmark off the subject), so it is chosen at pick time
+  const [stampPos, setStampPos] = d.use("stampPos", "");
+  const [stampScale, setStampScale] = d.use("stampScale", "");
   const [suggesting, setSuggesting] = useState(false);
   const [genning, setGenning] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -77,8 +82,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   }, []);
 
   useEffect(() => {
-    api.ytWordmarkOptions().then((o: { fonts: { id: string; label: string }[]; treatments: string[]; current: Wordmark }) => {
-      setWmFonts(o.fonts); setWmTreatments(o.treatments); setWm(o.current);
+    api.ytWordmarkOptions().then((o: { fonts: { id: string; label: string }[]; treatments: string[]; positions: string[]; current: Wordmark }) => {
+      setWmFonts(o.fonts); setWmTreatments(o.treatments); setWmPositions(o.positions || []); setWm(o.current);
     }).catch(() => {});
   }, []);
 
@@ -141,17 +146,19 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // Picking a candidate stamps the band wordmark onto a COPY (deterministic Pillow text -
   // Krea2 misspelled the invented band name 5/6, so it is never model-rendered) and the
   // stamped copy becomes the render input. The un-stamped original stays in the library.
-  async function pick(c: Cand) {
-    setErr(""); setPickedSrc(c.jobId);
+  async function stampCover(srcId: string, srcUrl?: string) {
+    setErr(""); setPickedSrc(srcId);
     if (stampOn && (wm?.text || "").trim()) {
       try {
-        const r = await api.ytStamp({ image_id: c.jobId }) as { job_id: string; media_url: string };
+        const r = await api.ytStamp({ image_id: srcId, position: stampPos || undefined,
+                                      scale: stampScale ? Number(stampScale) : undefined }) as { job_id: string; media_url: string };
         setPicked(r.job_id); setPickedUrl(r.media_url + "?t=" + Date.now()); ctx.onDone();
         return;
       } catch (e) { setErr("Wordmark stamp failed (using the plain cover): " + (e as Error).message); }
     }
-    setPicked(c.jobId); setPickedUrl(c.url || "");
+    setPicked(srcId); setPickedUrl(srcUrl || `/api/media/${srcId}`);
   }
+  const pick = (c: Cand) => stampCover(c.jobId, c.url);
 
   async function render() {
     if (!picked) { setErr("Pick a cover candidate first."); return; }
@@ -283,10 +290,29 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
           <div className="flex items-center gap-2">
             <img src={wmPreview(wm.font, wm.treatment)} alt="" className="h-10 rounded border border-[var(--color-line)]" title="the current wordmark" />
-            <span className="text-[11px] text-[var(--color-muted)]">{wm.font} · {wm.treatment} · {wm.position} · saved globally, reused on every cover</span>
+            <span className="text-[11px] text-[var(--color-muted)]">{wm.font} · {wm.treatment} · saved globally, reused on every cover</span>
             <button onClick={() => setWmOpen((v) => !v)} className="ml-auto text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
               {wmOpen ? "▾ close picker" : "▸ change"}
             </button>
+          </div>
+          <div className="flex items-end gap-3">
+            <Field label="Place on this cover" hint="pick to keep the name off the subject">
+              <select className={inp} value={stampPos} onChange={(e) => setStampPos(e.target.value)}>
+                <option value="">saved default ({wm.position})</option>
+                {wmPositions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </Field>
+            <Field label="Size">
+              <select className={inp} value={stampScale} onChange={(e) => setStampScale(e.target.value)}>
+                <option value="">default</option>
+                {WM_SIZES.map((s) => <option key={s.label} value={String(s.scale)}>{s.label}</option>)}
+              </select>
+            </Field>
+            {pickedSrc && (
+              <GhostButton onClick={() => stampCover(pickedSrc)} title="re-stamp the picked cover with the placement above">
+                ↻ Re-stamp
+              </GhostButton>
+            )}
           </div>
           {wmOpen && (
             <div className="space-y-2">
@@ -308,10 +334,9 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                 ))}
               </div>
               <div className="flex items-end gap-3">
-                <Field label="Position">
+                <Field label="Default position">
                   <select className={inp} value={wm.position} onChange={(e) => saveWm({ position: e.target.value })}>
-                    <option value="bottom">bottom</option>
-                    <option value="top">top (under the title)</option>
+                    {(wmPositions.length ? wmPositions : ["bottom", "top"]).map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </Field>
                 <Field label="Size">
