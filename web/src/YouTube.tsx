@@ -42,7 +42,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const d = useDrafts("youtube");
   const drafts = useDraftCtx();
   const [title, setTitle] = d.use("title", "");
-  const [artist, setArtist] = d.use("artist", "");
+  const [artist, setArtist] = d.use("artist", "Apotheon");   // the band (chosen 2026-08-23)
   const [audioId, setAudioId] = d.use("audioId", "");
   const [notes, setNotes] = d.use("notes", "");
   const [concepts, setConcepts] = d.use<Concept[]>("concepts", []);
