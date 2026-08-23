@@ -2480,7 +2480,15 @@ one character-driven). EVERY concept must be a DRAMATIC CLICK-HOOK: a frozen pea
 (mid-strike, mid-collapse, mid-ignition), extreme scale or peril, weather and light doing
 something violent or uncanny - never a calm generic mood piece. One dominant subject with
 empty-ish space in the upper band where the title will sit. Photoreal, cinematic, no text
-or letters described in the scene itself. Return ONLY a JSON array of {n} objects, each:
+or letters described in the scene itself.
+WHERE IT FITS THE SONG - a female singer (see the tags), a female character or persona in
+the lyrics, or a romantic/seductive/tragic-heroine theme - make SOME of the concepts (not
+all) center a strikingly beautiful, alluring woman as the dominant subject: gothic glamour,
+sensual and provocative in the album-cover tradition of the genre (bared shoulders, clinging
+or torn couture, wind-caught hair, commanding or smoldering gaze), while keeping it
+dramatic and tasteful - seductive power, never explicit. Songs with no such angle keep
+their concepts subject-appropriate instead.
+Return ONLY a JSON array of {n} objects, each:
 {{"name": "<2-4 word label>",
   "overview": "<2-4 flowing sentences describing the whole cover image - subject, scene, composition, camera/lens, atmosphere. Rich, concrete prose.>",
   "background": "<1-3 sentences on the setting/backdrop with real materials, depth layers, believable light falloff>",
