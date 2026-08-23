@@ -5838,6 +5838,85 @@ def music3_from_song(p: dict):
     return {"fields": music3_mod.song_to_fields(song), "lyrics": music3_mod.song_to_lyrics(song)}
 
 
+@app.post("/api/music3/to_song")
+def music3_to_song(body: dict):
+    """The REVERSE of /api/music3/from_song: a Music 3 caption + bare-tag lyrics -> a Song tab
+    (ACE-Step) arrangement. Deterministic where fidelity matters (lyrics kept verbatim per
+    section; bpm/key/genre parsed straight out of Basic Attributes); the LLM only does the
+    semantic compression ACE needs - a 4000-char caption boiled down to 10-12 dense tag
+    phrases, plus a 1-3 word delivery style and a duration per section.
+    Body: {fields, lyrics, title?, seconds? (total), provider?, model?}.
+    Returns {title, tags, bpm, keyscale, instrumental, blocks:[{type,seconds,lyrics,style}]}."""
+    fields = body.get("fields") or {}
+    sections = music3_mod.lyrics_to_sections(body.get("lyrics") or "")
+    if not sections:
+        raise HTTPException(400, "no [Section] markers found in the Music 3 lyrics")
+    caption = music3_mod.assemble_caption(fields)
+    if not caption.strip():
+        raise HTTPException(400, "the Music 3 caption fields are empty - nothing to translate")
+    bpm, keyscale, genre = music3_mod.parse_basic_attributes(fields)
+    total = int(float(body.get("seconds") or 0)) or None
+    provider = body.get("provider") or llm_mod.best_provider()
+    model = body.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-5"
+    listing = "\n".join(
+        f"  {i + 1}. {s['type']}" + (f' - starts "{s["lyrics"].splitlines()[0][:60]}"' if s["lyrics"] else " (no lyrics)")
+        for i, s in enumerate(sections))
+    system = ("You translate a MiniMax Music 3 caption into an ACE-Step song-builder setup. "
+              "The two engines want OPPOSITE prompt shapes: Music 3 is a 4000-character prose "
+              "caption; ACE-Step wants 10-12 DENSE comma-separated tag phrases TOTAL - more than "
+              "that measurably produces disjointed takes. Output STRICT JSON ONLY (no prose, no "
+              "markdown fences).")
+    prompt = f"""The Music 3 caption:
+---
+{caption[:6000]}
+---
+The song's sections, in order:
+{listing}
+{f"Total song length target: about {total} seconds." if total else "No total length given - use sensible section lengths."}
+
+Return ONLY a JSON object:
+{{"tags": "<10-12 dense comma-separated tag phrases for ACE-Step. The GENRE comes first{f" (the caption says: {genre})" if genre else ""}. Compress the caption's essence: core instruments, production feel, vocal character, tempo feel. No sentences, no negatives, no section names.>",
+  "sections": [<EXACTLY {len(sections)} objects, one per section above, in order:
+    {{"style": "<1-3 word delivery/feel cue for that section (e.g. anthemic, whispered, half-time, gang vocals, soaring) drawn from the caption's per-section direction; "" if nothing notable>",
+     "seconds": <int, the section's length: intros/outros ~8-12, verses/choruses ~16-28, bridge/solo ~12-24{", scaled so the total is about " + str(total) if total else ""}>}}>]}}"""
+    claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
+    try:
+        text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=300)
+        m = re.search(r"\{.*\}", text, re.S)
+        parsed = json.loads(m.group(0) if m else text)
+    except Exception as e:
+        raise HTTPException(500, f"translation failed ({provider}): {e}")
+    tags = ", ".join(t.strip() for t in str(parsed.get("tags") or "").split(",") if t.strip())[:400]
+    per = parsed.get("sections") or []
+    blocks = []
+    for i, s in enumerate(sections):
+        p = per[i] if i < len(per) and isinstance(per[i], dict) else {}
+        # cap the style at 3 words WITHOUT leaving a dangling connective ("soaring wall of")
+        words = str(p.get("style") or "").split()[:3]
+        while words and words[-1].lower() in ("of", "the", "a", "an", "and", "with", "into"):
+            words.pop()
+        try:
+            secs = max(4, min(40, int(p.get("seconds") or 0)))
+        except (TypeError, ValueError):
+            secs = 0
+        blocks.append({"type": s["type"], "seconds": secs or 16,
+                       "lyrics": s["lyrics"], "style": " ".join(words)})
+    # The LLM routinely misses the total-length target; ACE timing is explicit, so honor the
+    # requested total deterministically: scale every section proportionally when off by >10%.
+    if total:
+        cur = sum(b["seconds"] for b in blocks)
+        if cur and abs(cur - total) > total * 0.10:
+            f = total / cur
+            for b in blocks:
+                b["seconds"] = max(4, min(60, round(b["seconds"] * f)))
+    return {"title": str(body.get("title") or "").strip(),
+            "tags": tags, "bpm": bpm, "keyscale": keyscale,
+            "instrumental": not any(b["lyrics"] for b in blocks),
+            "blocks": blocks, "provider": provider}
+
+
 @app.post("/api/music3/preview")
 def music3_preview(p: dict):
     """Assemble the caption and report its size, so the 5000-token ceiling is visible while

@@ -79,6 +79,7 @@ export const api = {
   videoRetime: (p: unknown) => jpost("/api/video/retime", p),    // GPU-free speed-up (fixes SVI slow-mo)
   videoInfinitetalk: (p: unknown) => jpost("/api/video/infinitetalk", p),  // v2v lip-sync (keep clip motion, redrive lips)
   videoLoras: () => jget("/api/video/loras"),
+  music3ToSong: (p: unknown) => jpost("/api/music3/to_song", p),   // Music 3 caption+lyrics -> Song tab (ACE) arrangement
   ytConcepts: (p: unknown) => jpost("/api/youtube/concepts", p),   // LLM cover-art concepts from the song
   ytCover: (p: unknown) => jpost("/api/youtube/cover", p),         // one Krea2 cover candidate (title typeset in)
   ytRender: (p: unknown) => jpost("/api/youtube/render", p),       // still + track -> upload-ready static MP4 (sync)

@@ -268,7 +268,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "mix": return <MixForm {...p} />;
     case "video": return <VideoForm {...p} library={library} />;
     case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
-    case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} />;
+    case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} goTo={goTo} />;
     case "characters": return <CharactersForm {...p} library={library} />;
     case "youtube": return <YouTubeForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;

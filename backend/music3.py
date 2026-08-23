@@ -259,6 +259,58 @@ def song_to_fields(song):
     }
 
 
+# ---------------- reverse translation: Music 3 -> Song tab (ACE-Step) ----------------
+# The deterministic half of /api/music3/to_song. Lyrics keep VERBATIM fidelity here; only
+# tags / per-section styles / durations - the parts needing semantic compression from a
+# 4000-char caption down to ACE's 10-12 dense phrases - go through the LLM in app.py.
+
+# Music 3 section tag -> Song tab SECTION_TYPES (web/src/forms.tsx). Post-Chorus and
+# Instrumental have no Song-tab twin: Post-Chorus reads as a chorus variant; a bare
+# Instrumental is closest to Breakdown (Solo stays Solo).
+_TAG_TO_SONG = {"intro": "Intro", "verse": "Verse", "pre-chorus": "Pre-Chorus",
+                "prechorus": "Pre-Chorus", "chorus": "Chorus", "post-chorus": "Chorus",
+                "postchorus": "Chorus", "bridge": "Bridge", "instrumental": "Breakdown",
+                "interlude": "Breakdown", "break": "Breakdown", "breakdown": "Breakdown",
+                "solo": "Solo", "outro": "Outro"}
+
+
+def lyrics_to_sections(lyrics):
+    """Music 3 lyrics (bare [Tag] markers) -> ordered [{tag, type, lyrics}], lyrics verbatim.
+    Tolerates ACE-style '[chorus - anthemic]' input by keeping only the name before '-'.
+    Text before the first tag becomes a Verse (someone pasted lyrics without markers)."""
+    out = []
+    parts = re.split(r"\[([^\]\n]{1,40})\]", lyrics or "")
+    pre = (parts[0] or "").strip()
+    if pre:
+        out.append({"tag": "Verse", "type": "Verse", "lyrics": pre})
+    for i in range(1, len(parts), 2):
+        tag = parts[i].strip()
+        body = (parts[i + 1] if i + 1 < len(parts) else "").strip()
+        base = tag.split("-")[0].strip().lower()
+        out.append({"tag": tag, "type": _TAG_TO_SONG.get(base, "Verse"), "lyrics": body})
+    return out
+
+
+def parse_basic_attributes(fields):
+    """Reverse of song_to_fields' Basic Attributes line -> (bpm, 'C major' keyscale, genre).
+    Tolerant of hand-written variants; every piece is optional."""
+    t = str((fields or {}).get("Basic Attributes") or "")
+    bpm = None
+    m = re.search(r"bpm\s*(?:is|[:=])?\s*(\d{2,3})", t, re.I)
+    if m:
+        bpm = int(m.group(1))
+    keyscale = None
+    km = re.search(r"key\s*(?:is|[:=])?\s*([A-Ga-g][#b♭♯]?)", t, re.I)
+    sm = re.search(r"scale\s*(?:is|[:=])?\s*(major|minor)", t, re.I)
+    if km:
+        root = km.group(1)[0].upper() + km.group(1)[1:].replace("♭", "b").replace("♯", "#")
+        keyscale = f"{root} {(sm.group(1).lower() if sm else 'major')}"
+    # genre = whatever sentence(s) carry neither bpm nor key/scale
+    genre = " ".join(s.strip() for s in re.split(r"(?<=[.!])\s+", t)
+                     if s.strip() and not re.search(r"\b(bpm|key|scale)\b", s, re.I)).strip(" .")
+    return bpm, keyscale, genre
+
+
 # ---------------- the graph ----------------
 
 def shift_sigmas(steps, shift):

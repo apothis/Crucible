@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type Project, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, pollJob, rid, type RunCtx } from "./ui";
-import { useDrafts } from "./drafts";
+import { useDraftCtx, useDrafts } from "./drafts";
 
 // ---------------------------------------------------------------------------------------------
 // MiniMax Music 3 studio.
@@ -22,15 +22,16 @@ import { useDrafts } from "./drafts";
 // Per-section direction belongs in the progression fields, addressed by section name.
 // ---------------------------------------------------------------------------------------------
 
-type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string } & RunCtx;
+type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string; goTo?: (m: string) => void } & RunCtx;
 type SchemaField = { key: string; group: string; help: string };
 type Schema = {
   fields: SchemaField[]; groups: string[]; tags: string[];
   defaults: Record<string, number | boolean | string>; max_seconds: number;
 };
 
-export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }: Props) {
+export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...ctx }: Props) {
   const d = useDrafts("music3");
+  const draftCtx = useDraftCtx();   // imperative writes into the Song tab's drafts (send-to-song)
   // The Song page's draft carries the actual song title; the canonical SongDraft passed down as
   // `song` does not. Read it so an import can name the render after the song.
   const [songPageTitle] = useDrafts("song").use("title", "");
@@ -180,6 +181,41 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
     }
   }
 
+  // The REVERSE of importSong: this tab's caption + lyrics -> the Song tab (ACE-Step).
+  // Lyrics move verbatim; the LLM compresses the caption into ACE's 10-12 dense tag
+  // phrases plus per-section 1-3 word styles and durations. Then switch to the Song tab.
+  const [sending, setSending] = useState(false);
+  async function sendToSong() {
+    if (!lyrics.trim()) { setNote("write lyrics with [Section] markers first - the structure comes from them"); return; }
+    setSending(true);
+    setNote("translating the caption into ACE-Step tags (a few seconds)...");
+    try {
+      const r = await api.music3ToSong({
+        fields, lyrics, title: title || songPageTitle || projectName,
+        seconds: parseFloat(seconds) || undefined,
+      }) as { title: string; tags: string; bpm: number | null; keyscale: string | null; instrumental: boolean; blocks: { type: string; seconds: number; lyrics: string; style: string }[] };
+      const blocks = r.blocks.map((b, i) => ({
+        id: `m3_${Date.now()}_${i}`, type: b.type, seconds: b.seconds,
+        lyrics: b.lyrics || "", style: b.style || "", locked: false,
+      }));
+      draftCtx.set("song", "blocks", blocks);
+      draftCtx.set("song", "tags", r.tags);
+      draftCtx.set("song", "instrumental", r.instrumental);
+      draftCtx.set("song", "drive", "compile");
+      draftCtx.set("song", "title", r.title || title || "");
+      draftCtx.set("song", "tpl", "");
+      draftCtx.set("song", "dirty", false);
+      if (r.bpm) draftCtx.set("song.tuning", "bpm", String(r.bpm));
+      if (r.keyscale) draftCtx.set("song.tuning", "keyscale", r.keyscale);
+      setNote(`sent to the Song tab: ${blocks.length} sections, tags "${r.tags.slice(0, 60)}...". `
+        + "Check the per-section styles and seconds there - ACE timing is explicit where Music 3's is not.");
+      goTo?.("song");
+    } catch (e) {
+      setNote(`send to Song tab failed: ${e}`);
+    }
+    setSending(false);
+  }
+
   async function importProject(id: string) {
     setImportFrom(id);
     if (!id) return;
@@ -280,6 +316,10 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, ...ctx }:
           <GhostButton onClick={() => importSong(song, "the loaded song", songPageTitle || projectName)} disabled={!song?.blocks?.length}
             title={song?.blocks?.length ? "fill the caption and lyrics from the song currently loaded" : "no song loaded"}>
             Import loaded song
+          </GhostButton>
+          <GhostButton onClick={sendToSong} disabled={sending || !lyrics.trim()}
+            title="the reverse: translate THIS caption + lyrics into a Song tab (ACE-Step) arrangement - lyrics verbatim, caption compressed to dense tags">
+            {sending ? "Translating…" : "→ Song tab (ACE)"}
           </GhostButton>
           <select className={inp} value={importFrom} onChange={(e) => importProject(e.target.value)}
             title="copies that project's song arrangement into this caption - it does NOT switch projects; use the top-bar Open for that">
