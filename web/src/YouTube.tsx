@@ -16,6 +16,10 @@ import { openLightbox } from "./Lightbox";
 
 type Concept = { name: string; overview: string; background: string; aesthetics: string; lighting: string; palette: string[]; title_style: string };
 type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number };
+// The band wordmark is GLOBAL app config (choose-once band logo), not per-project drafts.
+type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number };
+const WM_SIZES: { label: string; scale: number }[] = [
+  { label: "S", scale: 0.3 }, { label: "M", scale: 0.4 }, { label: "L", scale: 0.52 }];
 
 const EMPTY_CONCEPT: Concept = { name: "", overview: "", background: "", aesthetics: "", lighting: "", palette: [], title_style: "" };
 
@@ -42,15 +46,22 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const d = useDrafts("youtube");
   const drafts = useDraftCtx();
   const [title, setTitle] = d.use("title", "");
-  const [artist, setArtist] = d.use("artist", "Apotheon");   // the band (chosen 2026-08-23)
   const [audioId, setAudioId] = d.use("audioId", "");
   const [notes, setNotes] = d.use("notes", "");
   const [concepts, setConcepts] = d.use<Concept[]>("concepts", []);
   const [concept, setConcept] = d.use<Concept>("concept", EMPTY_CONCEPT);
   const [count, setCount] = d.use("count", 4);
   const [cands, setCands] = d.use<Cand[]>("cands", []);
-  const [picked, setPicked] = d.use("picked", "");
+  const [picked, setPicked] = d.use("picked", "");         // FINAL image id for the render (stamped copy when stamping)
+  const [pickedSrc, setPickedSrc] = d.use("pickedSrc", ""); // which candidate it came from (grid highlight)
+  const [pickedUrl, setPickedUrl] = d.use("pickedUrl", "");
+  const [stampOn, setStampOn] = d.use("stampOn", true);
   const [res, setRes] = d.use("res", "1080p");
+  // wordmark picker (global config; fetched, saved back on every change)
+  const [wmFonts, setWmFonts] = useState<{ id: string; label: string }[]>([]);
+  const [wmTreatments, setWmTreatments] = useState<string[]>([]);
+  const [wm, setWm] = useState<Wordmark | null>(null);
+  const [wmOpen, setWmOpen] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [genning, setGenning] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -65,10 +76,22 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    api.ytWordmarkOptions().then((o: { fonts: { id: string; label: string }[]; treatments: string[]; current: Wordmark }) => {
+      setWmFonts(o.fonts); setWmTreatments(o.treatments); setWm(o.current);
+    }).catch(() => {});
+  }, []);
+
   const audios = library.filter((i) => i.audio_url);
-  const pickedCand = cands.find((c) => c.jobId === picked);
 
   const setC = (k: keyof Concept, v: string | string[]) => setConcept((p) => ({ ...p, [k]: v } as Concept));
+  const saveWm = (patch: Partial<Wordmark>) => {
+    const next = { ...(wm as Wordmark), ...patch };
+    setWm(next);
+    api.ytWordmarkSave(next).catch((e) => setErr("Wordmark save failed: " + (e as Error).message));
+  };
+  const wmPreview = (font: string, treatment: string) =>
+    `/api/youtube/wordmark_preview?text=${encodeURIComponent(wm?.text || "")}&font=${font}&treatment=${treatment}`;
 
   async function suggest() {
     if (!title.trim()) { setErr("Set a song title first."); return; }
@@ -100,7 +123,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     const fresh: Cand[] = [];
     try {
       for (let i = 0; i < count; i++) {
-        const r = await api.ytCover({ title, artist: artist || undefined, concept, seed: base + i * 101 }) as { job_id: string; seed: number };
+        const r = await api.ytCover({ title, concept, seed: base + i * 101 }) as { job_id: string; seed: number };
         fresh.push({ jobId: r.job_id, seed: r.seed });
       }
     } catch (e) { setErr("Cover generation failed: " + (e as Error).message); }
@@ -113,6 +136,21 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       });
     }
     setGenning(false);
+  }
+
+  // Picking a candidate stamps the band wordmark onto a COPY (deterministic Pillow text -
+  // Krea2 misspelled the invented band name 5/6, so it is never model-rendered) and the
+  // stamped copy becomes the render input. The un-stamped original stays in the library.
+  async function pick(c: Cand) {
+    setErr(""); setPickedSrc(c.jobId);
+    if (stampOn && (wm?.text || "").trim()) {
+      try {
+        const r = await api.ytStamp({ image_id: c.jobId }) as { job_id: string; media_url: string };
+        setPicked(r.job_id); setPickedUrl(r.media_url + "?t=" + Date.now()); ctx.onDone();
+        return;
+      } catch (e) { setErr("Wordmark stamp failed (using the plain cover): " + (e as Error).message); }
+    }
+    setPicked(c.jobId); setPickedUrl(c.url || "");
   }
 
   async function render() {
@@ -139,14 +177,9 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       </p>
 
       <SectionTitle>1 · Song</SectionTitle>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Song title" hint="rendered INTO the artwork">
-          <input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Ashes of the Dawn" />
-        </Field>
-        <Field label="Artist / band" hint="optional second line">
-          <input className={inp} value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="(none)" />
-        </Field>
-      </div>
+      <Field label="Song title" hint="rendered INTO the artwork; the band name is stamped as a wordmark (step 2)">
+        <input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Ashes of the Dawn" />
+      </Field>
       <Field label="Track" hint="the audio for the final video">
         <select className={inp} value={audioId} onChange={(e) => setAudioId(e.target.value)}>
           <option value="">— pick a track —</option>
@@ -208,7 +241,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         <div className="space-y-1 rounded-lg border border-[var(--color-line)] bg-[var(--color-bg)] p-2">
           <div className="flex items-center justify-between px-0.5">
             <span className="text-[10px] text-[var(--color-muted)]">click to enlarge · "use this" to pick the cover</span>
-            <button onClick={() => { setCands([]); setPicked(""); }} className="text-[11px] leading-none text-[var(--color-muted)] hover:text-red-400" title="clear candidates">×</button>
+            <button onClick={() => { setCands([]); setPicked(""); setPickedSrc(""); setPickedUrl(""); }} className="text-[11px] leading-none text-[var(--color-muted)] hover:text-red-400" title="clear candidates">×</button>
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {cands.map((c) => (
@@ -229,9 +262,9 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                   {picked === c.jobId && <span className="absolute right-1 top-1 rounded bg-[var(--color-accent2)] px-1 text-[9px] text-black">cover</span>}
                 </div>
                 {c.url && (
-                  <button onClick={() => setPicked(c.jobId)}
-                    className={`w-full py-0.5 text-[10px] ${picked === c.jobId ? "bg-[var(--color-accent2)] text-black" : "text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
-                    {picked === c.jobId ? "✓ this is the cover" : "use this"}
+                  <button onClick={() => pick(c)}
+                    className={`w-full py-0.5 text-[10px] ${pickedSrc === c.jobId ? "bg-[var(--color-accent2)] text-black" : "text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>
+                    {pickedSrc === c.jobId ? "✓ this is the cover" : "use this"}
                   </button>
                 )}
               </div>
@@ -240,9 +273,65 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </div>
       )}
 
+      <SectionTitle>Band wordmark</SectionTitle>
+      <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
+        <input type="checkbox" checked={stampOn} onChange={(e) => setStampOn(e.target.checked)} />
+        Stamp the band wordmark on the picked cover
+        <span className="text-[10px]">— real typography, always spelled right (Krea2 garbled the name 5/6)</span>
+      </label>
+      {wm && (
+        <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+          <div className="flex items-center gap-2">
+            <img src={wmPreview(wm.font, wm.treatment)} alt="" className="h-10 rounded border border-[var(--color-line)]" title="the current wordmark" />
+            <span className="text-[11px] text-[var(--color-muted)]">{wm.font} · {wm.treatment} · {wm.position} · saved globally, reused on every cover</span>
+            <button onClick={() => setWmOpen((v) => !v)} className="ml-auto text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
+              {wmOpen ? "▾ close picker" : "▸ change"}
+            </button>
+          </div>
+          {wmOpen && (
+            <div className="space-y-2">
+              <Field label="Band name" hint="the exact letters stamped on every cover">
+                <input className={inp} value={wm.text} onChange={(e) => saveWm({ text: e.target.value })} />
+              </Field>
+              <div className="flex flex-wrap gap-1.5">
+                {wmTreatments.map((t) => (
+                  <button key={t} onClick={() => saveWm({ treatment: t })}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] transition ${wm.treatment === t ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>{t}</button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {wmFonts.map((f) => (
+                  <button key={f.id} onClick={() => saveWm({ font: f.id })} title={f.label}
+                    className={`overflow-hidden rounded border ${wm.font === f.id ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"}`}>
+                    <img src={wmPreview(f.id, wm.treatment)} alt={f.label} className="w-full" />
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-end gap-3">
+                <Field label="Position">
+                  <select className={inp} value={wm.position} onChange={(e) => saveWm({ position: e.target.value })}>
+                    <option value="bottom">bottom</option>
+                    <option value="top">top (under the title)</option>
+                  </select>
+                </Field>
+                <Field label="Size">
+                  <div className="flex gap-1.5">
+                    {WM_SIZES.map((s) => (
+                      <button key={s.label} onClick={() => saveWm({ scale: s.scale })}
+                        className={`rounded border px-3 py-2 text-xs ${Math.abs(wm.scale - s.scale) < 0.01 ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{s.label}</button>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+              <p className="text-[10px] text-[var(--color-muted)]">Changes apply when you next pick a candidate (re-click "use this" to re-stamp).</p>
+            </div>
+          )}
+        </div>
+      )}
+
       <SectionTitle>3 · Make the video</SectionTitle>
-      {pickedCand?.url && (
-        <img src={pickedCand.url} alt="" onClick={() => openLightbox(pickedCand.url!)} title="the chosen cover — click to enlarge"
+      {pickedUrl && (
+        <img src={pickedUrl} alt="" onClick={() => openLightbox(pickedUrl)} title="the chosen cover — click to enlarge"
           className="max-h-40 cursor-zoom-in rounded-lg border border-[var(--color-line)]" />
       )}
       <Field label="Output" hint="1080p is YouTube's sweet spot; 4K upscales the art (lanczos) for the higher-res player codec">

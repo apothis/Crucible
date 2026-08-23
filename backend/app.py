@@ -48,6 +48,7 @@ from . import lyrics as lyrics_mod
 from . import melody as melody_mod
 from . import solo as solo_mod
 from . import kontakt_daemon as kontakt_daemon_mod
+from . import wordmark as wordmark_mod
 from . import deglitch as deglitch_mod
 from . import shape as shape_mod
 from . import acestep_train as ace_train
@@ -2529,7 +2530,6 @@ def youtube_cover(p: dict):
     overview = str(c.get("overview") or "").strip()
     if not overview:
         raise HTTPException(400, "concept.overview is required (Krea2 needs rich global fields)")
-    artist = str(p.get("artist") or "").strip()
     background = str(c.get("background") or "").strip() or overview
     tstyle = (str(c.get("title_style") or "").strip()
               or "bold weathered metal album lettering with high contrast against the scene")
@@ -2544,10 +2544,9 @@ def youtube_cover(p: dict):
          "desc": f"the song title in large {tstyle}, centered, fully legible, correctly spelled",
          "x": 0.10, "y": 0.07, "w": 0.80, "h": 0.16},
     ]
-    if artist:
-        regions.append({"type": "text", "text": artist, "palette": [],
-                        "desc": "the artist name in smaller lettering matching the title style, centered, legible",
-                        "x": 0.25, "y": 0.85, "w": 0.50, "h": 0.07})
+    # The band name is deliberately NOT rendered in-model: Krea2 misspelled the invented
+    # band name in 5 of 6 renders (small text + non-dictionary word = the model "corrects"
+    # it). It is stamped deterministically afterwards - see /api/youtube/stamp.
     layout = {
         "overview": overview,
         "background": background,
@@ -2592,6 +2591,89 @@ def youtube_render(body: dict):
     save_done_row(jid, "ytvideo", {"title": title or "youtube video", "res": res,
                                    "image_id": os.path.basename(str(body.get("image_id") or "")),
                                    "audio_id": os.path.basename(str(body.get("audio_id") or ""))}, out)
+    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
+# ---- band wordmark: deterministic Pillow lettering, never model-rendered (see backend/wordmark.py)
+def _yt_wordmark_cfg():
+    saved = CFG.get("yt_wordmark") or {}
+    return {**wordmark_mod.DEFAULTS, **{k: v for k, v in saved.items() if v not in (None, "")}}
+
+
+@app.get("/api/youtube/wordmark_options")
+def youtube_wordmark_options():
+    """The picker's vocabulary: available fonts (existence-checked), treatments, and the
+    saved global wordmark choice (app_config.json `yt_wordmark`, merged over defaults)."""
+    return {"fonts": wordmark_mod.available_fonts(),
+            "treatments": list(wordmark_mod.TREATMENTS.keys()),
+            "current": _yt_wordmark_cfg()}
+
+
+@app.get("/api/youtube/wordmark_preview")
+def youtube_wordmark_preview(text: str = "", font: str = "luminari", treatment: str = "bone"):
+    """One picker tile: the wordmark rendered on a dark card, returned as PNG directly
+    (stateless - no library rows; the picker grid is just <img> tags on this URL)."""
+    try:
+        png = wordmark_mod.preview_png(text.strip() or _yt_wordmark_cfg()["text"], font, treatment)
+    except Exception as e:
+        raise HTTPException(500, f"wordmark preview failed: {e}")
+    return Response(content=png, media_type="image/png")
+
+
+@app.put("/api/youtube/wordmark")
+def youtube_wordmark_save(body: dict):
+    """Persist the chosen wordmark (text/font/treatment/position/scale) GLOBALLY in
+    app_config.json - the band logo is choose-once, reused on every cover. Preserves
+    unrelated config keys (same pattern as PUT /api/settings) and refreshes CFG so it
+    applies without a restart."""
+    allowed = {"text": str, "font": str, "treatment": str, "position": str, "scale": float}
+    wm = _yt_wordmark_cfg()
+    for k, cast in allowed.items():
+        if k in body and body[k] is not None:
+            try:
+                wm[k] = cast(body[k])
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"bad value for {k}")
+    cur = {}
+    if os.path.exists(_CFG_PATH):
+        try:
+            with open(_CFG_PATH) as f:
+                cur = json.load(f)
+        except Exception:
+            cur = {}
+    cur["yt_wordmark"] = wm
+    with open(_CFG_PATH, "w") as f:
+        json.dump(cur, f, indent=2)
+    CFG["yt_wordmark"] = wm
+    return {"ok": True, "wordmark": wm}
+
+
+@app.post("/api/youtube/stamp")
+def youtube_stamp(body: dict):
+    """Stamp the band wordmark onto a cover still -> a NEW library still (the original is
+    kept). Body: {image_id, text?, font?, treatment?, position?, scale?} - omitted fields
+    fall back to the saved global wordmark. Synchronous (Pillow on the Mac). Returns
+    {job_id, media_url, status: "done"}; kind=image."""
+    img = _lib_image_path(body.get("image_id") or "")
+    if not img:
+        raise HTTPException(400, "image_id must reference a generated still in the library")
+    wm = _yt_wordmark_cfg()
+    for k in ("text", "font", "treatment", "position", "scale"):
+        if body.get(k) not in (None, ""):
+            wm[k] = body[k]
+    if not str(wm.get("text") or "").strip():
+        raise HTTPException(400, "wordmark text is empty - set the band name")
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.png")
+    try:
+        wordmark_mod.stamp(img, out, str(wm["text"]).strip(), str(wm["font"]),
+                           str(wm["treatment"]), position=str(wm.get("position") or "bottom"),
+                           scale=float(wm.get("scale") or 0.40))
+    except Exception as e:
+        raise HTTPException(500, f"wordmark stamp failed: {e}")
+    save_done_row(jid, "videostill", {"prompt": f"wordmark: {wm['text']} ({wm['font']}/{wm['treatment']})",
+                                      "source": os.path.basename(str(body.get("image_id") or "")),
+                                      "wordmark": wm}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
 
 
