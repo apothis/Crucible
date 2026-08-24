@@ -16,10 +16,13 @@ import { openLightbox } from "./Lightbox";
 
 type Concept = { name: string; overview: string; background: string; aesthetics: string; lighting: string; palette: string[]; title_style: string };
 type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number };
-// The band wordmark is GLOBAL app config (choose-once band logo), not per-project drafts.
-type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number };
+// The band wordmark + title lettering are GLOBAL app config (choose-once), not per-project drafts.
+type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number;
+  title_font: string; title_treatment: string; title_position: string; title_scale: number };
 const WM_SIZES: { label: string; scale: number }[] = [
   { label: "S", scale: 0.3 }, { label: "M", scale: 0.4 }, { label: "L", scale: 0.52 }];
+const TITLE_SIZES: { label: string; scale: number }[] = [
+  { label: "S", scale: 0.58 }, { label: "M", scale: 0.72 }, { label: "L", scale: 0.85 }];
 
 const EMPTY_CONCEPT: Concept = { name: "", overview: "", background: "", aesthetics: "", lighting: "", palette: [], title_style: "" };
 
@@ -67,6 +70,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // artwork (keep the wordmark off the subject), so it is chosen at pick time
   const [stampPos, setStampPos] = d.use("stampPos", "");
   const [stampScale, setStampScale] = d.use("stampScale", "");
+  // How the song TITLE gets onto the art. "stamped" (default) = deterministic typography,
+  // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
+  // misspelled every take of a 5-word title, so it is the opt-in now.
+  const [titleMode, setTitleMode] = d.use("titleMode", "stamped");
   const [suggesting, setSuggesting] = useState(false);
   const [genning, setGenning] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -128,7 +135,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     const fresh: Cand[] = [];
     try {
       for (let i = 0; i < count; i++) {
-        const r = await api.ytCover({ title, concept, seed: base + i * 101 }) as { job_id: string; seed: number };
+        const r = await api.ytCover({ title, concept, seed: base + i * 101,
+                                      omit_title: titleMode === "stamped" }) as { job_id: string; seed: number };
         fresh.push({ jobId: r.job_id, seed: r.seed });
       }
     } catch (e) { setErr("Cover generation failed: " + (e as Error).message); }
@@ -151,7 +159,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     if (stampOn && (wm?.text || "").trim()) {
       try {
         const r = await api.ytStamp({ image_id: srcId, position: stampPos || undefined,
-                                      scale: stampScale ? Number(stampScale) : undefined }) as { job_id: string; media_url: string };
+                                      scale: stampScale ? Number(stampScale) : undefined,
+                                      title: titleMode === "stamped" ? title.trim() : undefined }) as { job_id: string; media_url: string };
         setPicked(r.job_id); setPickedUrl(r.media_url + "?t=" + Date.now()); ctx.onDone();
         return;
       } catch (e) { setErr("Wordmark stamp failed (using the plain cover): " + (e as Error).message); }
@@ -232,6 +241,12 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </div>
       )}
       <div className="flex items-center gap-3">
+        <Field label="Title lettering" hint="stamped = real typography, always spelled right">
+          <select className={inp} value={titleMode} onChange={(e) => setTitleMode(e.target.value)}>
+            <option value="stamped">Stamped (always correct)</option>
+            <option value="model">In the artwork (AI - misspells long titles)</option>
+          </select>
+        </Field>
         <Field label="Candidates">
           <select className={inp} value={count} onChange={(e) => setCount(Number(e.target.value))}>
             {[2, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
@@ -316,6 +331,38 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           </div>
           {wmOpen && (
             <div className="space-y-2">
+              <SectionTitle>Title lettering</SectionTitle>
+              <p className="text-[10px] text-[var(--color-muted)]">The song title's stamped face - previews show the current title. Saved globally.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {wmTreatments.map((t) => (
+                  <button key={`t_${t}`} onClick={() => saveWm({ title_treatment: t })}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] transition ${wm.title_treatment === t ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>{t}</button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {wmFonts.map((f) => (
+                  <button key={`t_${f.id}`} onClick={() => saveWm({ title_font: f.id })} title={f.label}
+                    className={`overflow-hidden rounded border ${wm.title_font === f.id ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"}`}>
+                    <img src={`/api/youtube/wordmark_preview?text=${encodeURIComponent(title.trim() || "Angel of the Shattered Sky")}&font=${f.id}&treatment=${wm.title_treatment}`} alt={f.label} className="w-full" loading="lazy" />
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-end gap-3">
+                <Field label="Title position">
+                  <select className={inp} value={wm.title_position} onChange={(e) => saveWm({ title_position: e.target.value })}>
+                    {wmPositions.map((p) => <option key={`t_${p}`} value={p}>{p}</option>)}
+                  </select>
+                </Field>
+                <Field label="Title size">
+                  <div className="flex gap-1.5">
+                    {TITLE_SIZES.map((s) => (
+                      <button key={`t_${s.label}`} onClick={() => saveWm({ title_scale: s.scale })}
+                        className={`rounded border px-3 py-2 text-xs ${Math.abs(wm.title_scale - s.scale) < 0.01 ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{s.label}</button>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+              <SectionTitle>Band wordmark</SectionTitle>
               <Field label="Band name" hint="the exact letters stamped on every cover">
                 <input className={inp} value={wm.text} onChange={(e) => saveWm({ text: e.target.value })} />
               </Field>

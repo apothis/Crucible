@@ -2546,12 +2546,17 @@ def youtube_cover(p: dict):
         {"type": "obj", "text": "", "palette": [],
          "desc": background + " Rendered with true-to-life photographic detail.",
          "x": 0.02, "y": 0.02, "w": 0.96, "h": 0.96},
+    ]
+    # omit_title = the title will be STAMPED afterwards (deterministic typography, always
+    # spelled right - in-model lettering held for short titles but misspelled the 5-word
+    # "Angel of the Shattered Sky" in 6 of 6 renders [OBSERVED 2026-08-24]). The scene
+    # concepts already reserve the upper band, so no text region is placed at all.
+    if not p.get("omit_title"):
         # the title as LITERAL text: the Ideogram4 builder's type="text" element renders the
         # `text` string; `desc` carries the typography
-        {"type": "text", "text": title, "palette": [],
-         "desc": f"the song title in large {tstyle}, centered, fully legible, correctly spelled",
-         "x": 0.10, "y": 0.07, "w": 0.80, "h": 0.16},
-    ]
+        regions.append({"type": "text", "text": title, "palette": [],
+                        "desc": f"the song title in large {tstyle}, centered, fully legible, correctly spelled",
+                        "x": 0.10, "y": 0.07, "w": 0.80, "h": 0.16})
     # The band name is deliberately NOT rendered in-model: Krea2 misspelled the invented
     # band name in 5 of 6 renders (small text + non-dictionary word = the model "corrects"
     # it). It is stamped deterministically afterwards - see /api/youtube/stamp.
@@ -2635,7 +2640,8 @@ def youtube_wordmark_save(body: dict):
     app_config.json - the band logo is choose-once, reused on every cover. Preserves
     unrelated config keys (same pattern as PUT /api/settings) and refreshes CFG so it
     applies without a restart."""
-    allowed = {"text": str, "font": str, "treatment": str, "position": str, "scale": float}
+    allowed = {"text": str, "font": str, "treatment": str, "position": str, "scale": float,
+               "title_font": str, "title_treatment": str, "title_position": str, "title_scale": float}
     wm = _yt_wordmark_cfg()
     for k, cast in allowed.items():
         if k in body and body[k] is not None:
@@ -2659,28 +2665,40 @@ def youtube_wordmark_save(body: dict):
 
 @app.post("/api/youtube/stamp")
 def youtube_stamp(body: dict):
-    """Stamp the band wordmark onto a cover still -> a NEW library still (the original is
-    kept). Body: {image_id, text?, font?, treatment?, position?, scale?} - omitted fields
-    fall back to the saved global wordmark. Synchronous (Pillow on the Mac). Returns
-    {job_id, media_url, status: "done"}; kind=image."""
+    """Stamp text layers onto a cover still -> a NEW library still (the original is kept).
+    Always stamps the band wordmark; when `title` is given, the song TITLE is stamped too
+    (large, header band by default) - the deterministic alternative to in-model lettering,
+    which misspells long titles. Body: {image_id, title?, text?, font?, treatment?,
+    position?, scale?, title_font?, title_treatment?, title_position?, title_scale?} -
+    omitted fields fall back to the saved global config. Synchronous (Pillow on the Mac)."""
     img = _lib_image_path(body.get("image_id") or "")
     if not img:
         raise HTTPException(400, "image_id must reference a generated still in the library")
     wm = _yt_wordmark_cfg()
-    for k in ("text", "font", "treatment", "position", "scale"):
+    for k in ("text", "font", "treatment", "position", "scale",
+              "title_font", "title_treatment", "title_position", "title_scale"):
         if body.get(k) not in (None, ""):
             wm[k] = body[k]
     if not str(wm.get("text") or "").strip():
         raise HTTPException(400, "wordmark text is empty - set the band name")
+    layers = []
+    song_title = str(body.get("title") or "").strip()
+    if song_title:
+        layers.append({"text": song_title, "font": wm.get("title_font") or "unifraktur",
+                       "treatment": wm.get("title_treatment") or "ember",
+                       "position": wm.get("title_position") or "header",
+                       "scale": float(wm.get("title_scale") or 0.72), "max_h": 0.22})
+    layers.append({"text": str(wm["text"]).strip(), "font": str(wm["font"]),
+                   "treatment": str(wm["treatment"]),
+                   "position": str(wm.get("position") or "bottom"),
+                   "scale": float(wm.get("scale") or 0.40)})
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.png")
     try:
-        wordmark_mod.stamp(img, out, str(wm["text"]).strip(), str(wm["font"]),
-                           str(wm["treatment"]), position=str(wm.get("position") or "bottom"),
-                           scale=float(wm.get("scale") or 0.40))
+        wordmark_mod.stamp_layers(img, out, layers)
     except Exception as e:
         raise HTTPException(500, f"wordmark stamp failed: {e}")
-    save_done_row(jid, "videostill", {"prompt": f"wordmark: {wm['text']} ({wm['font']}/{wm['treatment']})",
+    save_done_row(jid, "videostill", {"prompt": f"stamped: {(song_title + ' / ') if song_title else ''}{wm['text']}",
                                       "source": os.path.basename(str(body.get("image_id") or "")),
                                       "wordmark": wm}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
