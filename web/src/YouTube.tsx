@@ -65,7 +65,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [wmTreatments, setWmTreatments] = useState<string[]>([]);
   const [wmPositions, setWmPositions] = useState<string[]>([]);
   const [wm, setWm] = useState<Wordmark | null>(null);
-  const [wmOpen, setWmOpen] = useState(false);
+  const [wmOpen, setWmOpen] = useState(true);   // open by default - hidden behind a tiny link, nobody found the pickers
   // per-cover placement overrides ("" = use the saved global) - placement depends on the
   // artwork (keep the wordmark off the subject), so it is chosen at pick time
   const [stampPos, setStampPos] = d.use("stampPos", "");
@@ -222,10 +222,12 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         <textarea className={inp} rows={4} value={concept.overview} onChange={(e) => setC("overview", e.target.value)}
           placeholder="e.g. A lone longship frozen mid-burn on a black glass sea at dusk, embers rising into a bruised violet sky, shot from low on the waterline with a 35mm lens, cinematic and desolate." />
       </Field>
-      <Field label="Title lettering" hint="typography / material / color of the title text">
-        <input className={inp} value={concept.title_style} onChange={(e) => setC("title_style", e.target.value)}
-          placeholder="e.g. carved bone-white gothic serif lettering with charred edges" />
-      </Field>
+      {titleMode === "model" && (
+        <Field label="AI title style" hint="only used when the title is rendered in the artwork - describes the lettering to the model">
+          <input className={inp} value={concept.title_style} onChange={(e) => setC("title_style", e.target.value)}
+            placeholder="e.g. carved bone-white gothic serif lettering with charred edges" />
+        </Field>
+      )}
       <button onClick={() => setShowAdv((v) => !v)} className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
         {showAdv ? "▾" : "▸"} more fields (background · aesthetics · lighting · palette)
       </button>
@@ -295,20 +297,22 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </div>
       )}
 
-      <SectionTitle>Band wordmark</SectionTitle>
+      <SectionTitle>Lettering · title &amp; band name</SectionTitle>
       <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
         <input type="checkbox" checked={stampOn} onChange={(e) => setStampOn(e.target.checked)} />
-        Stamp the band wordmark on the picked cover
-        <span className="text-[10px]">— real typography, always spelled right (Krea2 garbled the name 5/6)</span>
+        Stamp lettering on the picked cover
+        <span className="text-[10px]">— real typography, always spelled right</span>
       </label>
       {wm && (
         <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
           <div className="flex items-center gap-2">
-            <img src={wmPreview(wm.font, wm.treatment)} alt="" className="h-10 rounded border border-[var(--color-line)]" title="the current wordmark" />
-            <span className="text-[11px] text-[var(--color-muted)]">{wm.font} · {wm.treatment} · saved globally, reused on every cover</span>
-            <button onClick={() => setWmOpen((v) => !v)} className="ml-auto text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
-              {wmOpen ? "▾ close picker" : "▸ change"}
-            </button>
+            <img src={wmPreview(wm.font, wm.treatment)} alt="" className="h-10 rounded border border-[var(--color-line)]" title="the current band wordmark" />
+            <span className="text-[11px] text-[var(--color-muted)]">
+              title: {wm.title_font} · {wm.title_treatment} · {wm.title_position} &nbsp;|&nbsp; band: {wm.font} · {wm.treatment} · saved globally
+            </span>
+            <GhostButton onClick={() => setWmOpen((v) => !v)} className="ml-auto">
+              {wmOpen ? "▾ Hide fonts & placement" : "▸ Choose fonts & placement"}
+            </GhostButton>
           </div>
           <div className="flex items-end gap-3">
             <Field label="Place on this cover" hint="pick to keep the name off the subject">
