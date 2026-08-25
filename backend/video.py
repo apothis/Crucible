@@ -360,6 +360,69 @@ def build_krea2_still(p, init_image=None):
                "layout": layout or None, "kind": "image"}
 
 
+# Krea 2 Identity Edit (community LoRA, civitai model 2761113 + lbouaraba/comfyui-krea2edit):
+# instruction-based identity-PRESERVING re-staging on Krea2 - "move a person to new scenes
+# while preserving their face". Numbers below are VERBATIM from the pack's shipped
+# krea2_identity_edit.json workflow (euler/simple/10/cfg 1/denoise 1, LoRA @1.0 fixed,
+# ref_boost 4 / ref_boost_a 1 / fit_mode "fit"). One deliberate deviation: grounding_px
+# defaults to 1024 rather than the workflow's 768 - the author's own model page says
+# "1024+ recommended for people" and our subject is always a person [upstream doc].
+KREA2_EDIT_SETTINGS = {"steps": 10, "cfg": 1.0, "sampler": "euler", "scheduler": "simple",
+                       "ref_boost": 4.0, "ref_boost_a": 1.0, "fit_mode": "fit",
+                       "grounding_px": 1024, "lora_strength": 1.0}
+
+
+def build_krea2_identity_still(p, ref_image, lora_name):
+    """Re-stage the person in `ref_image` (uploaded name on ComfyUI) into a new scene per
+    the instruction `prompt`, keeping their identity (Krea2 Identity Edit LoRA). p:
+    {prompt, seed?, width?, height?, ref_boost?, grounding_px?, steps?, cfg?}. The author
+    trained on <=2MP same-size pairs, so the default canvas is 1792x1008 (16:9 under 2MP)
+    rather than the still path's 1920x1080. Output: SaveImage -> videogen/still."""
+    s = KREA2_EDIT_SETTINGS
+    seed = _seed(p)
+    w = int(p.get("width", 1792))
+    h = int(p.get("height", 1008))
+    prompt = (p.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("an instruction prompt is required (e.g. 'Re-stage the woman into ...')")
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": KREA2_CLIP, "type": "krea2", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": KREA2_VAE}},
+        "4": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["1", 0], "lora_name": lora_name,
+                         "strength_model": float(p.get("lora_strength", s["lora_strength"]))}},
+        "7": {"class_type": "LoadImage", "inputs": {"image": ref_image}},
+        "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}},
+        "9": {"class_type": "EmptySD3LatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+        # in-context patch: the reference's VAE tokens are prepended to the sampling context
+        "10": {"class_type": "Krea2EditModelPatch",
+               "inputs": {"model": ["4", 0], "source_latent": ["8", 0], "target_latent": ["9", 0],
+                          "fit_mode": s["fit_mode"],
+                          "ref_boost": float(p.get("ref_boost", s["ref_boost"])),
+                          "ref_boost_a": s["ref_boost_a"]}},
+        # image-grounded instruction encoding (Qwen3-VL sees the reference)
+        "11": {"class_type": "Krea2EditGroundedEncode",
+               "inputs": {"clip": ["2", 0], "prompt": prompt, "image": ["7", 0],
+                          "grounding_px": int(p.get("grounding_px", s["grounding_px"]))}},
+        "12": {"class_type": "Krea2EditGroundedEncode",
+               "inputs": {"clip": ["2", 0], "prompt": "", "image": ["7", 0],
+                          "grounding_px": int(p.get("grounding_px", s["grounding_px"]))}},
+        "13": {"class_type": "KSampler",
+               "inputs": {"model": ["10", 0], "seed": seed,
+                          "steps": int(p.get("steps", s["steps"])), "cfg": float(p.get("cfg", s["cfg"])),
+                          "sampler_name": s["sampler"], "scheduler": s["scheduler"],
+                          "positive": ["11", 0], "negative": ["12", 0],
+                          "latent_image": ["9", 0], "denoise": 1.0}},
+        "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}},
+        "15": {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "videogen/still"}},
+    }
+    return g, {"seed": seed, "width": w, "height": h, "prompt": prompt, "engine": "krea2_edit",
+               "ref_boost": float(p.get("ref_boost", s["ref_boost"])),
+               "grounding_px": int(p.get("grounding_px", s["grounding_px"])),
+               "lora": lora_name, "kind": "image"}
+
+
 def build_still(p, init_image=None):
     """Text-to-image photoreal still. Engine selectable: "zimage" (Z-Image Turbo, default) or
     "krea2" (Krea 2 Ultra). p: {prompt, negative?, seed?, width?, height?, steps?, cfg?, engine?}.

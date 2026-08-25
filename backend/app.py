@@ -961,6 +961,43 @@ def video_char_still(p: dict):
     return _submit_video(graph, resolved, "videostill")
 
 
+def _krea2_edit_lora():
+    """The Identity Edit LoRA's name as ComfyUI sees it (any folder), or None. The shipped
+    workflow files it under loras/Krea2/, but accept it anywhere in the loras tree."""
+    try:
+        for n in C.models("loras"):
+            if "krea2_identity_edit" in n.lower():
+                return n
+    except Exception:
+        pass
+    return None
+
+
+@app.post("/api/video/krea2_edit")
+def video_krea2_edit(p: dict):
+    """Identity-preserving re-staging (Krea 2 Identity Edit): put the person from a
+    reference still into a new scene, keeping face/body, with clothing and setting from
+    the instruction prompt. p: {ref_id (library still), prompt, seed?, width?, height?,
+    ref_boost?, grounding_px?}. Needs the comfyui-krea2edit node pack + the LoRA on the
+    box (KREA2-IDENTITY-EDIT_INSTALL.bat)."""
+    ref = _lib_image_path(p.get("ref_id") or "")
+    if not ref:
+        raise HTTPException(400, "ref_id must reference a generated still in the library")
+    lora = _krea2_edit_lora()
+    if not lora:
+        raise HTTPException(400, "krea2_identity_edit LoRA not found on the box - download it "
+                                 "from civitai model 2761113 into ComfyUI/models/loras/Krea2/ "
+                                 "and run KREA2-IDENTITY-EDIT_INSTALL.bat")
+    try:
+        with open(ref, "rb") as f:
+            up = C.upload_audio(f.read(), os.path.basename(ref))
+        graph, resolved = video_mod.build_krea2_identity_still(p, up, lora)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved["ref_id"] = os.path.basename(str(p.get("ref_id")))
+    return _submit_video(graph, resolved, "videostill")
+
+
 @app.get("/api/video/loras")
 def video_loras():
     """LoRAs available on the box (for the character-LoRA picker). Excludes the pipeline's
@@ -2495,7 +2532,8 @@ Return ONLY a JSON array of {n} objects, each:
   "aesthetics": "<comma phrases: photoreal/cinematic/texture cues; avoid 8k/masterpiece gloss>",
   "lighting": "<one sentence of motivated lighting>",
   "palette": ["#RRGGBB", 3-5 hex colors for the whole image],
-  "title_style": "<one sentence: the title lettering's typography, material and color so it stays legible over this scene>"}}"""
+  "title_style": "<one sentence: the title lettering's typography, material and color so it stays legible over this scene>",
+  "features_woman": <true when the concept's dominant subject is a woman, else false>}}"""
     claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
     try:
         text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=300)
@@ -2515,6 +2553,7 @@ Return ONLY a JSON array of {n} objects, each:
             "lighting": str(c.get("lighting") or "").strip(),
             "palette": [str(x) for x in (c.get("palette") or []) if str(x).startswith("#")][:5],
             "title_style": str(c.get("title_style") or "").strip(),
+            "features_woman": bool(c.get("features_woman")),
         })
     concepts = [c for c in concepts if c["overview"]][:n]
     if not concepts:
@@ -2538,6 +2577,20 @@ def youtube_cover(p: dict):
     overview = str(c.get("overview") or "").strip()
     if not overview:
         raise HTTPException(400, "concept.overview is required (Krea2 needs rich global fields)")
+    # ref_still_id = the COVER MODEL: render via Krea 2 Identity Edit so the woman in the
+    # art is the same woman every time (face/body from the reference; clothing, pose and
+    # scene from the concept). Only meaningful for concepts that feature her.
+    if p.get("ref_still_id"):
+        instruction = (f"Re-stage the woman from the reference into a completely different scene: "
+                       f"{overview} {str(c.get('background') or '').strip()} "
+                       f"Change her clothing, pose and surroundings to fit that scene; keep her face, "
+                       f"hair and body exactly as they are in the reference. "
+                       f"{str(c.get('lighting') or '').strip()} "
+                       f"Leave the upper band of the frame free of any large object.")
+        req = {"ref_id": p["ref_still_id"], "prompt": " ".join(instruction.split())}
+        if p.get("seed") is not None:
+            req["seed"] = int(p["seed"])
+        return video_krea2_edit(req)
     background = str(c.get("background") or "").strip() or overview
     tstyle = (str(c.get("title_style") or "").strip()
               or "bold weathered metal album lettering with high contrast against the scene")
@@ -2691,7 +2744,8 @@ def youtube_wordmark_save(body: dict):
     unrelated config keys (same pattern as PUT /api/settings) and refreshes CFG so it
     applies without a restart."""
     allowed = {"text": str, "font": str, "treatment": str, "position": str, "scale": float,
-               "title_font": str, "title_treatment": str, "title_position": str, "title_scale": float}
+               "title_font": str, "title_treatment": str, "title_position": str, "title_scale": float,
+               "cover_model_still": str}   # the canonical cover-model reference still (library id)
     wm = _yt_wordmark_cfg()
     for k, cast in allowed.items():
         if k in body and body[k] is not None:

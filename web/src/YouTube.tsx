@@ -14,11 +14,12 @@ import { openLightbox } from "./Lightbox";
 //     card's download button hands back the friendly-named upload file.
 // ============================================================================
 
-type Concept = { name: string; overview: string; background: string; aesthetics: string; lighting: string; palette: string[]; title_style: string };
+type Concept = { name: string; overview: string; background: string; aesthetics: string; lighting: string; palette: string[]; title_style: string; features_woman?: boolean };
 type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number };
 // The band wordmark + title lettering are GLOBAL app config (choose-once), not per-project drafts.
 type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number;
-  title_font: string; title_treatment: string; title_position: string; title_scale: number };
+  title_font: string; title_treatment: string; title_position: string; title_scale: number;
+  cover_model_still?: string };
 const WM_SIZES: { label: string; scale: number }[] = [
   { label: "S", scale: 0.3 }, { label: "M", scale: 0.4 }, { label: "L", scale: 0.52 }];
 const TITLE_SIZES: { label: string; scale: number }[] = [
@@ -74,6 +75,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
   // misspelled every take of a 5-word title, so it is the opt-in now.
   const [titleMode, setTitleMode] = d.use("titleMode", "stamped");
+  // use the saved cover model (Krea2 Identity Edit) for concepts that feature a woman
+  const [useModel, setUseModel] = d.use("useModel", true);
   const [meta, setMeta] = d.use<{ video_title: string; description: string; tags: string[] } | null>("meta", null);
   const [metaBusy, setMetaBusy] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -138,7 +141,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     try {
       for (let i = 0; i < count; i++) {
         const r = await api.ytCover({ title, concept, seed: base + i * 101,
-                                      omit_title: titleMode === "stamped" }) as { job_id: string; seed: number };
+                                      omit_title: titleMode === "stamped",
+                                      // same woman on every cover that features one: render via
+                                      // Krea2 Identity Edit anchored on the saved cover model
+                                      ref_still_id: (useModel && concept.features_woman && wm?.cover_model_still) || undefined }) as { job_id: string; seed: number };
         fresh.push({ jobId: r.job_id, seed: r.seed });
       }
     } catch (e) { setErr("Cover generation failed: " + (e as Error).message); }
@@ -315,6 +321,26 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           </div>
         </div>
       )}
+
+      <SectionTitle>Cover model</SectionTitle>
+      <div className="flex items-center gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+        {wm?.cover_model_still ? (
+          <img src={`/api/media/${wm.cover_model_still}`} alt="" onClick={() => openLightbox(`/api/media/${wm.cover_model_still}`)}
+            className="h-16 cursor-zoom-in rounded border border-[var(--color-line)]" title="the cover model — click to enlarge" />
+        ) : (
+          <span className="text-[11px] text-[var(--color-muted)]">No cover model set — pick a candidate below, then</span>
+        )}
+        <GhostButton onClick={() => pickedSrc ? saveWm({ cover_model_still: pickedSrc }) : setErr("Pick a candidate first — the un-stamped pick becomes the reference.")}
+          title="save the currently picked candidate (un-stamped) as the permanent cover-model reference">
+          {wm?.cover_model_still ? "Replace with picked" : "Set from picked candidate"}
+        </GhostButton>
+        {wm?.cover_model_still && (
+          <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+            <input type="checkbox" checked={useModel} onChange={(e) => setUseModel(e.target.checked)} />
+            use her on every woman-featuring cover (Identity Edit)
+          </label>
+        )}
+      </div>
 
       <SectionTitle>Lettering · title &amp; band name</SectionTitle>
       <label className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
