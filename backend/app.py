@@ -2598,13 +2598,63 @@ def youtube_render(body: dict):
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
     try:
-        musicvideo_mod.still_video(img, audio, out, width=w, height=h)
+        musicvideo_mod.still_video(img, audio, out, width=w, height=h, title=title,
+                                   artist=str(_yt_wordmark_cfg().get("text") or ""))
     except Exception as e:
         raise HTTPException(500, f"render failed: {e}")
     save_done_row(jid, "ytvideo", {"title": title or "youtube video", "res": res,
                                    "image_id": os.path.basename(str(body.get("image_id") or "")),
                                    "audio_id": os.path.basename(str(body.get("audio_id") or ""))}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
+@app.post("/api/youtube/metadata")
+def youtube_metadata(body: dict):
+    """The upload text package for a finished video: title line, description (strong
+    keyword-bearing first lines, credits, hashtags at the end) and a short tags list.
+    Body: {title, artist?, song?: {title,tags,sections[{lyrics}]}, notes?, provider?, model?}.
+    Returns {video_title, description, tags:[...]} - all paste-ready for YouTube Studio."""
+    song = body.get("song") or {}
+    title = str(body.get("title") or song.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "title is required")
+    artist = str(body.get("artist") or _yt_wordmark_cfg().get("text") or "").strip()
+    tags = str(song.get("tags") or "").strip()
+    lyrics = "\n".join((s.get("lyrics") or "").strip()
+                       for s in (song.get("sections") or []) if (s.get("lyrics") or "").strip())[:1200]
+    provider = body.get("provider") or llm_mod.best_provider()
+    model = body.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-5"
+    system = ("You write YouTube upload metadata for a band's official-audio music uploads. "
+              "Output STRICT JSON ONLY (no prose, no markdown fences). You know how YouTube "
+              "search works: the title carries 'Artist - Song (Official Audio)'; the first "
+              "two description lines are indexed hardest and shown above the fold, so they "
+              "carry the genre words, mood words and a 'for fans of X, Y' line naming 2-3 "
+              "real bands the song genuinely resembles; hashtags go at the END of the "
+              "description (the first three show above the video title - lead with the "
+              "genre ones); the separate tags field mainly catches misspellings.")
+    prompt = f"""Song: "{title}" by {artist or "an independent band"}.
+Genre/mood tags: {tags or "(none given)"}
+Lyrics excerpt (may be empty):
+{lyrics or "(none)"}
+Extra notes: {str(body.get("notes") or "").strip() or "(none)"}
+
+Return ONLY a JSON object:
+{{"video_title": "<{artist + ' - ' if artist else ''}{title} (Official Audio)> or a better variant, under 100 chars",
+  "description": "<the full description: 2 strong opening lines with genre/mood keywords and a 'For fans of ...' line; a blank line; 1-2 short lines about the song's story drawn from the lyrics; a blank line; a credits line naming {artist or 'the band'}; then ONE final line of 4-6 hashtags, genre first (e.g. #symphonicmetal), no spaces inside a tag>",
+  "tags": [<8-12 short strings for YouTube's tags field: the artist name, the song title, genre phrases, and 2-3 plausible misspellings of the artist name>]}}"""
+    claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
+    try:
+        text = llm_mod.complete(provider, model, system, prompt, claude_model, timeout=240)
+        m = re.search(r"\{.*\}", text, re.S)
+        parsed = json.loads(m.group(0) if m else text)
+    except Exception as e:
+        raise HTTPException(500, f"metadata generation failed ({provider}): {e}")
+    return {"video_title": str(parsed.get("video_title") or f"{artist} - {title} (Official Audio)").strip()[:100],
+            "description": str(parsed.get("description") or "").strip(),
+            "tags": [str(t).strip() for t in (parsed.get("tags") or []) if str(t).strip()][:15],
+            "provider": provider}
 
 
 # ---- band wordmark: deterministic Pillow lettering, never model-rendered (see backend/wordmark.py)

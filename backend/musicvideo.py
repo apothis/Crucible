@@ -265,7 +265,8 @@ def audio_duration(path):
         return 0.0
 
 
-def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1):
+def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1,
+                title="", artist=""):
     """One cover still + the full song -> an upload-ready static MP4 (the YouTube
     "art track" shape). GPU-free ffmpeg on the Mac: the image loops at `fps` (1 fps
     makes the video stream nearly free next to the audio), scaled and padded onto a
@@ -278,13 +279,18 @@ def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1
         raise ValueError("could not read the audio duration")
     vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
           f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
-    subprocess.run([_ffmpeg(), "-y", "-loglevel", "error",
-                    "-loop", "1", "-framerate", str(fps), "-i", image_path,
-                    "-i", audio_path, "-map", "0:v", "-map", "1:a",
-                    "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage",
-                    "-pix_fmt", "yuv420p", "-vf", vf, "-r", str(fps),
-                    "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart",
-                    "-t", f"{dur:.3f}", out_path], check=True)
+    cmd = [_ffmpeg(), "-y", "-loglevel", "error",
+           "-loop", "1", "-framerate", str(fps), "-i", image_path,
+           "-i", audio_path, "-map", "0:v", "-map", "1:a",
+           "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage",
+           "-pix_fmt", "yuv420p", "-vf", vf, "-r", str(fps),
+           "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart"]
+    # container metadata: YouTube ignores it, but every player shows it, and it costs nothing
+    if title:
+        cmd += ["-metadata", f"title={title}"]
+    if artist:
+        cmd += ["-metadata", f"artist={artist}"]
+    subprocess.run(cmd + ["-t", f"{dur:.3f}", out_path], check=True)
     return out_path
 
 

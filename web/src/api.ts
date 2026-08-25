@@ -86,6 +86,7 @@ export const api = {
   ytWordmarkOptions: () => jget("/api/youtube/wordmark_options"),  // fonts/treatments + saved global choice
   ytWordmarkSave: (p: unknown) => jmethod("PUT", "/api/youtube/wordmark", p),
   ytStamp: (p: unknown) => jpost("/api/youtube/stamp", p),         // wordmark onto a cover -> new library still (sync)
+  ytMetadata: (p: unknown) => jpost("/api/youtube/metadata", p),   // upload text package (title/description/tags)
   mvScript: (p: unknown) => jpost("/api/mv/script", p),
   mvGrades: () => jget("/api/mv/grades"),
   mvAssemble: (p: unknown) => jpost("/api/mv/assemble", p),

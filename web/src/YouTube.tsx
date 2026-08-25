@@ -74,6 +74,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
   // misspelled every take of a 5-word title, so it is the opt-in now.
   const [titleMode, setTitleMode] = d.use("titleMode", "stamped");
+  const [meta, setMeta] = d.use<{ video_title: string; description: string; tags: string[] } | null>("meta", null);
+  const [metaBusy, setMetaBusy] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [genning, setGenning] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -168,6 +170,23 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     setPicked(srcId); setPickedUrl(srcUrl || `/api/media/${srcId}`);
   }
   const pick = (c: Cand) => stampCover(c.jobId, c.url);
+
+  async function writeMeta() {
+    if (!title.trim()) { setErr("Set a song title first."); return; }
+    setErr(""); setMetaBusy(true);
+    try {
+      const blocks = (drafts.get("song", "blocks") as { lyrics?: string }[] | undefined) || [];
+      let sections = blocks.map((b) => ({ lyrics: b.lyrics || "" })).filter((s) => s.lyrics.trim());
+      if (!sections.length) {
+        const m3 = (drafts.get("music3", "lyrics") as string) || "";
+        if (m3.trim()) sections = [{ lyrics: m3 }];
+      }
+      const song = { title, tags: (drafts.get("song", "tags") as string) || "", sections };
+      const r = await api.ytMetadata({ title, song, notes: notes.trim() || undefined }) as { video_title: string; description: string; tags: string[] };
+      setMeta(r);
+    } catch (e) { setErr("Upload text failed: " + (e as Error).message); }
+    setMetaBusy(false);
+  }
 
   async function render() {
     if (!picked) { setErr("Pick a cover candidate first."); return; }
@@ -420,6 +439,29 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       <PrimaryButton onClick={render} disabled={rendering || busy} title="GPU-free ffmpeg on the Mac — a few seconds">
         {rendering ? "Rendering…" : "Create YouTube video"}
       </PrimaryButton>
+
+      <SectionTitle>4 · Upload text</SectionTitle>
+      <GhostButton onClick={writeMeta} disabled={metaBusy} title="Claude writes the title line, description (keywords + hashtags) and tags from the song">
+        {metaBusy ? "Writing…" : meta ? "↻ Rewrite upload text" : "✦ Write upload text"}
+      </GhostButton>
+      {meta && (
+        <div className="space-y-2">
+          {([["Video title", meta.video_title], ["Description", meta.description], ["Tags (comma-separated)", meta.tags.join(", ")]] as const).map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)]">{label}</span>
+                <button onClick={() => navigator.clipboard?.writeText(value)}
+                  className="ml-auto rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">copy</button>
+              </div>
+              <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--color-ink)]">{value}</pre>
+            </div>
+          ))}
+          <p className="text-[10px] text-[var(--color-muted)]">
+            Paste the description block straight into YouTube's Description field (the hashtags on its last line are all you need — the first three show above the title).
+            Tags go in the Tags box under "Show more". Remember to tick the altered/synthetic content disclosure.
+          </p>
+        </div>
+      )}
       <p className="text-[11px] text-[var(--color-muted)]">
         The finished video lands in the Library under <b>YouTube videos</b> — its ⬇ button downloads the
         upload-ready MP4 named after the song.
