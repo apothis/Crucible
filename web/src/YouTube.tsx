@@ -27,6 +27,25 @@ const TITLE_SIZES: { label: string; scale: number }[] = [
 
 const EMPTY_CONCEPT: Concept = { name: "", overview: "", background: "", aesthetics: "", lighting: "", palette: [], title_style: "" };
 
+// 12-slot placement picker: a mini map of the cover mirroring backend/wordmark.py
+// POSITIONS (4 vertical bands x 3 columns; bare band name = centered).
+function PlacementGrid({ value, onPick }: { value: string; onPick: (slot: string) => void }) {
+  const rows = ["header", "top", "middle", "bottom"];
+  const cols = ["left", "", "right"];
+  return (
+    <div className="grid grid-cols-3 gap-[3px] rounded border border-[var(--color-line)] bg-[var(--color-panel)] p-[3px]"
+      style={{ width: 92, aspectRatio: "16 / 9" }}>
+      {rows.flatMap((r) => cols.map((c) => {
+        const slot = c ? `${r}-${c}` : r;
+        return (
+          <button key={slot} onClick={() => onPick(slot)} title={slot}
+            className={`rounded-[2px] transition ${value === slot ? "bg-[var(--color-accent)]" : "bg-[var(--color-line)] hover:bg-[var(--color-accent2)]"}`} />
+        );
+      }))}
+    </div>
+  );
+}
+
 function audioLabel(it: LibItem): string {
   const p = it.params || {};
   const take = p.take ? ` · v${p.take}` : "";
@@ -71,6 +90,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // artwork (keep the wordmark off the subject), so it is chosen at pick time
   const [stampPos, setStampPos] = d.use("stampPos", "");
   const [stampScale, setStampScale] = d.use("stampScale", "");
+  const [stampTitlePos, setStampTitlePos] = d.use("stampTitlePos", "");
+  const [stampTitleScale, setStampTitleScale] = d.use("stampTitleScale", "");
   // How the song TITLE gets onto the art. "stamped" (default) = deterministic typography,
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
   // misspelled every take of a 5-word title, so it is the opt-in now.
@@ -162,12 +183,18 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // Picking a candidate stamps the band wordmark onto a COPY (deterministic Pillow text -
   // Krea2 misspelled the invented band name 5/6, so it is never model-rendered) and the
   // stamped copy becomes the render input. The un-stamped original stays in the library.
-  async function stampCover(srcId: string, srcUrl?: string) {
+  async function stampCover(srcId: string, srcUrl?: string,
+                            ov?: { pos?: string; scale?: string; tPos?: string; tScale?: string }) {
     setErr(""); setPickedSrc(srcId);
+    // ov carries the just-clicked value (setState is async, the state read would be stale)
+    const pos = ov?.pos ?? stampPos, scale = ov?.scale ?? stampScale;
+    const tPos = ov?.tPos ?? stampTitlePos, tScale = ov?.tScale ?? stampTitleScale;
     if (stampOn && (wm?.text || "").trim()) {
       try {
-        const r = await api.ytStamp({ image_id: srcId, position: stampPos || undefined,
-                                      scale: stampScale ? Number(stampScale) : undefined,
+        const r = await api.ytStamp({ image_id: srcId, position: pos || undefined,
+                                      scale: scale ? Number(scale) : undefined,
+                                      title_position: tPos || undefined,
+                                      title_scale: tScale ? Number(tScale) : undefined,
                                       title: titleMode === "stamped" ? title.trim() : undefined }) as { job_id: string; media_url: string };
         setPicked(r.job_id); setPickedUrl(r.media_url + "?t=" + Date.now()); ctx.onDone();
         return;
@@ -359,25 +386,36 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
               {wmOpen ? "▾ Hide fonts & placement" : "▸ Choose fonts & placement"}
             </GhostButton>
           </div>
-          <div className="flex items-end gap-3">
-            <Field label="Place on this cover" hint="pick to keep the name off the subject">
-              <select className={inp} value={stampPos} onChange={(e) => setStampPos(e.target.value)}>
-                <option value="">saved default ({wm.position})</option>
-                {wmPositions.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+          <div className="flex flex-wrap items-end gap-4">
+            <Field label="Song title placement" hint="click a slot to move it off the subject's face">
+              <div className="flex items-center gap-2">
+                <PlacementGrid value={stampTitlePos || wm.title_position}
+                  onPick={(slot) => { setStampTitlePos(slot); if (pickedSrc) stampCover(pickedSrc, undefined, { tPos: slot }); }} />
+                <select className={inp} value={stampTitleScale}
+                  onChange={(e) => { setStampTitleScale(e.target.value); if (pickedSrc) stampCover(pickedSrc, undefined, { tScale: e.target.value }); }}>
+                  <option value="">size: default</option>
+                  {TITLE_SIZES.map((s) => <option key={s.label} value={String(s.scale)}>size: {s.label}</option>)}
+                </select>
+              </div>
             </Field>
-            <Field label="Size">
-              <select className={inp} value={stampScale} onChange={(e) => setStampScale(e.target.value)}>
-                <option value="">default</option>
-                {WM_SIZES.map((s) => <option key={s.label} value={String(s.scale)}>{s.label}</option>)}
-              </select>
+            <Field label="Band name placement">
+              <div className="flex items-center gap-2">
+                <PlacementGrid value={stampPos || wm.position}
+                  onPick={(slot) => { setStampPos(slot); if (pickedSrc) stampCover(pickedSrc, undefined, { pos: slot }); }} />
+                <select className={inp} value={stampScale}
+                  onChange={(e) => { setStampScale(e.target.value); if (pickedSrc) stampCover(pickedSrc, undefined, { scale: e.target.value }); }}>
+                  <option value="">size: default</option>
+                  {WM_SIZES.map((s) => <option key={s.label} value={String(s.scale)}>size: {s.label}</option>)}
+                </select>
+              </div>
             </Field>
             {pickedSrc && (
-              <GhostButton onClick={() => stampCover(pickedSrc)} title="re-stamp the picked cover with the placement above">
+              <GhostButton onClick={() => stampCover(pickedSrc)} title="re-stamp the picked cover with the placements above">
                 ↻ Re-stamp
               </GhostButton>
             )}
           </div>
+          {pickedSrc && <p className="text-[10px] text-[var(--color-muted)]">Clicking a slot re-stamps the picked cover instantly (from the clean original). Per-cover choice; the saved defaults are unchanged.</p>}
           {wmOpen && (
             <div className="space-y-2">
               <SectionTitle>Title lettering</SectionTitle>
