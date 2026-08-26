@@ -335,7 +335,10 @@ def _song_summary(song, grid=None, align=None):
         stag = f" ({style})" if style else ""
         w0 = round(_map_time(anchors, t)) if anchors else t
         w1 = round(_map_time(anchors, t + dur)) if anchors else t + dur
-        head = f"  [{w0}-{w1}s] {s.get('type') or 'section'}{stag}:"
+        # Music 3 sections carry no seconds at all - a "[0-0s]" window would just mislead
+        # the writer, so drop the time prefix when there is no timing to show.
+        head = (f"  [{w0}-{w1}s] {s.get('type') or 'section'}{stag}:"
+                if (dur or anchors) else f"  {s.get('type') or 'section'}{stag}:")
         if lyr:
             body.append(head)
             # per-line times when the vocals were measured: the writer can then hang a shot on one

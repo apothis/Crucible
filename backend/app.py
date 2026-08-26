@@ -3747,13 +3747,60 @@ def _resolve_project(key: str):
     return r
 
 
+def _music3_song_view(data: dict):
+    """Normalized song view for a MUSIC 3 project (no Song-builder arrangement): sections come
+    from the [Section] tags in the lyric sheet, bpm/key from the caption's Basic Attributes.
+    Music 3 has no per-section timing at all, so seconds stay None - the MV writers get real
+    timing from audio-structure analysis (audio_id), which is the normal path anyway."""
+    dr = data.get("drafts") or {}
+    m3 = dr.get("music3") or {}
+    lyrics = (m3.get("lyrics") or "").strip()
+    if not lyrics:
+        return None
+    fields = m3.get("fields") or {}
+    basic = str(fields.get("Basic Attributes") or "")
+    mb = re.search(r"bpm is (\d+)", basic)
+    mk = re.search(r"key is ([A-G][#b]?),? and scale is (\w+)", basic)
+    tail = [t.strip() for t in basic.split(".") if t.strip()]
+    genre = tail[-1] if tail else ""
+    imagery = str(fields.get("Application Scenarios & Imagery") or "").strip()
+    sections, cur = [], None
+    for line in lyrics.splitlines():
+        line = line.strip()
+        tm = re.fullmatch(r"\[(.+?)\]", line)
+        if tm:
+            cur = {"type": tm.group(1).strip().lower(), "lines": []}
+            sections.append(cur)
+        elif line and cur is not None:
+            cur["lines"].append(line)
+    if not sections:
+        return None
+    return {
+        "title": m3.get("title") or None,
+        # genre tail + imagery: the writer reads this line for the video's whole mood
+        "tags": (genre + (". " + imagery if imagery else "")).strip(),
+        "bpm": int(mb.group(1)) if mb else None,
+        "keyscale": f"{mk.group(1)} {mk.group(2)}" if mk else None,
+        "instrumental": False,
+        "drive": "music3",
+        "sections": [{"index": i, "type": s["type"], "seconds": None,
+                      "lyrics": "\n".join(s["lines"]), "style": ""}
+                     for i, s in enumerate(sections)],
+    }
+
+
 def _project_song_view(data: dict) -> dict:
-    """Normalized view of a project's song: tags/bpm/keyscale + numbered sections."""
+    """Normalized view of a project's song: tags/bpm/keyscale + numbered sections.
+    Falls back to the Music 3 draft when there is no Song-builder arrangement."""
     dr = data.get("drafts") or {}
     ds = dr.get("song") or {}
     tuning = dr.get("song.tuning") or {}
     lifted = data.get("song") or {}
     blocks = ds.get("blocks") or lifted.get("blocks") or []
+    if not blocks:
+        m3 = _music3_song_view(data)
+        if m3:
+            return m3
     return {
         "title": ds.get("title") or lifted.get("title"),
         "tags": ds.get("tags") or lifted.get("tags") or "",
