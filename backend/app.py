@@ -2587,7 +2587,12 @@ def youtube_cover(p: dict):
                        f"hair and body exactly as they are in the reference. "
                        f"{str(c.get('lighting') or '').strip()} "
                        f"Leave the upper band of the frame free of any large object.")
-        req = {"ref_id": p["ref_still_id"], "prompt": " ".join(instruction.split())}
+        # two_pass = the 4-step refine stage, DEFAULT ON to match the plain-cover combo path.
+        # A/B on a held seed [MEASURED 2026-08-25]: refine keeps identity AND composition while
+        # sharpening detail; the Krea2T enhancer restructures the scene on this path, so it
+        # stays off here permanently.
+        req = {"ref_id": p["ref_still_id"], "prompt": " ".join(instruction.split()),
+               "two_pass": bool(p.get("two_pass", True))}
         if p.get("seed") is not None:
             req["seed"] = int(p["seed"])
         return video_krea2_edit(req)

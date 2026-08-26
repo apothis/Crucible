@@ -385,6 +385,13 @@ def build_krea2_identity_still(p, ref_image, lora_name):
     prompt = (p.get("prompt") or "").strip()
     if not prompt:
         raise ValueError("an instruction prompt is required (e.g. 'Re-stage the woman into ...')")
+    # EXPERIMENTAL flags, off by default (the author's shipped workflow is single-pass, no
+    # enhancer; these graft our plain-still combo stages onto the identity path for A/B):
+    #  - two_pass: decode -> resize -> re-encode -> 4-step euler refine at denoise 0.3
+    #    (KREA2_COMBO_P2 verbatim), same patched model + conditioning.
+    #  - enhancer: Krea2T enhancer patch between the identity LoRA and the edit patch.
+    two_pass = bool(p.get("two_pass"))
+    enhancer = bool(p.get("enhancer"))
     g = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": KREA2_UNET, "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": KREA2_CLIP, "type": "krea2", "device": "default"}},
@@ -397,7 +404,8 @@ def build_krea2_identity_still(p, ref_image, lora_name):
         "9": {"class_type": "EmptySD3LatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
         # in-context patch: the reference's VAE tokens are prepended to the sampling context
         "10": {"class_type": "Krea2EditModelPatch",
-               "inputs": {"model": ["4", 0], "source_latent": ["8", 0], "target_latent": ["9", 0],
+               "inputs": {"model": ["40", 0] if enhancer else ["4", 0],
+                          "source_latent": ["8", 0], "target_latent": ["9", 0],
                           "fit_mode": s["fit_mode"],
                           "ref_boost": float(p.get("ref_boost", s["ref_boost"])),
                           "ref_boost_a": s["ref_boost_a"]}},
@@ -415,11 +423,32 @@ def build_krea2_identity_still(p, ref_image, lora_name):
                           "positive": ["11", 0], "negative": ["12", 0],
                           "latent_image": ["9", 0], "denoise": 1.0}},
         "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["3", 0]}},
-        "15": {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "videogen/still"}},
     }
+    if enhancer:
+        g["40"] = {"class_type": "ComfyUI-Krea2T-Enhancer",
+                   "inputs": {"model": ["4", 0], "enabled": True, "strength": 1.0, "debug": False}}
+    if two_pass:
+        r = KREA2_COMBO_P2
+        g.update({
+            "16": {"class_type": "ImageResize+",
+                   "inputs": {"image": ["14", 0], "width": w, "height": h, "interpolation": "lanczos",
+                              "method": "keep proportion", "condition": "always", "multiple_of": 0}},
+            "17": {"class_type": "VAEEncode", "inputs": {"pixels": ["16", 0], "vae": ["3", 0]}},
+            "18": {"class_type": "KSampler",
+                   "inputs": {"model": ["10", 0], "seed": random.randint(0, 2**31 - 1),
+                              "steps": r["steps"], "cfg": float(p.get("cfg", s["cfg"])),
+                              "sampler_name": r["sampler"], "scheduler": r["scheduler"],
+                              "positive": ["11", 0], "negative": ["12", 0],
+                              "latent_image": ["17", 0], "denoise": r["denoise"]}},
+            "19": {"class_type": "VAEDecode", "inputs": {"samples": ["18", 0], "vae": ["3", 0]}},
+            "15": {"class_type": "SaveImage", "inputs": {"images": ["19", 0], "filename_prefix": "videogen/still"}},
+        })
+    else:
+        g["15"] = {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "videogen/still"}}
     return g, {"seed": seed, "width": w, "height": h, "prompt": prompt, "engine": "krea2_edit",
                "ref_boost": float(p.get("ref_boost", s["ref_boost"])),
                "grounding_px": int(p.get("grounding_px", s["grounding_px"])),
+               "two_pass": two_pass, "enhancer": enhancer,
                "lora": lora_name, "kind": "image"}
 
 
