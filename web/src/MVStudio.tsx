@@ -118,6 +118,14 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
   // loads with the standard project Save/Open (top bar) exactly like every other tab - no
   // separate persistence. Characters are global (the shared /api/characters library).
   const d = useDrafts("mvstudio");
+  // Music 3 projects have no Song-builder arrangement - their song lives in the music3 drafts
+  // (tagged lyric sheet + caption fields). Read them so both script writers can fall back to a
+  // synthesized song payload (mirrors the backend's _music3_song_view; sections carry no seconds,
+  // real timing comes from the audio-structure analysis of the rendered take).
+  const m3d = useDrafts("music3");
+  const [m3Lyrics] = m3d.use("lyrics", "");
+  const [m3Title] = m3d.use("title", "");
+  const [m3Fields] = m3d.use<Record<string, string>>("fields", {});
   // PIPELINE: "h3" (MiniMax H3 segments - the default since Phase 5) or "ltx" (the legacy
   // LTX MSR block timeline, kept until H3 fully replaces it).
   const [pipeline, setPipeline] = d.use("pipeline", "h3");
@@ -251,14 +259,36 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
 
   // ---- generate a starting timeline from the project's song arrangement ----
   const songTitle = library.find((i) => i.id === audioId)?.params?.title || "";
-  const canScript = !!(song && song.blocks && song.blocks.length);
+  // Music 3 fallback: parse the tagged lyric sheet into sections + bpm/key/genre from the caption.
+  const m3Song = (() => {
+    if (!m3Lyrics.trim()) return null;
+    const sections: { type: string; seconds: null; lyrics: string; style: string }[] = [];
+    let cur: string[] | null = null;
+    for (const raw of m3Lyrics.split("\n")) {
+      const line = raw.trim();
+      const tm = line.match(/^\[(.+?)\]$/);
+      if (tm) { cur = []; sections.push({ type: tm[1].trim().toLowerCase(), seconds: null, lyrics: "", style: "" }); }
+      else if (line && cur) { cur.push(line); sections[sections.length - 1].lyrics = cur.join("\n"); }
+    }
+    if (!sections.length) return null;
+    const basic = String(m3Fields["Basic Attributes"] || "");
+    const bpm = basic.match(/bpm is (\d+)/)?.[1];
+    const key = basic.match(/key is ([A-G][#b]?),? and scale is (\w+)/);
+    const tail = basic.split(".").map((t) => t.trim()).filter(Boolean);
+    const imagery = String(m3Fields["Application Scenarios & Imagery"] || "").trim();
+    return { title: m3Title || "", tags: [tail[tail.length - 1] || "", imagery].filter(Boolean).join(". "),
+      bpm: bpm ? Number(bpm) : undefined, keyscale: key ? `${key[1]} ${key[2]}` : undefined, sections };
+  })();
+  const canScript = !!(song && song.blocks && song.blocks.length) || !!m3Song;
   async function generateScript() {
-    if (!canScript || !song) { ctx.setResults([{ id: rid(), title: "No song arrangement", status: "error", pct: 0, err: "Open a project with a Song arrangement (the Song tab) to script from it." }]); return; }
+    const arranged = !!(song && song.blocks && song.blocks.length);
+    if (!arranged && !m3Song) { ctx.setResults([{ id: rid(), title: "No song arrangement", status: "error", pct: 0, err: "Open a project with a Song arrangement (Song tab) or a Music 3 song (caption + lyrics) to script from it." }]); return; }
     if (blocks.length && !window.confirm(`Replace the current ${blocks.length} blocks with a generated timeline?`)) return;
     setScripting(true);
     try {
-      const payload = { title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
-        sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })) };
+      const payload = arranged && song ? { title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
+        sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics })) }
+        : { ...m3Song!, title: String(songTitle || m3Song!.title || "") };
       // audio_id lets the backend snap the cuts onto the song's ACTUAL structure (allin1 segments +
       // downbeats from the rendered audio) - more accurate than the planned arrangement.
       const r = await api.mvScript({ song: payload, model: scriptModel, audio_id: audioId,
@@ -487,12 +517,12 @@ export function MVStudioForm({ cfg, busy, library, song, goTo, ...ctx }:
       songAudioId={audioId} libChars={castChars} onClose={() => setEditing(false)} />;
   }
 
-  const songPayload = canScript && song ? {
+  const songPayload = (song && song.blocks && song.blocks.length) ? {
     title: String(songTitle || ""), tags: song.tags, bpm: song.bpm, keyscale: song.key,
     // style carries the vocal-part markers ("female bell canto" / "warm male" / "duet") that
     // the H3 writer uses for voice-matched casting
     sections: song.blocks.map((b) => ({ type: b.type, seconds: b.seconds, lyrics: b.lyrics, style: b.style })),
-  } : null;
+  } : m3Song ? { ...m3Song, title: String(songTitle || m3Song.title || "") } : null;
 
   return (
     <div className="space-y-4">
