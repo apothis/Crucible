@@ -1195,6 +1195,12 @@ HARD RULES:
   established set rather than inventing more.
 - "scene" gives one shot per listed internal cut, visually connected (an evolving viewpoint or
   a two-thread intercut). Its cuts may include lip-sync shots.
+- THE ACTION HAPPENS INSIDE THE SCENE: every shot is filmed by a camera standing IN the shot's
+  environment, so the action must be something visible from there. Never describe an interior
+  detail from an exterior location (or vice versa), a view through a window from the other side,
+  or a close-up of an object that the environment description does not contain. A detail insert
+  (an instrument dial, a letter, a bell) is only possible as its OWN shot in its OWN named
+  location whose environment IS that interior or surface.
 - ONE motion per shot. The action is a single continuous thing a real person/scene does at
   real-world speed. Never describe multiple movements, weather changes or time passing.
 - CAMERA: give the video some MOVEMENT. The first cut of this video came back 27 shots locked off
