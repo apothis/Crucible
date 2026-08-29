@@ -1629,6 +1629,102 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
   );
 }
 
+type NaturalizeOpts = { available: boolean; roundtrip: boolean };
+
+export function NaturalizeForm({ busy, ...ctx }: FormProps) {
+  const d = useDrafts("naturalize");
+  const targets = useLibrary((it) => ["generate", "music3", "song", "mix", "master", "tone", "shape", "restyle", "cover", "source", "naturalize"].includes(it.mode));
+  const [opts, setOpts] = useState<NaturalizeOpts | null>(null);
+  const [job, setJob] = d.use("job", "");
+  const [file, setFile] = useState<File | null>(null);
+  const [warmth, setWarmth] = d.use("warmth", 0.12);
+  const [hfTame, setHfTame] = d.use("hfTame", 1.5);        // shelf cut in dB (positive number, applied as negative)
+  const [wow, setWow] = d.use("wow", 0);
+  const [roundtrip, setRoundtrip] = d.use("roundtrip", "mp3");
+  const [bitrate, setBitrate] = d.use("bitrate", "320k");
+  const [noiseFloor, setNoiseFloor] = d.use("noiseFloor", 65);  // dB below full-scale (positive number)
+  useEffect(() => { api.naturalizeOptions().then(setOpts).catch(() => {}); }, []);
+
+  async function run() {
+    if (!file && !job) return fail(ctx, "Choose a track to naturalize.");
+    const id = rid();
+    ctx.setResults([{ id, title: "naturalizing…", status: "running", pct: 45 }]);
+    try {
+      const fd = new FormData();
+      if (file) fd.append("file", file); else fd.append("job_id", job);
+      fd.append("warmth", String(warmth));
+      fd.append("hf_tame_db", String(-Math.abs(hfTame)));
+      fd.append("wow_flutter", String(wow));
+      fd.append("roundtrip", roundtrip);
+      fd.append("roundtrip_bitrate", bitrate);
+      fd.append("noise_floor_db", String(-Math.abs(noiseFloor)));
+      const r = await api.naturalize(fd);
+      const srcName = job ? trackLabel(targets.find((t) => t.id === job) || ({} as LibItem), targets) : (file?.name || "track");
+      ctx.setResults([{ id: rid(), title: `${srcName} (naturalized)`, status: "done", pct: 100, url: r.audio_url }]);
+      ctx.onDone();   // synchronous — refresh the library
+    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
+  }
+
+  const sel = (list: LibItem[]) => list.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, list)}</option>);
+  const rtHave = !opts || opts.roundtrip;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        <b>Naturalize</b> adds back the small imperfections a purely synthetic render lacks — harmonic warmth, softened top-end fizz, an analog noise floor, and an optional lossy round-trip — so a track reads less machine-perfect. All Mac-side DSP; chain it after Master. It targets no watermark (our generators embed none).
+      </p>
+      <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-300/90">
+        Honest caveat: this is cosmetic and <em>unverifiable</em>. It can make audio look less machine-perfect to naive detectors, but it will not fool a classifier trained on the generator, and no one can prove a given track now "passes." Cat and mouse.
+      </p>
+
+      <div className="text-xs font-medium text-[var(--color-muted)]">Target (the track to naturalize)</div>
+      <Field label="From a library track">
+        <select className={inp} value={job} onChange={(e) => setJob(e.target.value)}>
+          <option value="">— choose —</option>{sel(targets)}
+        </select>
+      </Field>
+      <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+
+      <div className="space-y-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
+        <Field label={`Warmth · ${Math.round(warmth * 100)}%`} hint="soft saturation — adds natural harmonics (0 = off)">
+          <input type="range" min={0} max={0.5} step={0.02} value={warmth} onChange={(e) => setWarmth(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+        </Field>
+        <Field label={`Tame top-end · ${hfTame === 0 ? "off" : "−" + hfTame.toFixed(1) + " dB"}`} hint="gentle high-shelf to soften brittle vocoder fizz above ~12 kHz">
+          <input type="range" min={0} max={4} step={0.5} value={hfTame} onChange={(e) => setHfTame(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+        </Field>
+        <Field label={`Wow / flutter · ${wow === 0 ? "off" : Math.round(wow * 100) + "%"}`} hint="tiny slow time drift so timing isn't grid-perfect (subtle; off by default)">
+          <input type="range" min={0} max={1} step={0.05} value={wow} onChange={(e) => setWow(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+        </Field>
+        <Field label={`Noise floor · ${noiseFloor >= 90 ? "off" : "−" + noiseFloor + " dBFS"}`} hint="low-level analog hiss so the digital silence isn't suspiciously perfect (also dithers)">
+          <input type="range" min={40} max={90} step={1} value={noiseFloor} onChange={(e) => setNoiseFloor(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+        </Field>
+        <Field label="Lossy round-trip" hint="encode→decode to smear the frequency-domain synthesis signature — the strongest step">
+          <div className="flex flex-wrap gap-1.5">
+            {[["none", "off"], ["mp3", "MP3"], ["aac", "AAC"]].map(([v, lbl]) => {
+              const disabled = v !== "none" && !rtHave;
+              return (
+                <button key={v} onClick={() => !disabled && setRoundtrip(v)} disabled={disabled}
+                  className={`rounded-lg border px-2.5 py-1 text-xs ${roundtrip === v ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"} ${disabled ? "opacity-40" : ""}`}>{lbl}</button>
+              );
+            })}
+          </div>
+        </Field>
+        {roundtrip !== "none" && (
+          <Field label="Round-trip bitrate" hint="higher = more transparent, less smear">
+            <select className={inp} value={bitrate} onChange={(e) => setBitrate(e.target.value)}>
+              {["320k", "256k", "192k", "128k"].map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </Field>
+        )}
+        {opts && !opts.roundtrip && <p className="text-[11px] text-amber-400/80">ffmpeg not found on PATH — the lossy round-trip is unavailable, but every other stage still runs.</p>}
+      </div>
+
+      <PrimaryButton onClick={run} disabled={busy || (opts ? !opts.available : false)}>{busy ? "Naturalizing…" : "Naturalize"}</PrimaryButton>
+      {opts && !opts.available && <p className="text-[11px] text-amber-400/80">Naturalize needs pedalboard + soundfile on the Mac.</p>}
+    </div>
+  );
+}
+
 export function DeglitchForm({ busy, ...ctx }: FormProps) {
   const d = useDrafts("deglitch");
   const tracks = useLibrary((it) => ["generate", "music3", "song", "mix", "master", "restyle", "cover", "tone", "source"].includes(it.mode));

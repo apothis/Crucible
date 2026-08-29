@@ -38,6 +38,7 @@ from . import stems as stems_mod
 from . import mix as mix_mod
 from . import postfx as postfx_mod
 from . import master as master_mod
+from . import naturalize as naturalize_mod
 from . import guitar as guitar_mod
 from . import sections as sections_mod
 from . import analyze as analyze_mod
@@ -4628,6 +4629,61 @@ async def master_apply(job_id: str = Form(None),
     params["title"] = _source_master_title(job_id, tgt_label)   # name it after the song
     out = _keep_lossless(jid, tgt)
     save_done_row(jid, "master", params, out)
+    return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+@app.get("/api/naturalize/options")
+def naturalize_options():
+    """What the Naturalize tool can do on this machine."""
+    return {
+        "available": naturalize_mod.available(),        # core DSP deps present
+        "roundtrip": naturalize_mod.ffmpeg_available(),  # lossy round-trip needs ffmpeg
+    }
+
+
+@app.post("/api/naturalize/apply")
+async def naturalize_apply(job_id: str = Form(None),
+                           file: UploadFile = File(None),
+                           warmth: float = Form(0.12),           # harmonic saturation 0..1
+                           hf_tame_db: float = Form(-1.5),       # top-end shelf gain (<=0), 0 = off
+                           hf_tame_hz: float = Form(12000.0),    # shelf corner
+                           wow_flutter: float = Form(0.0),       # micro time modulation 0..1
+                           roundtrip: str = Form("none"),        # none | mp3 | aac
+                           roundtrip_bitrate: str = Form("320k"),
+                           noise_floor_db: float = Form(-65.0),  # injected noise bed dBFS (<0), 0 = off
+                           bit_depth: int = Form(16)):
+    """Naturalize an AI-generated track: add back human/analog imperfection so it reads less
+    machine-perfect to naive detectors. Cosmetic + unverifiable (see naturalize.py). All Mac DSP."""
+    if not naturalize_mod.available():
+        raise HTTPException(500, "naturalize needs pedalboard + soundfile on the Mac")
+    if roundtrip not in ("none", "mp3", "aac"):
+        raise HTTPException(400, "roundtrip must be none, mp3, or aac")
+    work = os.path.join(STEMS_DIR, uuid.uuid4().hex)
+    os.makedirs(work, exist_ok=True)
+    tgt, tgt_label = _stash_input(work, "target",
+                                  await file.read() if file else None,
+                                  file.filename if file else None, job_id)
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.wav")
+    try:
+        _, applied = naturalize_mod.naturalize(
+            tgt, out, warmth=float(warmth), hf_tame_db=float(hf_tame_db),
+            hf_tame_hz=float(hf_tame_hz), wow_flutter=float(wow_flutter),
+            roundtrip=roundtrip, roundtrip_bitrate=str(roundtrip_bitrate),
+            noise_floor_db=float(noise_floor_db), bit_depth=int(bit_depth))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"naturalize failed: {e}")
+    shutil.rmtree(work, ignore_errors=True)
+    base = _source_master_title(job_id, tgt_label).replace(" (master)", "")
+    note = "naturalize · " + (" · ".join(applied) if applied else "no-op")
+    params = {"source": tgt_label, "mode": "naturalize", "warmth": float(warmth),
+              "hf_tame_db": float(hf_tame_db), "wow_flutter": float(wow_flutter),
+              "roundtrip": roundtrip, "noise_floor_db": float(noise_floor_db),
+              "applied": applied, "note": note, "title": f"{base} (naturalized)"}
+    out = _keep_lossless(jid, tgt)
+    save_done_row(jid, "naturalize", params, out)
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
 
 

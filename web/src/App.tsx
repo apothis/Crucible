@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, versionInfo, type Config, type LibItem, type Project, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, VideoForm } from "./forms";
+import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, NaturalizeForm, VideoForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { SoloBuilderForm } from "./SoloBuilder";
 import { ImportForm } from "./Import";
@@ -33,6 +33,7 @@ const MODES = [
   { id: "solo", label: "Add Solo" },
   { id: "master", label: "Master" },
   { id: "shape", label: "Shape" },
+  { id: "naturalize", label: "Naturalize" },
   { id: "deglitch", label: "De-glitch" },
   { id: "compare", label: "Compare" },
   { id: "mix", label: "Mix" },
@@ -49,7 +50,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Create", modes: ["generate", "song", "music3", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
-  { name: "Finish", modes: ["stems", "mix", "master", "shape", "deglitch", "compare"] },
+  { name: "Finish", modes: ["stems", "mix", "master", "shape", "naturalize", "deglitch", "compare"] },
   { name: "Video", modes: ["video", "mvstudio", "characters", "youtube"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
@@ -264,6 +265,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "solo": return <SoloBuilderForm {...p} />;
     case "master": return <MasterForm {...p} />;
     case "shape": return <ShapeForm {...p} />;
+    case "naturalize": return <NaturalizeForm {...p} />;
     case "deglitch": return <DeglitchForm {...p} />;
     case "mix": return <MixForm {...p} />;
     case "video": return <VideoForm {...p} library={library} />;
@@ -453,6 +455,7 @@ function libDesc(it: LibItem): string {
   if (it.mode === "source") return String(p.source || p.title || "imported audio").slice(0, 40);
   if (it.mode === "tone") return `tone: ${p.preset || "?"}${p.source ? " · from " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "master") return `mastered${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
+  if (it.mode === "naturalize") return `naturalized${p.source ? " · " + String(p.source).slice(0, 24) : ""}`;
   if (it.mode === "repaint") return `repaint: ${p.tags ? String(p.tags).slice(0, 28) : "?"} · [${p.repaint_start ?? "?"}–${p.repaint_end ?? "?"}s]`;
   if (it.mode === "cover") { const st = p.cover_strength != null ? " str" + p.cover_strength : (p.cover_cfg ? " cfg" + p.cover_cfg : ""); const tk = p.take ? " · take " + p.take : ""; return `cover${st}${tk}: ${p.tags ? String(p.tags).slice(0, 20) : "?"}${p.source ? " · " + String(p.source).slice(0, 12) : ""}`; }
   if (it.mode === "layer") return `layer: ${p.track_name || "?"}${p.tags ? " · " + String(p.tags).slice(0, 22) : ""}`;
