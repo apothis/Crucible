@@ -59,6 +59,26 @@ Exclude: "pop, EDM, synth-pop, country, acoustic"
 - A dynamics arc works via tags: `[Instrumental Intro]`, `[Build]`, `[Drop to whisper]`,
   `[Final Chorus - biggest]` - phrased simply.
 
+## 3a. The proven tag vocabulary (community-tested; use only this)
+
+Core structure tags (most reliable, verbatim): [Intro] [Verse] [Verse 1] [Verse 2]
+[Pre-Chorus] [Chorus] [Hook] [Bridge] [Break] [Interlude] [Instrumental]
+[Instrumental Break] [Build-Up] [Breakdown] [Drop] [Guitar Solo] [Outro] [End].
+
+A core tag may take ONE qualifier - instrument/arrangement (Orchestral, Piano, Drum,
+Riff, Acoustic, Choir, Chant, A Cappella, Half-time, Heavy, Final) or delivery
+(Whispered, Spoken, Belted, Falsetto, Harmonized, Gang Vocal). Delivery can instead be
+STACKED as a second tag on the line: "[Chorus] [Belted]" - the documented pattern.
+
+Rules learned the hard way:
+- Imagery/theme words in tags are noise ("[Ash Outro]" from our own enrichment - wrong;
+  "[Fading Outro]" right). Session-musician-chart vocabulary only.
+- Intro/outro tags should NAME the featured element ("[Drum Intro]", "[Orchestral
+  Intro]"): metal styles fill vague instrumental intros with unrequested lead-guitar
+  noodling, and a concrete element crowds it out.
+- Always end with [Outro] (then [End]) or the song cuts off / fades awkwardly.
+- Tags in the STYLE field are ignored; they only work in the lyrics field.
+
 ## 4. Vocals (the big win over Music 3)
 
 - Operatic vocabulary WORKS here: "bel canto", "operatic soprano", "dramatic vibrato",

@@ -27,18 +27,37 @@ _SYSTEM = (
     "Output STRICT JSON ONLY: {\"style\": \"...\", \"exclude\": \"...\", \"tags\": {...}}. "
     "No prose, no markdown.")
 
-_TAG_RULES = """Rules for "tags" (enriched section tags for the lyric sheet):
+# The PROVEN tag vocabulary (community-tested, docs/SUNO_PROMPTING.md section 3a).
+# Anything outside it is a gamble; imagery words ("Ash Outro") are noise at best.
+_TAG_VOCAB = """PROVEN Suno tag vocabulary - use ONLY this:
+- Core structure tags (most reliable, use verbatim): Intro, Verse, Verse 1, Verse 2,
+  Pre-Chorus, Chorus, Hook, Bridge, Break, Interlude, Instrumental, Instrumental Break,
+  Build-Up, Breakdown, Drop, Guitar Solo, Outro, End.
+- A core tag MAY take ONE qualifier, either an instrument/arrangement word (Orchestral,
+  Piano, Drum, Riff, Acoustic, Choir, Chant, A Cappella, Half-time, Heavy, Final) or a
+  proven delivery word (Whispered, Spoken, Belted, Falsetto, Harmonized, Gang Vocal):
+  "Orchestral Intro", "Drum Intro", "Whispered Bridge", "Final Chorus", "Choir Interlude".
+- Delivery may instead be STACKED as a second bracket tag on the same line - the
+  documented pattern: "[Chorus] [Belted]", "[Verse] [Whispered]".
+- NEVER use the song's imagery or theme words in a tag ("Ash Outro", "Storm Bridge" are
+  wrong; "Fading Outro", "Quiet Bridge" are right). If a word would not appear on a
+  session musician's chart, it does not belong in a tag.
+- Intro/outro tags should NAME the featured element from the caption ("Drum Intro",
+  "Orchestral Intro", "A Cappella Intro"): a vague instrumental intro invites Suno's
+  default lead-guitar noodling. Always end a sheet with [Outro] (and [End] last) so the
+  song closes instead of cutting off."""
+
+_TAG_RULES = _TAG_VOCAB + """
+
+Rules for "tags" (enriched section tags for the lyric sheet):
 - You are given the sheet's section tags as a NUMBERED list. Return {"<number>": "<enriched
   tag text>"} ONLY for sections where the caption's per-section direction earns an
   enrichment; omit a number to keep its original tag.
-- Suno treats bracket tags as stage direction, so a section tag may carry SHORT arrangement
-  direction: "Orchestral Intro", "A Cappella Intro", "Choir Interlude", "Whispered Bridge",
-  "Half-time Breakdown", "Gang Vocal Chant", "Big Final Chorus", "Guitar Solo".
-- 1-3 conventional musical words, Title Case, NO brackets in the value, no punctuation.
-  Longer or exotic phrasing gets ignored or sung - never exceed 3 words.
+- 1-3 words from the proven vocabulary above, Title Case, NO brackets in the value, no
+  punctuation.
 - Derive them from the caption's Groove/Embellishments/Harmony/Vocal Style fields (e.g.
   "the intro has no drums, only massed stomps and claps" -> "A Cappella Intro"; "a full
-  choir joins the final chorus" -> that chorus becomes "Big Final Chorus").
+  choir joins the final chorus" -> "Final Chorus").
 - A [Solo] section becomes a solo tag CONTAINING "Guitar Solo", with at most one style
   qualifier drawn from the caption: "Melodic Guitar Solo", "Shred Guitar Solo",
   "Blues Guitar Solo", "Harmonized Guitar Solo". Plain "Guitar Solo" when unsure."""
@@ -176,13 +195,15 @@ _WRITE_SYSTEM = (
     "ONLY: {\"title\": \"...\", \"style\": \"...\", \"exclude\": \"...\", \"lyrics\": \"...\"}. "
     "No prose, no markdown.")
 
-_LYRIC_RULES = """Rules for "lyrics" (only when no lyrics are provided):
+_LYRIC_RULES = _TAG_VOCAB + """
+
+Rules for "lyrics" (only when no lyrics are provided):
 - Original lyrics, never quoting any existing song. Structure with bracket tags on their
   own lines: [Intro] [Verse] [Pre-Chorus] [Chorus] [Bridge] [Guitar Solo] [Outro].
-- Tags MAY carry short arrangement direction (1-3 conventional words, Title Case):
-  "[A Cappella Intro]", "[Choir Interlude]", "[Whispered Bridge]", "[Big Final Chorus]".
-  A solo section is a tag CONTAINING "Guitar Solo", optionally with ONE style qualifier
-  ("[Melodic Guitar Solo]", "[Shred Guitar Solo]"); the house default is melodic and fast.
+- Tags come ONLY from the proven vocabulary above (core tags, one qualifier, or a
+  stacked delivery tag). A solo section is a tag CONTAINING "Guitar Solo", optionally
+  with ONE style qualifier ("[Melodic Guitar Solo]", "[Shred Guitar Solo]"); the house
+  default is melodic and fast. End the sheet with [Outro], then [End].
 - DELIVERY DIRECTION GOES IN BRACKET TAGS ONLY, never in parentheses: on Suno,
   parenthesized text is SUNG as a backing/echo vocal. So never write "(whispered)" or
   "(softly)" - write "[Whispered Verse]" as the section tag instead. Parentheses are
