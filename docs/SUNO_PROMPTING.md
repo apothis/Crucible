@@ -75,6 +75,10 @@ Exclude: "pop, EDM, synth-pop, country, acoustic"
   reuse across every song = the consistent-vocalist feature we cannot get locally.
   A Persona carries voice + genre + energy + production ("an essence, not a lock"), so
   mint it from a take whose WHOLE sound is worth inheriting.
+  Mechanics: "..." menu on ANY song (own or Explore-page public songs) -> Make a Persona;
+  select via the Persona dropdown in Custom Mode; free to create. Public/private toggle
+  defaults to PUBLIC - flip the band's Personas private. Other users' public Personas
+  are usable too.
 
 ## 5. Mapping our Music 3 captions -> Suno
 
