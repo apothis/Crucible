@@ -152,3 +152,18 @@ production phrase, 1-2 mood words. Everything section-shaped becomes lyric tags.
   on Premier = unlimited downloads.
 - **My Taste**: passive personalization of default styles from your likes; no action
   needed, but it means the account's suggestions drift toward the band's sound over time.
+
+## 8. Studio export mechanics (measured on our account, 2026-09)
+
+- Export **Full Mix** = bounce to the SUNO LIBRARY with the master-bus FX chain BAKED IN.
+  No local file.
+- Export **Multitrack** = zip download of per-track audio, master bus BYPASSED (a
+  single-track session yields one raw file). This is the download route exempt from the
+  Sept 2026 download meter.
+- **Mastered-download workaround** (user-discovered): master in Studio -> Export Full Mix
+  (library, FX baked) -> open that bounced track in a NEW Studio session -> Export
+  Multitrack -> the mastered audio downloads through the unmetered route.
+- Keep BOTH: import the raw multitrack AND the mastered one as takes of the same title;
+  the raw copy is the re-masterable archive.
+- Suno Studio's mastering chain (EQ/compressor/limiter) is preferred by ear over our
+  ffmpeg Master tab for Suno-rendered songs.
