@@ -193,7 +193,7 @@ fields; the caller keeps its own copy and ignores yours)."""
 
 
 def write_suno(brief: str, title: str, style: str, exclude: str, lyrics: str,
-               provider: str, model: str, claude_model: str) -> dict:
+               provider: str, model: str, claude_model: str, solo_style: str = "") -> dict:
     """Brief -> a full Suno Custom Mode prompt. Existing field values are given to the
     model as the starting point so a short brief ("more aggressive", "make it a ballad")
     edits rather than restarts."""
@@ -206,7 +206,9 @@ def write_suno(brief: str, title: str, style: str, exclude: str, lyrics: str,
         ctx.append(f"Current exclude field: {exclude.strip()}")
     if lyrics.strip():
         ctx.append(f"Current lyrics (context only - do not rewrite):\n{lyrics.strip()}")
-    prompt = (f"{_RULES}\n\n{_LYRIC_RULES}\n\n"
+    solo_rule = (f"\nThe guitar solo tag must be exactly \"[{solo_style}]\".\n"
+                 if solo_style.strip() else "")
+    prompt = (f"{_RULES}\n\n{_LYRIC_RULES}{solo_rule}\n\n"
               + ("\n".join(ctx) + "\n\n" if ctx else "")
               + f"The brief, in the author's own words:\n{brief.strip() or '(none - use the current fields)'}\n\n"
               "Return the JSON now.")

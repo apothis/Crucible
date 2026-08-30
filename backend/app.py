@@ -5393,7 +5393,8 @@ def suno_write(p: dict):
         return suno_export.write_suno(
             p.get("brief") or "", p.get("title") or "", p.get("style") or "",
             p.get("exclude") or "", p.get("lyrics") or "",
-            provider, model, CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+            provider, model, CFG.get("claude_model", "claude-3-5-sonnet-latest"),
+            solo_style=(p.get("solo_style") or ""))
     except Exception as e:
         raise HTTPException(500, f"suno writer failed: {e}")
 

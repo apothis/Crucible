@@ -14,6 +14,18 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
   const [exclude, setExclude] = d.use("exclude", "");
   const [lyrics, setLyrics] = d.use("lyrics", "");
   const [brief, setBrief] = d.use("brief", "");
+  // Solo styles that demonstrably work as Suno tags (docs/SUNO_PROMPTING.md): one style
+  // qualifier + "Guitar Solo". "" = let the writer pick from the song.
+  const SOLO_STYLES = ["", "Guitar Solo", "Melodic Guitar Solo", "Shred Guitar Solo",
+    "Blues Guitar Solo", "Harmonized Guitar Solo", "Emotional Guitar Solo",
+    "Neoclassical Guitar Solo"] as const;
+  const [soloStyle, setSoloStyle] = d.use("soloStyle", "Melodic Guitar Solo");
+  // any existing solo tag in the lyrics follows the selector immediately (a fresh regex
+  // per call: a shared /g regex is stateful across test/replace)
+  function applySoloStyle(tag: string) {
+    setSoloStyle(tag);
+    if (tag) setLyrics(lyrics.replace(/^\[(?:solo|(?:\w+ )?(?:\w+ )?guitar solo)\]\s*$/gim, `[${tag}]`));
+  }
   const [writing, setWriting] = useState(false);
   const [note, setNote] = useState("");
   const [copied, setCopied] = useState("");
@@ -23,7 +35,7 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
   async function write() {
     setWriting(true); setNote("");
     try {
-      const r = await api.sunoWrite({ brief, title, style, exclude, lyrics }) as
+      const r = await api.sunoWrite({ brief, title, style, exclude, lyrics, solo_style: soloStyle }) as
         { title: string; style: string; exclude: string; lyrics: string };
       if (r.style) setStyle(r.style);
       if (r.exclude) setExclude(r.exclude);
@@ -99,6 +111,13 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
             </div>
             <input className={inp + " mt-1"} value={exclude} onChange={(e) => setExclude(e.target.value)} />
           </div>
+          <Field label="Guitar solo" hint="rewrites the solo tag in the lyrics and steers the writer; qualified tags are community-proven on Suno">
+            <select className={inp} value={soloStyle} onChange={(e) => applySoloStyle(e.target.value)}>
+              {SOLO_STYLES.map((t) => (
+                <option key={t} value={t}>{t === "" ? "(writer's choice)" : t === "Guitar Solo" ? "Guitar Solo (plain)" : t.replace(" Guitar Solo", "")}</option>
+              ))}
+            </select>
+          </Field>
           <div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Lyrics (Suno tags allowed: [Big Final Chorus], [Guitar Solo]…)</span>
