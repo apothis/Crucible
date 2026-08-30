@@ -179,8 +179,15 @@ def _valid_tag(text: str) -> bool:
     if t in _CORE_TAGS or t in _VOCAL_TAGS:
         return True
     for core in _CORE_TAGS:
-        if t.endswith(" " + core) and t[: -len(core) - 1] in _TAG_QUALIFIERS:
+        if not t.endswith(" " + core):
+            continue
+        prefix = t[: -len(core) - 1]
+        if prefix in _TAG_QUALIFIERS:
             return True
+        # two stacked qualifiers ("Soft Cello Intro") - both halves must be proven
+        for i in range(1, len(prefix)):
+            if prefix[:i].rstrip() in _TAG_QUALIFIERS and prefix[i:].lstrip() in _TAG_QUALIFIERS:
+                return True
     return False
 
 
