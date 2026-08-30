@@ -58,8 +58,9 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
       if (title.trim()) fd.append("title", title.trim());
       if (style.trim()) fd.append("style", style.trim());
       if (exclude.trim()) fd.append("exclude", exclude.trim());
-      const r = await api.sunoImport(fd) as { job_id: string; audio_url: string; title: string };
-      ctx.patch(card.id, { status: "done", pct: 100, title: `Imported: ${r.title}`, url: r.audio_url });
+      const r = await api.sunoImport(fd) as { job_id: string; audio_url: string; title: string; stems_muxed?: number };
+      ctx.patch(card.id, { status: "done", pct: 100, url: r.audio_url,
+        title: `Imported: ${r.title}${(r.stems_muxed || 1) > 1 ? ` (${r.stems_muxed} stems muxed to one track)` : ""}` });
       ctx.onDone();
     } catch (e) {
       ctx.patch(card.id, { status: "error", pct: 0, err: String(e) });
@@ -136,15 +137,18 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
       <div className="rounded border border-[var(--color-line)] p-3">
         <SectionTitle>3 {"·"} Bring the download home</SectionTitle>
         <p className="mt-1 text-[10px] text-[var(--color-muted)]">
-          Import the downloaded file; it lands in the library under the Title above as a
-          versioned take (with the style/exclude prompt saved as its params), usable by every
-          downstream tool - MV writers, naturalize, stems, compare.
+          Takes a plain audio file OR a Suno Studio Multitrack zip (a single file inside is
+          imported as-is; multiple stems are summed back into one track). It lands in the
+          library under the Title above as a versioned take, with the style/exclude prompt
+          saved as its params, usable by every downstream tool - MV writers, naturalize,
+          stems, compare.
         </p>
+        <input ref={fileRef} type="file" accept=".mp3,.wav,.flac,.m4a,.ogg,.zip" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); }} />
         <div className="mt-2 flex items-center gap-2">
-          <input ref={fileRef} type="file" accept=".mp3,.wav,.flac,.m4a,.ogg"
-            className="text-[11px] text-[var(--color-muted)]"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); }} disabled={importing} />
-          {importing && <span className="text-[10px] text-[var(--color-muted)]">importing…</span>}
+          <PrimaryButton onClick={() => fileRef.current?.click()} disabled={importing}>
+            {importing ? "Importing…" : "Import download (audio or zip)"}
+          </PrimaryButton>
         </div>
       </div>
     </div>

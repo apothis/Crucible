@@ -5358,24 +5358,86 @@ async def import_upload(file: UploadFile = File(...), title: str = Form(None)):
     return {"job_id": iid, "import_id": iid, "audio_url": f"/api/audio/{iid}", "title": name}
 
 
+_AUDIO_EXTS = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
+
+
+def _unpack_suno_zip(data: bytes):
+    """Suno Studio's Multitrack export is a zip (one file for a single-track session, N
+    time-aligned stems otherwise). Returns (audio_bytes, filename, stem_count): a lone
+    file passes through; multiple stems are summed at unity gain (amix normalize=0 -
+    time-aligned stems sum back to the mix) into a 24-bit WAV. Extraction is flat and
+    name-sanitized because zip entry names are untrusted."""
+    import io
+    import shutil as _sh
+    import subprocess
+    import zipfile
+    tmpd = os.path.join(os.path.dirname(LIBRARY), ".mvwork", f"suno_zip_{uuid.uuid4().hex[:8]}")
+    os.makedirs(tmpd, exist_ok=True)
+    try:
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile:
+            raise HTTPException(400, "not a readable zip file")
+        audio = []
+        for info in zf.infolist():
+            base = os.path.basename(info.filename)
+            if not base or base.startswith("._") or info.is_dir():
+                continue
+            if os.path.splitext(base)[1].lower() not in _AUDIO_EXTS:
+                continue
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", base)
+            p = os.path.join(tmpd, f"{len(audio):02d}_{safe}")
+            with open(p, "wb") as f:
+                f.write(zf.read(info))
+            audio.append(p)
+        if not audio:
+            raise HTTPException(400, "no audio files inside the zip")
+        if len(audio) == 1:
+            with open(audio[0], "rb") as f:
+                return f.read(), os.path.basename(audio[0])[3:], 1
+        ff = _sh.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+        if not os.path.exists(ff):
+            raise HTTPException(500, "ffmpeg not found (brew install ffmpeg) — needed to mux stems")
+        mix = os.path.join(tmpd, "mix.wav")
+        cmd = [ff, "-y"]
+        for a in audio:
+            cmd += ["-i", a]
+        cmd += ["-filter_complex", f"amix=inputs={len(audio)}:duration=longest:normalize=0",
+                "-c:a", "pcm_s24le", mix]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0 or not os.path.exists(mix):
+            raise HTTPException(500, f"stem mux failed: {r.stderr[-300:]}")
+        with open(mix, "rb") as f:
+            return f.read(), "mix.wav", len(audio)
+    finally:
+        _sh.rmtree(tmpd, ignore_errors=True)
+
+
 @app.post("/api/suno/import")
 async def suno_import(file: UploadFile = File(...), title: str = Form(None),
                       style: str = Form(None), exclude: str = Form(None)):
     """Import a Suno download into the library as a SONG (mode 'suno'): params carry the
     title so it groups into a version card with a stable take number, plus the prompt it
-    was generated with for provenance (shown by the params panel like any render)."""
+    was generated with for provenance. Accepts plain audio OR a Studio Multitrack zip
+    (single file inside = imported as-is; multiple stems = summed to one track)."""
     data = await file.read()
     if not data:
         raise HTTPException(400, "empty file")
-    iid, out = _store_audio_upload(data, file.filename or "")
+    stems = 1
+    fname = file.filename or ""
+    if os.path.splitext(fname)[1].lower() == ".zip":
+        data, fname, stems = _unpack_suno_zip(data)
+    iid, out = _store_audio_upload(data, fname)
     name = (title or os.path.splitext(file.filename or "")[0] or "suno import")[:120]
     params = {"title": name, "engine": "suno", "imported": True}
+    if stems > 1:
+        params["stems_muxed"] = stems
     if style:
         params["style"] = style[:1200]
     if exclude:
         params["exclude"] = exclude[:500]
     save_done_row(iid, "suno", params, out)
-    return {"job_id": iid, "audio_url": f"/api/audio/{iid}", "title": name}
+    return {"job_id": iid, "audio_url": f"/api/audio/{iid}", "title": name, "stems_muxed": stems}
 
 
 @app.post("/api/suno/write")
