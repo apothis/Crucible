@@ -48,9 +48,13 @@ _TAG_VOCAB = """PROVEN Suno tag vocabulary - use ONLY this:
   wrong; "Fading Outro", "Quiet Bridge" are right). If a word would not appear on a
   session musician's chart, it does not belong in a tag.
 - Intro/outro tags should NAME the featured element from the caption ("Drum Intro",
-  "Orchestral Intro", "A Cappella Intro"): a vague instrumental intro invites Suno's
+  "Piano Intro", "A Cappella Intro"): a vague instrumental intro invites Suno's
   default lead-guitar noodling. Always end a sheet with [Outro] (and [End] last) so the
-  song closes instead of cutting off."""
+  song closes instead of cutting off.
+- GENTLE OPENINGS need smallness, not ensembles: "Orchestral Intro" on a metal song
+  reliably produces a brass fanfare and crashing tutti. For a quiet start, tag the SMALL
+  element ("Piano Intro", "Strings Intro", "Quiet Intro", "Soft Cello Intro") and never
+  put "orchestral"/"epic" in the intro tag."""
 
 _TAG_RULES = _TAG_VOCAB + """
 
@@ -80,8 +84,10 @@ _RULES = """Rules for "style" (Suno's Style of Music field):
   words and 1-2 mood words.
 - After the spine, ONE arc sentence UNDER 30 WORDS drawn from Global Emotional
   Progression, naming only where the song STARTS, its PEAK, and how it ENDS - never a
-  section-by-section walkthrough (e.g. "builds from a quiet orchestral overture to a
-  colossal choir finale, ending in a wordless vocalise; huge dynamic contrast").
+  section-by-section walkthrough. When the song opens gently, START the sentence with
+  the SMALL element, named specifically ("opens with a single quiet cello line, strings
+  gathering slowly") - words like "overture", "epic" or "fanfare" at the start produce a
+  brass fanfare opening regardless of "hushed".
 - Optionally ONE more sentence of scene/feel color (instrument relationships, spatial
   character: "the orchestra surrounds the guitars like a film score").
 - NO section-by-section instructions ("the bridge does X") - the style field is global;
@@ -158,7 +164,7 @@ _TAG_QUALIFIERS = {"orchestral", "piano", "drum", "riff", "acoustic", "choir", "
                    "a cappella", "half-time", "heavy", "final", "whispered", "spoken",
                    "belted", "falsetto", "harmonized", "gang vocal", "drone", "fading",
                    "quiet", "melodic", "shred", "blues", "emotional", "neoclassical",
-                   "duet"}
+                   "duet", "soft", "gentle", "ambient", "strings", "cello", "harp"}
 # Standalone vocal-assignment tags (proven): stack under a section tag to cast the part.
 _VOCAL_TAGS = {"male vocal", "female vocal", "duet", "harmonized", "whispered", "spoken",
                "belted", "falsetto", "gang vocals", "choir"}
