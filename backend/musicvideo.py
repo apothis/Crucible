@@ -265,32 +265,106 @@ def audio_duration(path):
         return 0.0
 
 
+def _viz_filter(viz, width, height, position, scale):
+    """Audio-reactive overlay chain for still_video. The visualiser is generated from the
+    ACTUAL samples (ffmpeg showwaves/showfreqs/showspectrum, sample-accurate), keyed over
+    the cover art at one of the 12 lettering slots. Placement fractions mirror
+    wordmark._place so the visualiser grid in the UI means the same thing as the
+    title/band-name grids. `scale` = visualiser width as a fraction of the canvas."""
+    vw = int(round(width * max(0.15, min(0.60, float(scale or 0.33))))) // 2 * 2
+    vh = int(round(vw * 0.28)) // 2 * 2
+    parts = str(position or "bottom-right").split("-")
+    vert, horiz = parts[0], (parts[1] if len(parts) > 1 else "center")
+    if horiz == "left":
+        x = round(width * 0.06)
+    elif horiz == "right":
+        x = round(width * 0.94) - vw
+    else:
+        x = (width - vw) // 2
+    if vert == "header":
+        y = round(height * 0.055)
+    elif vert == "top":
+        y = round(height * 0.24)
+    elif vert == "middle":
+        y = (height - vh) // 2
+    else:
+        y = round(height * 0.93) - vh
+    if viz == "bars":
+        gen = (f"showfreqs=s={vw}x{vh}:mode=bar:ascale=cbrt:fscale=log:"
+               f"win_size=2048:colors=0xffc27a|0xff7a3c")
+    elif viz == "spectro":
+        # log frequency axis: the music lives in the low/mid bands, a linear axis
+        # squeezes it all into a thin strip at the bottom of the box
+        gen = (f"showspectrum=s={vw}x{vh}:slide=scroll:mode=combined:color=fire:"
+               f"scale=cbrt:fscale=log:legend=0:fps=25")
+    else:  # "waves"
+        # draw=full: the default draw=scale accumulates sample intensity and shifts
+        # the hue (a plain orange came out with a mint-green core)
+        gen = f"showwaves=s={vw}x{vh}:mode=cline:rate=25:draw=full:colors=0xff9a4d"
+    # waves draws MONO: overlapping stereo channels accumulate the same way, and
+    # the mono mix is the classic centered waveform anyway
+    layout = "mono" if viz not in ("bars", "spectro") else "stereo"
+    # the generators draw on black; colorkey makes that transparent so only the
+    # waveform/bars sit over the art (soft blend edge to avoid a dark halo)
+    return (f"[1:a]aformat=channel_layouts={layout},{gen}[vz0];"
+            f"[vz0]colorkey=0x000000:0.10:0.30[vz];"
+            f"[bg][vz]overlay={max(0, x)}:{max(0, y)}[v]")
+
+
 def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1,
-                title="", artist=""):
+                title="", artist="", viz="", viz_position="bottom-right", viz_scale=0.33,
+                progress_cb=None):
     """One cover still + the full song -> an upload-ready static MP4 (the YouTube
     "art track" shape). GPU-free ffmpeg on the Mac: the image loops at `fps` (1 fps
     makes the video stream nearly free next to the audio), scaled and padded onto a
     width x height canvas, x264 -tune stillimage, AAC 320k, +faststart. The length
     comes from ffprobe on the audio and is passed as an explicit -t: the classic
     -loop/-shortest pairing can keep muxing past the audio end (interleave quirk),
-    and an explicit duration sidesteps it."""
+    and an explicit duration sidesteps it.
+    viz ("waves"|"bars"|"spectro") overlays an audio-reactive visualiser, which turns
+    the output into a real 25 fps encode (minutes of CPU instead of seconds - pass
+    progress_cb(seconds_done, total_seconds) and run it off-thread)."""
     dur = audio_duration(audio_path)
     if dur <= 0:
         raise ValueError("could not read the audio duration")
-    vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-          f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
-    cmd = [_ffmpeg(), "-y", "-loglevel", "error",
-           "-loop", "1", "-framerate", str(fps), "-i", image_path,
-           "-i", audio_path, "-map", "0:v", "-map", "1:a",
-           "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage",
-           "-pix_fmt", "yuv420p", "-vf", vf, "-r", str(fps),
-           "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart"]
+    base_vf = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+               f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    cmd = [_ffmpeg(), "-y", "-loglevel", "error"]
+    if progress_cb:
+        cmd += ["-nostats", "-progress", "pipe:1"]
+    if viz:
+        cmd += ["-loop", "1", "-framerate", "25", "-i", image_path,
+                "-i", audio_path,
+                "-filter_complex",
+                f"[0:v]{base_vf}[bg];" + _viz_filter(viz, width, height, viz_position, viz_scale),
+                "-map", "[v]", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-r", "25"]
+    else:
+        cmd += ["-loop", "1", "-framerate", str(fps), "-i", image_path,
+                "-i", audio_path, "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "medium", "-tune", "stillimage",
+                "-pix_fmt", "yuv420p", "-vf", base_vf, "-r", str(fps)]
+    cmd += ["-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart"]
     # container metadata: YouTube ignores it, but every player shows it, and it costs nothing
     if title:
         cmd += ["-metadata", f"title={title}"]
     if artist:
         cmd += ["-metadata", f"artist={artist}"]
-    subprocess.run(cmd + ["-t", f"{dur:.3f}", out_path], check=True)
+    cmd += ["-t", f"{dur:.3f}", out_path]
+    if not progress_cb:
+        subprocess.run(cmd, check=True)
+        return out_path
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        if line.startswith("out_time_us="):
+            try:
+                progress_cb(int(line.split("=", 1)[1]) / 1e6, dur)
+            except ValueError:
+                pass
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {(proc.stderr.read() or '')[-400:]}")
     return out_path
 
 

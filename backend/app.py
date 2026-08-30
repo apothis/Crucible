@@ -2654,17 +2654,47 @@ def youtube_render(body: dict):
     res = str(body.get("res") or "1080p").lower()
     w, h = (3840, 2160) if res in ("4k", "2160p") else (1920, 1080)
     title = str(body.get("title") or "").strip()
+    viz = str(body.get("viz") or "").strip().lower()
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
-    try:
-        musicvideo_mod.still_video(img, audio, out, width=w, height=h, title=title,
-                                   artist=str(_yt_wordmark_cfg().get("text") or ""))
-    except Exception as e:
-        raise HTTPException(500, f"render failed: {e}")
-    save_done_row(jid, "ytvideo", {"title": title or "youtube video", "res": res,
-                                   "image_id": os.path.basename(str(body.get("image_id") or "")),
-                                   "audio_id": os.path.basename(str(body.get("audio_id") or ""))}, out)
-    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+    params = {"title": title or "youtube video", "res": res,
+              "image_id": os.path.basename(str(body.get("image_id") or "")),
+              "audio_id": os.path.basename(str(body.get("audio_id") or ""))}
+    artist = str(_yt_wordmark_cfg().get("text") or "")
+    if not viz:
+        try:
+            musicvideo_mod.still_video(img, audio, out, width=w, height=h, title=title,
+                                       artist=artist)
+        except Exception as e:
+            raise HTTPException(500, f"render failed: {e}")
+        save_done_row(jid, "ytvideo", params, out)
+        return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+    # with a visualiser the output is a real 25 fps encode (minutes of Mac CPU, still
+    # GPU-free) - run it as a background job the UI polls via GET /api/job/{id}
+    params["viz"] = viz
+    dur = musicvideo_mod.audio_duration(audio)
+    with LOCK:
+        JOBS[jid] = {"created": time.time(), "mode": "ytvideo", "status": "running",
+                     "progress": 0, "max": max(1, int(dur)), "params": params}
+
+    def _render_viz():
+        try:
+            musicvideo_mod.still_video(
+                img, audio, out, width=w, height=h, title=title, artist=artist,
+                viz=viz, viz_position=str(body.get("viz_position") or "bottom-right"),
+                viz_scale=float(body.get("viz_scale") or 0.33),
+                progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
+            with LOCK:
+                JOBS[jid]["audio_file"] = out
+                JOBS[jid]["status"] = "done"
+            save_done_row(jid, "ytvideo", params, out)
+        except Exception as e:
+            with LOCK:
+                JOBS[jid]["status"] = "error"
+                JOBS[jid]["error"] = str(e)
+
+    threading.Thread(target=_render_viz, daemon=True).start()
+    return {"job_id": jid, "status": "running"}
 
 
 @app.post("/api/youtube/metadata")

@@ -24,6 +24,8 @@ const WM_SIZES: { label: string; scale: number }[] = [
   { label: "S", scale: 0.3 }, { label: "M", scale: 0.4 }, { label: "L", scale: 0.52 }];
 const TITLE_SIZES: { label: string; scale: number }[] = [
   { label: "S", scale: 0.58 }, { label: "M", scale: 0.72 }, { label: "L", scale: 0.85 }];
+const VIZ_SIZES: { label: string; scale: number }[] = [
+  { label: "S", scale: 0.25 }, { label: "M", scale: 0.33 }, { label: "L", scale: 0.45 }];
 
 const EMPTY_CONCEPT: Concept = { name: "", overview: "", background: "", aesthetics: "", lighting: "", palette: [], title_style: "" };
 
@@ -92,6 +94,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [stampScale, setStampScale] = d.use("stampScale", "");
   const [stampTitlePos, setStampTitlePos] = d.use("stampTitlePos", "");
   const [stampTitleScale, setStampTitleScale] = d.use("stampTitleScale", "");
+  // audio visualiser baked into the video ("" = off, the classic static cover)
+  const [vizStyle, setVizStyle] = d.use("vizStyle", "");
+  const [vizPos, setVizPos] = d.use("vizPos", "bottom-right");
+  const [vizScale, setVizScale] = d.use("vizScale", "0.33");
   // How the song TITLE gets onto the art. "stamped" (default) = deterministic typography,
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
   // misspelled every take of a 5-word title, so it is the opt-in now.
@@ -225,11 +231,18 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     if (!picked) { setErr("Pick a cover candidate first."); return; }
     if (!audioId) { setErr("Pick the song track to use."); return; }
     setErr(""); setRendering(true);
-    const card = { id: rid(), title: `YouTube video · ${title || "untitled"}`, status: "running" as const, pct: 40 };
+    const card = { id: rid(), title: `YouTube video · ${title || "untitled"}`, status: "running" as const, pct: vizStyle ? 2 : 40 };
     ctx.setResults([card]);
     try {
-      const r = await api.ytRender({ image_id: picked, audio_id: audioId, title, res }) as { media_url: string };
-      ctx.patch(card.id, { status: "done", pct: 100, url: r.media_url + "?t=" + Date.now(), media: "video" });
+      const r = await api.ytRender({ image_id: picked, audio_id: audioId, title, res,
+                                     viz: vizStyle || undefined,
+                                     viz_position: vizStyle ? vizPos : undefined,
+                                     viz_scale: vizStyle ? Number(vizScale) : undefined }) as { job_id: string; media_url?: string; status: string };
+      // static cover = sync (seconds); with a visualiser it is a background encode we poll
+      const url = r.status === "done" && r.media_url
+        ? r.media_url + "?t=" + Date.now()
+        : await waitMedia(r.job_id, (pct) => ctx.patch(card.id, { pct }));
+      ctx.patch(card.id, { status: "done", pct: 100, url, media: "video" });
       ctx.onDone();
     } catch (e) {
       ctx.patch(card.id, { status: "error", pct: 0, err: (e as Error).message });
@@ -499,8 +512,27 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           <option value="4k">3840 x 2160 (upscaled)</option>
         </select>
       </Field>
+      <Field label="Audio visualiser" hint="drawn from the actual samples (ffmpeg); animates the video, so the render takes minutes instead of seconds">
+        <select className={inp} value={vizStyle} onChange={(e) => setVizStyle(e.target.value)}>
+          <option value="">off — static cover (fast)</option>
+          <option value="waves">Waveform</option>
+          <option value="bars">Spectrum bars</option>
+          <option value="spectro">Scrolling spectrogram</option>
+        </select>
+      </Field>
+      {vizStyle && (
+        <Field label="Visualiser placement" hint="same 12 slots as the lettering — keep it off the face and the title">
+          <div className="flex items-center gap-2">
+            <PlacementGrid value={vizPos} onPick={setVizPos} />
+            <select className={inp} value={vizScale} onChange={(e) => setVizScale(e.target.value)}>
+              {VIZ_SIZES.map((s) => <option key={s.label} value={String(s.scale)}>size: {s.label}</option>)}
+            </select>
+          </div>
+        </Field>
+      )}
       {err && <p className="text-xs text-red-400">{err}</p>}
-      <PrimaryButton onClick={render} disabled={rendering || busy} title="GPU-free ffmpeg on the Mac — a few seconds">
+      <PrimaryButton onClick={render} disabled={rendering || busy}
+        title={vizStyle ? "GPU-free ffmpeg on the Mac — an animated encode takes a few minutes" : "GPU-free ffmpeg on the Mac — a few seconds"}>
         {rendering ? "Rendering…" : "Create YouTube video"}
       </PrimaryButton>
 
