@@ -89,6 +89,13 @@ Rules learned the hard way:
 
 ## 3b. The gentle-intro playbook (hard-won, 2026-09)
 
+VERDICT after extended fighting: on epic symphonic metal, guitar/fanfare intro injection
+could NOT be fully suppressed prompt-side - every lever below only lowers the odds. The
+ACCEPTED WORKFLOW is post-edit in Studio: cut the intro, generate the replacement with
+Studio's in-session generate box using a no-metal prompt ("quiet solo cello and soft
+strings, cinematic, no drums, no guitars" - its own prompt, so it cannot grow guitars),
+crossfade, Full Mix export, mastered-download chain.
+
 An epic-metal style field makes Suno inflate instrumental intros (brass fanfare, guitar
 fills, early choir) no matter what the intro tag says - the style field is global and
 dominates a lone tag. In order of reliability:
