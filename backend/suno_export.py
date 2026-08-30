@@ -180,6 +180,10 @@ _LYRIC_RULES = """Rules for "lyrics" (only when no lyrics are provided):
 - Tags MAY carry short arrangement direction (1-3 conventional words, Title Case):
   "[A Cappella Intro]", "[Choir Interlude]", "[Whispered Bridge]", "[Big Final Chorus]".
   A solo section is always exactly "[Guitar Solo]".
+- DELIVERY DIRECTION GOES IN BRACKET TAGS ONLY, never in parentheses: on Suno,
+  parenthesized text is SUNG as a backing/echo vocal. So never write "(whispered)" or
+  "(softly)" - write "[Whispered Verse]" as the section tag instead. Parentheses are
+  allowed ONLY for actual words a backing vocal should sing, e.g. "(down we go)".
 - Verses 4-8 lines, chantable choruses, a bridge that shifts the energy. Plain ASCII.
 If lyrics ARE provided, return them EXACTLY as given (they are context for the style
 fields; the caller keeps its own copy and ignores yours)."""
@@ -209,4 +213,25 @@ def write_suno(brief: str, title: str, style: str, exclude: str, lyrics: str,
     return {"title": str(data.get("title") or "").strip()[:120],
             "style": str(data.get("style") or "").strip()[:1000],
             "exclude": str(data.get("exclude") or "").strip()[:500],
-            "lyrics": str(data.get("lyrics") or "").strip()[:8000]}
+            "lyrics": _scrub_delivery_parens(str(data.get("lyrics") or "").strip()[:8000])}
+
+
+# Delivery words that must never appear parenthesized in a Suno lyric sheet: parens are
+# SUNG there (backing/echo vocal), so "(whispered)" comes out as a sung word. Scrubbed
+# ONLY from writer-drafted lyrics - user-typed lyrics are never modified. Real backing
+# lines ("(down we go)") don't match: the scrub hits single delivery words only.
+_DELIVERY_WORDS = ("whispered", "whisper", "whispering", "softly", "quietly", "spoken",
+                   "shouted", "screamed", "screaming", "growled", "breathy", "hushed",
+                   "belted", "gently", "loudly")
+_DELIVERY_PAREN = re.compile(r"\(\s*(?:%s)\s*\)" % "|".join(_DELIVERY_WORDS), re.IGNORECASE)
+
+
+def _scrub_delivery_parens(lyrics: str) -> str:
+    lines = []
+    for line in lyrics.split("\n"):
+        cleaned = re.sub(r"  +", " ", _DELIVERY_PAREN.sub("", line)).rstrip()
+        # a line that WAS only a delivery paren disappears entirely
+        if line.strip() and not cleaned.strip():
+            continue
+        lines.append(cleaned if cleaned.strip() else line)
+    return "\n".join(lines)
