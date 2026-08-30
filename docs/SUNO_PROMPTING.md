@@ -106,3 +106,25 @@ production phrase, 1-2 mood words. Everything section-shaped becomes lyric tags.
 - Style field negatives unreliable -> Exclude field.
 - Tags obeyed most of the time, not always; a run that ignores a tag = re-roll, or
   simplify the tag wording.
+
+## 7. Paid-tier features worth exploiting (researched 2026-08-31)
+
+- **Cover (Remix family)**: upload audio (up to 8 min) and transform its STYLE while
+  keeping the melody. This is the true remix Music 3 could not do (our latent-injection
+  band collapses below 0.85 strength): a local Music 3 take uploaded and covered = our
+  composition + Suno's production/vocal quality. Available Pro+.
+- **Replace Section / Song Editor**: regenerate one section from the waveform - the
+  Repaint equivalent (fix a flubbed line without re-rolling the song). Extend = add
+  sections/outro.
+- **Custom Models (v5.5, Pro+)**: upload >=6 of YOUR OWN tracks -> a personal model that
+  generates in that style (up to 3 models). The hosted equivalent of the band-LoRA plan:
+  train an "Apotheon model" on the best local+Suno keepers for style-consistent output.
+  You must own the rights to the uploads.
+- **Personas/Voices**: persistent singer identity across songs (see section 4).
+- **Suno Studio (Premier)**: generative DAW - up to 12 time-aligned WAV stems (32-bit/48k
+  on Premier), works on UPLOADED external audio too (i.e. it can stem-split our local
+  Music 3 renders at high fidelity - worth testing against our vocal-isolation dead end),
+  MIDI export (10 credits per extraction), multitrack editing, automation. Studio usage
+  on Premier = unlimited downloads.
+- **My Taste**: passive personalization of default styles from your likes; no action
+  needed, but it means the account's suggestions drift toward the band's sound over time.

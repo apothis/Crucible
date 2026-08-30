@@ -24,7 +24,22 @@ from . import llm
 
 _SYSTEM = (
     "You compress a structured music-generation caption into a Suno Custom Mode prompt. "
-    "Output STRICT JSON ONLY: {\"style\": \"...\", \"exclude\": \"...\"}. No prose, no markdown.")
+    "Output STRICT JSON ONLY: {\"style\": \"...\", \"exclude\": \"...\", \"tags\": {...}}. "
+    "No prose, no markdown.")
+
+_TAG_RULES = """Rules for "tags" (enriched section tags for the lyric sheet):
+- You are given the sheet's section tags as a NUMBERED list. Return {"<number>": "<enriched
+  tag text>"} ONLY for sections where the caption's per-section direction earns an
+  enrichment; omit a number to keep its original tag.
+- Suno treats bracket tags as stage direction, so a section tag may carry SHORT arrangement
+  direction: "Orchestral Intro", "A Cappella Intro", "Choir Interlude", "Whispered Bridge",
+  "Half-time Breakdown", "Gang Vocal Chant", "Big Final Chorus", "Guitar Solo".
+- 1-3 conventional musical words, Title Case, NO brackets in the value, no punctuation.
+  Longer or exotic phrasing gets ignored or sung - never exceed 3 words.
+- Derive them from the caption's Groove/Embellishments/Harmony/Vocal Style fields (e.g.
+  "the intro has no drums, only massed stomps and claps" -> "A Cappella Intro"; "a full
+  choir joins the final chorus" -> that chorus becomes "Big Final Chorus").
+- A [Solo] section must become "Guitar Solo" (that exact tag is what produces one)."""
 
 _RULES = """Rules for "style" (Suno's Style of Music field):
 - UNDER 700 characters. Aim for 6-7 descriptors TOTAL - more turns the mix to mush.
@@ -98,13 +113,44 @@ def fallback_exclude(fields: dict) -> str:
     return ", ".join(dict.fromkeys(out))
 
 
+_TAG_LINE = re.compile(r"^\[(.+?)\]\s*$")
+
+
+def _section_tags(lyrics: str):
+    """(line_index, tag_text) for every bare section-tag line, in order."""
+    out = []
+    for i, line in enumerate((lyrics or "").split("\n")):
+        m = _TAG_LINE.match(line.strip())
+        if m:
+            out.append((i, m.group(1).strip()))
+    return out
+
+
+def apply_tag_enrichment(lyrics: str, enriched: dict) -> tuple:
+    """Replace section-tag LINES by their 1-based occurrence number. The lyric words are
+    untouched by construction - only lines that are already bare tags can be replaced.
+    Values are validated hard (<=3 words, no brackets) because they come from a model."""
+    lines = (lyrics or "").split("\n")
+    tags = _section_tags(lyrics)
+    applied = 0
+    for n, (idx, _orig) in enumerate(tags, 1):
+        val = str(enriched.get(str(n)) or enriched.get(n) or "").strip()
+        if not val or "[" in val or "]" in val or len(val.split()) > 3 or len(val) > 30:
+            continue
+        lines[idx] = f"[{val}]"
+        applied += 1
+    return "\n".join(lines), applied
+
+
 def compile_suno(fields: dict, lyrics: str, title: str,
                  provider: str, model: str, claude_model: str) -> dict:
     caption = "\n".join(f"{k}: {v}" for k, v in fields.items() if str(v).strip())
-    prompt = (f"{_RULES}\n\nSong title: {title or 'Untitled'}\n\n"
+    tag_list = "\n".join(f"  {n}. [{t}]" for n, (_i, t) in enumerate(_section_tags(lyrics), 1))
+    prompt = (f"{_RULES}\n\n{_TAG_RULES}\n\nSong title: {title or 'Untitled'}\n\n"
               f"The caption to compress:\n{caption}\n\n"
+              f"The lyric sheet's section tags, numbered in order:\n{tag_list or '  (none)'}\n\n"
               "Return the JSON now.")
-    style, exclude, source = "", "", "llm"
+    style, exclude, source, out_lyrics, enriched_n = "", "", "llm", map_lyrics(lyrics), 0
     try:
         text = llm.complete(provider, model, _SYSTEM, prompt, claude_model, timeout=240)
         mjson = re.search(r"\{.*\}", text, re.DOTALL)
@@ -113,7 +159,11 @@ def compile_suno(fields: dict, lyrics: str, title: str,
         exclude = str(data.get("exclude") or "").strip()[:500]
         if not style:
             raise ValueError("empty style from LLM")
+        enriched = data.get("tags") or {}
+        if isinstance(enriched, dict) and enriched:
+            out_lyrics, enriched_n = apply_tag_enrichment(lyrics, enriched)
+            out_lyrics = map_lyrics(out_lyrics)   # [Solo] safety net if the model skipped it
     except Exception as e:
         style, exclude, source = fallback_style(fields), fallback_exclude(fields), f"fallback ({e})"
-    return {"style": style, "exclude": exclude, "lyrics": map_lyrics(lyrics),
-            "source": source}
+    return {"style": style, "exclude": exclude, "lyrics": out_lyrics,
+            "tags_enriched": enriched_n, "source": source}
