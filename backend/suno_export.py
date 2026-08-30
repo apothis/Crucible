@@ -51,10 +51,12 @@ _TAG_VOCAB = """PROVEN Suno tag vocabulary - use ONLY this:
   "Piano Intro", "A Cappella Intro"): a vague instrumental intro invites Suno's
   default lead-guitar noodling. Always end a sheet with [Outro] (and [End] last) so the
   song closes instead of cutting off.
-- GENTLE OPENINGS need smallness, not ensembles: "Orchestral Intro" on a metal song
-  reliably produces a brass fanfare and crashing tutti. For a quiet start, tag the SMALL
-  element ("Piano Intro", "Strings Intro", "Quiet Intro", "Soft Cello Intro") and never
-  put "orchestral"/"epic" in the intro tag."""
+- THE INTRO TAG MUST MATCH WHAT THE CAPTION SAYS THE INTRO IS - the generic
+  "Orchestral Intro" on a metal song collapses every song to the same brass fanfare and
+  crashing tutti. Be specific in the caption's own direction: a heroic opening earns
+  "Fanfare Intro" or "Brass Intro"; a gentle one earns the SMALL element it names
+  ("Piano Intro", "Strings Intro", "Quiet Intro", "Soft Cello Intro"); a rhythmic one
+  "Drum Intro"; a chanted one "A Cappella Intro". Specific either way, generic never."""
 
 _TAG_RULES = _TAG_VOCAB + """
 
@@ -84,10 +86,11 @@ _RULES = """Rules for "style" (Suno's Style of Music field):
   words and 1-2 mood words.
 - After the spine, ONE arc sentence UNDER 30 WORDS drawn from Global Emotional
   Progression, naming only where the song STARTS, its PEAK, and how it ENDS - never a
-  section-by-section walkthrough. When the song opens gently, START the sentence with
-  the SMALL element, named specifically ("opens with a single quiet cello line, strings
-  gathering slowly") - words like "overture", "epic" or "fanfare" at the start produce a
-  brass fanfare opening regardless of "hushed".
+  section-by-section walkthrough. Describe the opening SPECIFICALLY, in the caption's
+  own direction: "opens with a heroic horn fanfare" when the caption wants grandeur,
+  "opens with a single quiet cello line, strings gathering slowly" when it wants hush.
+  Generic ensemble words at the start ("orchestral overture", "epic intro") produce the
+  same stock brass fanfare on every song - name what actually plays.
 - Optionally ONE more sentence of scene/feel color (instrument relationships, spatial
   character: "the orchestra surrounds the guitars like a film score").
 - NO section-by-section instructions ("the bridge does X") - the style field is global;
@@ -164,7 +167,8 @@ _TAG_QUALIFIERS = {"orchestral", "piano", "drum", "riff", "acoustic", "choir", "
                    "a cappella", "half-time", "heavy", "final", "whispered", "spoken",
                    "belted", "falsetto", "harmonized", "gang vocal", "drone", "fading",
                    "quiet", "melodic", "shred", "blues", "emotional", "neoclassical",
-                   "duet", "soft", "gentle", "ambient", "strings", "cello", "harp"}
+                   "duet", "soft", "gentle", "ambient", "strings", "cello", "harp",
+                   "brass", "horn", "fanfare"}
 # Standalone vocal-assignment tags (proven): stack under a section tag to cast the part.
 _VOCAL_TAGS = {"male vocal", "female vocal", "duet", "harmonized", "whispered", "spoken",
                "belted", "falsetto", "gang vocals", "choir"}
