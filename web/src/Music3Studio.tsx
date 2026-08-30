@@ -90,12 +90,19 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...
   const [suno, setSuno] = useState<{ style: string; exclude: string; lyrics: string; source: string } | null>(null);
   const [sunoBusy, setSunoBusy] = useState(false);
   const [sunoCopied, setSunoCopied] = useState("");
+  // the compiled prompt also populates the Suno tab's drafts, so the export IS the handoff
+  const sunoD = useDrafts("suno");
+  const [, setSunoTitle] = sunoD.use("title", "");
+  const [, setSunoStyle] = sunoD.use("style", "");
+  const [, setSunoExclude] = sunoD.use("exclude", "");
+  const [, setSunoLyrics] = sunoD.use("lyrics", "");
   async function exportSuno() {
     setSunoBusy(true); setSunoCopied("");
     try {
       const r = await api.music3SunoExport({ fields, lyrics, title }) as
         { style: string; exclude: string; lyrics: string; source: string };
       setSuno(r);
+      setSunoTitle(title); setSunoStyle(r.style); setSunoExclude(r.exclude); setSunoLyrics(r.lyrics);
     } catch (e) {
       ctx.setResults([{ id: rid(), title: "Suno export failed", status: "error", pct: 0, err: String(e) }]);
     } finally { setSunoBusy(false); }
@@ -669,7 +676,7 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-medium text-[var(--color-ink)]">Suno Custom Mode prompt</span>
               <span className="text-[10px] text-[var(--color-muted)]">
-                paste each box into its field on suno.com; your words are untouched
+                loaded into the Suno tab (and copyable here); your words are untouched
                 {(suno as { tags_enriched?: number }).tags_enriched ? ` · ${(suno as { tags_enriched?: number }).tags_enriched} section tags enriched from the caption` : ""}
                 {suno.source.startsWith("fallback") ? " · (LLM unavailable - deterministic compile)" : ""}
               </span>

@@ -167,3 +167,46 @@ def compile_suno(fields: dict, lyrics: str, title: str,
         style, exclude, source = fallback_style(fields), fallback_exclude(fields), f"fallback ({e})"
     return {"style": style, "exclude": exclude, "lyrics": out_lyrics,
             "tags_enriched": enriched_n, "source": source}
+
+
+_WRITE_SYSTEM = (
+    "You write prompts for the Suno music generator (Custom Mode). Output STRICT JSON "
+    "ONLY: {\"title\": \"...\", \"style\": \"...\", \"exclude\": \"...\", \"lyrics\": \"...\"}. "
+    "No prose, no markdown.")
+
+_LYRIC_RULES = """Rules for "lyrics" (only when no lyrics are provided):
+- Original lyrics, never quoting any existing song. Structure with bracket tags on their
+  own lines: [Intro] [Verse] [Pre-Chorus] [Chorus] [Bridge] [Guitar Solo] [Outro].
+- Tags MAY carry short arrangement direction (1-3 conventional words, Title Case):
+  "[A Cappella Intro]", "[Choir Interlude]", "[Whispered Bridge]", "[Big Final Chorus]".
+  A solo section is always exactly "[Guitar Solo]".
+- Verses 4-8 lines, chantable choruses, a bridge that shifts the energy. Plain ASCII.
+If lyrics ARE provided, return them EXACTLY as given (they are context for the style
+fields; the caller keeps its own copy and ignores yours)."""
+
+
+def write_suno(brief: str, title: str, style: str, exclude: str, lyrics: str,
+               provider: str, model: str, claude_model: str) -> dict:
+    """Brief -> a full Suno Custom Mode prompt. Existing field values are given to the
+    model as the starting point so a short brief ("more aggressive", "make it a ballad")
+    edits rather than restarts."""
+    ctx = []
+    if title.strip():
+        ctx.append(f"Current title: {title.strip()}")
+    if style.strip():
+        ctx.append(f"Current style field: {style.strip()}")
+    if exclude.strip():
+        ctx.append(f"Current exclude field: {exclude.strip()}")
+    if lyrics.strip():
+        ctx.append(f"Current lyrics (context only - do not rewrite):\n{lyrics.strip()}")
+    prompt = (f"{_RULES}\n\n{_LYRIC_RULES}\n\n"
+              + ("\n".join(ctx) + "\n\n" if ctx else "")
+              + f"The brief, in the author's own words:\n{brief.strip() or '(none - use the current fields)'}\n\n"
+              "Return the JSON now.")
+    text = llm.complete(provider, model, _WRITE_SYSTEM, prompt, claude_model, timeout=240)
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    data = json.loads(m.group(0) if m else text)
+    return {"title": str(data.get("title") or "").strip()[:120],
+            "style": str(data.get("style") or "").strip()[:1000],
+            "exclude": str(data.get("exclude") or "").strip()[:500],
+            "lyrics": str(data.get("lyrics") or "").strip()[:8000]}

@@ -5314,44 +5314,88 @@ def deglitch_track(body: dict):
     return {"audio_url": f"/api/audio/{out_jid}", "job_id": out_jid, "report": report}
 
 
-@app.post("/api/import/upload")
-async def import_upload(file: UploadFile = File(...), title: str = Form(None)):
-    """Import a local audio file INTO the library as a reusable `source` track
-    (usable by Cover/Restyle/Stems/Backing/Layer/Master). mp3/wav saved as-is;
-    anything else (flac/m4a/ogg…) transcoded to mp3 via ffmpeg so /api/audio and
-    every feature's source-resolver can find it at library/<id>.<ext>."""
-    data = await file.read()
-    if not data:
-        raise HTTPException(400, "empty file")
+def _store_audio_upload(data: bytes, filename: str) -> tuple:
+    """Write uploaded audio into the library dir: mp3/wav/flac as-is (flac stays lossless -
+    transcoding a lossless import throws away exactly what the finish chain preserves),
+    anything else transcoded to mp3 via ffmpeg. Returns (id, path)."""
     iid = uuid.uuid4().hex
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    # .flac passes through untouched: transcoding a lossless import to mp3 threw away
-    # exactly the quality the finish chain is built to preserve
+    ext = os.path.splitext(filename or "")[1].lower()
     if ext in (".mp3", ".wav", ".flac"):
         out = os.path.join(LIBRARY, iid + ext)
         with open(out, "wb") as f:
             f.write(data)
-    else:                                            # transcode to mp3 via ffmpeg
-        import shutil as _sh
-        import subprocess
-        ff = _sh.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
-        if not os.path.exists(ff):
-            raise HTTPException(500, "ffmpeg not found (brew install ffmpeg) — needed to import this format")
-        tmp = os.path.join(LIBRARY, iid + (ext or ".bin"))
-        with open(tmp, "wb") as f:
-            f.write(data)
-        out = os.path.join(LIBRARY, iid + ".mp3")
-        r = subprocess.run([ff, "-y", "-i", tmp, "-vn", "-b:a", "192k", out],
-                           capture_output=True, text=True)
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
-        if r.returncode != 0 or not os.path.exists(out):
-            raise HTTPException(500, f"transcode failed: {r.stderr[-400:]}")
+        return iid, out
+    import shutil as _sh
+    import subprocess
+    ff = _sh.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    if not os.path.exists(ff):
+        raise HTTPException(500, "ffmpeg not found (brew install ffmpeg) — needed to import this format")
+    tmp = os.path.join(LIBRARY, iid + (ext or ".bin"))
+    with open(tmp, "wb") as f:
+        f.write(data)
+    out = os.path.join(LIBRARY, iid + ".mp3")
+    r = subprocess.run([ff, "-y", "-i", tmp, "-vn", "-b:a", "192k", out],
+                       capture_output=True, text=True)
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
+    if r.returncode != 0 or not os.path.exists(out):
+        raise HTTPException(500, f"transcode failed: {r.stderr[-400:]}")
+    return iid, out
+
+
+@app.post("/api/import/upload")
+async def import_upload(file: UploadFile = File(...), title: str = Form(None)):
+    """Import a local audio file INTO the library as a reusable `source` track
+    (usable by Cover/Restyle/Stems/Backing/Layer/Master)."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    iid, out = _store_audio_upload(data, file.filename or "")
     name = (title or os.path.splitext(file.filename or "")[0] or "imported audio")[:80]
     save_done_row(iid, "source", {"source": name, "imported": True}, out)
     return {"job_id": iid, "import_id": iid, "audio_url": f"/api/audio/{iid}", "title": name}
+
+
+@app.post("/api/suno/import")
+async def suno_import(file: UploadFile = File(...), title: str = Form(None),
+                      style: str = Form(None), exclude: str = Form(None)):
+    """Import a Suno download into the library as a SONG (mode 'suno'): params carry the
+    title so it groups into a version card with a stable take number, plus the prompt it
+    was generated with for provenance (shown by the params panel like any render)."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    iid, out = _store_audio_upload(data, file.filename or "")
+    name = (title or os.path.splitext(file.filename or "")[0] or "suno import")[:120]
+    params = {"title": name, "engine": "suno", "imported": True}
+    if style:
+        params["style"] = style[:1200]
+    if exclude:
+        params["exclude"] = exclude[:500]
+    save_done_row(iid, "suno", params, out)
+    return {"job_id": iid, "audio_url": f"/api/audio/{iid}", "title": name}
+
+
+@app.post("/api/suno/write")
+def suno_write(p: dict):
+    """The Suno tab's writer: a plain-words brief -> {title, style, exclude, lyrics} in
+    Suno Custom Mode format (docs/SUNO_PROMPTING.md rules). Existing lyrics are context
+    only - the frontend never overwrites a populated lyrics box, matching the Music 3
+    writer's convention."""
+    from . import suno_export
+    provider = p.get("provider") or llm_mod.best_provider()
+    model = p.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-5"
+    try:
+        return suno_export.write_suno(
+            p.get("brief") or "", p.get("title") or "", p.get("style") or "",
+            p.get("exclude") or "", p.get("lyrics") or "",
+            provider, model, CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+    except Exception as e:
+        raise HTTPException(500, f"suno writer failed: {e}")
 
 
 @app.post("/api/import/fetch")
