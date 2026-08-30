@@ -136,6 +136,60 @@ def fallback_exclude(fields: dict) -> str:
 
 _TAG_LINE = re.compile(r"^\[(.+?)\]\s*$")
 
+# Deterministic whitelist backing the prompt rules: the LLM still leaks caption imagery
+# into tags occasionally ("[Mountain-Heartbeat Pre-Chorus]" observed with the rules in
+# place), so every emitted tag is validated mechanically. A tag is valid when it is a
+# proven CORE tag, optionally prefixed by ONE proven qualifier.
+_CORE_TAGS = {"intro", "verse", "verse 1", "verse 2", "pre-chorus", "chorus", "hook",
+              "bridge", "break", "interlude", "instrumental", "instrumental break",
+              "build-up", "breakdown", "drop", "guitar solo", "outro", "end"}
+_TAG_QUALIFIERS = {"orchestral", "piano", "drum", "riff", "acoustic", "choir", "chant",
+                   "a cappella", "half-time", "heavy", "final", "whispered", "spoken",
+                   "belted", "falsetto", "harmonized", "gang vocal", "drone", "fading",
+                   "quiet", "melodic", "shred", "blues", "emotional", "neoclassical"}
+
+
+def _valid_tag(text: str) -> bool:
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    if t in _CORE_TAGS:
+        return True
+    for core in _CORE_TAGS:
+        if t.endswith(" " + core) and t[: -len(core) - 1] in _TAG_QUALIFIERS:
+            return True
+    return False
+
+
+def _nearest_core(text: str) -> str:
+    """Salvage an invalid tag: keep its core structure word if one is present
+    ("Mountain-Heartbeat Pre-Chorus" -> "Pre-Chorus"), else drop the enrichment."""
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    for core in sorted(_CORE_TAGS, key=len, reverse=True):
+        if t == core or t.endswith(" " + core):
+            return core.title().replace("-c", "-C")   # Pre-Chorus / Build-Up casing
+    return ""
+
+
+def sanitize_tags(lyrics: str) -> str:
+    """Rules-check every bracket tag line in a sheet (single tags and stacked pairs).
+    Invalid tags are reduced to their core structure tag when one is recognizable,
+    otherwise left alone (a human wrote them or there is nothing safe to reduce to)."""
+    out = []
+    for line in (lyrics or "").split("\n"):
+        stripped = line.strip()
+        parts = re.findall(r"\[([^\[\]]+)\]", stripped)
+        if parts and re.fullmatch(r"(?:\[[^\[\]]+\]\s*)+", stripped):
+            fixed = []
+            for ptxt in parts:
+                if _valid_tag(ptxt):
+                    fixed.append(f"[{ptxt.strip()}]")
+                else:
+                    core = _nearest_core(ptxt)
+                    fixed.append(f"[{core}]" if core else f"[{ptxt.strip()}]")
+            out.append(" ".join(fixed))
+        else:
+            out.append(line)
+    return "\n".join(out)
+
 
 def _section_tags(lyrics: str):
     """(line_index, tag_text) for every bare section-tag line, in order."""
@@ -158,6 +212,8 @@ def apply_tag_enrichment(lyrics: str, enriched: dict) -> tuple:
         val = str(enriched.get(str(n)) or enriched.get(n) or "").strip()
         if not val or "[" in val or "]" in val or len(val.split()) > 3 or len(val) > 30:
             continue
+        if not _valid_tag(val):
+            continue                      # imagery/off-vocabulary tag: keep the original
         lines[idx] = f"[{val}]"
         applied += 1
     return "\n".join(lines), applied
@@ -239,7 +295,8 @@ def write_suno(brief: str, title: str, style: str, exclude: str, lyrics: str,
     return {"title": str(data.get("title") or "").strip()[:120],
             "style": str(data.get("style") or "").strip()[:1000],
             "exclude": str(data.get("exclude") or "").strip()[:500],
-            "lyrics": _scrub_delivery_parens(str(data.get("lyrics") or "").strip()[:8000])}
+            "lyrics": sanitize_tags(
+                _scrub_delivery_parens(str(data.get("lyrics") or "").strip()[:8000]))}
 
 
 # Delivery words that must never appear parenthesized in a Suno lyric sheet: parens are
