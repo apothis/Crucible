@@ -39,6 +39,11 @@ _TAG_VOCAB = """PROVEN Suno tag vocabulary - use ONLY this:
   "Orchestral Intro", "Drum Intro", "Whispered Bridge", "Final Chorus", "Choir Interlude".
 - Delivery may instead be STACKED as a second bracket tag on the same line - the
   documented pattern: "[Chorus] [Belted]", "[Verse] [Whispered]".
+- MULTIPLE SINGERS: cast parts by stacking vocal tags per section - "[Verse] [Female
+  Vocal]", "[Verse 2] [Male Vocal]", "[Chorus] [Duet]". Both voices must ALSO be
+  described distinctly in the style field (register + weight + grit each) or they
+  converge into one voice. Turn-taking by section is reliable; simultaneous different
+  lines are not - shared moments use [Duet]/[Harmonized] and parenthesized echo lines.
 - NEVER use the song's imagery or theme words in a tag ("Ash Outro", "Storm Bridge" are
   wrong; "Fading Outro", "Quiet Bridge" are right). If a word would not appear on a
   session musician's chart, it does not belong in a tag.
@@ -146,12 +151,16 @@ _CORE_TAGS = {"intro", "verse", "verse 1", "verse 2", "pre-chorus", "chorus", "h
 _TAG_QUALIFIERS = {"orchestral", "piano", "drum", "riff", "acoustic", "choir", "chant",
                    "a cappella", "half-time", "heavy", "final", "whispered", "spoken",
                    "belted", "falsetto", "harmonized", "gang vocal", "drone", "fading",
-                   "quiet", "melodic", "shred", "blues", "emotional", "neoclassical"}
+                   "quiet", "melodic", "shred", "blues", "emotional", "neoclassical",
+                   "duet"}
+# Standalone vocal-assignment tags (proven): stack under a section tag to cast the part.
+_VOCAL_TAGS = {"male vocal", "female vocal", "duet", "harmonized", "whispered", "spoken",
+               "belted", "falsetto", "gang vocals", "choir"}
 
 
 def _valid_tag(text: str) -> bool:
     t = re.sub(r"\s+", " ", text.strip().lower())
-    if t in _CORE_TAGS:
+    if t in _CORE_TAGS or t in _VOCAL_TAGS:
         return True
     for core in _CORE_TAGS:
         if t.endswith(" " + core) and t[: -len(core) - 1] in _TAG_QUALIFIERS:
