@@ -79,6 +79,25 @@ Rules learned the hard way:
 - Always end with [Outro] (then [End]) or the song cuts off / fades awkwardly.
 - Tags in the STYLE field are ignored; they only work in the lyrics field.
 
+## 3b. The gentle-intro playbook (hard-won, 2026-09)
+
+An epic-metal style field makes Suno inflate instrumental intros (brass fanfare, guitar
+fills, early choir) no matter what the intro tag says - the style field is global and
+dominates a lone tag. In order of reliability:
+1. EXTEND TWO-STAGE (best): generate the intro as its OWN short piece with a no-metal
+   style ("solo cello, soft strings, quiet cinematic film score, no drums, no guitars,
+   no choir"), then Extend it with the FULL song style + lyrics. Each extension takes
+   its own style prompt (this is why extends "drift" - here it is the feature). Keep the
+   extension prompt full-strength, repeat the BPM.
+2. ALIGN EVERYTHING + [Crescendo]: caption intro -> arc sentence -> intro tag all agree,
+   an early whispered vocal denies Suno empty bars, and a [Crescendo] tag AFTER the
+   quiet lines gives the growth a sanctioned place instead of the intro.
+3. SALVAGE: Crop / Remove Section / Replace Section on an otherwise-good take.
+4. EXPERIMENT: render locally on Music 3 (whose per-section obedience is measured) and
+   Cover it on Suno - structure from Music 3, sound from Suno. Unverified.
+Splice-in-Studio (two generations, crossfade, Full Mix export) remains the fully
+deterministic fallback.
+
 ## 4. Vocals (the big win over Music 3)
 
 - Operatic vocabulary WORKS here: "bel canto", "operatic soprano", "dramatic vibrato",

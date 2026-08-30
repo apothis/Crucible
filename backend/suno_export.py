@@ -51,6 +51,10 @@ _TAG_VOCAB = """PROVEN Suno tag vocabulary - use ONLY this:
   "Piano Intro", "A Cappella Intro"): a vague instrumental intro invites Suno's
   default lead-guitar noodling. Always end a sheet with [Outro] (and [End] last) so the
   song closes instead of cutting off.
+- DYNAMICS TAGS give energy changes a sanctioned place: [Crescendo] on its own line
+  marks where a build happens ([Build-Up] similar; [Pause] a held silence). After a
+  gentle intro, place [Crescendo] where the caption says the band enters - without a
+  sanctioned growth point, Suno inflates the intro itself.
 - THE INTRO TAG MUST MATCH WHAT THE CAPTION SAYS THE INTRO IS - the generic
   "Orchestral Intro" on a metal song collapses every song to the same brass fanfare and
   crashing tutti. Be specific in the caption's own direction: a heroic opening earns
@@ -90,7 +94,9 @@ _RULES = """Rules for "style" (Suno's Style of Music field):
   own direction: "opens with a heroic horn fanfare" when the caption wants grandeur,
   "opens with a single quiet cello line, strings gathering slowly" when it wants hush.
   Generic ensemble words at the start ("orchestral overture", "epic intro") produce the
-  same stock brass fanfare on every song - name what actually plays.
+  same stock brass fanfare on every song - name what actually plays. For songs that grow,
+  phrase the arc as a JOURNEY: "soft intro, gradually building, gradual crescendo,
+  intense climax".
 - Optionally ONE more sentence of scene/feel color (instrument relationships, spatial
   character: "the orchestra surrounds the guitars like a film score").
 - NO section-by-section instructions ("the bridge does X") - the style field is global;
@@ -162,7 +168,8 @@ _TAG_LINE = re.compile(r"^\[(.+?)\]\s*$")
 # proven CORE tag, optionally prefixed by ONE proven qualifier.
 _CORE_TAGS = {"intro", "verse", "verse 1", "verse 2", "pre-chorus", "chorus", "hook",
               "bridge", "break", "interlude", "instrumental", "instrumental break",
-              "build-up", "breakdown", "drop", "guitar solo", "outro", "end"}
+              "build-up", "breakdown", "drop", "guitar solo", "outro", "end",
+              "crescendo", "pause"}
 _TAG_QUALIFIERS = {"orchestral", "piano", "drum", "riff", "acoustic", "choir", "chant",
                    "a cappella", "half-time", "heavy", "final", "whispered", "spoken",
                    "belted", "falsetto", "harmonized", "gang vocal", "drone", "fading",
