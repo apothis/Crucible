@@ -85,7 +85,18 @@ _RULES = """Rules for "style" (Suno's Style of Music field):
   the song has a distinctive opening, the OPENING COMES NEXT - in the high-weight front
   zone, fused to the main instrumentation with a transition verb, the proven creator
   pattern for soft-to-heavy songs: "soft solo piano and strings intro building into
-  downtuned rhythm guitars and double-kick drums". Then the remaining instruments WITH
+  downtuned rhythm guitars and double-kick drums". Three measured rules for that opening
+  phrase (Drowned Bell held its intro, Queen of the Hollow Stars did not - this is why):
+  (a) pick an opener instrument OUTSIDE the song's big ensembles - piano, tin whistle,
+  music box, solo acoustic; NOT "strings"/"cello" when an orchestra is in the prompt,
+  because naming a section member puts the whole section on stage from bar one;
+  (b) NO energy words inside the opening phrase ("soaring", "epic", "sweeping" belong to
+  the peak, not the intro descriptor); use small dark words ("lone", "hushed", "distant");
+  (c) genre tokens carry intro priors - celtic folk metal expects quiet folk intros,
+  symphonic metal expects orchestral bombast openings - so when the caption wants a
+  gentle open on a symphonic song, the opening phrase must work HARDER (a+b), and
+  softening the genre token helps when truthful ("cinematic metal" over "symphonic
+  metal"). Then the remaining instruments WITH
   adjectives (guitars first for rock/metal, tuning + drum-feel words), then ONE vocal
   phrase translating the caption's vocal timbre (register + weight + grit + delivery as
   adjectives - "raspy", "breathy", "operatic", "bel canto", "dramatic vibrato" all good;

@@ -104,6 +104,16 @@ dominates a lone tag. In order of reliability:
    no choir"), then Extend it with the FULL song style + lyrics. Each extension takes
    its own style prompt (this is why extends "drift" - here it is the feature). Keep the
    extension prompt full-strength, repeat the BPM.
+1a. WHY IT WORKS SOMETIMES (measured on our own songs, 2026-09): The Drowned Bell's
+   whistle intro HELD while Queen of the Hollow Stars' quiet intro blew up, with
+   identical prompt structure. Three separating factors: (a) genre-token prior - celtic
+   folk metal's training data is full of quiet folk-instrument intros, symphonic metal's
+   opens with orchestral bombast; the genre token sets the distribution, descriptors
+   only steer inside it; (b) the opener instrument's ensemble membership - a tin whistle
+   implicates nobody, "lone string melody" puts the blow-up-prone string section on
+   stage at bar one (piano works for the same reason; cello does NOT, it is string
+   section); (c) energy words inside the intro phrase ("soaring") prime bigness - use
+   small dark words ("lone", "hushed", "over black water").
 1b. THE CREATOR PATTERN (what the YouTube symphonic-metal channels do): the opening
    element goes EARLY in the style field, fused to the main instrumentation with a
    transition verb - "soft solo piano and strings intro building into downtuned guitars
