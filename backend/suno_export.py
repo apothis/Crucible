@@ -39,7 +39,9 @@ _TAG_RULES = """Rules for "tags" (enriched section tags for the lyric sheet):
 - Derive them from the caption's Groove/Embellishments/Harmony/Vocal Style fields (e.g.
   "the intro has no drums, only massed stomps and claps" -> "A Cappella Intro"; "a full
   choir joins the final chorus" -> that chorus becomes "Big Final Chorus").
-- A [Solo] section must become "Guitar Solo" (that exact tag is what produces one)."""
+- A [Solo] section becomes a solo tag CONTAINING "Guitar Solo", with at most one style
+  qualifier drawn from the caption: "Melodic Guitar Solo", "Shred Guitar Solo",
+  "Blues Guitar Solo", "Harmonized Guitar Solo". Plain "Guitar Solo" when unsure."""
 
 _RULES = """Rules for "style" (Suno's Style of Music field):
 - UNDER 700 characters. Aim for 6-7 descriptors TOTAL - more turns the mix to mush.
@@ -179,7 +181,8 @@ _LYRIC_RULES = """Rules for "lyrics" (only when no lyrics are provided):
   own lines: [Intro] [Verse] [Pre-Chorus] [Chorus] [Bridge] [Guitar Solo] [Outro].
 - Tags MAY carry short arrangement direction (1-3 conventional words, Title Case):
   "[A Cappella Intro]", "[Choir Interlude]", "[Whispered Bridge]", "[Big Final Chorus]".
-  A solo section is always exactly "[Guitar Solo]".
+  A solo section is a tag CONTAINING "Guitar Solo", optionally with ONE style qualifier
+  ("[Melodic Guitar Solo]", "[Shred Guitar Solo]"); the house default is melodic and fast.
 - DELIVERY DIRECTION GOES IN BRACKET TAGS ONLY, never in parentheses: on Suno,
   parenthesized text is SUNG as a backing/echo vocal. So never write "(whispered)" or
   "(softly)" - write "[Whispered Verse]" as the section tag instead. Parentheses are
