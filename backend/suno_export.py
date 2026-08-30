@@ -68,18 +68,24 @@ Rules for "tags" (enriched section tags for the lyric sheet):
   "Blues Guitar Solo", "Harmonized Guitar Solo". Plain "Guitar Solo" when unsure."""
 
 _RULES = """Rules for "style" (Suno's Style of Music field):
-- UNDER 700 characters. Aim for 6-7 descriptors TOTAL - more turns the mix to mush.
-- FRONT-LOAD: start with "<bpm> bpm, <key> <scale>, <one precise subgenre>". Precision beats
-  piling; never list three overlapping genre names.
-- Then 2-3 instruments WITH adjectives (guitars first for rock/metal - include tuning words
-  like "downtuned" and a drum-feel word like "double-kick" / "half-time stomp" when the
-  caption implies them; these are what hold metal on-genre).
-- Then ONE vocal phrase translating the caption's vocal timbre (register + weight + grit +
-  delivery). Operatic vocabulary (operatic, bel canto, dramatic vibrato, classically
-  trained) is GOOD here when the caption calls for it. NEVER name a real artist.
-- Then 1-2 production words and 1-2 mood words.
-- Plain comma-separated phrases, no sentences, no section-by-section direction (that lives
-  in the lyric tags, not the style field).
+- Target 450-650 characters (hard cap 1000): a compact descriptor SPINE followed by one
+  or two short prose sentences. Richer coherent prose helps; what hurts is contradictory
+  tag soup - every phrase must agree with the others.
+- THE SPINE comes first, front-loaded: "<bpm> bpm, <key> <scale>, <one precise subgenre>",
+  then 2-3 instruments WITH adjectives (guitars first for rock/metal - tuning words like
+  "downtuned" and a drum-feel word like "double-kick" / "half-time stomp" when the caption
+  implies them), then ONE vocal phrase translating the caption's vocal timbre (register +
+  weight + grit + delivery; operatic vocabulary - operatic, bel canto, dramatic vibrato -
+  is GOOD when the caption calls for it; NEVER a real artist name), then 1-2 production
+  words and 1-2 mood words.
+- After the spine, ONE arc sentence UNDER 30 WORDS drawn from Global Emotional
+  Progression, naming only where the song STARTS, its PEAK, and how it ENDS - never a
+  section-by-section walkthrough (e.g. "builds from a quiet orchestral overture to a
+  colossal choir finale, ending in a wordless vocalise; huge dynamic contrast").
+- Optionally ONE more sentence of scene/feel color (instrument relationships, spatial
+  character: "the orchestra surrounds the guitars like a film score").
+- NO section-by-section instructions ("the bridge does X") - the style field is global;
+  per-section direction lives ONLY in the lyric tags.
 
 Rules for "exclude" (Suno's Exclude Styles field):
 - A short comma-separated list of what must NOT appear, derived from the caption's explicit
