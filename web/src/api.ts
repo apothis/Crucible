@@ -55,6 +55,7 @@ export const api = {
   music3FetchLyrics: (p: { artist?: string; title?: string; src?: string }) =>
     jpost("/api/music3/fetch_lyrics", p),
   music3Write: (p: unknown) => jpost("/api/music3/write", p),          // writer:"ours"|"skill"
+  music3SunoExport: (p: unknown) => jpost("/api/music3/suno_export", p),
   music3WriterStatus: () => jget("/api/music3/writer_status"),
   music3References: (family?: string) =>
     jget(`/api/music3/references${family ? `?family=${encodeURIComponent(family)}` : ""}`),

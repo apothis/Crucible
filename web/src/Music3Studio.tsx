@@ -85,6 +85,21 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...
   type Card = { id: string; style: string; secondary: string; tempo_key: string; mood: string; vocal: string; palette: string; template: string };
   const [refsOpen, setRefsOpen] = useState(false);
   const [writerHelp, setWriterHelp] = useState(false);
+  // Export-for-Suno: transient (not a draft) - the compiled prompt is derived output,
+  // regenerated on demand from the caption, never persisted.
+  const [suno, setSuno] = useState<{ style: string; exclude: string; lyrics: string; source: string } | null>(null);
+  const [sunoBusy, setSunoBusy] = useState(false);
+  const [sunoCopied, setSunoCopied] = useState("");
+  async function exportSuno() {
+    setSunoBusy(true); setSunoCopied("");
+    try {
+      const r = await api.music3SunoExport({ fields, lyrics, title }) as
+        { style: string; exclude: string; lyrics: string; source: string };
+      setSuno(r);
+    } catch (e) {
+      ctx.setResults([{ id: rid(), title: "Suno export failed", status: "error", pct: 0, err: String(e) }]);
+    } finally { setSunoBusy(false); }
+  }
   const [fams, setFams] = useState<{ file: string; label: string; cards: number }[]>([]);
   const [family, setFamily] = d.use("family", "");
   const [cards, setCards] = useState<Card[]>([]);
@@ -640,11 +655,40 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...
             title={preview?.over_limit ? "caption is over the 5000-token limit" : "generate"}>
             Generate
           </PrimaryButton>
+          <GhostButton onClick={exportSuno} disabled={sunoBusy}
+            title="Compile the caption + lyrics into a Suno Custom Mode prompt (style / exclude / lyrics) per docs/SUNO_PROMPTING.md">
+            {sunoBusy ? "Compiling for Suno…" : "Export for Suno"}
+          </GhostButton>
           <span className="text-[10px] text-[var(--color-muted)]">
             about 110s of GPU per 60s of audio. Masters are saved lossless; the library export
             button also offers 320k MP3.
           </span>
         </div>
+        {suno && (
+          <div className="mt-2 rounded border border-[var(--color-line)] bg-[var(--color-panel)] p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-medium text-[var(--color-ink)]">Suno Custom Mode prompt</span>
+              <span className="text-[10px] text-[var(--color-muted)]">
+                paste each box into its field on suno.com; lyrics are your sheet with [Solo] mapped to [Guitar Solo]
+                {suno.source.startsWith("fallback") ? " · (LLM unavailable - deterministic compile)" : ""}
+              </span>
+              <GhostButton onClick={() => setSuno(null)}>close</GhostButton>
+            </div>
+            {([["Style of Music", suno.style], ["Exclude Styles", suno.exclude], ["Lyrics", suno.lyrics]] as const).map(([label, text]) => (
+              <div key={label} className="mt-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">{label}</span>
+                  <GhostButton onClick={() => { navigator.clipboard.writeText(text); setSunoCopied(label); }}>
+                    {sunoCopied === label ? "copied ✓" : "copy"}
+                  </GhostButton>
+                  {label === "Style of Music" && <span className="text-[10px] text-[var(--color-muted)]">{text.length} chars</span>}
+                </div>
+                <textarea readOnly value={text} rows={label === "Lyrics" ? 8 : 2}
+                  className={inp + " mt-1 font-mono text-[10.5px]"} />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       </div>
       </div>

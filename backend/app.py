@@ -6302,6 +6302,21 @@ def music3_fetch_lyrics(p: dict):
     return {"lyrics": ly, "source": source, "artist": artist, "title": title}
 
 
+@app.post("/api/music3/suno_export")
+def music3_suno_export(p: dict):
+    """Compile the Music 3 caption + lyrics into a Suno Custom Mode prompt
+    ({style, exclude, lyrics} - see docs/SUNO_PROMPTING.md). LLM compression with a
+    deterministic fallback; the lyrics are never rewritten, only tag-mapped."""
+    from . import suno_export
+    provider = p.get("provider") or llm_mod.best_provider()
+    model = p.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-5"
+    return suno_export.compile_suno(
+        p.get("fields") or {}, p.get("lyrics") or "", p.get("title") or "",
+        provider, model, CFG.get("claude_model", "claude-3-5-sonnet-latest"))
+
+
 @app.post("/api/music3/generate")
 def music3_generate(p: dict):
     caption = (music3_mod.assemble_caption(p["fields"]) if p.get("fields")
