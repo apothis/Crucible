@@ -22,6 +22,14 @@ this is the translation target when a song goes to Suno for a release-quality re
 
 ## 2. Style field recipe (metal)
 
+REVISED 2026-09 after deeper research + our own failed prose-arc renders: the style
+field is ONE comma-separated descriptor list, 30-45 words, NO periods ("commas separate
+ideas; periods RESET context" - the prose arc sentences our first recipe used sat after
+a period and were largely ignored, which matches our observed renders). The dynamic arc
+goes at the END as comma journey phrases ("soft solo cello intro, gradually building,
+colossal choir finale"). v5 rewards more description than v4, but as denser descriptors,
+not longer sentences.
+
 Order and count matter:
 
 1. Start with tempo + key + ONE precise subgenre. Precision beats piling: "melodic power
@@ -89,12 +97,18 @@ dominates a lone tag. In order of reliability:
    no choir"), then Extend it with the FULL song style + lyrics. Each extension takes
    its own style prompt (this is why extends "drift" - here it is the feature). Keep the
    extension prompt full-strength, repeat the BPM.
+1b. THE CREATOR PATTERN (what the YouTube symphonic-metal channels do): the opening
+   element goes EARLY in the style field, fused to the main instrumentation with a
+   transition verb - "soft solo piano and strings intro building into downtuned guitars
+   and double-kick" - not as an arc summary at the tail (the tail is the low-weight
+   zone). Piano + strings is the community's most proven soft opener for this genre.
 2. ALIGN EVERYTHING + [Crescendo]: caption intro -> arc sentence -> intro tag all agree,
    an early whispered vocal denies Suno empty bars, and a [Crescendo] tag AFTER the
    quiet lines gives the growth a sanctioned place instead of the intro.
 3. SALVAGE: Crop / Remove Section / Replace Section on an otherwise-good take.
-4. EXPERIMENT: render locally on Music 3 (whose per-section obedience is measured) and
-   Cover it on Suno - structure from Music 3, sound from Suno. Unverified.
+4. TESTED AND FAILED (2026-09): Music 3 render -> Suno Cover. Cover keeps the melody
+   but RE-ARRANGES against the style prompt, so the metal style reclaims the intro
+   (guitars injected again). Cover is not a structure-preservation tool.
 Splice-in-Studio (two generations, crossfade, Full Mix export) remains the fully
 deterministic fallback.
 

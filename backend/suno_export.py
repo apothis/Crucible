@@ -78,27 +78,23 @@ Rules for "tags" (enriched section tags for the lyric sheet):
   "Blues Guitar Solo", "Harmonized Guitar Solo". Plain "Guitar Solo" when unsure."""
 
 _RULES = """Rules for "style" (Suno's Style of Music field):
-- Target 450-650 characters (hard cap 1000): a compact descriptor SPINE followed by one
-  or two short prose sentences. Richer coherent prose helps; what hurts is contradictory
-  tag soup - every phrase must agree with the others.
-- THE SPINE comes first, front-loaded: "<bpm> bpm, <key> <scale>, <one precise subgenre>",
-  then 2-3 instruments WITH adjectives (guitars first for rock/metal - tuning words like
-  "downtuned" and a drum-feel word like "double-kick" / "half-time stomp" when the caption
-  implies them), then ONE vocal phrase translating the caption's vocal timbre (register +
-  weight + grit + delivery; operatic vocabulary - operatic, bel canto, dramatic vibrato -
-  is GOOD when the caption calls for it; NEVER a real artist name), then 1-2 production
-  words and 1-2 mood words.
-- After the spine, ONE arc sentence UNDER 30 WORDS drawn from Global Emotional
-  Progression, naming only where the song STARTS, its PEAK, and how it ENDS - never a
-  section-by-section walkthrough. Describe the opening SPECIFICALLY, in the caption's
-  own direction: "opens with a heroic horn fanfare" when the caption wants grandeur,
-  "opens with a single quiet cello line, strings gathering slowly" when it wants hush.
-  Generic ensemble words at the start ("orchestral overture", "epic intro") produce the
-  same stock brass fanfare on every song - name what actually plays. For songs that grow,
-  phrase the arc as a JOURNEY: "soft intro, gradually building, gradual crescendo,
-  intense climax".
-- Optionally ONE more sentence of scene/feel color (instrument relationships, spatial
-  character: "the orchestra surrounds the guitars like a film score").
+- ONE comma-separated descriptor list, 30-45 words (~250-450 characters). NO full
+  sentences and NO periods: Suno reads descriptors, not grammar, and a period RESETS its
+  context - anything after one is heavily discounted. Commas separate ideas.
+- Order, front-loaded: "<bpm> bpm, <key> <scale>, <one precise subgenre>". THEN, when
+  the song has a distinctive opening, the OPENING COMES NEXT - in the high-weight front
+  zone, fused to the main instrumentation with a transition verb, the proven creator
+  pattern for soft-to-heavy songs: "soft solo piano and strings intro building into
+  downtuned rhythm guitars and double-kick drums". Then the remaining instruments WITH
+  adjectives (guitars first for rock/metal, tuning + drum-feel words), then ONE vocal
+  phrase translating the caption's vocal timbre (register + weight + grit + delivery as
+  adjectives - "raspy", "breathy", "operatic", "bel canto", "dramatic vibrato" all good;
+  NEVER a real artist name), then 1-2 production words and 1-2 mood words.
+- The END of the field carries AT MOST 3 short comma phrases for the rest of the arc:
+  the peak and the ending ("colossal full-choir finale, wordless vocalise outro") -
+  NEVER one phrase per section. The opening already lives at the front. Generic ensemble
+  words ("orchestral overture", "epic intro") produce the same stock brass fanfare on
+  every song - always name what actually plays. TOTAL field stays under 45 words.
 - NO section-by-section instructions ("the bridge does X") - the style field is global;
   per-section direction lives ONLY in the lyric tags.
 
