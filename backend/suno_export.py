@@ -73,6 +73,13 @@ Rules for "tags" (enriched section tags for the lyric sheet):
 - Derive them from the caption's Groove/Embellishments/Harmony/Vocal Style fields (e.g.
   "the intro has no drums, only massed stomps and claps" -> "A Cappella Intro"; "a full
   choir joins the final chorus" -> "Final Chorus").
+- SWAPPING VOICES: when the caption defines TWO singers (Singer A and Singer B), cast
+  EVERY sung section with a stacked vocal tag, written in the value as a slash pair:
+  "Verse / Male Vocal", "Verse / Female Vocal", "Chorus / Duet", "Bridge / Male Vocal".
+  Read the caption's Vocal Style field for who takes which section and cast accordingly;
+  shared sections get "/ Duet". A section that alternates line-by-line still gets ONE
+  cast (turn-taking by section is what Suno does reliably). Never leave a duet song's
+  sections uncast - uncast sections converge to a single voice.
 - A [Solo] section becomes a solo tag CONTAINING "Guitar Solo", with at most one style
   qualifier drawn from the caption: "Melodic Guitar Solo", "Shred Guitar Solo",
   "Blues Guitar Solo", "Harmonized Guitar Solo". Plain "Guitar Solo" when unsure."""
@@ -100,7 +107,10 @@ _RULES = """Rules for "style" (Suno's Style of Music field):
   adjectives (guitars first for rock/metal, tuning + drum-feel words), then ONE vocal
   phrase translating the caption's vocal timbre (register + weight + grit + delivery as
   adjectives - "raspy", "breathy", "operatic", "bel canto", "dramatic vibrato" all good;
-  NEVER a real artist name), then 1-2 production words and 1-2 mood words.
+  NEVER a real artist name) - except a DUET: when the caption defines two singers, spend
+  one short phrase on EACH voice, distinct in register and grit ("clear bright female
+  soprano, rough raspy gritty male baritone") - describing only one converges Suno to a
+  single voice - then 1-2 production words and 1-2 mood words.
 - The END of the field carries AT MOST 3 short comma phrases for the rest of the arc:
   the peak and the ending ("colossal full-choir finale, wordless vocalise outro") -
   NEVER one phrase per section. The opening already lives at the front. Generic ensemble
@@ -146,13 +156,19 @@ def fallback_style(fields: dict) -> str:
     if genre:
         bits.append(genre.replace(" / ", ", ").lower())
     v = str(fields.get("Vocal Gender & Timbre") or "")
-    gender = "female" if "(Female)" in v else "male" if "(Male)" in v else ""
-    m = re.search(r"possesses an? ([^.]+?) timbre", v)
-    if m:
-        bits.append((f"{gender} " if gender else "") + m.group(1).strip() + " vocals")
+    # one phrase PER singer: a duet caption defines Singer A and Singer B, and Suno
+    # needs both voices described distinctly or they converge into one
+    genders = [g.lower() for g in re.findall(r"\((Female|Male)\)", v)]
+    timbres = re.findall(r"possesses an? ([^.]+?) timbre", v)
+    for i, t in enumerate(timbres):
+        g = genders[i] if i < len(genders) else ""
+        bits.append((f"{g} " if g else "") + t.strip() + " vocals")
+    if len(timbres) > 1:
+        bits.append("duet with alternating vocals")
     p = str(fields.get("Primary") or "").split(".")[0].strip()
     if p:
-        bits.append(p[:140].lower().lstrip("electric guitars:").strip() or p[:140].lower())
+        p = re.sub(r"^electric guitars:\s*", "", p[:140].lower())
+        bits.append(p)
     return ", ".join(bits)[:700]
 
 
@@ -247,20 +263,34 @@ def _section_tags(lyrics: str):
     return out
 
 
+def _render_enriched(val: str) -> str:
+    """One enriched value -> a tag line, or "" when invalid. A plain value becomes one
+    tag; a slash pair ("Chorus / Duet") becomes the documented STACKED form
+    "[Chorus] [Duet]" - the voice-casting mechanism for duet/swapping-voice songs.
+    Every part is whitelisted independently."""
+    parts = [p.strip() for p in val.split("/") if p.strip()]
+    if not 1 <= len(parts) <= 2:
+        return ""
+    for p in parts:
+        if "[" in p or "]" in p or len(p.split()) > 3 or len(p) > 30 or not _valid_tag(p):
+            return ""
+    return " ".join(f"[{p}]" for p in parts)
+
+
 def apply_tag_enrichment(lyrics: str, enriched: dict) -> tuple:
     """Replace section-tag LINES by their 1-based occurrence number. The lyric words are
     untouched by construction - only lines that are already bare tags can be replaced.
-    Values are validated hard (<=3 words, no brackets) because they come from a model."""
+    Values are validated hard because they come from a model; "A / B" values render as
+    stacked tags ("[Verse] [Male Vocal]") to cast voices per section."""
     lines = (lyrics or "").split("\n")
     tags = _section_tags(lyrics)
     applied = 0
     for n, (idx, _orig) in enumerate(tags, 1):
         val = str(enriched.get(str(n)) or enriched.get(n) or "").strip()
-        if not val or "[" in val or "]" in val or len(val.split()) > 3 or len(val) > 30:
-            continue
-        if not _valid_tag(val):
+        rendered = _render_enriched(val) if val else ""
+        if not rendered:
             continue                      # imagery/off-vocabulary tag: keep the original
-        lines[idx] = f"[{val}]"
+        lines[idx] = rendered
         applied += 1
     return "\n".join(lines), applied
 
