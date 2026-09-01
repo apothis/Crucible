@@ -206,7 +206,7 @@ function AppInner() {
 
         {libOpen && (
           <aside className="w-[520px] flex-none min-h-0 overflow-y-auto border-l border-[var(--color-line)] bg-[var(--color-panel)] p-4">
-            <Library items={library}
+            <Library items={library} onRefresh={refreshLib}
               onOpen={(it) => setResults([{ id: it.id, title: libDesc(it), status: "done", pct: 100,
                 url: (it.media_url || it.audio_url) + "?t=" + Date.now(),
                 media: it.media_url ? (it.mode === "videostill" ? "image" : "video") : undefined }])}
@@ -719,7 +719,7 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
   );
 }
 
-function Library({ items, onOpenInBuilder, ...a }: { items: LibItem[] } & LibActions) {
+function Library({ items, onRefresh, onOpenInBuilder, ...a }: { items: LibItem[]; onRefresh: () => void } & LibActions) {
   const [tab, setTab] = useState("");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"new" | "old" | "name">("new");
@@ -754,6 +754,8 @@ function Library({ items, onOpenInBuilder, ...a }: { items: LibItem[] } & LibAct
     <div className="flex h-full flex-col">
       <div className="mb-2 flex items-center gap-2">
         <h2 className="text-sm font-semibold">Library</h2>
+        <button onClick={onRefresh} title="refresh the library list (picks up renders finished outside the app, no page reload)"
+          className="rounded-md border border-[var(--color-line)] bg-[var(--color-panel2)] px-1.5 py-0.5 text-[13px] text-[var(--color-muted)] transition hover:text-[var(--color-ink)]">↻</button>
         <select value={sort} onChange={(e) => setSort(e.target.value as any)}
           className="ml-auto rounded-md border border-[var(--color-line)] bg-[var(--color-panel2)] px-1.5 py-1 text-[11px] text-[var(--color-muted)]">
           <option value="new">Newest</option><option value="old">Oldest</option><option value="name">Name</option>
