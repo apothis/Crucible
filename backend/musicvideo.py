@@ -409,22 +409,34 @@ def loop_tail_report(path):
     motion = np.abs(np.diff(fr, axis=0)).mean(axis=(1, 2))
     mid = float(motion[len(motion) // 4:3 * len(motion) // 4].mean())
     tail = motion[-24:]
+    # freeze threshold: relative to the clip's own pace, with an ABSOLUTE floor - on
+    # very subtle covers (Queen of the Hollow Stars, mid ~0.5) the relative rule alone
+    # misses stalls a viewer plainly sees
+    thresh = max(0.15 * mid, 0.30)
     frozen_from = None
     i = n - 1
-    while i >= 1 and motion[i - 1] < 0.15 * mid:
+    while i >= 1 and motion[i - 1] < thresh:
         frozen_from = i
         i -= 1
     trim_frame = None
+    f0 = fr[0]
     if frozen_from is not None:
-        f0 = fr[0]
         cut = frozen_from
         # walk back only while the wrap step stays ~one normal frame of motion
         while cut > n - 24 and np.abs(fr[cut - 1] - f0).mean() > 1.3 * mid:
             cut -= 1
         if np.abs(fr[cut - 1] - f0).mean() <= 1.3 * mid:
             trim_frame = cut
+    # interior stalls (arrive-early-and-idle) are NOT trimmable - cutting one makes a
+    # jump - but they must be reported: fraction of the last 2s spent below threshold
+    tail2 = motion[-50:]
+    idle_frac = float((tail2 < thresh).mean())
+    # a wrap that never closes: last frame vs frame 1 in units of the clip's own pace
+    wrap_step = float(np.abs(fr[-1] - f0).mean())
     return {"frames": n, "mid": round(mid, 2),
             "tail_ratio": round(float(tail.mean()) / mid, 2) if mid else 1.0,
+            "idle_frac": round(idle_frac, 2),
+            "wrap_step_ratio": round(wrap_step / mid, 1) if mid else 0.0,
             "frozen_from": frozen_from, "trim_frame": trim_frame}
 
 

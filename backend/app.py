@@ -2813,8 +2813,16 @@ def youtube_livecover_check(body: dict):
         except Exception:
             pass                       # analysis stands; the raw take remains usable
     eases = rep.get("tail_ratio", 1.0) < 0.8
-    badge = (("trimmed" if trimmed else "") +
-             ("+eases" if trimmed and eases else "")) or ("eases into wrap" if eases else "clean")
+    idles = rep.get("idle_frac", 0) >= 0.5          # interior stall: NOT trimmable, reroll
+    open_wrap = rep.get("wrap_step_ratio", 0) > 3    # end never closes on the start frame
+    if trimmed:
+        badge = "trimmed" + ("+eases" if eases else "")
+    elif idles or open_wrap:
+        badge = "idles before wrap - reroll" if idles else "wrap never closes - reroll"
+    elif eases:
+        badge = "eases into wrap"
+    else:
+        badge = "clean"
     return {"clip_id": use_id, "badge": badge, "trimmed": trimmed, "report": rep}
 
 
@@ -2900,7 +2908,9 @@ def youtube_livecover_prompt(body: dict):
         "fabric drifting, flames flickering, sparks and embers rising, mist, lightning, swaying) - "
         "nothing walks, travels or crosses the frame; the central figure stays in her pose but "
         "alive (slow visible breathing, hair stirring); phrase all motion as slow and continuous "
-        f"for the entire {seconds:.0f} seconds. Plain ASCII.\n\n"
+        f"for the entire {seconds:.0f} seconds, and name at least three elements that KEEP moving "
+        "the whole time - motion must never settle or come to rest before the end (a becalmed "
+        "scene makes the loop stall). Plain ASCII.\n\n"
         f"Song title: {body.get('title') or 'unknown'}\nThe artwork's concept:\n{desc or '(none)'}")
     try:
         motion = llm_mod.complete(provider, model, system, prompt,
