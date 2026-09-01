@@ -98,6 +98,19 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [vizStyle, setVizStyle] = d.use("vizStyle", "");
   const [vizPos, setVizPos] = d.use("vizPos", "bottom-right");
   const [vizScale, setVizScale] = d.use("vizScale", "0.33");
+  // living cover: H3 FLF loop of the picked art (same image pinned at both ends)
+  const [lcPrompt, setLcPrompt] = d.use("lcPrompt", "");
+  const [lcTakes, setLcTakes] = d.use<Cand[]>("lcTakes", []);
+  const [lcPicked, setLcPicked] = d.use("lcPicked", "");
+  const [lcFinal, setLcFinal] = d.use("lcFinal", "");     // FlashVSR-upscaled loop
+  const [lcBusy, setLcBusy] = useState("");
+  // video style + card background
+  const [style, setStyle] = d.use("style", "still");
+  const [bgId, setBgId] = d.use("bgId", "");
+  const [bgs, setBgs] = useState<{ id: string; label: string }[]>([]);
+  const [bgPrompt, setBgPrompt] = d.use("bgPrompt", "");
+  const [bgLabel, setBgLabel] = d.use("bgLabel", "");
+  const [bgBusy, setBgBusy] = useState(false);
   // How the song TITLE gets onto the art. "stamped" (default) = deterministic typography,
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
   // misspelled every take of a 5-word title, so it is the opt-in now.
@@ -124,7 +137,70 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     api.ytWordmarkOptions().then((o: { fonts: { id: string; label: string }[]; treatments: string[]; positions: string[]; current: Wordmark }) => {
       setWmFonts(o.fonts); setWmTreatments(o.treatments); setWmPositions(o.positions || []); setWm(o.current);
     }).catch(() => {});
+    refreshBgs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const refreshBgs = () =>
+    api.ytBackgrounds().then((r: { backgrounds: { id: string; label: string }[] }) => setBgs(r.backgrounds)).catch(() => {});
+
+  // ---- living cover: draft prompt -> hunt 2 FLF takes -> pick -> FlashVSR upscale ----
+  async function lcDraftPrompt() {
+    setErr(""); setLcBusy("prompt");
+    try {
+      const r = await api.ytLivecoverPrompt({ title, concept }) as { prompt: string };
+      setLcPrompt(r.prompt);
+    } catch (e) { setErr("Prompt draft failed: " + (e as Error).message); }
+    setLcBusy("");
+  }
+  async function lcAnimate() {
+    if (!pickedSrc) { setErr("Pick a cover candidate first."); return; }
+    if (!lcPrompt.trim()) { setErr("Draft (or write) the motion prompt first."); return; }
+    setErr(""); setLcBusy("animate");
+    try {
+      const r = await api.h3i2v({ still_id: pickedSrc, last_id: pickedSrc, prompt: lcPrompt,
+                                  frames: 243, width: 864, height: 480,
+                                  mode: "hunt", drafts: 2 }) as { drafts: { job_id: string; seed: number }[] };
+      const fresh: Cand[] = r.drafts.map((t) => ({ jobId: t.job_id, seed: t.seed }));
+      setLcTakes((p) => [...fresh, ...p]);
+      fresh.forEach((c) => {
+        waitMedia(c.jobId, (pct) => setLcTakes((p) => p.map((x) => x.jobId === c.jobId ? { ...x, pct } : x)))
+          .then((url) => { setLcTakes((p) => p.map((x) => x.jobId === c.jobId ? { ...x, url } : x)); ctx.onDone(); })
+          .catch(() => setLcTakes((p) => p.map((x) => x.jobId === c.jobId ? { ...x, err: "failed" } : x)));
+      });
+    } catch (e) { setErr("Animate failed: " + (e as Error).message); }
+    setLcBusy("");
+  }
+  async function lcUpscale() {
+    if (!lcPicked) return;
+    setErr(""); setLcBusy("upscale");
+    try {
+      const r = await api.flashvsr({ video_id: lcPicked, scale: 2 }) as { job_id: string };
+      const url = await waitMedia(r.job_id);
+      void url;
+      setLcFinal(r.job_id); ctx.onDone();
+    } catch (e) { setErr("Upscale failed: " + (e as Error).message); }
+    setLcBusy("");
+  }
+
+  // ---- background loops: generate (H3 t2v) -> loopify -> save to the named library ----
+  async function bgGenerate() {
+    if (!bgPrompt.trim() || !bgLabel.trim()) { setErr("Background needs a description and a name."); return; }
+    setErr(""); setBgBusy(true);
+    try {
+      const prompt = "integrated_multimodal_description: [Shot 1] " + bgPrompt.trim() +
+        " The camera is completely static, locked off for the entire 10 seconds, one continuous shot, " +
+        "no cuts, and the scene stays uniformly dark and sparse throughout.\n" +
+        "overall_soundscape: Quiet ambience.\nnon_diegetic_music: N/A";
+      const r = await api.h3t2v({ prompt, frames: 243, width: 864, height: 480, turbo: true }) as { job_id: string };
+      await waitMedia(r.job_id);
+      const lp = await api.ytLoopify({ clip_id: r.job_id, label: bgLabel.trim() + " (loop)" }) as { job_id: string };
+      await api.ytBackgroundsSave({ clip_id: lp.job_id, label: bgLabel.trim() });
+      await refreshBgs();
+      setBgId(lp.job_id); setBgPrompt(""); ctx.onDone();
+    } catch (e) { setErr("Background generation failed: " + (e as Error).message); }
+    setBgBusy(false);
+  }
 
   const audios = library.filter((i) => i.audio_url);
 
@@ -228,16 +304,33 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   }
 
   async function render() {
-    if (!picked) { setErr("Pick a cover candidate first."); return; }
     if (!audioId) { setErr("Pick the song track to use."); return; }
+    const loop = lcFinal || lcPicked;
+    let body: Record<string, unknown>;
+    if (style === "fullbleed") {
+      if (!loop) { setErr("Animate the cover first (Living cover section)."); return; }
+      body = { style, clip_id: loop, audio_id: audioId, title, res,
+               position: stampPos || undefined, scale: stampScale ? Number(stampScale) : undefined,
+               title_position: stampTitlePos || undefined,
+               title_scale: stampTitleScale ? Number(stampTitleScale) : undefined };
+    } else if (style === "card") {
+      if (!bgId) { setErr("Pick a background loop."); return; }
+      if (!loop && !pickedSrc) { setErr("Pick a cover candidate first."); return; }
+      body = { style, bg_id: bgId, clip_id: loop || undefined,
+               image_id: loop ? undefined : pickedSrc, audio_id: audioId, title, res };
+    } else {
+      if (!picked) { setErr("Pick a cover candidate first."); return; }
+      body = { image_id: picked, audio_id: audioId, title, res,
+               viz: vizStyle || undefined,
+               viz_position: vizStyle ? vizPos : undefined,
+               viz_scale: vizStyle ? Number(vizScale) : undefined };
+    }
     setErr(""); setRendering(true);
-    const card = { id: rid(), title: `YouTube video · ${title || "untitled"}`, status: "running" as const, pct: vizStyle ? 2 : 40 };
+    const animated = style !== "still" || !!vizStyle;
+    const card = { id: rid(), title: `YouTube video · ${title || "untitled"}`, status: "running" as const, pct: animated ? 2 : 40 };
     ctx.setResults([card]);
     try {
-      const r = await api.ytRender({ image_id: picked, audio_id: audioId, title, res,
-                                     viz: vizStyle || undefined,
-                                     viz_position: vizStyle ? vizPos : undefined,
-                                     viz_scale: vizStyle ? Number(vizScale) : undefined }) as { job_id: string; media_url?: string; status: string };
+      const r = await api.ytRender(body) as { job_id: string; media_url?: string; status: string };
       // static cover = sync (seconds); with a visualiser it is a background encode we poll
       const url = r.status === "done" && r.media_url
         ? r.media_url + "?t=" + Date.now()
@@ -501,6 +594,53 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </div>
       )}
 
+      <SectionTitle>Living cover · animate the picked art</SectionTitle>
+      {!pickedSrc ? (
+        <p className="text-[11px] text-[var(--color-muted)]">Pick a cover candidate first — the un-stamped art gets animated into a seamless 10s loop (H3, same frame pinned at both ends).</p>
+      ) : (
+        <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+          <div className="flex items-center gap-2">
+            <GhostButton onClick={lcDraftPrompt} disabled={lcBusy !== ""}>
+              {lcBusy === "prompt" ? "drafting…" : "✨ Draft motion prompt"}
+            </GhostButton>
+            <GhostButton onClick={lcAnimate} disabled={lcBusy !== "" || !lcPrompt.trim()}>
+              {lcBusy === "animate" ? "submitting…" : "▶ Animate (2 takes, box GPU)"}
+            </GhostButton>
+            {lcPicked && (
+              <GhostButton onClick={lcUpscale} disabled={lcBusy !== ""} title="FlashVSR 2x on the picked take — do this once you're happy with a take">
+                {lcBusy === "upscale" ? "upscaling…" : lcFinal ? "✓ upscaled" : "⬆ Upscale pick"}
+              </GhostButton>
+            )}
+          </div>
+          {lcPrompt && (
+            <textarea className={inp + " h-28 w-full font-mono text-[10px]"} value={lcPrompt}
+              onChange={(e) => setLcPrompt(e.target.value)} />
+          )}
+          {lcTakes.length > 0 && (
+            <div className="grid grid-cols-2 gap-1.5">
+              {lcTakes.map((t) => (
+                <div key={t.jobId} className={`overflow-hidden rounded border ${lcPicked === t.jobId ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"}`}>
+                  {t.url ? (
+                    <video src={t.url} muted loop autoPlay playsInline className="w-full" />
+                  ) : (
+                    <div className="flex h-24 items-center justify-center text-[11px] text-[var(--color-muted)]">
+                      {t.err || `rendering… ${t.pct || 0}%`}
+                    </div>
+                  )}
+                  {t.url && (
+                    <button onClick={() => { setLcPicked(t.jobId); setLcFinal(""); }}
+                      className="w-full bg-[var(--color-panel)] py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
+                      {lcPicked === t.jobId ? "✓ using this take" : "use this take"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-[var(--color-muted)]">Watch each take loop — reject any where background figures visibly speed up to reach the wrap point (per-seed; re-Animate for fresh seeds).</p>
+        </div>
+      )}
+
       <SectionTitle>3 · Make the video</SectionTitle>
       {pickedUrl && (
         <img src={pickedUrl} alt="" onClick={() => openLightbox(pickedUrl)} title="the chosen cover — click to enlarge"
@@ -512,14 +652,44 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           <option value="4k">3840 x 2160 (upscaled)</option>
         </select>
       </Field>
-      <Field label="Audio visualiser" hint="drawn from the actual samples (ffmpeg); animates the video, so the render takes minutes instead of seconds">
-        <select className={inp} value={vizStyle} onChange={(e) => setVizStyle(e.target.value)}>
-          <option value="">off — static cover (fast)</option>
-          <option value="waves">Waveform</option>
-          <option value="bars">Spectrum bars</option>
-          <option value="spectro">Scrolling spectrogram</option>
+      <Field label="Video style" hint="card = the layout you picked from the mocks: art in a card over an animated background, band + title beside it">
+        <select className={inp} value={style} onChange={(e) => setStyle(e.target.value)}>
+          <option value="still">Still cover (classic)</option>
+          <option value="fullbleed">Living cover — full-bleed loop</option>
+          <option value="card">Card visualizer — loop + background + lettering</option>
         </select>
       </Field>
+      {style === "card" && (
+        <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+          <Field label="Background loop">
+            <select className={inp} value={bgId} onChange={(e) => setBgId(e.target.value)}>
+              <option value="">choose…</option>
+              {bgs.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
+            </select>
+          </Field>
+          <div className="flex items-end gap-2">
+            <Field label="New background" hint="describe slow dark ambient motion (embers, mist, rain…) — generated on the box, looped, saved by name">
+              <input className={inp} value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)}
+                placeholder="slow drifting blue-grey mist over black…" />
+            </Field>
+            <Field label="Name">
+              <input className={inp + " w-36"} value={bgLabel} onChange={(e) => setBgLabel(e.target.value)} placeholder="mist" />
+            </Field>
+            <GhostButton onClick={bgGenerate} disabled={bgBusy}>{bgBusy ? "generating…" : "＋ Generate"}</GhostButton>
+          </div>
+          <p className="text-[10px] text-[var(--color-muted)]">The card shows the living cover when one is picked, otherwise the still art.</p>
+        </div>
+      )}
+      {style === "still" && (
+        <Field label="Audio visualiser" hint="drawn from the actual samples (ffmpeg); animates the video, so the render takes minutes instead of seconds">
+          <select className={inp} value={vizStyle} onChange={(e) => setVizStyle(e.target.value)}>
+            <option value="">off — static cover (fast)</option>
+            <option value="waves">Waveform</option>
+            <option value="bars">Spectrum bars</option>
+            <option value="spectro">Scrolling spectrogram</option>
+          </select>
+        </Field>
+      )}
       {vizStyle && (
         <Field label="Visualiser placement" hint="same 12 slots as the lettering — keep it off the face and the title">
           <div className="flex items-center gap-2">
@@ -532,7 +702,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       )}
       {err && <p className="text-xs text-red-400">{err}</p>}
       <PrimaryButton onClick={render} disabled={rendering || busy}
-        title={vizStyle ? "GPU-free ffmpeg on the Mac — an animated encode takes a few minutes" : "GPU-free ffmpeg on the Mac — a few seconds"}>
+        title={(style !== "still" || vizStyle) ? "GPU-free ffmpeg on the Mac — an animated encode takes a few minutes" : "GPU-free ffmpeg on the Mac — a few seconds"}>
         {rendering ? "Rendering…" : "Create YouTube video"}
       </PrimaryButton>
 
