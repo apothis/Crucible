@@ -386,6 +386,57 @@ def _run_progress(cmd, dur, progress_cb):
         raise RuntimeError(f"ffmpeg failed: {(proc.stderr.read() or '')[-400:]}")
 
 
+def loop_tail_report(path):
+    """Measure a living-cover loop's tail behavior (the end-pin failure modes, measured
+    2026-09-02 on The Endless Sea takes): decode to small grayscale, mean abs diff between
+    consecutive frames = motion. Returns
+      {frames, mid, tail_ratio, frozen_from, trim_frame}
+    mid        = mean motion across the middle half (the reference speed)
+    tail_ratio = final-second motion / mid  (< ~0.8 reads as an ease-in hesitation)
+    frozen_from= first frame of a terminal run with motion < 15% of mid (None if none)
+    trim_frame = suggested exclusive cut BEFORE the frozen run, but only while the cut
+                 frame still lands within ~1.3 frame-steps of frame 1 (deeper cuts turn
+                 the pause into a visible position jump - measured, do not trim harder)."""
+    import numpy as np
+    p = subprocess.run([_ffmpeg(), "-v", "error", "-i", path,
+                        "-vf", "scale=160:90,format=gray", "-f", "rawvideo", "-"],
+                       capture_output=True)
+    buf = np.frombuffer(p.stdout, dtype=np.uint8)
+    n = len(buf) // (160 * 90)
+    if n < 50:
+        raise ValueError("clip too short to analyze")
+    fr = buf[:n * 160 * 90].reshape(n, 90, 160).astype(np.int16)
+    motion = np.abs(np.diff(fr, axis=0)).mean(axis=(1, 2))
+    mid = float(motion[len(motion) // 4:3 * len(motion) // 4].mean())
+    tail = motion[-24:]
+    frozen_from = None
+    i = n - 1
+    while i >= 1 and motion[i - 1] < 0.15 * mid:
+        frozen_from = i
+        i -= 1
+    trim_frame = None
+    if frozen_from is not None:
+        f0 = fr[0]
+        cut = frozen_from
+        # walk back only while the wrap step stays ~one normal frame of motion
+        while cut > n - 24 and np.abs(fr[cut - 1] - f0).mean() > 1.3 * mid:
+            cut -= 1
+        if np.abs(fr[cut - 1] - f0).mean() <= 1.3 * mid:
+            trim_frame = cut
+    return {"frames": n, "mid": round(mid, 2),
+            "tail_ratio": round(float(tail.mean()) / mid, 2) if mid else 1.0,
+            "frozen_from": frozen_from, "trim_frame": trim_frame}
+
+
+def trim_frames(in_path, out_path, end_frame):
+    """Re-encode keeping frames [0, end_frame) - used to drop a loop's frozen tail."""
+    subprocess.run([_ffmpeg(), "-y", "-loglevel", "error", "-i", in_path,
+                    "-vf", f"select='lt(n,{int(end_frame)})'", "-vsync", "0", "-an",
+                    "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", out_path],
+                   check=True)
+    return out_path
+
+
 def seamless_loop(in_path, out_path, fade=1.5):
     """Crossfade a clip's head into its own tail -> a seamlessly loopable clip (duration
     shrinks by `fade`). The output's last frame flows straight into its first: verified

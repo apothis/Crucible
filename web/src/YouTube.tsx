@@ -15,7 +15,8 @@ import { openLightbox } from "./Lightbox";
 // ============================================================================
 
 type Concept = { name: string; overview: string; background: string; aesthetics: string; lighting: string; palette: string[]; title_style: string; features_woman?: boolean };
-type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number };
+type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number;
+  useId?: string; badge?: string };   // useId/badge: living-cover tail check (auto-trim)
 // The band wordmark + title lettering are GLOBAL app config (choose-once), not per-project drafts.
 type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number;
   title_font: string; title_treatment: string; title_position: string; title_scale: number;
@@ -167,7 +168,18 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       setLcTakes((p) => [...fresh, ...p]);
       fresh.forEach((c) => {
         waitMedia(c.jobId, (pct) => setLcTakes((p) => p.map((x) => x.jobId === c.jobId ? { ...x, pct } : x)))
-          .then((url) => { setLcTakes((p) => p.map((x) => x.jobId === c.jobId ? { ...x, url } : x)); ctx.onDone(); })
+          .then(async (url) => {
+            // wrap check: score the tail, auto-trim frozen frames (the measured playbook);
+            // the take tile plays and PICKS the repaired clip when one was made
+            let useId = c.jobId, badge = "";
+            try {
+              const chk = await api.ytLivecoverCheck({ clip_id: c.jobId }) as { clip_id: string; badge: string };
+              useId = chk.clip_id; badge = chk.badge;
+            } catch { /* raw take stays usable */ }
+            setLcTakes((p) => p.map((x) => x.jobId === c.jobId
+              ? { ...x, url: useId !== c.jobId ? `/api/media/${useId}?t=${Date.now()}` : url, useId, badge } : x));
+            ctx.onDone();
+          })
           .catch(() => setLcTakes((p) => p.map((x) => x.jobId === c.jobId ? { ...x, err: "failed" } : x)));
       });
     } catch (e) { setErr("Animate failed: " + (e as Error).message); }
@@ -621,7 +633,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           {lcTakes.length > 0 && (
             <div className="grid grid-cols-2 gap-1.5">
               {lcTakes.map((t) => (
-                <div key={t.jobId} className={`overflow-hidden rounded border ${lcPicked === t.jobId ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"}`}>
+                <div key={t.jobId} className={`overflow-hidden rounded border ${lcPicked === (t.useId || t.jobId) ? "border-[var(--color-accent2)] ring-1 ring-[var(--color-accent2)]" : "border-[var(--color-line)]"}`}>
                   {t.url ? (
                     <video src={t.url} muted loop autoPlay playsInline className="w-full" />
                   ) : (
@@ -630,9 +642,11 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                     </div>
                   )}
                   {t.url && (
-                    <button onClick={() => { setLcPicked(t.jobId); setLcFinal(""); }}
+                    <button onClick={() => { setLcPicked(t.useId || t.jobId); setLcFinal(""); }}
                       className="w-full bg-[var(--color-panel)] py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
-                      {lcPicked === t.jobId ? "✓ using this take" : "use this take"}
+                      {lcPicked === (t.useId || t.jobId) ? "✓ using this take" : "use this take"}
+                      {t.badge && t.badge !== "clean" && <span className="ml-1 text-[10px] text-[var(--color-accent)]">· {t.badge}</span>}
+                      {t.badge === "clean" && <span className="ml-1 text-[10px] text-emerald-500">· clean wrap</span>}
                     </button>
                   )}
                 </div>

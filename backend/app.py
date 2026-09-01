@@ -2781,6 +2781,43 @@ def youtube_render(body: dict):
     return {"job_id": jid, "status": "running"}
 
 
+@app.post("/api/youtube/livecover_check")
+def youtube_livecover_check(body: dict):
+    """Score a living-cover take's loop tail and auto-repair it (the wrap playbook,
+    measured 2026-09-02): frozen tail frames are trimmed to the optimal wrap-step frame
+    into a NEW library clip (retiming was tried and REJECTED - it microstutters); an
+    ease-in slowdown that can't be trimmed is reported as a badge. Body: {clip_id}.
+    Returns {clip_id (the one to USE - trimmed copy when repaired), badge, report}."""
+    clip = _lib_video_path(body.get("clip_id"))
+    if not clip:
+        raise HTTPException(400, "clip_id must reference a library video")
+    try:
+        rep = musicvideo_mod.loop_tail_report(clip)
+    except Exception as e:
+        raise HTTPException(500, f"analysis failed: {e}")
+    use_id = os.path.basename(str(body.get("clip_id") or ""))
+    trimmed = False
+    if rep.get("trim_frame"):
+        jid = uuid.uuid4().hex
+        out = os.path.join(LIBRARY, f"{jid}.mp4")
+        try:
+            musicvideo_mod.trim_frames(clip, out, rep["trim_frame"])
+            save_done_row(jid, "videoclip",
+                          {"title": "living cover (tail-trimmed)", "kind": "loop",
+                           "source": use_id, "trim_frame": rep["trim_frame"]}, out)
+            use_id, trimmed = jid, True
+            try:                       # the residual ease is judged on the TRIMMED clip
+                rep = {**musicvideo_mod.loop_tail_report(out), "trim_frame": rep["trim_frame"]}
+            except Exception:
+                pass
+        except Exception:
+            pass                       # analysis stands; the raw take remains usable
+    eases = rep.get("tail_ratio", 1.0) < 0.8
+    badge = (("trimmed" if trimmed else "") +
+             ("+eases" if trimmed and eases else "")) or ("eases into wrap" if eases else "clean")
+    return {"clip_id": use_id, "badge": badge, "trimmed": trimmed, "report": rep}
+
+
 @app.post("/api/youtube/loopify")
 def youtube_loopify(body: dict):
     """Crossfade a library clip's head into its tail -> a NEW seamlessly loopable clip

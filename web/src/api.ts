@@ -87,6 +87,7 @@ export const api = {
   ytCover: (p: unknown) => jpost("/api/youtube/cover", p),         // one Krea2 cover candidate (title typeset in)
   ytRender: (p: unknown) => jpost("/api/youtube/render", p),       // visuals + track -> upload-ready MP4 (sync for plain still)
   ytLivecoverPrompt: (p: unknown) => jpost("/api/youtube/livecover_prompt", p), // LLM motion prompt for the loop
+  ytLivecoverCheck: (p: unknown) => jpost("/api/youtube/livecover_check", p), // tail score + auto-trim
   ytLoopify: (p: unknown) => jpost("/api/youtube/loopify", p),     // clip -> seamless crossfade loop (sync)
   ytBackgrounds: () => jget("/api/youtube/backgrounds"),           // named background-loop library
   ytBackgroundsSave: (p: unknown) => jpost("/api/youtube/backgrounds", p),
