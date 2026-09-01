@@ -167,12 +167,11 @@ def _place(img, wm, position):
     return max(0, x), max(0, y)
 
 
-def stamp_layers(image_path, out_path, layers):
-    """Composite one or more text layers onto a cover still -> out_path (PNG). Each layer:
+def compose_layers(img, layers):
+    """Composite text layers onto an RGBA image IN PLACE. Each layer:
     {text, font, treatment, position, scale, max_h?}. `scale` = layer width as a fraction
     of the image width; `max_h` caps the height as a fraction (default 0.16 - the song
     TITLE passes ~0.22 so a tall blackletter face can carry a full headline)."""
-    img = Image.open(image_path).convert("RGBA")
     for l in layers:
         text = str(l.get("text") or "").strip()
         if not text:
@@ -184,7 +183,21 @@ def stamp_layers(image_path, out_path, layers):
         f = min((img.width * scale) / wm.width, (img.height * max_h) / wm.height)
         wm = wm.resize((max(1, round(wm.width * f)), max(1, round(wm.height * f))), Image.LANCZOS)
         img.alpha_composite(wm, _place(img, wm, l.get("position")))
-    img.convert("RGB").save(out_path, format="PNG")
+    return img
+
+
+def layers_plate(width, height, layers, out_path):
+    """The same text layers on a TRANSPARENT canvas -> RGBA PNG. Used as a static
+    ffmpeg overlay so lettering can sit on top of VIDEO (living covers)."""
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    compose_layers(img, layers).save(out_path, format="PNG")
+    return out_path
+
+
+def stamp_layers(image_path, out_path, layers):
+    """Composite one or more text layers onto a cover still -> out_path (PNG)."""
+    img = Image.open(image_path).convert("RGBA")
+    compose_layers(img, layers).convert("RGB").save(out_path, format="PNG")
     return out_path
 
 
@@ -193,3 +206,38 @@ def stamp(image_path, out_path, text, font_id, treatment, position="bottom", sca
     return stamp_layers(image_path, out_path,
                         [{"text": text, "font": font_id, "treatment": treatment,
                           "position": position, "scale": scale}])
+
+
+# Layout B ("card visualizer") geometry on a 1920x1080 canvas - the layout the user
+# picked from the mock PDF (2026-09-02): art card left, band + title column right,
+# waveform under the text. All consumers (plate below, musicvideo.card_video) share it.
+CARD_LAYOUT = {"card_x": 114, "card_y": 292, "card_w": 880, "card_h": 495,
+               "col_x": 1088, "col_w": 760,
+               "band_y": 300, "band_max_h": 210,
+               "title_y": 480, "title_max_h": 240,
+               "wave_x": 1118, "wave_y": 660, "wave_w": 700, "wave_h": 70}
+
+
+def card_plate(out_path, band_text, band_font, band_treatment,
+               title_text, title_font, title_treatment, width=1920, height=1080):
+    """The static overlay for the card-visualizer video: card border + band wordmark +
+    song title on a transparent canvas. The card interior stays transparent (the living
+    cover / still plays underneath); ffmpeg overlays this plate above it."""
+    L = {k: round(v * width / 1920) for k, v in CARD_LAYOUT.items()}
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
+                 L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
+                outline=(210, 190, 160, 90), width=4)
+
+    def put(text, font_id, treatment, y, max_h):
+        wm = render_wordmark(text, font_id, treatment, height=260)
+        f = min(L["col_w"] / wm.width, max_h / wm.height, 1.0)
+        wm = wm.resize((max(1, round(wm.width * f)), max(1, round(wm.height * f))), Image.LANCZOS)
+        img.alpha_composite(wm, (L["col_x"] + (L["col_w"] - wm.width) // 2, y))
+    if str(band_text or "").strip():
+        put(band_text, band_font, band_treatment, L["band_y"], L["band_max_h"])
+    if str(title_text or "").strip():
+        put(title_text, title_font, title_treatment, L["title_y"], L["title_max_h"])
+    img.save(out_path, format="PNG")
+    return out_path

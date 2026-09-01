@@ -2639,15 +2639,49 @@ def youtube_cover(p: dict):
     return video_still(req)
 
 
+def _yt_lettering_layers(body, title):
+    """The stamp layer list (title + band wordmark) used by both the still stamper and
+    the video lettering plates. Per-cover overrides come in on the body exactly like
+    /api/youtube/stamp."""
+    wm = _yt_wordmark_cfg()
+    for k in ("position", "scale", "title_position", "title_scale"):
+        if body.get(k) not in (None, ""):
+            wm[k] = body[k]
+    layers = []
+    if title:
+        layers.append({"text": title, "font": wm.get("title_font") or "unifraktur",
+                       "treatment": wm.get("title_treatment") or "ember",
+                       "position": wm.get("title_position") or "header",
+                       "scale": float(wm.get("title_scale") or 0.72), "max_h": 0.22})
+    if str(wm.get("text") or "").strip():
+        layers.append({"text": str(wm["text"]).strip(), "font": str(wm["font"]),
+                       "treatment": str(wm["treatment"]),
+                       "position": str(wm.get("position") or "bottom"),
+                       "scale": float(wm.get("scale") or 0.40)})
+    return layers, wm
+
+
+def _yt_scratch(name):
+    d = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "ytplates")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, name)
+
+
 @app.post("/api/youtube/render")
 def youtube_render(body: dict):
-    """Mux a picked cover still + a library track into an upload-ready static MP4
-    (GPU-free ffmpeg on the Mac: 1 fps x264 stillimage + AAC 320k + faststart).
-    Body: {image_id, audio_id, title?, res?: "1080p"|"4k"}. Synchronous - returns
-    {job_id, media_url, status: "done"}; download via GET /api/export/{job_id}."""
-    img = _lib_image_path(body.get("image_id") or "")
-    if not img:
-        raise HTTPException(400, "image_id must reference a generated still in the library")
+    """A library track + visuals -> an upload-ready MP4. Styles (body.style):
+      still     (default) the picked cover still; 1 fps unless viz is on (as before)
+      fullbleed a living-cover LOOP (body.clip_id) repeated for the whole song, with
+                the title/wordmark lettering overlaid as a plate
+      card      layout B: background loop (body.bg_id) + the cover (clip_id loop, or
+                image_id still) in a card + band/title column + waveform (body.viz
+                truthy by default for card)
+    Common: {audio_id, title?, res?: "1080p"|"4k"}; still also takes {image_id, viz?,
+    viz_position?, viz_scale?}; lettering overrides {position, scale, title_position,
+    title_scale} apply to fullbleed plates like /api/youtube/stamp.
+    still-without-viz is synchronous; everything else is a background job polled via
+    GET /api/job/{id}."""
+    style = str(body.get("style") or "still").strip().lower()
     audio = _lib_source_path(os.path.basename(str(body.get("audio_id") or "")))
     if not audio:
         raise HTTPException(400, "audio_id must reference a library track")
@@ -2657,33 +2691,83 @@ def youtube_render(body: dict):
     viz = str(body.get("viz") or "").strip().lower()
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.mp4")
-    params = {"title": title or "youtube video", "res": res,
-              "image_id": os.path.basename(str(body.get("image_id") or "")),
+    params = {"title": title or "youtube video", "res": res, "style": style,
               "audio_id": os.path.basename(str(body.get("audio_id") or ""))}
     artist = str(_yt_wordmark_cfg().get("text") or "")
-    if not viz:
-        try:
-            musicvideo_mod.still_video(img, audio, out, width=w, height=h, title=title,
-                                       artist=artist)
-        except Exception as e:
-            raise HTTPException(500, f"render failed: {e}")
-        save_done_row(jid, "ytvideo", params, out)
-        return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
-    # with a visualiser the output is a real 25 fps encode (minutes of Mac CPU, still
-    # GPU-free) - run it as a background job the UI polls via GET /api/job/{id}
-    params["viz"] = viz
-    dur = musicvideo_mod.audio_duration(audio)
-    with LOCK:
-        JOBS[jid] = {"created": time.time(), "mode": "ytvideo", "status": "running",
-                     "progress": 0, "max": max(1, int(dur)), "params": params}
 
-    def _render_viz():
-        try:
+    if style == "still":
+        img = _lib_image_path(body.get("image_id") or "")
+        if not img:
+            raise HTTPException(400, "image_id must reference a generated still in the library")
+        params["image_id"] = os.path.basename(str(body.get("image_id") or ""))
+        if not viz:
+            try:
+                musicvideo_mod.still_video(img, audio, out, width=w, height=h, title=title,
+                                           artist=artist)
+            except Exception as e:
+                raise HTTPException(500, f"render failed: {e}")
+            save_done_row(jid, "ytvideo", params, out)
+            return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+        params["viz"] = viz
+
+        def render():
             musicvideo_mod.still_video(
                 img, audio, out, width=w, height=h, title=title, artist=artist,
                 viz=viz, viz_position=str(body.get("viz_position") or "bottom-right"),
                 viz_scale=float(body.get("viz_scale") or 0.33),
                 progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
+
+    elif style == "fullbleed":
+        clip = _lib_video_path(body.get("clip_id"))
+        if not clip:
+            raise HTTPException(400, "clip_id must reference a library video (the living-cover loop)")
+        params["clip_id"] = os.path.basename(str(body.get("clip_id") or ""))
+        layers, _wm = _yt_lettering_layers(body, title)
+        plate = _yt_scratch(f"plate_{jid}.png")
+        wordmark_mod.layers_plate(w, h, layers, plate)
+
+        def render():
+            musicvideo_mod.fullbleed_video(
+                clip, audio, plate, out, width=w, height=h, title=title, artist=artist,
+                progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
+
+    elif style == "card":
+        bg = _lib_video_path(body.get("bg_id"))
+        if not bg:
+            raise HTTPException(400, "bg_id must reference a library video (a background loop)")
+        card_clip = _lib_video_path(body.get("clip_id")) if body.get("clip_id") else None
+        card_img = _lib_image_path(body.get("image_id") or "") if body.get("image_id") else None
+        card_src = card_clip or card_img
+        if not card_src:
+            raise HTTPException(400, "pass clip_id (living cover) or image_id (still) for the card")
+        params["bg_id"] = os.path.basename(str(body.get("bg_id") or ""))
+        params["clip_id" if card_clip else "image_id"] = os.path.basename(
+            str(body.get("clip_id") or body.get("image_id") or ""))
+        wmc = _yt_wordmark_cfg()
+        plate = _yt_scratch(f"plate_{jid}.png")
+        wordmark_mod.card_plate(plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
+                                str(wmc.get("treatment") or "ember"), title,
+                                str(wmc.get("title_font") or "unifraktur"),
+                                str(wmc.get("title_treatment") or "bone"), width=w, height=h)
+        layout = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
+        card_viz = body.get("viz", True) not in (False, "", "0", "off", "none")
+
+        def render():
+            musicvideo_mod.card_video(
+                bg, card_src, bool(card_clip), audio, plate, out, layout,
+                width=w, height=h, title=title, artist=artist, viz=card_viz,
+                progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
+    else:
+        raise HTTPException(400, f"unknown style: {style}")
+
+    dur = musicvideo_mod.audio_duration(audio)
+    with LOCK:
+        JOBS[jid] = {"created": time.time(), "mode": "ytvideo", "status": "running",
+                     "progress": 0, "max": max(1, int(dur)), "params": params}
+
+    def _render_job():
+        try:
+            render()
             with LOCK:
                 JOBS[jid]["audio_file"] = out
                 JOBS[jid]["status"] = "done"
@@ -2693,8 +2777,111 @@ def youtube_render(body: dict):
                 JOBS[jid]["status"] = "error"
                 JOBS[jid]["error"] = str(e)
 
-    threading.Thread(target=_render_viz, daemon=True).start()
+    threading.Thread(target=_render_job, daemon=True).start()
     return {"job_id": jid, "status": "running"}
+
+
+@app.post("/api/youtube/loopify")
+def youtube_loopify(body: dict):
+    """Crossfade a library clip's head into its tail -> a NEW seamlessly loopable clip
+    (for BACKGROUND loops from the t2v lane, which cannot pin their endpoints; H3 FLF
+    living covers loop natively and never need this). Body: {clip_id, fade?: 1.5,
+    label?}. Synchronous ffmpeg on the Mac."""
+    clip = _lib_video_path(body.get("clip_id"))
+    if not clip:
+        raise HTTPException(400, "clip_id must reference a library video")
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.mp4")
+    try:
+        musicvideo_mod.seamless_loop(clip, out, fade=float(body.get("fade") or 1.5))
+    except Exception as e:
+        raise HTTPException(500, f"loopify failed: {e}")
+    save_done_row(jid, "videoclip",
+                  {"title": str(body.get("label") or "seamless loop"),
+                   "source": os.path.basename(str(body.get("clip_id") or "")),
+                   "kind": "loop"}, out)
+    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
+@app.get("/api/youtube/backgrounds")
+def youtube_backgrounds():
+    """The named background-loop library for card videos: [{id, label}], stored in
+    app_config yt_backgrounds; rows whose media file has been deleted are filtered."""
+    out = []
+    for b in (CFG.get("yt_backgrounds") or []):
+        if _lib_video_path(b.get("id")):
+            out.append({"id": b["id"], "label": b.get("label") or b["id"][:8]})
+    return {"backgrounds": out}
+
+
+@app.post("/api/youtube/backgrounds")
+def youtube_backgrounds_save(body: dict):
+    """Add ({clip_id, label}) or remove ({remove: clip_id}) a background loop. Adding
+    expects an already-loopified clip (see /api/youtube/loopify)."""
+    bgs = [dict(b) for b in (CFG.get("yt_backgrounds") or [])]
+    if body.get("remove"):
+        bgs = [b for b in bgs if b.get("id") != os.path.basename(str(body["remove"]))]
+    else:
+        cid = os.path.basename(str(body.get("clip_id") or ""))
+        if not _lib_video_path(cid):
+            raise HTTPException(400, "clip_id must reference a library video")
+        bgs = [b for b in bgs if b.get("id") != cid]
+        bgs.append({"id": cid, "label": str(body.get("label") or "").strip() or cid[:8]})
+    cfg_path = os.path.join(os.path.dirname(LIBRARY), "app_config.json")
+    try:
+        with open(cfg_path) as f:
+            cur = json.load(f)
+    except Exception:
+        cur = {}
+    cur["yt_backgrounds"] = bgs
+    with open(cfg_path, "w") as f:
+        json.dump(cur, f, indent=2)
+    CFG["yt_backgrounds"] = bgs
+    return {"ok": True, "backgrounds": bgs}
+
+
+@app.post("/api/youtube/livecover_prompt")
+def youtube_livecover_prompt(body: dict):
+    """Draft the H3 FLF motion prompt for a living-cover loop from the cover's concept.
+    Deterministic wrapper (the alignment opening line, static-camera and return-to-start
+    clauses, N/A music) around an LLM-written motion body biased toward IN-PLACE ambient
+    motion (traveling background elements can visibly sprint to reach the pinned end
+    frame). Body: {title?, concept?, seconds? (10.12), provider?, model?}."""
+    seconds = float(body.get("seconds") or 10.12)
+    concept = body.get("concept") or {}
+    desc = "\n".join(f"{k}: {v}" for k, v in concept.items() if str(v or "").strip())
+    provider = body.get("provider") or llm_mod.best_provider()
+    model = body.get("model") or ""
+    if not model and provider in ("claude_sub", "claude_code", "claude"):
+        model = "claude-sonnet-5"
+    system = ("You write one paragraph of MOTION description for animating a static cover "
+              "artwork into a subtle seamless video loop. Output the paragraph ONLY - no "
+              "preamble, no markdown.")
+    prompt = (
+        "Describe, in one flowing paragraph of 3-5 sentences, the subtle ambient motion for "
+        "animating this cover artwork. Rules: every element stays IN PLACE (breathing, hair and "
+        "fabric drifting, flames flickering, sparks and embers rising, mist, lightning, swaying) - "
+        "nothing walks, travels or crosses the frame; the central figure stays in her pose but "
+        "alive (slow visible breathing, hair stirring); phrase all motion as slow and continuous "
+        f"for the entire {seconds:.0f} seconds. Plain ASCII.\n\n"
+        f"Song title: {body.get('title') or 'unknown'}\nThe artwork's concept:\n{desc or '(none)'}")
+    try:
+        motion = llm_mod.complete(provider, model, system, prompt,
+                                  CFG.get("claude_model", "claude-3-5-sonnet-latest"),
+                                  timeout=120).strip()
+    except Exception as e:
+        raise HTTPException(500, f"prompt draft failed: {e}")
+    full = (
+        "How the reference pictures align with the target video - Picture 1 (from Shot 1) aligns "
+        "with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the "
+        f"{seconds:.2f}-second mark of the target video.\n\n"
+        "integrated_multimodal_description: [Shot 1] " + motion +
+        f" The camera is completely static, locked off for the entire {seconds:.0f} seconds, one "
+        "continuous shot with no cuts. By the end of the shot every element returns to the exact "
+        "arrangement it started in.\n"
+        "overall_soundscape: Quiet scene ambience.\n"
+        "non_diegetic_music: N/A")
+    return {"prompt": full, "motion": motion}
 
 
 @app.post("/api/youtube/metadata")

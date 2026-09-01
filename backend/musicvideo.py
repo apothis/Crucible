@@ -368,6 +368,116 @@ def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1
     return out_path
 
 
+def _run_progress(cmd, dur, progress_cb):
+    """Run an ffmpeg command; with progress_cb, stream -progress and report seconds done."""
+    if not progress_cb:
+        subprocess.run(cmd, check=True)
+        return
+    cmd = cmd[:1] + ["-nostats", "-progress", "pipe:1"] + cmd[1:]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        if line.startswith("out_time_us="):
+            try:
+                progress_cb(int(line.split("=", 1)[1]) / 1e6, dur)
+            except ValueError:
+                pass
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {(proc.stderr.read() or '')[-400:]}")
+
+
+def seamless_loop(in_path, out_path, fade=1.5):
+    """Crossfade a clip's head into its own tail -> a seamlessly loopable clip (duration
+    shrinks by `fade`). The output's last frame flows straight into its first: verified
+    invisible on particle fields (embers/fog backgrounds); NOT needed for H3 FLF loops,
+    which pin their own endpoints. Video only (loops are muxed with the song later)."""
+    dur = _video_duration(in_path)
+    if dur <= 2 * fade + 0.5:
+        raise ValueError(f"clip too short ({dur:.1f}s) for a {fade}s crossfade loop")
+    off = round((dur - fade) - fade, 3)
+    fc = (f"[0:v]split[b][p];[p]trim=0:{fade},setpts=PTS-STARTPTS[fin];"
+          f"[b]trim={fade},setpts=PTS-STARTPTS[rest];"
+          f"[rest][fin]xfade=transition=fade:duration={fade}:offset={off}[v]")
+    subprocess.run([_ffmpeg(), "-y", "-loglevel", "error", "-i", in_path,
+                    "-filter_complex", fc, "-map", "[v]", "-an",
+                    "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", out_path],
+                   check=True)
+    return out_path
+
+
+def _video_duration(path):
+    out = subprocess.run([_ffmpeg().replace("ffmpeg", "ffprobe"), "-v", "error",
+                          "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                         capture_output=True, text=True, timeout=30)
+    return float(out.stdout.strip().split()[0])
+
+
+def _loop_av_cmd(dur, title, artist, out_path):
+    """Shared encode tail for the loop-video assemblers."""
+    cmd = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-r", "25",
+           "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart"]
+    if title:
+        cmd += ["-metadata", f"title={title}"]
+    if artist:
+        cmd += ["-metadata", f"artist={artist}"]
+    return cmd + ["-t", f"{dur:.3f}", out_path]
+
+
+def fullbleed_video(loop_path, audio_path, plate_path, out_path,
+                    width=1920, height=1080, title="", artist="", progress_cb=None):
+    """Living-cover video, layout C: the loop clip repeats for the whole song, scaled and
+    padded to the canvas, with the transparent lettering plate (wordmark/title) on top."""
+    dur = audio_duration(audio_path)
+    if dur <= 0:
+        raise ValueError("could not read the audio duration")
+    fc = (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+          f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];"
+          f"[bg][2:v]overlay=0:0[v]")
+    cmd = [_ffmpeg(), "-y", "-loglevel", "error",
+           "-stream_loop", "-1", "-i", loop_path,
+           "-i", audio_path, "-i", plate_path,
+           "-filter_complex", fc, "-map", "[v]", "-map", "1:a"]
+    _run_progress(cmd + _loop_av_cmd(dur, title, artist, out_path), dur, progress_cb)
+    return out_path
+
+
+def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, out_path,
+               layout, width=1920, height=1080, title="", artist="",
+               viz=True, progress_cb=None):
+    """Card-visualizer video, layout B (the user's pick): background loop full-frame,
+    the cover (living-cover loop or still) inside the card, the card_plate PNG
+    (border + band + title) on top, and an audio-reactive waveform in the text column.
+    `layout` = wordmark.CARD_LAYOUT scaled to the canvas by the caller."""
+    dur = audio_duration(audio_path)
+    if dur <= 0:
+        raise ValueError("could not read the audio duration")
+    L = layout
+    cmd = [_ffmpeg(), "-y", "-loglevel", "error",
+           "-stream_loop", "-1", "-i", bg_loop_path]
+    if card_is_video:
+        cmd += ["-stream_loop", "-1", "-i", card_path]
+    else:
+        cmd += ["-loop", "1", "-framerate", "25", "-i", card_path]
+    cmd += ["-i", audio_path, "-i", plate_path]
+    fc = (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+          f"crop={width}:{height},setsar=1[bg];"
+          f"[1:v]scale={L['card_w']}:{L['card_h']}:force_original_aspect_ratio=decrease,"
+          f"pad={L['card_w']}:{L['card_h']}:(ow-iw)/2:(oh-ih)/2,setsar=1[card];"
+          f"[bg][card]overlay={L['card_x']}:{L['card_y']}[b1];"
+          f"[b1][3:v]overlay=0:0[b2];")
+    if viz:
+        fc += (f"[2:a]aformat=channel_layouts=mono,"
+               f"showwaves=s={L['wave_w']}x{L['wave_h']}:mode=cline:rate=25:draw=full:"
+               f"colors=0xff9a4d[vz0];[vz0]colorkey=0x000000:0.10:0.30[vz];"
+               f"[b2][vz]overlay={L['wave_x']}:{L['wave_y']}[v]")
+    else:
+        fc += "[b2]null[v]"
+    cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "2:a"]
+    _run_progress(cmd + _loop_av_cmd(dur, title, artist, out_path), dur, progress_cb)
+    return out_path
+
+
 def retime(in_path, out_path, speed, fps=24):
     """Speed up (or down) a clip, GPU-free. speed > 1 = faster/shorter (fixes uniform slow-motion
     by scaling the whole clip back to natural speed). Re-encodes at `fps`; drops any per-clip
