@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type Config, type LibItem } from "./api";
 import { Field, GhostButton, PrimaryButton, SectionTitle, inp, rid, type RunCtx } from "./ui";
 import { useDraftCtx, useDrafts } from "./drafts";
@@ -29,6 +29,21 @@ const VIZ_SIZES: { label: string; scale: number }[] = [
   { label: "S", scale: 0.25 }, { label: "M", scale: 0.33 }, { label: "L", scale: 0.45 }];
 
 const EMPTY_CONCEPT: Concept = { name: "", overview: "", background: "", aesthetics: "", lighting: "", palette: [], title_style: "" };
+
+// Section header with a pipeline-state chip so the page reads as a FLOW: what is
+// finished, what needs doing next, what is optional.
+function StepTitle({ children, state }: { children: ReactNode; state: "done" | "next" | "todo" | "optional" }) {
+  const chip = state === "done" ? ["✓ done", "text-emerald-500 border-emerald-800"]
+    : state === "next" ? ["● next", "text-[var(--color-accent)] border-[var(--color-accent)]"]
+    : state === "optional" ? ["optional", "text-[var(--color-muted)] border-[var(--color-line)]"]
+    : ["·", "text-[var(--color-muted)] border-[var(--color-line)]"];
+  return (
+    <div className="flex items-center gap-2">
+      <SectionTitle>{children}</SectionTitle>
+      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${chip[1]}`}>{chip[0]}</span>
+    </div>
+  );
+}
 
 // 12-slot placement picker: a mini map of the cover mirroring backend/wordmark.py
 // POSITIONS (4 vertical bands x 3 columns; bare band name = centered).
@@ -185,15 +200,15 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     } catch (e) { setErr("Animate failed: " + (e as Error).message); }
     setLcBusy("");
   }
-  async function lcUpscale() {
-    if (!lcPicked) return;
-    setErr(""); setLcBusy("upscale");
+  // Picking a take IS declaring it the keeper, so the FlashVSR upscale fires
+  // automatically - no hidden extra button (that UI failed; user 2026-09-02).
+  async function lcPick(id: string) {
+    setErr(""); setLcPicked(id); setLcFinal(""); setLcBusy("upscale");
     try {
-      const r = await api.flashvsr({ video_id: lcPicked, scale: 2 }) as { job_id: string };
-      const url = await waitMedia(r.job_id);
-      void url;
+      const r = await api.flashvsr({ video_id: id, scale: 2 }) as { job_id: string };
+      await waitMedia(r.job_id);
       setLcFinal(r.job_id); ctx.onDone();
-    } catch (e) { setErr("Upscale failed: " + (e as Error).message); }
+    } catch (e) { setErr("Upscale failed - the video would use the soft 480p take: " + (e as Error).message); }
     setLcBusy("");
   }
 
@@ -364,7 +379,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         title in the image, pick one, and it is muxed with the full track into a static MP4 (1 fps, AAC 320k).
       </p>
 
-      <SectionTitle>1 · Song</SectionTitle>
+      <StepTitle state={(title.trim() && audioId) ? "done" : "next"}>1 · Song &amp; track</StepTitle>
       <Field label="Song title" hint="rendered INTO the artwork; the band name is stamped as a wordmark (step 2)">
         <input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Ashes of the Dawn" />
       </Field>
@@ -375,7 +390,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </select>
       </Field>
 
-      <SectionTitle>2 · Cover art</SectionTitle>
+      <StepTitle state={pickedSrc ? "done" : (title.trim() && audioId) ? "next" : "todo"}>2 · Cover art</StepTitle>
       <Field label="Visual notes" hint="optional — imagery, setting or symbols the art should show; Claude weighs these when proposing ideas">
         <textarea className={inp} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
           placeholder="e.g. a burning longship, northern coastline, no people" />
@@ -608,26 +623,50 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </div>
       )}
 
-      <SectionTitle>Living cover · animate the picked art</SectionTitle>
+      <StepTitle state={lcFinal ? "done" : !pickedSrc ? "todo" : style === "still" ? "optional" : "next"}>
+        3 · Animate the cover
+      </StepTitle>
       {!pickedSrc ? (
-        <p className="text-[11px] text-[var(--color-muted)]">Pick a cover candidate first — the un-stamped art gets animated into a seamless 10s loop (H3, same frame pinned at both ends).</p>
+        <p className="text-[11px] text-[var(--color-muted)]">Needs a picked cover (step 2). The un-stamped art becomes a seamless 10s breathing loop.</p>
       ) : (
         <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
-          <div className="flex items-center gap-2">
-            <GhostButton onClick={lcDraftPrompt} disabled={lcBusy !== ""}>
-              {lcBusy === "prompt" ? "drafting…" : "✨ Draft motion prompt"}
-            </GhostButton>
-            <GhostButton onClick={lcAnimate} disabled={lcBusy !== "" || !lcPrompt.trim()}>
-              {lcBusy === "animate" ? "submitting…" : "▶ Animate (2 takes, box GPU)"}
-            </GhostButton>
-            {lcPicked && (
-              <GhostButton onClick={lcUpscale} disabled={lcBusy !== ""} title="FlashVSR 2x on the picked take — do this once you're happy with a take">
-                {lcBusy === "upscale" ? "upscaling…" : lcFinal ? "✓ upscaled" : "⬆ Upscale pick"}
-              </GhostButton>
-            )}
-          </div>
+          {(() => {
+            const stage = lcBusy === "upscale" ? "upscaling"
+              : lcFinal ? "done"
+              : lcTakes.some((t) => t.url) ? "pick"
+              : lcTakes.length > 0 ? "rendering"
+              : lcPrompt.trim() ? "animate" : "prompt";
+            const line: Record<string, string> = {
+              prompt: "Step 1 of 3 — draft the motion prompt (editable before rendering).",
+              animate: "Step 2 of 3 — render two takes on the box (~2 min each).",
+              rendering: "Rendering takes on the box… they appear below as they finish, pre-checked for loop problems.",
+              pick: "Step 3 of 3 — pick the best take. Picking upscales it automatically.",
+              upscaling: "Upscaling your pick on the box (~1 min)…",
+              done: "✓ Ready — the upscaled loop will be used by step 4.",
+            };
+            return (
+              <div className="flex items-center gap-2">
+                <p className={`text-[11px] ${stage === "done" ? "text-emerald-500" : "text-[var(--color-ink)]"}`}>{line[stage]}</p>
+                <span className="ml-auto flex gap-2">
+                  {stage === "prompt" && (
+                    <PrimaryButton onClick={lcDraftPrompt} disabled={lcBusy !== ""}>
+                      {lcBusy === "prompt" ? "drafting…" : "✨ Draft motion prompt"}
+                    </PrimaryButton>
+                  )}
+                  {(stage === "animate" || stage === "pick" || stage === "done") && (
+                    stage === "animate"
+                      ? <PrimaryButton onClick={lcAnimate} disabled={lcBusy !== ""}>▶ Animate 2 takes</PrimaryButton>
+                      : <GhostButton onClick={lcAnimate} disabled={lcBusy !== ""} title="two more takes with fresh seeds">↻ 2 more takes</GhostButton>
+                  )}
+                  {stage !== "prompt" && (
+                    <GhostButton onClick={lcDraftPrompt} disabled={lcBusy !== ""} title="rewrite the motion prompt">✨ redraft</GhostButton>
+                  )}
+                </span>
+              </div>
+            );
+          })()}
           {lcPrompt && (
-            <textarea className={inp + " h-28 w-full font-mono text-[10px]"} value={lcPrompt}
+            <textarea className={inp + " h-24 w-full font-mono text-[10px]"} value={lcPrompt}
               onChange={(e) => setLcPrompt(e.target.value)} />
           )}
           {lcTakes.length > 0 && (
@@ -642,9 +681,11 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                     </div>
                   )}
                   {t.url && (
-                    <button onClick={() => { setLcPicked(t.useId || t.jobId); setLcFinal(""); }}
-                      className="w-full bg-[var(--color-panel)] py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
-                      {lcPicked === (t.useId || t.jobId) ? "✓ using this take" : "use this take"}
+                    <button onClick={() => lcPick(t.useId || t.jobId)} disabled={lcBusy === "upscale"}
+                      className="w-full bg-[var(--color-panel)] py-1.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
+                      {lcPicked === (t.useId || t.jobId)
+                        ? (lcBusy === "upscale" ? "⏳ picked — upscaling…" : lcFinal ? "✓ picked & upscaled" : "✓ picked")
+                        : "use this take"}
                       {t.badge && t.badge !== "clean" && <span className="ml-1 text-[10px] text-[var(--color-accent)]">· {t.badge}</span>}
                       {t.badge === "clean" && <span className="ml-1 text-[10px] text-emerald-500">· clean wrap</span>}
                     </button>
@@ -653,11 +694,12 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
               ))}
             </div>
           )}
-          <p className="text-[10px] text-[var(--color-muted)]">Watch each take loop — reject any where background figures visibly speed up to reach the wrap point (per-seed; re-Animate for fresh seeds).</p>
         </div>
       )}
 
-      <SectionTitle>3 · Make the video</SectionTitle>
+      <StepTitle state={(audioId && (style === "still" ? picked : style === "card" ? (bgId && (lcFinal || lcPicked || pickedSrc)) : (lcFinal || lcPicked))) ? "next" : "todo"}>
+        4 · Make the video
+      </StepTitle>
       {pickedUrl && (
         <img src={pickedUrl} alt="" onClick={() => openLightbox(pickedUrl)} title="the chosen cover — click to enlarge"
           className="max-h-40 cursor-zoom-in rounded-lg border border-[var(--color-line)]" />
@@ -717,12 +759,24 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         </Field>
       )}
       {err && <p className="text-xs text-red-400">{err}</p>}
+      <p className="rounded-md border border-[var(--color-line)] bg-[var(--color-panel2)] px-2.5 py-1.5 text-[11px] text-[var(--color-muted)]">
+        Will render:{" "}
+        <span className="text-[var(--color-ink)]">
+          {style === "still"
+            ? `stamped still${vizStyle ? ` + ${vizStyle} visualiser` : ""}`
+            : style === "fullbleed"
+              ? (lcFinal ? "living cover (upscaled) + lettering" : lcPicked ? "living cover (480p — not upscaled yet)" : "⚠ no animated cover yet (step 3)")
+              : `card: ${(lcFinal || lcPicked) ? `living cover${lcFinal ? " (upscaled)" : " (480p)"}` : "still art"} over ${bgs.find((b) => b.id === bgId)?.label || "⚠ no background chosen"} + lettering + waveform`}
+        </span>
+        {" · "}{res}
+        {" · "}{audioId ? (audios.find((a) => a.id === audioId) ? `track: ${audioLabel(audios.find((a) => a.id === audioId)!)}` : "track selected") : "⚠ no track chosen"}
+      </p>
       <PrimaryButton onClick={render} disabled={rendering || busy}
         title={(style !== "still" || vizStyle) ? "GPU-free ffmpeg on the Mac — an animated encode takes a few minutes" : "GPU-free ffmpeg on the Mac — a few seconds"}>
         {rendering ? "Rendering…" : "Create YouTube video"}
       </PrimaryButton>
 
-      <SectionTitle>4 · Upload text</SectionTitle>
+      <StepTitle state={meta ? "done" : "optional"}>5 · Upload text</StepTitle>
       <GhostButton onClick={writeMeta} disabled={metaBusy} title="Claude writes the title line, description (keywords + hashtags) and tags from the song">
         {metaBusy ? "Writing…" : meta ? "↻ Rewrite upload text" : "✦ Write upload text"}
       </GhostButton>
