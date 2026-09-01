@@ -311,9 +311,27 @@ def _viz_filter(viz, width, height, position, scale):
             f"[bg][vz]overlay={max(0, x)}:{max(0, y)}[v]")
 
 
+def _motion_chain(motion, width, height, frames):
+    """Animated background chain for still_video (Ken Burns style camera drift on
+    the cover). The art is scaled/padded onto a 2x supersampled canvas first so
+    zoompan's integer-pixel crop doesn't visibly jitter, then cropped back to the
+    output size while the zoom expression runs over the whole song.
+      push    - one slow push-in, 1.00 -> 1.10 across the full track
+      breathe - gentle zoom oscillation (about 45 s per cycle, +/- 1.5%)"""
+    sw, sh = width * 2, height * 2
+    if motion == "breathe":
+        z = f"1.045+0.015*sin(2*PI*in/{45 * 25})"
+    else:  # "push"
+        z = f"min(1+0.10*in/{max(1, frames)},1.10)"
+    return (f"scale={sw}:{sh}:force_original_aspect_ratio=decrease,"
+            f"pad={sw}:{sh}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+            f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d=1:s={width}x{height}")
+
+
 def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1,
                 title="", artist="", viz="", viz_position="bottom-right", viz_scale=0.33,
-                progress_cb=None):
+                motion="", progress_cb=None):
     """One cover still + the full song -> an upload-ready static MP4 (the YouTube
     "art track" shape). GPU-free ffmpeg on the Mac: the image loops at `fps` (1 fps
     makes the video stream nearly free next to the audio), scaled and padded onto a
@@ -321,9 +339,10 @@ def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1
     comes from ffprobe on the audio and is passed as an explicit -t: the classic
     -loop/-shortest pairing can keep muxing past the audio end (interleave quirk),
     and an explicit duration sidesteps it.
-    viz ("waves"|"bars"|"spectro") overlays an audio-reactive visualiser, which turns
-    the output into a real 25 fps encode (minutes of CPU instead of seconds - pass
-    progress_cb(seconds_done, total_seconds) and run it off-thread)."""
+    viz ("waves"|"bars"|"spectro") overlays an audio-reactive visualiser and
+    motion ("push"|"breathe") drifts the camera over the art (combinable) - either
+    turns the output into a real 25 fps encode (minutes of CPU instead of seconds -
+    pass progress_cb(seconds_done, total_seconds) and run it off-thread)."""
     dur = audio_duration(audio_path)
     if dur <= 0:
         raise ValueError("could not read the audio duration")
@@ -332,12 +351,18 @@ def still_video(image_path, audio_path, out_path, width=1920, height=1080, fps=1
     cmd = [_ffmpeg(), "-y", "-loglevel", "error"]
     if progress_cb:
         cmd += ["-nostats", "-progress", "pipe:1"]
-    if viz:
+    if viz or motion:
+        bg_vf = _motion_chain(motion, width, height, int(dur * 25)) if motion else base_vf
+        graph = f"[0:v]{bg_vf}[bg];"
+        if viz:
+            graph += _viz_filter(viz, width, height, viz_position, viz_scale)
+            out_pad = "[v]"
+        else:
+            out_pad = "[bg]"
         cmd += ["-loop", "1", "-framerate", "25", "-i", image_path,
                 "-i", audio_path,
-                "-filter_complex",
-                f"[0:v]{base_vf}[bg];" + _viz_filter(viz, width, height, viz_position, viz_scale),
-                "-map", "[v]", "-map", "1:a",
+                "-filter_complex", graph,
+                "-map", out_pad, "-map", "1:a",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-pix_fmt", "yuv420p", "-r", "25"]
     else:

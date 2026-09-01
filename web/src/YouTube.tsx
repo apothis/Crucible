@@ -98,6 +98,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [vizStyle, setVizStyle] = d.use("vizStyle", "");
   const [vizPos, setVizPos] = d.use("vizPos", "bottom-right");
   const [vizScale, setVizScale] = d.use("vizScale", "0.33");
+  // camera drift over the art ("" = static); combinable with the visualiser
+  const [motion, setMotion] = d.use("motion", "");
   // How the song TITLE gets onto the art. "stamped" (default) = deterministic typography,
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
   // misspelled every take of a 5-word title, so it is the opt-in now.
@@ -231,13 +233,14 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     if (!picked) { setErr("Pick a cover candidate first."); return; }
     if (!audioId) { setErr("Pick the song track to use."); return; }
     setErr(""); setRendering(true);
-    const card = { id: rid(), title: `YouTube video · ${title || "untitled"}`, status: "running" as const, pct: vizStyle ? 2 : 40 };
+    const card = { id: rid(), title: `YouTube video · ${title || "untitled"}`, status: "running" as const, pct: (vizStyle || motion) ? 2 : 40 };
     ctx.setResults([card]);
     try {
       const r = await api.ytRender({ image_id: picked, audio_id: audioId, title, res,
                                      viz: vizStyle || undefined,
                                      viz_position: vizStyle ? vizPos : undefined,
-                                     viz_scale: vizStyle ? Number(vizScale) : undefined }) as { job_id: string; media_url?: string; status: string };
+                                     viz_scale: vizStyle ? Number(vizScale) : undefined,
+                                     motion: motion || undefined }) as { job_id: string; media_url?: string; status: string };
       // static cover = sync (seconds); with a visualiser it is a background encode we poll
       const url = r.status === "done" && r.media_url
         ? r.media_url + "?t=" + Date.now()
@@ -512,6 +515,13 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           <option value="4k">3840 x 2160 (upscaled)</option>
         </select>
       </Field>
+      <Field label="Motion" hint="slow camera drift over the art — the cheapest way out of static-image territory; combinable with the visualiser">
+        <select className={inp} value={motion} onChange={(e) => setMotion(e.target.value)}>
+          <option value="">off — static cover</option>
+          <option value="push">Slow push-in (Ken Burns)</option>
+          <option value="breathe">Breathe (gentle zoom cycles)</option>
+        </select>
+      </Field>
       <Field label="Audio visualiser" hint="drawn from the actual samples (ffmpeg); animates the video, so the render takes minutes instead of seconds">
         <select className={inp} value={vizStyle} onChange={(e) => setVizStyle(e.target.value)}>
           <option value="">off — static cover (fast)</option>
@@ -532,7 +542,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       )}
       {err && <p className="text-xs text-red-400">{err}</p>}
       <PrimaryButton onClick={render} disabled={rendering || busy}
-        title={vizStyle ? "GPU-free ffmpeg on the Mac — an animated encode takes a few minutes" : "GPU-free ffmpeg on the Mac — a few seconds"}>
+        title={(vizStyle || motion) ? "GPU-free ffmpeg on the Mac — an animated encode takes a few minutes" : "GPU-free ffmpeg on the Mac — a few seconds"}>
         {rendering ? "Rendering…" : "Create YouTube video"}
       </PrimaryButton>
 
