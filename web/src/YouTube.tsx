@@ -87,7 +87,9 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [wmTreatments, setWmTreatments] = useState<string[]>([]);
   const [wmPositions, setWmPositions] = useState<string[]>([]);
   const [wm, setWm] = useState<Wordmark | null>(null);
-  const [wmOpen, setWmOpen] = useState(true);   // open by default - hidden behind a tiny link, nobody found the pickers
+  // collapsed by default (user request 2026-09-02): the font grids eat too much space to
+  // live open; the per-cover placement grids + sizes stay visible above at all times
+  const [wmOpen, setWmOpen] = useState(false);
   // per-cover placement overrides ("" = use the saved global) - placement depends on the
   // artwork (keep the wordmark off the subject), so it is chosen at pick time
   const [stampPos, setStampPos] = d.use("stampPos", "");
