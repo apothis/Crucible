@@ -2805,6 +2805,10 @@ def youtube_livecover_check(body: dict):
             save_done_row(jid, "videoclip",
                           {"title": "living cover (tail-trimmed)", "kind": "loop",
                            "source": use_id, "trim_frame": rep["trim_frame"]}, out)
+            # the raw take is superseded by its repaired copy - file it under the
+            # Tests bucket so 2 takes stay 2 rows in the main library view
+            with db() as conn:
+                conn.execute("UPDATE jobs SET bucket='tests' WHERE id=?", (use_id,))
             use_id, trimmed = jid, True
             try:                       # the residual ease is judged on the TRIMMED clip
                 rep = {**musicvideo_mod.loop_tail_report(out), "trim_frame": rep["trim_frame"]}
