@@ -146,7 +146,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // Prefill the title from the Song page (or the Music 3 tab) once, if it is empty.
   useEffect(() => {
     if (title) return;
-    const t = (drafts.get("song", "title") as string) || (drafts.get("music3", "title") as string) || "";
+    const t = (drafts.get("song", "title") as string) || (drafts.get("music3", "title") as string) || (drafts.get("suno", "title") as string) || "";
     if (t) setTitle(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -247,16 +247,18 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     setErr(""); setSuggesting(true);
     try {
       // Lyrics come from the Song page's blocks; if that page is empty, fall back to the
-      // Music 3 tab's plain lyrics. The Music 3 song brief rides along as extra direction.
+      // Music 3 tab's plain lyrics, then to the Suno tab's sheet (a Suno-only project has
+      // its whole song there). The Music 3 brief - or failing that the Suno style field -
+      // rides along as extra direction, and the Suno style stands in for tags.
       const blocks = (drafts.get("song", "blocks") as { lyrics?: string }[] | undefined) || [];
       let sections = blocks.map((b) => ({ lyrics: b.lyrics || "" })).filter((s) => s.lyrics.trim());
       if (!sections.length) {
-        const m3 = (drafts.get("music3", "lyrics") as string) || "";
+        const m3 = (drafts.get("music3", "lyrics") as string) || (drafts.get("suno", "lyrics") as string) || "";
         if (m3.trim()) sections = [{ lyrics: m3 }];
       }
-      const brief = (drafts.get("music3", "brief") as string) || "";
+      const brief = (drafts.get("music3", "brief") as string) || (drafts.get("suno", "style") as string) || "";
       const allNotes = [notes.trim(), brief.trim()].filter(Boolean).join("\n");
-      const song = { title, tags: (drafts.get("song", "tags") as string) || "", sections };
+      const song = { title, tags: (drafts.get("song", "tags") as string) || (drafts.get("suno", "style") as string) || "", sections };
       const r = await api.ytConcepts({ title, song, notes: allNotes || undefined, n: 4 }) as { concepts: Concept[] };
       setConcepts(r.concepts);
       if (r.concepts[0]) setConcept(r.concepts[0]);
@@ -322,10 +324,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       const blocks = (drafts.get("song", "blocks") as { lyrics?: string }[] | undefined) || [];
       let sections = blocks.map((b) => ({ lyrics: b.lyrics || "" })).filter((s) => s.lyrics.trim());
       if (!sections.length) {
-        const m3 = (drafts.get("music3", "lyrics") as string) || "";
+        const m3 = (drafts.get("music3", "lyrics") as string) || (drafts.get("suno", "lyrics") as string) || "";
         if (m3.trim()) sections = [{ lyrics: m3 }];
       }
-      const song = { title, tags: (drafts.get("song", "tags") as string) || "", sections };
+      const song = { title, tags: (drafts.get("song", "tags") as string) || (drafts.get("suno", "style") as string) || "", sections };
       const r = await api.ytMetadata({ title, song, notes: notes.trim() || undefined }) as { video_title: string; description: string; tags: string[] };
       setMeta(r);
     } catch (e) { setErr("Upload text failed: " + (e as Error).message); }
