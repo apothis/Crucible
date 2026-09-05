@@ -2788,14 +2788,66 @@ def youtube_livecover_check(body: dict):
     into a NEW library clip (retiming was tried and REJECTED - it microstutters); an
     ease-in slowdown that can't be trimmed is reported as a badge. Body: {clip_id}.
     Returns {clip_id (the one to USE - trimmed copy when repaired), badge, report}."""
-    clip = _lib_video_path(body.get("clip_id"))
+    return _livecover_check(os.path.basename(str(body.get("clip_id") or "")))
+
+
+@app.post("/api/youtube/import_clip")
+async def youtube_import_clip(file: UploadFile = File(...), loopify: str = Form("0"),
+                              label: str = Form(None)):
+    """Bring an EXTERNALLY made loop (OpenArt/Kling/Seedance etc.) straight into the
+    living-cover flow, skipping generation: the upload becomes a library clip
+    (transcoded to h264 mp4 when needed, audio dropped - the song is muxed at render),
+    optionally crossfade-looped for clips whose ends don't match (loopify=1), then run
+    through the same wrap check as generated takes. Returns what /livecover_check does."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty upload")
+    jid = uuid.uuid4().hex
+    scratch = _yt_scratch(f"import_{jid}{os.path.splitext(file.filename or '')[1] or '.mp4'}")
+    with open(scratch, "wb") as f:
+        f.write(data)
+    out = os.path.join(LIBRARY, f"{jid}.mp4")
+    try:
+        import subprocess
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", scratch, "-an",
+                        "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
+                        "-movflags", "+faststart", out], check=True, timeout=600)
+    except Exception as e:
+        raise HTTPException(500, f"could not read that video: {e}")
+    finally:
+        try:
+            os.remove(scratch)
+        except OSError:
+            pass
+    name = (label or os.path.splitext(file.filename or "")[0] or "imported loop")[:120]
+    save_done_row(jid, "videoclip", {"title": f"{name} (imported)", "kind": "loop",
+                                     "imported": True, "engine": "external"}, out)
+    use_id = jid
+    if str(loopify).lower() in ("1", "true", "yes", "on"):
+        lid = uuid.uuid4().hex
+        lout = os.path.join(LIBRARY, f"{lid}.mp4")
+        try:
+            musicvideo_mod.seamless_loop(out, lout, fade=1.5)
+        except Exception as e:
+            raise HTTPException(500, f"loopify failed: {e}")
+        save_done_row(lid, "videoclip", {"title": f"{name} (loop)", "kind": "loop",
+                                         "source": jid}, lout)
+        with db() as conn:
+            conn.execute("UPDATE jobs SET bucket='tests' WHERE id=?", (jid,))
+        use_id = lid
+    res = _livecover_check(use_id)
+    res["media_url"] = f"/api/media/{res['clip_id']}"
+    return res
+
+
+def _livecover_check(use_id: str):
+    clip = _lib_video_path(use_id)
     if not clip:
         raise HTTPException(400, "clip_id must reference a library video")
     try:
         rep = musicvideo_mod.loop_tail_report(clip)
     except Exception as e:
         raise HTTPException(500, f"analysis failed: {e}")
-    use_id = os.path.basename(str(body.get("clip_id") or ""))
     trimmed = False
     if rep.get("trim_frame"):
         jid = uuid.uuid4().hex

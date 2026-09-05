@@ -16,7 +16,7 @@ import { openLightbox } from "./Lightbox";
 
 type Concept = { name: string; overview: string; background: string; aesthetics: string; lighting: string; palette: string[]; title_style: string; features_woman?: boolean };
 type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number;
-  useId?: string; badge?: string };   // useId/badge: living-cover tail check (auto-trim)
+  useId?: string; badge?: string; imported?: boolean };   // useId/badge: living-cover tail check (auto-trim)
 // The band wordmark + title lettering are GLOBAL app config (choose-once), not per-project drafts.
 type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number;
   title_font: string; title_treatment: string; title_position: string; title_scale: number;
@@ -122,6 +122,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [lcPicked, setLcPicked] = d.use("lcPicked", "");
   const [lcFinal, setLcFinal] = d.use("lcFinal", "");     // FlashVSR-upscaled loop
   const [lcBusy, setLcBusy] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importLoopify, setImportLoopify] = useState(false);
   // video style + card background
   const [style, setStyle] = d.use("style", "still");
   const [bgId, setBgId] = d.use("bgId", "");
@@ -200,10 +202,31 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     } catch (e) { setErr("Animate failed: " + (e as Error).message); }
     setLcBusy("");
   }
+  // An externally made loop (OpenArt etc.) skips generation entirely: upload -> library
+  // -> optional crossfade loop -> the same wrap check -> becomes the picked, final cover.
+  async function lcImport() {
+    if (!importFile) { setErr("Choose a video file to import."); return; }
+    setErr(""); setLcBusy("import");
+    try {
+      const fd = new FormData();
+      fd.append("file", importFile);
+      fd.append("loopify", importLoopify ? "1" : "0");
+      fd.append("label", title.trim() || importFile.name);
+      const r = await api.ytImportClip(fd) as { clip_id: string; badge: string; media_url: string };
+      setLcTakes((p) => [{ jobId: r.clip_id, seed: 0, url: r.media_url + "?t=" + Date.now(),
+                           useId: r.clip_id, badge: r.badge, imported: true }, ...p]);
+      setLcPicked(r.clip_id); setLcFinal(r.clip_id); setImportFile(null); ctx.onDone();
+    } catch (e) { setErr("Import failed: " + (e as Error).message); }
+    setLcBusy("");
+  }
+
   // Picking a take IS declaring it the keeper, so the FlashVSR upscale fires
   // automatically - no hidden extra button (that UI failed; user 2026-09-02).
-  async function lcPick(id: string) {
-    setErr(""); setLcPicked(id); setLcFinal(""); setLcBusy("upscale");
+  // Imported clips are already full-res: picking them skips the upscale.
+  async function lcPick(id: string, imported = false) {
+    setErr(""); setLcPicked(id);
+    if (imported) { setLcFinal(id); return; }
+    setLcFinal(""); setLcBusy("upscale");
     try {
       const r = await api.flashvsr({ video_id: id, scale: 2 }) as { job_id: string };
       await waitMedia(r.job_id);
@@ -628,8 +651,16 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       <StepTitle state={lcFinal ? "done" : !pickedSrc ? "todo" : style === "still" ? "optional" : "next"}>
         3 · Animate the cover
       </StepTitle>
-      {!pickedSrc ? (
-        <p className="text-[11px] text-[var(--color-muted)]">Needs a picked cover (step 2). The un-stamped art becomes a seamless 10s breathing loop.</p>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--color-line)] px-2.5 py-2 text-[11px] text-[var(--color-muted)]">
+        <span>Already have a loop (OpenArt, Kling, Seedance…)?</span>
+        <input type="file" accept="video/*" className="text-[11px]" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
+        <label className="flex items-center gap-1" title="tick for clips whose last frame does not match the first (no end-frame pin): a 1.5s crossfade makes them loop">
+          <input type="checkbox" checked={importLoopify} onChange={(e) => setImportLoopify(e.target.checked)} /> crossfade-loop it
+        </label>
+        <GhostButton onClick={lcImport} disabled={lcBusy !== "" || !importFile}>{lcBusy === "import" ? "importing…" : "⬆ Import as living cover"}</GhostButton>
+      </div>
+      {!pickedSrc && lcTakes.length === 0 ? (
+        <p className="text-[11px] text-[var(--color-muted)]">Or pick a cover (step 2) and animate it here: the un-stamped art becomes a seamless 10s breathing loop.</p>
       ) : (
         <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
           {(() => {
@@ -683,10 +714,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                     </div>
                   )}
                   {t.url && (
-                    <button onClick={() => lcPick(t.useId || t.jobId)} disabled={lcBusy === "upscale"}
+                    <button onClick={() => lcPick(t.useId || t.jobId, !!t.imported)} disabled={lcBusy === "upscale"}
                       className="w-full bg-[var(--color-panel)] py-1.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">
                       {lcPicked === (t.useId || t.jobId)
-                        ? (lcBusy === "upscale" ? "⏳ picked — upscaling…" : lcFinal ? "✓ picked & upscaled" : "✓ picked")
+                        ? (lcBusy === "upscale" ? "⏳ picked — upscaling…" : t.imported ? "✓ imported & picked" : lcFinal ? "✓ picked & upscaled" : "✓ picked")
                         : "use this take"}
                       {t.badge && t.badge !== "clean" && <span className="ml-1 text-[10px] text-[var(--color-accent)]">· {t.badge}</span>}
                       {t.badge === "clean" && <span className="ml-1 text-[10px] text-emerald-500">· clean wrap</span>}
@@ -767,8 +798,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           {style === "still"
             ? `stamped still${vizStyle ? ` + ${vizStyle} visualiser` : ""}`
             : style === "fullbleed"
-              ? (lcFinal ? "living cover (upscaled) + lettering" : lcPicked ? "living cover (480p — not upscaled yet)" : "⚠ no animated cover yet (step 3)")
-              : `card: ${(lcFinal || lcPicked) ? `living cover${lcFinal ? " (upscaled)" : " (480p)"}` : "still art"} over ${bgs.find((b) => b.id === bgId)?.label || "⚠ no background chosen"} + lettering + waveform`}
+              ? (lcFinal ? "living cover (ready) + lettering" : lcPicked ? "living cover (480p — not upscaled yet)" : "⚠ no animated cover yet (step 3)")
+              : `card: ${(lcFinal || lcPicked) ? `living cover${lcFinal ? " (ready)" : " (480p)"}` : "still art"} over ${bgs.find((b) => b.id === bgId)?.label || "⚠ no background chosen"} + lettering + waveform`}
         </span>
         {" · "}{res}
         {" · "}{audioId ? (audios.find((a) => a.id === audioId) ? `track: ${audioLabel(audios.find((a) => a.id === audioId)!)}` : "track selected") : "⚠ no track chosen"}
