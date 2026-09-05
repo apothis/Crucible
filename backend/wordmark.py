@@ -211,7 +211,7 @@ def stamp(image_path, out_path, text, font_id, treatment, position="bottom", sca
 # Layout B ("card visualizer") geometry on a 1920x1080 canvas - the layout the user
 # picked from the mock PDF (2026-09-02): art card left, band + title column right,
 # waveform under the text. All consumers (plate below, musicvideo.card_video) share it.
-CARD_LAYOUT = {"card_x": 114, "card_y": 292, "card_w": 880, "card_h": 495,
+CARD_LAYOUT = {"card_x": 106, "card_y": 288, "card_w": 896, "card_h": 504,   # exact 16:9, EVEN dims (yuv420p)
                "col_x": 1088, "col_w": 760,
                "band_y": 300, "band_max_h": 210,
                "title_y": 480, "title_max_h": 240,

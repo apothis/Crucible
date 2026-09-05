@@ -525,7 +525,8 @@ def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, o
     cmd += ["-i", audio_path, "-i", plate_path]
     fc = (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
           f"crop={width}:{height},setsar=1[bg];"
-          f"[1:v]scale={L['card_w']}:{L['card_h']}:force_original_aspect_ratio=decrease,"
+          f"[1:v]scale={L['card_w']}:{L['card_h']}:force_original_aspect_ratio=decrease:"
+          f"force_divisible_by=2,"
           f"pad={L['card_w']}:{L['card_h']}:(ow-iw)/2:(oh-ih)/2,setsar=1[card];"
           f"[bg][card]overlay={L['card_x']}:{L['card_y']}[b1];"
           f"[b1][3:v]overlay=0:0[b2];")
