@@ -3005,6 +3005,17 @@ def youtube_metadata(body: dict):
     model = body.get("model") or ""
     if not model and provider in ("claude_sub", "claude_code", "claude"):
         model = "claude-sonnet-5"
+    # The tags may arrive as a generation STYLE line ("72 bpm, E minor, lone hushed acoustic
+    # guitar intro building into...") - the Suno-draft fallback on the YouTube page. Reduce
+    # that to genre/mood hints: short comma chunks with no digits or arrangement words, so
+    # the writer describes the SONG, not the production spec (regressed 2026-09-04).
+    _spec_words = ("intro", "outro", "chorus", "verse", "guitar", "drum", "bass", "vocal",
+                   "production", "building", "bpm", "minor", "major", "reverb", "mix",
+                   "synth", "piano", "strings", "orchestra", "choir", "whistle")
+    hints = [c.strip() for c in tags.split(",")]
+    hints = [c for c in hints if c and len(c.split()) <= 4 and not any(ch.isdigit() for ch in c)
+             and not any(w in c.lower() for w in _spec_words)]
+    tags = ", ".join(hints)
     system = ("You write YouTube upload metadata for a band's official-audio music uploads. "
               "Output STRICT JSON ONLY (no prose, no markdown fences). You know how YouTube "
               "search works: the title carries 'Artist - Song (Official Audio)'; the first "
@@ -3012,7 +3023,11 @@ def youtube_metadata(body: dict):
               "carry the genre words, mood words and a 'for fans of X, Y' line naming 2-3 "
               "real bands the song genuinely resembles; hashtags go at the END of the "
               "description (the first three show above the video title - lead with the "
-              "genre ones); the separate tags field mainly catches misspellings.")
+              "genre ones); the separate tags field mainly catches misspellings. "
+              "The description is written FOR LISTENERS: it evokes the song's story, "
+              "characters, imagery and emotion as heard, drawn from the lyrics. NEVER mention "
+              "BPM, tempo, key, chords, instrument lists, arrangement, production, mixing or "
+              "any generation/prompt language - the genre/mood tags are hints, not copy.")
     prompt = f"""Song: "{title}" by {artist or "an independent band"}.
 Genre/mood tags: {tags or "(none given)"}
 Lyrics excerpt (may be empty):
