@@ -398,26 +398,38 @@ def loop_tail_report(path):
                  frame still lands within ~1.3 frame-steps of frame 1 (deeper cuts turn
                  the pause into a visible position jump - measured, do not trim harder)."""
     import numpy as np
+    W, H = 320, 180
     p = subprocess.run([_ffmpeg(), "-v", "error", "-i", path,
-                        "-vf", "scale=160:90,format=gray", "-f", "rawvideo", "-"],
+                        "-vf", f"scale={W}:{H},format=gray", "-f", "rawvideo", "-"],
                        capture_output=True)
     buf = np.frombuffer(p.stdout, dtype=np.uint8)
-    n = len(buf) // (160 * 90)
+    n = len(buf) // (W * H)
     if n < 50:
         raise ValueError("clip too short to analyze")
-    fr = buf[:n * 160 * 90].reshape(n, 90, 160).astype(np.int16)
-    motion = np.abs(np.diff(fr, axis=0)).mean(axis=(1, 2))
+    fr = buf[:n * W * H].reshape(n, H, W).astype(np.int16)
+    diffs = np.abs(np.diff(fr, axis=0))
+    motion = diffs.mean(axis=(1, 2))
+    # localized motion: the 99th-percentile pixel change per frame pair. Fine motion
+    # (dust motes, candle flicker, a breath) barely moves the MEAN but lights this up;
+    # a frame is only "frozen" when BOTH say nothing moved. Added 2026-09-05 after the
+    # mean-only rule judged an OpenArt clip (real but subtle motion, mid 0.13) frozen
+    # from frame 1 and the auto-trim amputated it to a single frame.
+    local = np.percentile(diffs.reshape(diffs.shape[0], -1), 99, axis=1)
     mid = float(motion[len(motion) // 4:3 * len(motion) // 4].mean())
     tail = motion[-24:]
-    # freeze threshold: relative to the clip's own pace, with an ABSOLUTE floor - on
-    # very subtle covers (Queen of the Hollow Stars, mid ~0.5) the relative rule alone
-    # misses stalls a viewer plainly sees
-    thresh = max(0.15 * mid, 0.30)
+    # freeze threshold: relative to the clip's own pace, with a floor that SCALES with
+    # the clip (capped at 0.30) - a flat floor above a subtle clip's whole range calls
+    # everything frozen
+    thresh = max(0.15 * mid, min(0.30, 0.5 * mid))
     frozen_from = None
     i = n - 1
-    while i >= 1 and motion[i - 1] < thresh:
+    while i >= 1 and motion[i - 1] < thresh and local[i - 1] < 6:
         frozen_from = i
         i -= 1
+    # a frozen TAIL is a tail: a run longer than ~1s is a stalled clip (reported via
+    # idle_frac), never something to cut - trimming can remove at most 24 frames
+    if frozen_from is not None and frozen_from < n - 24:
+        frozen_from = None
     trim_frame = None
     f0 = fr[0]
     if frozen_from is not None:
@@ -425,7 +437,7 @@ def loop_tail_report(path):
         # walk back only while the wrap step stays ~one normal frame of motion
         while cut > n - 24 and np.abs(fr[cut - 1] - f0).mean() > 1.3 * mid:
             cut -= 1
-        if np.abs(fr[cut - 1] - f0).mean() <= 1.3 * mid:
+        if cut >= n - 24 and np.abs(fr[cut - 1] - f0).mean() <= 1.3 * mid:
             trim_frame = cut
     # interior stalls (arrive-early-and-idle) are NOT trimmable - cutting one makes a
     # jump - but they must be reported: fraction of the last 2s spent below threshold
@@ -436,6 +448,7 @@ def loop_tail_report(path):
     return {"frames": n, "mid": round(mid, 2),
             "tail_ratio": round(float(tail.mean()) / mid, 2) if mid else 1.0,
             "idle_frac": round(idle_frac, 2),
+            "wrap_step": round(wrap_step, 2),
             "wrap_step_ratio": round(wrap_step / mid, 1) if mid else 0.0,
             "frozen_from": frozen_from, "trim_frame": trim_frame}
 

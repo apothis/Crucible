@@ -2870,7 +2870,9 @@ def _livecover_check(use_id: str):
             pass                       # analysis stands; the raw take remains usable
     eases = rep.get("tail_ratio", 1.0) < 0.8
     idles = rep.get("idle_frac", 0) >= 0.5          # interior stall: NOT trimmable, reroll
-    open_wrap = rep.get("wrap_step_ratio", 0) > 3    # end never closes on the start frame
+    # end never closes on the start frame - ratio to the clip's own pace, but with an
+    # absolute guard: on very subtle clips (mid ~0.15) a sub-pixel wrap inflates the ratio
+    open_wrap = rep.get("wrap_step_ratio", 0) > 3 and rep.get("wrap_step", 0) > 1.5
     if trimmed:
         badge = "trimmed" + ("+eases" if eases else "")
     elif idles or open_wrap:
