@@ -89,6 +89,7 @@ export const api = {
   ytLivecoverPrompt: (p: unknown) => jpost("/api/youtube/livecover_prompt", p), // LLM motion prompt for the loop
   ytLivecoverCheck: (p: unknown) => jpost("/api/youtube/livecover_check", p), // tail score + auto-trim
   ytImportClip: (fd: FormData) => jform("/api/youtube/import_clip", fd), // external loop -> library + wrap check
+  ytImportStill: (fd: FormData) => jform("/api/youtube/import_still", fd), // external cover still -> pickable candidate
   ytLoopify: (p: unknown) => jpost("/api/youtube/loopify", p),     // clip -> seamless crossfade loop (sync)
   ytBackgrounds: () => jget("/api/youtube/backgrounds"),           // named background-loop library
   ytBackgroundsSave: (p: unknown) => jpost("/api/youtube/backgrounds", p),

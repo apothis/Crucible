@@ -2850,6 +2850,32 @@ def youtube_livecover_check(body: dict):
     return _livecover_check(os.path.basename(str(body.get("clip_id") or "")))
 
 
+@app.post("/api/youtube/import_still")
+async def youtube_import_still(file: UploadFile = File(...), label: str = Form(None)):
+    """Bring an EXTERNALLY rendered cover still (Seedream/OpenArt etc.) into the cover step
+    as a pickable candidate: the upload is filed in the library as a videostill (PNG, RGB,
+    full resolution kept - the living-cover lane crops it to the canvas aspect itself and
+    the thumbnail step wants the big original). Returns {still_id, media_url, width, height}."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty upload")
+    import io
+    from PIL import Image
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+    except Exception as e:
+        raise HTTPException(400, f"not an image I can read: {e}")
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.png")
+    im.convert("RGB").save(out, format="PNG")
+    name = (label or os.path.splitext(file.filename or "")[0] or "imported cover")[:120]
+    save_done_row(jid, "videostill", {"title": f"{name} (imported)", "kind": "cover",
+                                      "imported": True, "engine": "external",
+                                      "source": file.filename or ""}, out)
+    return {"still_id": jid, "media_url": f"/api/media/{jid}", "width": im.width, "height": im.height}
+
+
 @app.post("/api/youtube/import_clip")
 async def youtube_import_clip(file: UploadFile = File(...), loopify: str = Form("0"),
                               label: str = Form(None)):

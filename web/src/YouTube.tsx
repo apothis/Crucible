@@ -128,6 +128,8 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [lcNative, setLcNative] = d.use("lcNative", false);
   const [lcAtmos, setLcAtmos] = d.use("lcAtmos", "");
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);   // externally rendered cover still
+  const [coverImporting, setCoverImporting] = useState(false);
   const [importLoopify, setImportLoopify] = useState(false);
   // video style + card background
   const [style, setStyle] = d.use("style", "still");
@@ -389,6 +391,25 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   }
   const pick = (c: Cand) => stampCover(c.jobId, c.url);
 
+  // An externally rendered still (Seedream/OpenArt etc.) becomes a candidate and is picked
+  // straight away: it is the cover, the first/last frame of the living cover, and the
+  // thumbnail source, exactly like a generated candidate.
+  async function importCover() {
+    if (!coverFile) { setErr("Choose an image file to import."); return; }
+    setErr(""); setCoverImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", coverFile);
+      fd.append("label", title.trim() || coverFile.name);
+      const r = await api.ytImportStill(fd) as { still_id: string; media_url: string };
+      const c: Cand = { jobId: r.still_id, seed: 0, url: r.media_url + "?t=" + Date.now(), imported: true };
+      setCands((p) => [c, ...p]);
+      setCoverFile(null);
+      await pick(c);
+    } catch (e) { setErr("Cover import failed: " + (e as Error).message); }
+    setCoverImporting(false);
+  }
+
   async function writeMeta() {
     if (!title.trim()) { setErr("Set a song title first."); return; }
     setErr(""); setMetaBusy(true);
@@ -520,6 +541,13 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
             {genning ? "Submitting…" : `Generate ${count} candidates`}
           </GhostButton>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--color-line)] p-2 text-[11px] text-[var(--color-muted)]">
+        <span className="font-medium text-[var(--color-ink)]">Or import a rendered cover</span>
+        <span>(Seedream / OpenArt etc. - full resolution kept; it becomes the picked cover and the first/last frame for step 3)</span>
+        <input type="file" accept="image/*" className="text-[11px]" onChange={(e) => setCoverFile(e.target.files?.[0] || null)} />
+        <GhostButton onClick={importCover} disabled={coverImporting || !coverFile}>{coverImporting ? "importing…" : "⬆ Import as cover"}</GhostButton>
       </div>
 
       {cands.length > 0 && (
