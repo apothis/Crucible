@@ -441,17 +441,34 @@ def loop_tail_report(path, overrender=0):
     trim_frame = None
     f0 = fr[0]
     if overrender:
-        # lock point on the MEAN only (the localized p99 test stays for plain takes: on an
-        # over-rendered loop the parked tail still flickers flames/snow, which would mask it)
         med = float(np.median(motion)) or mid
-        lock = 1
-        for i in range(len(motion) - 1, -1, -1):
-            if motion[i] > 0.25 * med:
-                lock = i + 1
+        # EARLIEST-CLOSE cut (measured 2026-09-06 on a turbo take: the picture matches frame 1
+        # within a normal frame step from ~f240 while motion is still alive, but waiting for
+        # motion to die left 0.6s of near-freeze in): cut at the first frame of the trim window
+        # whose jump back to frame 1 is no bigger than an ordinary frame step, and which stays
+        # that close for the next 6 frames (so a coincidental early match cannot fool it).
+        # The parked tail after it is exactly the settle we over-rendered to throw away.
+        guard = max(1.3 * med, 1.0)
+        wrap = np.array([np.abs(fr[c] - f0).mean() for c in range(n)])
+        first_close = None
+        for c in range(max(1, n - max_trim), n - 6):
+            if wrap[c] <= guard and wrap[c:c + 6].max() <= guard:
+                first_close = c
                 break
-        if n - max_trim <= lock < n and np.abs(fr[lock] - f0).mean() <= 1.3 * mid:
-            trim_frame = lock
-            frozen_from = frozen_from if frozen_from is not None else lock
+        if first_close is not None:
+            trim_frame = first_close
+            frozen_from = frozen_from if frozen_from is not None else first_close
+        else:
+            # fallback: the motion lock point on the MEAN only (the localized p99 test stays
+            # for plain takes: a parked tail still flickers flames/snow, which would mask it)
+            lock = 1
+            for i in range(len(motion) - 1, -1, -1):
+                if motion[i] > 0.25 * med:
+                    lock = i + 1
+                    break
+            if n - max_trim <= lock < n and np.abs(fr[lock] - f0).mean() <= 1.3 * mid:
+                trim_frame = lock
+                frozen_from = frozen_from if frozen_from is not None else lock
     if frozen_from is not None and trim_frame is None:
         cut = frozen_from
         # walk back only while the wrap step stays ~one normal frame of motion

@@ -271,6 +271,21 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     setLcBusy("");
   }
 
+  // Re-run the wrap check on a take's RAW render (after a cut-rule change) and swap the
+  // tile - and the pick, if this take is the picked one - to the new cut copy.
+  async function lcRecheck(t: Cand) {
+    setErr(""); setLcBusy("recheck");
+    try {
+      const chk = await api.ytLivecoverCheck({ clip_id: t.jobId }) as { clip_id: string; badge: string };
+      const wasPicked = lcPicked === (t.useId || t.jobId);
+      setLcTakes((p) => p.map((x) => x.jobId === t.jobId
+        ? { ...x, useId: chk.clip_id, badge: chk.badge, url: `/api/media/${chk.clip_id}?t=${Date.now()}` } : x));
+      if (wasPicked) { setLcPicked(chk.clip_id); setLcFinal(lcNative ? chk.clip_id : ""); }
+      ctx.onDone();
+    } catch (e) { setErr("Re-check failed: " + (e as Error).message); }
+    setLcBusy("");
+  }
+
   // Picking a take IS declaring it the keeper, so the FlashVSR upscale fires
   // automatically - no hidden extra button (that UI failed; user 2026-09-02).
   // Imported clips are already full-res: picking them skips the upscale.
@@ -818,6 +833,13 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                         : "use this take"}
                       {t.badge && t.badge !== "clean" && <span className="ml-1 text-[10px] text-[var(--color-accent)]">· {t.badge}</span>}
                       {t.badge === "clean" && <span className="ml-1 text-[10px] text-emerald-500">· clean wrap</span>}
+                    </button>
+                  )}
+                  {t.url && !t.imported && (
+                    <button onClick={() => lcRecheck(t)} disabled={lcBusy !== ""}
+                      className="w-full border-t border-[var(--color-line)] bg-[var(--color-panel)] py-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+                      title="re-run the wrap check on this take's raw render and use the new cut">
+                      {lcBusy === "recheck" ? "re-checking…" : "↻ re-check wrap / re-cut"}
                     </button>
                   )}
                 </div>
