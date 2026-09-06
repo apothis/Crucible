@@ -2732,10 +2732,15 @@ def build_h3_i2v(p, first_ref, last_ref=None):
         node["first_frame"] = ["30", 0]
     if last_ref:
         g["31"] = {"class_type": "LoadImage", "inputs": {"image": last_ref}}
-        g["32"] = {"class_type": "ImageScaleToTotalPixels",
-                   "inputs": {"image": ["31", 0], "upscale_method": "nearest-exact",
-                              "megapixels": 1.0, "resolution_steps": 32}}
-        node["last_frame"] = ["32", 0]
+        if p.get("last_raw"):
+            # opt-in: feed the last frame RAW like the first one (skips the author's nearest-exact
+            # 1.0MP rescale). For same-still loops this keeps both anchors pixel-identical.
+            node["last_frame"] = ["31", 0]
+        else:
+            g["32"] = {"class_type": "ImageScaleToTotalPixels",
+                       "inputs": {"image": ["31", 0], "upscale_method": "nearest-exact",
+                                  "megapixels": 1.0, "resolution_steps": 32}}
+            node["last_frame"] = ["32", 0]
     if manual or not first_ref:
         node["width"], node["height"] = w, h          # manual path (or nothing to derive from)
     else:

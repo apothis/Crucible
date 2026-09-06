@@ -386,7 +386,7 @@ def _run_progress(cmd, dur, progress_cb):
         raise RuntimeError(f"ffmpeg failed: {(proc.stderr.read() or '')[-400:]}")
 
 
-def loop_tail_report(path):
+def loop_tail_report(path, overrender=0):
     """Measure a living-cover loop's tail behavior (the end-pin failure modes, measured
     2026-09-02 on The Endless Sea takes): decode to small grayscale, mean abs diff between
     consecutive frames = motion. Returns
@@ -396,7 +396,13 @@ def loop_tail_report(path):
     frozen_from= first frame of a terminal run with motion < 15% of mid (None if none)
     trim_frame = suggested exclusive cut BEFORE the frozen run, but only while the cut
                  frame still lands within ~1.3 frame-steps of frame 1 (deeper cuts turn
-                 the pause into a visible position jump - measured, do not trim harder)."""
+                 the pause into a visible position jump - measured, do not trim harder).
+    overrender = extra frames the take was deliberately rendered long (the same-still loop
+                 recipe, measured 2026-09-06). The FL2VA model decelerates onto its last
+                 anchor and parks, so an over-rendered take is cut at its LOCK POINT: the
+                 first frame after which motion stays under 25% of the clip's median to the
+                 end. The trim cap grows by the over-render; the wrap-step guard still applies
+                 (the lock frame already matches frame 1 - measured 1.1x a normal step)."""
     import numpy as np
     W, H = 320, 180
     p = subprocess.run([_ffmpeg(), "-v", "error", "-i", path,
@@ -428,16 +434,30 @@ def loop_tail_report(path):
         i -= 1
     # a frozen TAIL is a tail: a run longer than ~1s is a stalled clip (reported via
     # idle_frac), never something to cut - trimming can remove at most 24 frames
-    if frozen_from is not None and frozen_from < n - 24:
+    # (plus the deliberate over-render, which exists to be cut away)
+    max_trim = 24 + max(0, int(overrender or 0))
+    if frozen_from is not None and frozen_from < n - max_trim:
         frozen_from = None
     trim_frame = None
     f0 = fr[0]
-    if frozen_from is not None:
+    if overrender:
+        # lock point on the MEAN only (the localized p99 test stays for plain takes: on an
+        # over-rendered loop the parked tail still flickers flames/snow, which would mask it)
+        med = float(np.median(motion)) or mid
+        lock = 1
+        for i in range(len(motion) - 1, -1, -1):
+            if motion[i] > 0.25 * med:
+                lock = i + 1
+                break
+        if n - max_trim <= lock < n and np.abs(fr[lock] - f0).mean() <= 1.3 * mid:
+            trim_frame = lock
+            frozen_from = frozen_from if frozen_from is not None else lock
+    if frozen_from is not None and trim_frame is None:
         cut = frozen_from
         # walk back only while the wrap step stays ~one normal frame of motion
-        while cut > n - 24 and np.abs(fr[cut - 1] - f0).mean() > 1.3 * mid:
+        while cut > n - max_trim and np.abs(fr[cut - 1] - f0).mean() > 1.3 * mid:
             cut -= 1
-        if cut >= n - 24 and np.abs(fr[cut - 1] - f0).mean() <= 1.3 * mid:
+        if cut >= n - max_trim and np.abs(fr[cut - 1] - f0).mean() <= 1.3 * mid:
             trim_frame = cut
     # interior stalls (arrive-early-and-idle) are NOT trimmable - cutting one makes a
     # jump - but they must be reported: fraction of the last 2s spent below threshold

@@ -122,6 +122,11 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [lcPicked, setLcPicked] = d.use("lcPicked", "");
   const [lcFinal, setLcFinal] = d.use("lcFinal", "");     // FlashVSR-upscaled loop
   const [lcBusy, setLcBusy] = useState("");
+  // native 720p (1280x736, no FlashVSR) vs the default 480p hunt + upscale; and an optional
+  // ADDED atmosphere for artwork with little natural motion (enters after the start, clears
+  // before the end - anything not in the still has nowhere to be at the pinned last frame)
+  const [lcNative, setLcNative] = d.use("lcNative", false);
+  const [lcAtmos, setLcAtmos] = d.use("lcAtmos", "");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importLoopify, setImportLoopify] = useState(false);
   // video style + card background
@@ -209,7 +214,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   async function lcDraftPrompt() {
     setErr(""); setLcBusy("prompt");
     try {
-      const r = await api.ytLivecoverPrompt({ title, concept }) as { prompt: string };
+      const r = await api.ytLivecoverPrompt({ title, concept, atmosphere: lcAtmos }) as { prompt: string };
       setLcPrompt(r.prompt);
     } catch (e) { setErr("Prompt draft failed: " + (e as Error).message); }
     setLcBusy("");
@@ -219,8 +224,11 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
     if (!lcPrompt.trim()) { setErr("Draft (or write) the motion prompt first."); return; }
     setErr(""); setLcBusy("animate");
     try {
+      // the same-still loop recipe (measured 2026-09-06): aspect-matched anchors, raw last
+      // frame, over-rendered so the wrap check cuts at the motion lock point
       const r = await api.h3i2v({ still_id: pickedSrc, last_id: pickedSrc, prompt: lcPrompt,
-                                  frames: 243, width: 864, height: 480,
+                                  frames: 243, width: lcNative ? 1280 : 864, height: lcNative ? 736 : 480,
+                                  crop_to_canvas: true, last_raw: true, overrender: true,
                                   mode: "hunt", drafts: 2 }) as { drafts: { job_id: string; seed: number }[] };
       const fresh: Cand[] = r.drafts.map((t) => ({ jobId: t.job_id, seed: t.seed }));
       setLcTakes((p) => [...fresh, ...p]);
@@ -266,7 +274,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   // Imported clips are already full-res: picking them skips the upscale.
   async function lcPick(id: string, imported = false) {
     setErr(""); setLcPicked(id);
-    if (imported) { setLcFinal(id); return; }
+    if (imported || lcNative) { setLcFinal(id); return; }   // already full-res: no upscale
     setLcFinal(""); setLcBusy("upscale");
     try {
       const r = await api.flashvsr({ video_id: id, scale: 2 }) as { job_id: string };
@@ -712,9 +720,11 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
               : lcPrompt.trim() ? "animate" : "prompt";
             const line: Record<string, string> = {
               prompt: "Step 1 of 3 — draft the motion prompt (editable before rendering).",
-              animate: "Step 2 of 3 — render two takes on the box (~2 min each).",
+              animate: lcNative ? "Step 2 of 3 — render two native-720p takes on the box (~10 min each)."
+                               : "Step 2 of 3 — render two takes on the box (~2 min each).",
               rendering: "Rendering takes on the box… they appear below as they finish, pre-checked for loop problems.",
-              pick: "Step 3 of 3 — pick the best take. Picking upscales it automatically.",
+              pick: lcNative ? "Step 3 of 3 — pick the best take (native 720p, used as is)."
+                             : "Step 3 of 3 — pick the best take. Picking upscales it automatically.",
               upscaling: "Upscaling your pick on the box (~1 min)…",
               done: "✓ Ready — the upscaled loop will be used by step 4.",
             };
@@ -739,6 +749,24 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
               </div>
             );
           })()}
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--color-muted)]">
+            <label className="flex items-center gap-1" title="1280x736 straight off the model, no FlashVSR pass (slower: ~10 min a take)">
+              <input type="checkbox" checked={lcNative} onChange={(e) => setLcNative(e.target.checked)} /> native 720p, no upscale
+            </label>
+            <label className="flex items-center gap-1" title="for artwork with little natural motion: one element that is not in the art drifts in after the start and clears before the end">
+              add atmosphere
+              <select className={inp + " py-0.5 text-[11px]"} value={lcAtmos} onChange={(e) => setLcAtmos(e.target.value)}>
+                <option value="">none</option>
+                <option value="thin drifting fog">fog</option>
+                <option value="thin drifting smoke">smoke</option>
+                <option value="a gentle fall of snow">snow</option>
+                <option value="slow rising embers">embers</option>
+                <option value="light rain">rain</option>
+                <option value="low rolling mist">mist</option>
+              </select>
+              {lcAtmos && lcPrompt && <span className="text-[10px]">(redraft to apply)</span>}
+            </label>
+          </div>
           {lcPrompt && (
             <textarea className={inp + " h-24 w-full font-mono text-[10px]"} value={lcPrompt}
               onChange={(e) => setLcPrompt(e.target.value)} />

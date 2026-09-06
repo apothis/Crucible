@@ -755,6 +755,31 @@ def _lib_image_path(pid):
     return None
 
 
+def _crop_image_bytes_to_aspect(data, name, width, height):
+    """Centre-crop image bytes to width:height (the H3 canvas aspect) so a first/last
+    still hits the node's stretch (first) and cover-crop (last) paths identically. Returns
+    (png_bytes, new_name); the original bytes come back untouched when already matching."""
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(data))
+    target = width / height
+    w, h = im.size
+    if abs(w / h - target) < 0.002:
+        return data, name
+    if w / h > target:                      # too wide: trim the sides
+        nw = int(round(h * target)) & ~1
+        x0 = (w - nw) // 2
+        im = im.crop((x0, 0, x0 + nw, h))
+    else:                                   # too tall: trim top and bottom
+        nh = int(round(w / target)) & ~1
+        y0 = (h - nh) // 2
+        im = im.crop((0, y0, w, y0 + nh))
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, format="PNG")
+    stem = os.path.splitext(name)[0]
+    return buf.getvalue(), f"{stem}_c{width}x{height}.png"
+
+
 def _trim_audio_window(path, start, dur):
     """Return WAV bytes for [start, start+dur] of an audio file (mp3/wav). Mac CPU only."""
     import io
@@ -1106,6 +1131,17 @@ def video_h3_i2v(p: dict):
         raise HTTPException(400, "a prompt is required")
     if not (p.get("still_id") or p.get("last_id")):
         raise HTTPException(400, "provide still_id (first frame) and/or last_id (last frame)")
+    # Same-still LOOP recipe (measured 2026-09-06, docs/MINIMAX_H3_PLAN.md "Loop recipe") - three
+    # opt-in flags, each a one-variable win on the viking Selene loop:
+    #   crop_to_canvas: centre-crop the stills to the explicit width:height aspect BEFORE upload.
+    #       The node STRETCHES the first frame to the canvas but COVER-CROPS the last one, so a
+    #       16:9 still on a /32 canvas gives two different anchors (last-frame error 12 -> 5).
+    #   last_raw: feed the last frame raw (skip the author's nearest-exact 1.0MP rescale), which
+    #       makes both anchors pixel-identical (error 5 -> the VAE floor, wrap jump 4x -> 1.2x).
+    #   overrender: render 2 grid steps (+34f) longer than asked and record the target so the
+    #       wrap check can cut at the motion lock point - the FL2VA model decelerates onto the
+    #       last anchor and parks (no strength knob exists), so the settle is pushed past the cut.
+    crop = bool(p.get("crop_to_canvas")) and p.get("width") and p.get("height")
     up = {}
     try:
         for key, slot in (("still_id", "first"), ("last_id", "last")):
@@ -1115,11 +1151,28 @@ def video_h3_i2v(p: dict):
             if not path:
                 raise HTTPException(400, f"{key} must reference a generated still in the library")
             with open(path, "rb") as f:
-                up[slot] = C.upload_audio(f.read(), os.path.basename(path))
+                data = f.read()
+            name = os.path.basename(path)
+            if crop:
+                data, name = _crop_image_bytes_to_aspect(data, name, int(p["width"]), int(p["height"]))
+            up[slot] = C.upload_audio(data, name)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"still upload failed: {e}")
+    overrender = 0
+    target_frames = None
+    if p.get("overrender") and (p.get("frames") or p.get("seconds")):
+        fps = int(p.get("fps", video_mod.H3_FPS))
+        target_frames = video_mod._h3_frames(p.get("frames") or round(float(p["seconds"]) * fps))
+        overrender = 34
+        p = dict(p)
+        p["frames"] = target_frames + overrender
+        p.pop("seconds", None)
+        # the author's FLF header states the exact duration - keep it honest for the longer render
+        p["prompt"] = re.sub(r"(\d+\.\d+)(-second mark of the target video\.)",
+                             lambda m: f"{(target_frames + overrender) / fps:.2f}{m.group(2)}",
+                             str(p.get("prompt") or ""), count=2)
 
     def _build(q):
         graph, resolved = video_mod.build_h3_i2v(q, up.get("first"), up.get("last"))
@@ -1127,6 +1180,11 @@ def video_h3_i2v(p: dict):
             resolved["still_id"] = os.path.basename(p["still_id"])
         if p.get("last_id"):
             resolved["last_id"] = os.path.basename(p["last_id"])
+        resolved["crop_to_canvas"] = bool(crop)
+        resolved["last_raw"] = bool(q.get("last_raw"))
+        if overrender:
+            resolved["overrender"] = overrender
+            resolved["target_frames"] = target_frames
         return graph, resolved
 
     return _h3_dispatch(p, lambda q: _build(q))
@@ -2845,8 +2903,17 @@ def _livecover_check(use_id: str):
     clip = _lib_video_path(use_id)
     if not clip:
         raise HTTPException(400, "clip_id must reference a library video")
+    # an over-rendered take (the same-still loop recipe) carries its extra frame count in
+    # its job params: the check cuts it at the motion lock point instead of the 24f cap
+    overrender = 0
     try:
-        rep = musicvideo_mod.loop_tail_report(clip)
+        with db() as conn:
+            row = conn.execute("SELECT params FROM jobs WHERE id=?", (use_id,)).fetchone()
+        overrender = int((json.loads(row["params"] or "{}") if row else {}).get("overrender") or 0)
+    except Exception:
+        overrender = 0
+    try:
+        rep = musicvideo_mod.loop_tail_report(clip, overrender=overrender)
     except Exception as e:
         raise HTTPException(500, f"analysis failed: {e}")
     trimmed = False
@@ -2856,8 +2923,9 @@ def _livecover_check(use_id: str):
         try:
             musicvideo_mod.trim_frames(clip, out, rep["trim_frame"])
             save_done_row(jid, "videoclip",
-                          {"title": "living cover (tail-trimmed)", "kind": "loop",
-                           "source": use_id, "trim_frame": rep["trim_frame"]}, out)
+                          {"title": "living cover (lock-point cut)" if overrender else "living cover (tail-trimmed)",
+                           "kind": "loop", "source": use_id, "trim_frame": rep["trim_frame"],
+                           "overrender": 0}, out)
             # the raw take is superseded by its repaired copy - file it under the
             # Tests bucket so 2 takes stay 2 rows in the main library view
             with db() as conn:
@@ -2958,18 +3026,33 @@ def youtube_livecover_prompt(body: dict):
     model = body.get("model") or ""
     if not model and provider in ("claude_sub", "claude_code", "claude"):
         model = "claude-sonnet-5"
+    # Optional ADDED atmosphere (fog/smoke/snow/embers/rain/mist...) for artwork with little
+    # natural motion. Anything NOT in the still has nowhere to be at the pinned last frame, so
+    # it must drift in after the start and clear before the end (Seedance's trick; user
+    # 2026-09-06). Elements already in the artwork may run the whole time.
+    atmos = str(body.get("atmosphere") or "").strip()[:60]
+    atmos_rule = (
+        f" Add exactly ONE atmospheric element that is NOT in the artwork: {atmos}. It drifts in "
+        "after the first second, moves across at one constant slow speed, and has cleared "
+        "completely before the final second, so the last moment matches the artwork again."
+        if atmos else "")
     system = ("You write one paragraph of MOTION description for animating a static cover "
               "artwork into a subtle seamless video loop. Output the paragraph ONLY - no "
               "preamble, no markdown.")
+    # convergence-free grammar (measured 2026-09-06): the first-last model already pins the
+    # endpoints; any 'returns to' / 'settles' / 'finally' wording makes it decelerate and park
+    # early. Constant-speed cyclical verbs keep it alive to the cut.
     prompt = (
         "Describe, in one flowing paragraph of 3-5 sentences, the subtle ambient motion for "
         "animating this cover artwork. Rules: every element stays IN PLACE (breathing, hair and "
         "fabric drifting, flames flickering, sparks and embers rising, mist, lightning, swaying) - "
         "nothing walks, travels or crosses the frame; the central figure stays in her pose but "
-        "alive (slow visible breathing, hair stirring); phrase all motion as slow and continuous "
-        f"for the entire {seconds:.0f} seconds, and name at least three elements that KEEP moving "
-        "the whole time - motion must never settle or come to rest before the end (a becalmed "
-        "scene makes the loop stall). Plain ASCII.\n\n"
+        "alive (slow visible breathing, hair stirring); phrase all motion as steady and cyclical "
+        "at ONE constant slow speed (drift, sway, flicker, breathe, ripple), state that it repeats "
+        f"with no beginning and no ending for the entire {seconds:.0f} seconds, and name at least "
+        "three elements from the artwork that keep moving the whole time. Never write that anything "
+        "settles, slows, comes to rest, returns, ends or finally does something - a becalmed scene "
+        f"makes the loop stall.{atmos_rule} Plain ASCII.\n\n"
         f"Song title: {body.get('title') or 'unknown'}\nThe artwork's concept:\n{desc or '(none)'}")
     try:
         motion = llm_mod.complete(provider, model, system, prompt,
@@ -2982,12 +3065,12 @@ def youtube_livecover_prompt(body: dict):
         "with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the "
         f"{seconds:.2f}-second mark of the target video.\n\n"
         "integrated_multimodal_description: [Shot 1] " + motion +
-        f" The camera is completely static, locked off for the entire {seconds:.0f} seconds, one "
-        "continuous shot with no cuts. By the end of the shot every element returns to the exact "
-        "arrangement it started in.\n"
+        f" Static shot, locked off, the frame never moves for the entire {seconds:.0f} seconds, one "
+        "continuous shot with no cuts, the motion repeating at constant speed with no beginning "
+        "and no ending.\n"
         "overall_soundscape: Quiet scene ambience.\n"
         "non_diegetic_music: N/A")
-    return {"prompt": full, "motion": motion}
+    return {"prompt": full, "motion": motion, "atmosphere": atmos}
 
 
 @app.post("/api/youtube/metadata")
