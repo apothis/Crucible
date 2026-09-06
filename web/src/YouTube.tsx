@@ -137,6 +137,16 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [titleMode, setTitleMode] = d.use("titleMode", "stamped");
   // use the saved cover model (Krea2 Identity Edit) for concepts that feature a woman
   const [useModel, setUseModel] = d.use("useModel", true);
+  // thumbnail (panel layout): face point on the source, crop zoom, which side the text
+  // panel takes, optional cue line; previewed live, saved as a library still
+  const [thFace, setThFace] = d.use<{ x: number; y: number }>("thFace", { x: 0.5, y: 0.35 });
+  const [thZoom, setThZoom] = d.use("thZoom", 0.5);
+  const [thSide, setThSide] = d.use<"right" | "left">("thSide", "right");
+  const [thCue, setThCue] = d.use("thCue", "");
+  const [thGrade, setThGrade] = d.use("thGrade", 1);
+  const [thId, setThId] = d.use("thId", "");
+  const [thPreview, setThPreview] = useState("");
+  const [thBusy, setThBusy] = useState("");
   const [meta, setMeta] = d.use<{ video_title: string; description: string; tags: string[] } | null>("meta", null);
   const [metaBusy, setMetaBusy] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -163,6 +173,37 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
 
   const refreshBgs = () =>
     api.ytBackgrounds().then((r: { backgrounds: { id: string; label: string }[] }) => setBgs(r.backgrounds)).catch(() => {});
+
+  // ---- thumbnail: the unstamped cover when there is one, else the living cover's first frame ----
+  const thumbSrc = pickedSrc || lcFinal || lcPicked;
+  const thBody = () => ({ source_id: thumbSrc, title, cue: thCue, face_x: thFace.x, face_y: thFace.y,
+                          zoom: thZoom, side: thSide, grade: thGrade });
+  useEffect(() => {
+    if (!thumbSrc) { setThPreview(""); return; }
+    let dead = false;
+    const t = setTimeout(async () => {
+      setThBusy("preview");
+      try {
+        const r = await fetch(api.ytThumbnailPreviewUrl, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                            body: JSON.stringify({ ...thBody(), save: false }) });
+        if (!r.ok) throw new Error(await r.text());
+        const url = URL.createObjectURL(await r.blob());
+        if (!dead) setThPreview((old) => { if (old) URL.revokeObjectURL(old); return url; });
+      } catch (e) { if (!dead) setErr("Thumbnail preview failed: " + (e as Error).message); }
+      if (!dead) setThBusy("");
+    }, 350);
+    return () => { dead = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thumbSrc, title, thCue, thFace.x, thFace.y, thZoom, thSide, thGrade]);
+  async function thSave() {
+    setErr(""); setThBusy("save");
+    try {
+      const r = await api.ytThumbnail(thBody()) as { job_id: string };
+      setThId(r.job_id);
+      ctx.onDone();
+    } catch (e) { setErr("Thumbnail save failed: " + (e as Error).message); }
+    setThBusy("");
+  }
 
   // ---- living cover: draft prompt -> hunt 2 FLF takes -> pick -> FlashVSR upscale ----
   async function lcDraftPrompt() {
@@ -809,7 +850,65 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
         {rendering ? "Rendering…" : "Create YouTube video"}
       </PrimaryButton>
 
-      <StepTitle state={meta ? "done" : "optional"}>5 · Upload text</StepTitle>
+      <StepTitle state={thId ? "done" : thumbSrc ? "next" : "todo"}>5 · Thumbnail</StepTitle>
+      {!thumbSrc ? (
+        <p className="text-[11px] text-[var(--color-muted)]">Pick a cover (or import a living cover) first — the thumbnail is cut from it.</p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[11px] text-[var(--color-muted)]">
+            Click the face on the source. The face is cropped large on one side, the title, band and an optional
+            cue sit in a dark panel on the other — the layout that survives at feed size.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="relative cursor-crosshair overflow-hidden rounded border border-[var(--color-line)]"
+              title="click where the face is"
+              onClick={(e) => {
+                const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                setThFace({ x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+                            y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) });
+              }}>
+              <img src={`/api/youtube/frame/${thumbSrc}`} alt="" className="block w-full" draggable={false} />
+              <div className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[var(--color-accent2)] shadow"
+                style={{ left: `${thFace.x * 100}%`, top: `${thFace.y * 100}%` }} />
+            </div>
+            <div className="overflow-hidden rounded border border-[var(--color-line)] bg-black">
+              {thPreview
+                ? <img src={thPreview} alt="" className="block w-full cursor-zoom-in" onClick={() => openLightbox(thPreview)} title="preview — click to enlarge" />
+                : <div className="flex h-full min-h-[80px] items-center justify-center text-[11px] text-[var(--color-muted)]">{thBusy === "preview" ? "Rendering preview…" : "preview"}</div>}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Face size" hint={`${Math.round((1 - thZoom) * 100)}%`}>
+              <input type="range" min={0.3} max={0.8} step={0.02} value={thZoom} onChange={(e) => setThZoom(Number(e.target.value))}
+                className="w-full" style={{ direction: "rtl" }} />
+            </Field>
+            <Field label="Grade" hint={`${Math.round(thGrade * 100)}%`}>
+              <input type="range" min={0} max={1} step={0.1} value={thGrade} onChange={(e) => setThGrade(Number(e.target.value))} className="w-full" />
+            </Field>
+            <Field label="Text panel">
+              <div className="flex gap-1">
+                {(["right", "left"] as const).map((s) => (
+                  <button key={s} onClick={() => setThSide(s)}
+                    className={`flex-1 rounded border px-2 py-1 text-xs ${thSide === s ? "border-[var(--color-accent2)] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-muted)]"}`}>
+                    {s === "right" ? "face left · text right" : "text left · face right"}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Cue line" hint="optional, e.g. VIKING METAL">
+              <input className={inp} value={thCue} onChange={(e) => setThCue(e.target.value)} placeholder="genre or hook, 2–3 words" />
+            </Field>
+          </div>
+          <div className="flex items-center gap-2">
+            <GhostButton onClick={thSave} disabled={thBusy !== "" || !thPreview} title="writes a 1280x720 PNG to the Library (Stills) — download it from there and upload to YouTube">
+              {thBusy === "save" ? "Saving…" : thId ? "↻ Save another thumbnail" : "Save thumbnail to library"}
+            </GhostButton>
+            {thId && <span className="text-[11px] text-[var(--color-muted)]">saved · in Library → Stills</span>}
+          </div>
+        </div>
+      )}
+
+      <StepTitle state={meta ? "done" : "optional"}>6 · Upload text</StepTitle>
       <GhostButton onClick={writeMeta} disabled={metaBusy} title="Claude writes the title line, description (keywords + hashtags) and tags from the song">
         {metaBusy ? "Writing…" : meta ? "↻ Rewrite upload text" : "✦ Write upload text"}
       </GhostButton>

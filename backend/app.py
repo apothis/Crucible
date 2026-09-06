@@ -50,6 +50,7 @@ from . import melody as melody_mod
 from . import solo as solo_mod
 from . import kontakt_daemon as kontakt_daemon_mod
 from . import wordmark as wordmark_mod
+from . import thumbnail as thumbnail_mod
 from . import deglitch as deglitch_mod
 from . import shape as shape_mod
 from . import acestep_train as ace_train
@@ -3148,6 +3149,61 @@ def youtube_stamp(body: dict):
     save_done_row(jid, "videostill", {"prompt": f"stamped: {(song_title + ' / ') if song_title else ''}{wm['text']}",
                                       "source": os.path.basename(str(body.get("image_id") or "")),
                                       "wordmark": wm}, out)
+    return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
+def _thumb_source(source_id):
+    """A library still's path, or the first frame of a library clip (living covers that
+    were imported never had a still) cached under .mvwork/ytplates."""
+    img = _lib_image_path(source_id)
+    if img:
+        return img
+    vid = _lib_video_path(source_id)
+    if not vid:
+        raise HTTPException(400, "source_id must be a library still or clip")
+    frame = _yt_scratch(f"frame_{os.path.basename(source_id)}.png")
+    if not os.path.exists(frame):
+        thumbnail_mod.video_frame(vid, frame)
+    return frame
+
+
+@app.get("/api/youtube/frame/{source_id}")
+def youtube_frame(source_id: str):
+    """The thumbnail source as a PNG (a still as-is, a clip's first frame) - the face
+    picker in the UI clicks on this image."""
+    return FileResponse(_thumb_source(source_id), media_type="image/png")
+
+
+@app.post("/api/youtube/thumbnail")
+def youtube_thumbnail(body: dict):
+    """The panel thumbnail (backend/thumbnail.py) from a cover still or living cover.
+    Body: {source_id, title?, cue?, face_x, face_y (fractions of the source), zoom
+    (crop width fraction, smaller = bigger face), side: "right"|"left" (where the text
+    panel goes), grade 0-1, lift, save}. save=false returns the PNG directly for the
+    preview; save=true writes a library still (Stills section) and returns its id."""
+    src = _thumb_source(str(body.get("source_id") or ""))
+    wm = _yt_wordmark_cfg()
+    title = str(body.get("title") or "").strip()
+    kw = dict(title=title, band=str(wm.get("text") or "").strip(), cue=str(body.get("cue") or "").strip(),
+              face=(float(body.get("face_x", 0.5)), float(body.get("face_y", 0.35))),
+              zoom=float(body.get("zoom", 0.5)), side=str(body.get("side") or "right"),
+              grade=float(body.get("grade", 1.0)), lift=float(body.get("lift", 1.3)), wm_cfg=wm)
+    try:
+        if not body.get("save"):
+            out = _yt_scratch("thumb_preview.png")
+            thumbnail_mod.panel_thumbnail(src, out, **kw)
+            with open(out, "rb") as f:
+                return Response(content=f.read(), media_type="image/png",
+                                headers={"Cache-Control": "no-store"})
+        jid = uuid.uuid4().hex
+        out = os.path.join(LIBRARY, f"{jid}.png")
+        thumbnail_mod.panel_thumbnail(src, out, **kw)
+    except Exception as e:
+        raise HTTPException(500, f"thumbnail failed: {e}")
+    params = {k: v for k, v in kw.items() if k != "wm_cfg"}
+    save_done_row(jid, "videostill", {"prompt": f"thumbnail: {title or wm.get('text')}",
+                                      "source": os.path.basename(str(body.get("source_id") or "")),
+                                      "thumbnail": params}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
 
 
