@@ -2947,11 +2947,22 @@ def _livecover_check(use_id: str):
         jid = uuid.uuid4().hex
         out = os.path.join(LIBRARY, f"{jid}.mp4")
         try:
-            musicvideo_mod.trim_frames(clip, out, rep["trim_frame"])
-            save_done_row(jid, "videoclip",
-                          {"title": "living cover (lock-point cut)" if overrender else "living cover (tail-trimmed)",
-                           "kind": "loop", "source": use_id, "trim_frame": rep["trim_frame"],
-                           "overrender": 0}, out)
+            if overrender:
+                # the standard seam treatment for over-rendered loops: drop the eased static
+                # head, cut at the earliest frame that closes on frame 1, dissolve the moving
+                # tail into the moving head over 0.5s (user-chosen 'B', 2026-09-06)
+                head = int(rep.get("head_trim") or 0)
+                musicvideo_mod.seam_loop(clip, out, head, rep["trim_frame"], fade=0.5)
+                save_done_row(jid, "videoclip",
+                              {"title": "living cover (seam loop)", "kind": "loop", "source": use_id,
+                               "head_trim": head, "trim_frame": rep["trim_frame"], "fade": 0.5,
+                               "overrender": 0}, out)
+            else:
+                musicvideo_mod.trim_frames(clip, out, rep["trim_frame"])
+                save_done_row(jid, "videoclip",
+                              {"title": "living cover (tail-trimmed)",
+                               "kind": "loop", "source": use_id, "trim_frame": rep["trim_frame"],
+                               "overrender": 0}, out)
             # the raw take is superseded by its repaired copy - file it under the
             # Tests bucket so 2 takes stay 2 rows in the main library view
             with db() as conn:
@@ -2968,7 +2979,9 @@ def _livecover_check(use_id: str):
     # end never closes on the start frame - ratio to the clip's own pace, but with an
     # absolute guard: on very subtle clips (mid ~0.15) a sub-pixel wrap inflates the ratio
     open_wrap = rep.get("wrap_step_ratio", 0) > 3 and rep.get("wrap_step", 0) > 1.5
-    if trimmed:
+    if trimmed and overrender:
+        badge = "seam loop" + (" - wrap open" if open_wrap else "")
+    elif trimmed:
         badge = "trimmed" + ("+eases" if eases else "")
     elif idles or open_wrap:
         badge = "idles before wrap - reroll" if idles else "wrap never closes - reroll"

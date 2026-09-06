@@ -469,6 +469,14 @@ def loop_tail_report(path, overrender=0):
             if n - max_trim <= lock < n and np.abs(fr[lock] - f0).mean() <= 1.3 * mid:
                 trim_frame = lock
                 frozen_from = frozen_from if frozen_from is not None else lock
+        # the model also eases OUT of the first anchor (~0.5s of near-static frames at the
+        # head): the seam treatment drops them, so report where the motion reaches half pace
+        roll = np.convolve(motion, np.ones(12) / 12, mode="valid")
+        head_trim = min(24, len(roll))
+        for i in range(min(24, len(roll))):
+            if roll[i] >= 0.5 * med:
+                head_trim = i
+                break
     if frozen_from is not None and trim_frame is None:
         cut = frozen_from
         # walk back only while the wrap step stays ~one normal frame of motion
@@ -482,12 +490,38 @@ def loop_tail_report(path, overrender=0):
     idle_frac = float((tail2 < thresh).mean())
     # a wrap that never closes: last frame vs frame 1 in units of the clip's own pace
     wrap_step = float(np.abs(fr[-1] - f0).mean())
-    return {"frames": n, "mid": round(mid, 2),
-            "tail_ratio": round(float(tail.mean()) / mid, 2) if mid else 1.0,
-            "idle_frac": round(idle_frac, 2),
-            "wrap_step": round(wrap_step, 2),
-            "wrap_step_ratio": round(wrap_step / mid, 1) if mid else 0.0,
-            "frozen_from": frozen_from, "trim_frame": trim_frame}
+    out = {"frames": n, "mid": round(mid, 2),
+           "tail_ratio": round(float(tail.mean()) / mid, 2) if mid else 1.0,
+           "idle_frac": round(idle_frac, 2),
+           "wrap_step": round(wrap_step, 2),
+           "wrap_step_ratio": round(wrap_step / mid, 1) if mid else 0.0,
+           "frozen_from": frozen_from, "trim_frame": trim_frame}
+    if overrender:
+        out["head_trim"] = int(head_trim)
+    return out
+
+
+def seam_loop(in_path, out_path, head, tail, fade=0.5):
+    """The STANDARD seam treatment for over-rendered same-still H3 loops (user-chosen
+    2026-09-06, 'B'): keep frames [head, tail) - dropping the eased-out static head and the
+    eased-in parked tail - then crossfade the moving tail into the moving head over `fade`
+    seconds. Measured on the viking take: motion through the seam stays at the clip's normal
+    pace (1.2-1.5 vs median 1.9) with a 0.8x-step jump, where a plain cut left ~0.5s of
+    near-freeze (0.07-0.13). Both sides of the dissolve are MOVING, which is what hides it;
+    this is not the 1.5s still-into-still crossfade used for background loops."""
+    body = out_path + ".body.mp4"
+    subprocess.run([_ffmpeg(), "-y", "-loglevel", "error", "-i", in_path,
+                    "-vf", f"select='between(n,{int(head)},{int(tail) - 1})',setpts=PTS-STARTPTS",
+                    "-vsync", "0", "-an", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", body],
+                   check=True)
+    try:
+        seamless_loop(body, out_path, fade=fade)
+    finally:
+        try:
+            os.remove(body)
+        except OSError:
+            pass
+    return out_path
 
 
 def trim_frames(in_path, out_path, end_frame):
