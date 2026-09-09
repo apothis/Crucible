@@ -270,3 +270,5 @@ MEASURED 2026-09-09 (first v6 takes, Chooser of the Slain, defaults 50/50/Normal
   Caveat [H]: the panel reset Weirdness from our 28 to 50 and Style Influence from 71
   to 50 on the same run, so the defaults are a confound; retest at 28/71 before
   blaming the model.
+- 2026-09-09: the model picker offers ONLY v6 / v6-wild / v6-mini. v5.5 is gone, so
+  every fix now has to be found on v6.
