@@ -262,3 +262,11 @@ WHAT THIS MEANS FOR OUR WORKFLOW (to test, one variable at a time)
    the model is new from scratch.
 6. v6-wild is worth one roll on the deliberately silly songs (Yorkshire Thunder,
    Thirteenth Son of Odin); do not use it for the ones we need to land.
+
+MEASURED 2026-09-09 (first v6 takes, Chooser of the Slain, defaults 50/50/Normal):
+- Gender-tagged sections: NO better than v5.5 - the male voice still takes the tagged
+  female verse and the chorus.
+- Metal sound: WORSE on this song - muddier and more chaotic than the v5.5 takes.
+  Caveat [H]: the panel reset Weirdness from our 28 to 50 and Style Influence from 71
+  to 50 on the same run, so the defaults are a confound; retest at 28/71 before
+  blaming the model.
