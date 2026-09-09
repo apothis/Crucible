@@ -272,3 +272,7 @@ MEASURED 2026-09-09 (first v6 takes, Chooser of the Slain, defaults 50/50/Normal
   blaming the model.
 - 2026-09-09: the model picker offers ONLY v6 / v6-wild / v6-mini. v5.5 is gone, so
   every fix now has to be found on v6.
+- MEASURED 2026-09-09 (Winter in My Veins A/B, same lyrics + sliders): the user prefers
+  our technical style field (bpm, key, subgenre, gear, vocal register) over the
+  plain-language "no jargon" version that launch-week posts recommended for v6. Keep the
+  established style-field form until there is real evidence for a change.
