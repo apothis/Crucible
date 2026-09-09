@@ -235,10 +235,14 @@ OFFICIAL
 - Sampling: "sample the riff at 0:45, isolate the guitar, build a beat around it".
 - Vibe / reference prompting and multimodal input (text, audio, image, video).
 
-MEASURED BY US (2026-09-09, Pro account, More Options panel)
-- More Options is UNCHANGED from v5.5: Exclude styles, Vocal Gender (Male/Female),
-  Duration (Custom/Auto), Weirdness, Style Influence. There is NO Max Mode and NO
-  Variety control - launch-day write-ups claiming those were wrong.
+MEASURED BY US (2026-09-09, Pro account, More Options panel after a page refresh)
+- More Options now shows: Exclude styles, Vocal Gender (Male/Female), Duration
+  (Custom/Auto), Max Mode (Off/On), Weirdness (default 50), Style Influence (default 50,
+  was 71 on our old setting), Variety (a slider, default "Normal"), Personalize "My Taste"
+  (Off/On). A stale tab shows the old v5.5 panel - refresh before judging.
+- REPORTED, unverified by us: Max Mode = double credits, pitched at consistency across
+  long songs and for Covers/Voices rather than raw quality; Variety rewrites the style
+  prompt into a shorter generic one (one reviewer says keep it at the low end).
 - Day-one impression from others (unverified): v6 ~ v5.5 quality with fewer stray
   vocal artifacts; v6-wild fails about half the time; v6-mini surprisingly competitive.
 - Personas are now "Voices" (verified voice clones); Style Personas still exist inside
@@ -250,7 +254,8 @@ WHAT THIS MEANS FOR OUR WORKFLOW (to test, one variable at a time)
    Female, keep only the [Chorus] [Male Vocal] tag, see whether the chorus still gets him.
 2. Plain-language edit = the new repair for a voice flip: "sing the second verse with
    the female vocalist, keep everything else" on a take we otherwise like.
-3. (removed - no Variety control exists)
+3. Variety: leave at Normal for the first takes, then test the low end - if it really
+   rewrites the style field, our voice/instrumentation wording is what it would drop.
 4. Style Influence: our 70 was tuned on v5.5; retest 50 (new default) vs 70.
 5. Everything measured on v5.5 (gothic+folk adds a male voice, [Key Change] no-op,
    intro-tag lottery, colon params ignored) is a HYPOTHESIS on v6 until re-measured -
