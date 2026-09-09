@@ -235,24 +235,22 @@ OFFICIAL
 - Sampling: "sample the riff at 0:45, isolate the guitar, build a beat around it".
 - Vibe / reference prompting and multimodal input (text, audio, image, video).
 
-REPORTED (unverified by us)
-- Advanced Mode: Vocal Gender selector; Duration Custom/Auto; Max Mode on/off (double
-  credits; pitched at consistency across long songs and for Covers/Voices, not raw
-  quality); Weirdness and Style Influence both default 50; Variety (default Normal) -
-  it REWRITES the style prompt into a short generic one, reviewer says keep it Off.
-- Day-one impression: v6 ~ v5.5 quality with fewer stray vocal artifacts; v6-wild
-  fails about half the time; v6-mini surprisingly competitive.
+MEASURED BY US (2026-09-09, Pro account, More Options panel)
+- More Options is UNCHANGED from v5.5: Exclude styles, Vocal Gender (Male/Female),
+  Duration (Custom/Auto), Weirdness, Style Influence. There is NO Max Mode and NO
+  Variety control - launch-day write-ups claiming those were wrong.
+- Day-one impression from others (unverified): v6 ~ v5.5 quality with fewer stray
+  vocal artifacts; v6-wild fails about half the time; v6-mini surprisingly competitive.
 - Personas are now "Voices" (verified voice clones); Style Personas still exist inside
   Voices. Custom Models (10-60 own tracks) unchanged.
 
 WHAT THIS MEANS FOR OUR WORKFLOW (to test, one variable at a time)
-1. Vocal Gender = the first thing to try on every female-lead song that grew a male
-   voice (Vanadis, Chooser of the Slain). For female-lead + male-chorus songs, set
-   female and keep only the [Chorus] [Male Vocal] tag; see whether the chorus still
-   gets him.
+1. Vocal Gender (same control as before) on a fresh-from-scratch model: retest it on
+   the female-lead songs that grew a male voice (Vanadis, Chooser of the Slain) - set
+   Female, keep only the [Chorus] [Male Vocal] tag, see whether the chorus still gets him.
 2. Plain-language edit = the new repair for a voice flip: "sing the second verse with
    the female vocalist, keep everything else" on a take we otherwise like.
-3. Variety OFF. It overwrites the style field we spent effort on.
+3. (removed - no Variety control exists)
 4. Style Influence: our 70 was tuned on v5.5; retest 50 (new default) vs 70.
 5. Everything measured on v5.5 (gothic+folk adds a male voice, [Key Change] no-op,
    intro-tag lottery, colon params ignored) is a HYPOTHESIS on v6 until re-measured -
