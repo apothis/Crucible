@@ -276,3 +276,32 @@ MEASURED 2026-09-09 (first v6 takes, Chooser of the Slain, defaults 50/50/Normal
   our technical style field (bpm, key, subgenre, gear, vocal register) over the
   plain-language "no jargon" version that launch-week posts recommended for v6. Keep the
   established style-field form until there is real evidence for a change.
+
+## Suno's own style expander (measured 2026-09-13, Queen of the Sun)
+
+The SIMPLE-mode text box rewrites a one-line idea into a full style field before
+generating. The user typed roughly "mid 1980s NWOBHM heavy metal, driving bass, analogue
+production" and Suno expanded it to:
+
+  mid-1980s NWOBHM heavy metal, galloping eighth-note rhythm guitars, twin harmonised
+  lead guitars with melodic minor-key hooks, driving bass high in the mix, punchy live
+  drums with roomy toms, anthemic [male -> user changed to mezzo soprano female] vocals,
+  dramatic historical atmosphere, analog tape saturation, British valve-amp crunch,
+  tight but organic studio mix, powerful chorus, guitar solo tradeoffs
+
+That is the model's NATIVE dialect - the most training-aligned style text we can get.
+What it looks like:
+- comma-separated phrases, 12-13 of them, no sentences, no bpm, no key
+- era + subgenre first, then guitars (rhythm, then leads), bass, drums, vocals,
+  atmosphere, PRODUCTION (three phrases of it: tape, amp, mix), then arrangement
+  ("powerful chorus", "guitar solo tradeoffs")
+- concrete playing vocabulary ("galloping eighth-note", "roomy toms", "high in the mix")
+  rather than adjectives
+- it picked a MALE singer for NWOBHM on its own - gender must always be stated
+
+How to use it:
+1. For any new genre, type a one-line idea into simple mode, generate once, open the
+   song and COPY the expanded style field. Edit the singer line. That is the template.
+2. Our technical style fields still win the A/B (see above) - but fold in the expander's
+   production triplet (tape / amp / mix) and its playing vocabulary; they cost nothing.
+3. bpm and key are ours, not Suno's; keep them at the front, they have never hurt.
