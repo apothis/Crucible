@@ -387,3 +387,9 @@ d. End every lyric sheet [Final Chorus] -> [Instrumental Outro] -> [Hard Stop] -
    (we already use [End]; add the buffer) + the ending sentence in the style box.
 e. Keep our bpm/key/subgenre front-loading and tag grammar; the labelled-field order is
    compatible with it (genre first, vocals second, then the band).
+- MEASURED 2026-09-14 (Chooser of the Slain - v6 copy, a few generations): vocals sit
+  better in the mix, less "lost" than the first v6 takes. No other adopted change
+  showed a clear effect, and none did harm. Keep the production-quality clause + the
+  instrumental-outro buffer as house defaults; treat full-band-throughout as neutral
+  until a song shows a difference. (Sliders and wording were changed together, so the
+  vocal improvement is not attributed to one of them.)
