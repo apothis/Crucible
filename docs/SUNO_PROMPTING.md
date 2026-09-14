@@ -305,3 +305,17 @@ How to use it:
 2. Our technical style fields still win the A/B (see above) - but fold in the expander's
    production triplet (tape / amp / mix) and its playing vocabulary; they cost nothing.
 3. bpm and key are ours, not Suno's; keep them at the front, they have never hurt.
+
+## v6 third-party tested notes (hookgenius "tested day one", read 2026-09-14)
+- Field limits unchanged: style 1000 chars, lyrics 5000. The style prompt is stored
+  byte-identical - the model does NOT rewrite it (so the expander only runs in simple mode).
+- Exclude field: negatives typed into the STYLE box read as inclusions; keep them in Exclude.
+- Style Influence default 50 = first suspect when a carefully specified prompt comes back
+  generic. Variety = take-to-take divergence (lower for consistency, raise to explore).
+  Vocal Gender / Weirdness / Max Mode listed but not tested by them.
+- Bracketed per-section performance cues in the LYRICS are read and used by v6 (their test
+  track's caption echoed "whispered", "Italian", "French" that lived only in section cues).
+- Variance warning: the difference between the two takes of ONE generation can exceed the
+  effect of a deliberate prompt change. Judge prompt edits over several generations.
+- v6 returns longer songs on the same prompt (about 3:10 vs 2:45 on v5.5) and writes its
+  own caption summary instead of echoing the style text.
