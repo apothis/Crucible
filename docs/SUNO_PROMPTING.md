@@ -319,3 +319,71 @@ How to use it:
   effect of a deliberate prompt change. Judge prompt edits over several generations.
 - v6 returns longer songs on the same prompt (about 3:10 vs 2:45 on v5.5) and writes its
   own caption summary instead of echoing the style text.
+
+## Reddit "Unofficial Suno v6 Prompting Guide" (r/SunoAI, OP Novel_Tumbleweed9989, read 2026-09-14)
+Provenance: one experienced user's practice (pop-punk/metalcore/deathcore/darkwave), built
+with ChatGPT, self-described as unofficial. 93 up / 67 down - contested; several
+commenters say no prompt fixes v6's mix ("defaults to the generic v6 sound", "cannot do
+proper guitars"), one EQ-analysed downloads and says v6 "does not know how to mix" and
+must be spoon-fed mix instructions. Two commenters confirm the recipe fixed their
+choruses/verses. Treat every claim as [H] until we measure it.
+
+OP's core rule: "Tell it what the finished recording should actually sound like" -
+direct the musicians AND the recording engineer.
+
+1. Sliders for a NEW song: Variety 0, Weirdness under 50 (his sweet spot 30-50),
+   Style Influence 80-95. Calibrate first, then loosen. No Max Mode during development.
+   (Commenter: 33 / 85 also good. Our old 28 / 71 sits inside this band; the v6 reset to
+   50 / 50 is OUTSIDE it - the confound we already suspected on Chooser of the Slain.)
+2. Style field in MUSICAL ORDER with labels:
+   Genre -> Vocals -> Drums -> Guitars -> Bass -> Other -> Arrangement/Energy ->
+   Production Quality -> Ending Instruction (-> Sliders, which he types into the text;
+   almost certainly a no-op, harmless).
+3. PRODUCTION-QUALITY CLAUSE (his answer to muddy/distant/collapsing mixes - exactly our
+   v6 complaint): "high-fidelity studio production, close-mic vocals, crisp transients,
+   clear instrument separation, open low-mids, clear high-end air, stable loudness and
+   tonal balance". Don't let it eat half the box.
+4. Describe instrument ACTIVITY with verbs, not names: "continuous foreground guitar
+   riffs, interlocking melodic leads, fast alternate picking, driving power chords";
+   drums = what the drummer is doing (double bass, fills, ghost notes, ride bell).
+   (Matches what fixed Say It Again's buried guitars for us.)
+5. "Great chorus, dead verse": say "full-band energy throughout with foreground guitar
+   riffs and active drums during verses" - v6 strips verses unless told not to.
+6. Vocals: describe character, positively. His anti-operatic line for female vocals:
+   "gritty chest voice, contemporary rock delivery, aggressive edge" (= our Noora fix).
+   Prefer stating what you WANT over long negative lists.
+7. Lyric tags = SHORT commands; long bracket paragraphs get partly ignored or sung.
+   Per-section performance tags on their own line work: [Raspy Clean], [Building
+   Scream], [Wounded Clean], [False Cord], [Layered Vocals] (his metalcore example).
+   Parentheses = backing/echoes (same as ours).
+8. Undefined intros invite random "grrr/whoa" noise: start lyrics immediately or write
+   [Instrumental Intro] and describe it in the style box.
+9. Songs ending mid-lyric (a v6 problem): finish the lyrics with
+   [Final Chorus] ... [Instrumental Outro] [Hard Stop] [End]
+   and add "complete every written lyric before a short instrumental outro and final
+   hard stop" to the style box. The outro is a sacrificial buffer. Also stops outro drag.
+10. Hybrid genres: "one main identity + two or three influences", not twelve.
+11. Save working recipes verbatim; make "Recipe - v6" copies rather than rewriting.
+
+Commenter alternatives (all [H]):
+- Arqeph_: pipe-delimited labelled blocks in BOTH boxes, e.g. lyrics sections as
+  "[Section: First Chorus | Mood: ... | Key Instruments: ... | Dynamic: ... | Spatial
+  Effects: ...]" - says v6 treats the pipes as structure and can push lyrics off-beat
+  when short repetitive lines are cut; fine for full lyrics.
+- Auree_Gil: a working contralto rock/metal prompt in the OP's order (verses acoustic,
+  choruses metal) - dynamics written as "restrained verses building into explosive
+  choruses", ending "finish with a massive final metal chorus at maximum intensity".
+- angryazneyes: ask an LLM to "rewrite this in musicological terms, under 500 chars".
+- Osram_Serpentis: v6 quality degrades over a long song; extend with v6-mini instead.
+- ART-ficial-Ignorance: the template blows the 1000-char limit and "insists on putting
+  guitars in everything" (not a problem for us).
+
+WHAT WE ADOPT (test on Chooser of the Slain, the muddy one, one change per run):
+a. Sliders back to Weirdness 30 / Style Influence 85 / Variety 0 - first, alone.
+b. Append the production-quality clause to the style field.
+c. Add "full-band energy throughout, layered rhythm guitars remain present beneath the
+   vocals in every verse" for songs where guitars vanish.
+d. End every lyric sheet [Final Chorus] -> [Instrumental Outro] -> [Hard Stop] -> [End]
+   (we already use [End]; add the buffer) + the ending sentence in the style box.
+e. Keep our bpm/key/subgenre front-loading and tag grammar; the labelled-field order is
+   compatible with it (genre first, vocals second, then the band).
