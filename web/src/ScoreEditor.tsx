@@ -22,8 +22,71 @@ import type { AbcInfo } from "./Yue2Studio";
 // ---------------------------------------------------------------------------------------------
 
 type Props = { abc: string; setAbc: (t: string) => void; info: AbcInfo | null; onClear: () => void };
+
+// ---- pitch editing in the text ----
+// A dragged roll note becomes a text edit: the note token at [startChar, endChar) is re-spelled at
+// the new MIDI pitch WITH an explicit accidental (= ^ _), which is unambiguous for that note. An
+// explicit accidental also carries to later notes of the same letter in the bar, so after the edit
+// the score is re-parsed and any other note whose pitch moved gets an explicit accidental that
+// restores it. Time/duration dragging is not implemented: durations are tied to L: and bar maths.
+const NOTE_RE = /([_^=]*)([A-Ga-g])([,']*)/;
+const SHARP_NAMES = ["C", "^C", "D", "^D", "E", "F", "^F", "G", "^G", "A", "^A", "B"];
+const FLAT_NAMES = ["C", "_D", "D", "_E", "E", "F", "_G", "G", "_A", "A", "_B", "B"];
+function keyPrefersFlats(k: string | undefined): boolean {
+  const root = (k || "C").trim();
+  return /^[A-G]b/.test(root) || /^F(?![#])/.test(root) || /^(D|G|C)m/.test(root) || /^Dm/.test(root);
+}
+function spell(midi: number, flats: boolean): string {
+  const pc = ((midi % 12) + 12) % 12;
+  const name = (flats ? FLAT_NAMES : SHARP_NAMES)[pc];
+  const acc = name.length > 1 ? name[0] : "=";
+  const letter = name[name.length - 1];
+  const octave = Math.floor(midi / 12) - 1;         // 60 -> 4
+  let body = octave >= 5 ? letter.toLowerCase() : letter;
+  if (octave >= 6) body += "'".repeat(octave - 5);
+  if (octave <= 3) body += ",".repeat(4 - octave);
+  return acc + body;
+}
+function respellNote(abc: string, startChar: number, endChar: number, midi: number, flats: boolean): string {
+  const tok = abc.slice(startChar, endChar);
+  const m = NOTE_RE.exec(tok);
+  if (!m || m.index == null) return abc;
+  const a = startChar + m.index, b = a + m[0].length;
+  return abc.slice(0, a) + spell(midi, flats) + abc.slice(b);
+}
+function notePitches(abc: string): { pitch: number; startChar: number; endChar: number }[] {
+  const holder = document.createElement("div");
+  const tunes = abcjs.renderAbc(holder, abc, { add_classes: false });
+  const seq = tunes[0].setUpAudio({ chordsOff: true });
+  const out: { pitch: number; startChar: number; endChar: number }[] = [];
+  seq.tracks.forEach((track) => track.forEach((it) => { if (it.cmd === "note") out.push({ pitch: it.pitch, startChar: it.startChar, endChar: it.endChar }); }));
+  return out.sort((x, y) => x.startChar - y.startChar);
+}
+// Move one note by `delta` semitones and keep every other note where it was.
+function movePitch(abc: string, target: { startChar: number; endChar: number; pitch: number }, delta: number, flats: boolean): { abc: string; fixed: number } | null {
+  const before = notePitches(abc);
+  const idx = before.findIndex((n) => n.startChar === target.startChar);
+  if (idx < 0) return null;
+  let out = respellNote(abc, target.startChar, target.endChar, target.pitch + delta, flats);
+  let fixed = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    const after = notePitches(out);
+    if (after.length !== before.length) return null;      // the edit broke the parse; bail
+    let changed = false;
+    // walk from the end so earlier char offsets stay valid while we splice
+    for (let i = after.length - 1; i >= 0; i--) {
+      if (i === idx) continue;
+      if (after[i].pitch !== before[i].pitch) {
+        out = respellNote(out, after[i].startChar, after[i].endChar, before[i].pitch, flats);
+        fixed++; changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return { abc: out, fixed };
+}
 type View = "notation" | "roll" | "text";
-type RollNote = { pitch: number; start: number; duration: number; voice: number; startChar: number };
+type RollNote = { pitch: number; start: number; duration: number; voice: number; startChar: number; endChar: number };
 
 const VOICE_COLORS = ["#f0911d", "#4fa3e0"];   // Vocal, Ins
 
@@ -75,7 +138,7 @@ export function ScoreEditor({ abc, setAbc, info, onClear }: Props) {
           seq.tracks.forEach((track, vi) => {
             track.forEach((it) => {
               if (it.cmd !== "note") return;
-              notes.push({ pitch: it.pitch, start: it.start, duration: it.duration, voice: Math.min(vi, 1), startChar: it.startChar });
+              notes.push({ pitch: it.pitch, start: it.start, duration: it.duration, voice: Math.min(vi, 1), startChar: it.startChar, endChar: it.endChar });
               total = Math.max(total, it.start + it.duration);
               lo = Math.min(lo, it.pitch); hi = Math.max(hi, it.pitch);
             });
@@ -187,10 +250,23 @@ export function ScoreEditor({ abc, setAbc, info, onClear }: Props) {
           no score loaded: write plans above, transcribe a recording below, or paste ABC in the text view
         </div>
       )}
-      {view === "roll" && (roll ? <PianoRoll roll={roll} marks={sectionMarks} onNote={(n) => {
-        setView("text");
-        window.setTimeout(() => { const ta = textRef.current; if (!ta) return; ta.focus(); ta.setSelectionRange(n.startChar, n.startChar + 2); }, 0);
-      }} /> : <div className="mt-2 p-4 text-center text-[11px] text-[var(--color-muted)]">no notes to show</div>)}
+      {view === "roll" && (roll ? <PianoRoll roll={roll} marks={sectionMarks}
+        onNote={(n) => {
+          setView("text");
+          window.setTimeout(() => { const ta = textRef.current; if (!ta) return; ta.focus(); ta.setSelectionRange(n.startChar, n.startChar + 2); }, 0);
+        }}
+        onDrag={(n, delta) => {
+          if (!delta) return;
+          const r = movePitch(abc, { startChar: n.startChar, endChar: n.endChar, pitch: n.pitch }, delta, keyPrefersFlats(info?.K));
+          if (!r) { setWarn("could not move that note in the text (the token was not found or the edit broke the parse)"); return; }
+          setAbc(r.abc);
+          setWarn(r.fixed ? `moved ${delta > 0 ? "+" : ""}${delta} semitones; ${r.fixed} other note(s) in the bar got an explicit accidental to stay put` : "");
+        }} /> : <div className="mt-2 p-4 text-center text-[11px] text-[var(--color-muted)]">no notes to show</div>)}
+      {view === "roll" && roll && (
+        <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+          Drag a note up or down to change its pitch (written into the ABC with an explicit accidental). Click a note to jump to it in the text. Time and length are edited in the text.
+        </div>
+      )}
       <textarea ref={textRef} className={inp + " mt-2 min-h-[320px] font-mono text-[11px] leading-[15px] " + (view === "text" ? "" : "hidden")}
         rows={20} value={abc} onChange={(e) => setAbc(e.target.value)} spellCheck={false}
         placeholder={"X:1\nT:\nM:4/4\nL:1/32\nQ:1/4=120\nV: Vocal clef=treble name=\"Vocal Melody\" snm=\"Vocal\"\nV: Ins clef=treble name=\"Ins Melody\" snm=\"Inst.\"\nK:Am\n% intro\nV: Vocal\n..."} />
@@ -204,7 +280,9 @@ export function ScoreEditor({ abc, setAbc, info, onClear }: Props) {
   );
 }
 
-function PianoRoll({ roll, marks, onNote }: { roll: { notes: RollNote[]; total: number; lo: number; hi: number }; marks: { name: string; x: number }[]; onNote: (n: RollNote) => void }) {
+function PianoRoll({ roll, marks, onNote, onDrag }: { roll: { notes: RollNote[]; total: number; lo: number; hi: number }; marks: { name: string; x: number }[]; onNote: (n: RollNote) => void; onDrag: (n: RollNote, deltaSemitones: number) => void }) {
+  // drag state: which note, where the press started, and the live semitone offset for the ghost
+  const [drag, setDrag] = useState<{ i: number; y0: number; dy: number } | null>(null);
   const pxPerUnit = 640 / Math.max(roll.total, 1);   // whole-note units -> px, fit ~640px then scroll
   const scale = Math.max(pxPerUnit, 160);            // at least 160 px per whole note so eighths are visible
   const width = Math.ceil(roll.total * scale) + 40;
@@ -228,12 +306,29 @@ function PianoRoll({ roll, marks, onNote }: { roll: { notes: RollNote[]; total: 
             <text x={m.x * scale + 33} y={10} fontSize={9} fill="#f7b733">{m.name}</text>
           </g>
         ))}
-        {roll.notes.map((n, i) => (
-          <rect key={i} x={n.start * scale + 30} y={y(n.pitch) + 1} width={Math.max(2, n.duration * scale - 1)} height={rowH - 2}
-            rx={1} fill={VOICE_COLORS[n.voice]} opacity={0.9} className="cursor-pointer" onClick={() => onNote(n)}>
-            <title>{`${n.voice === 0 ? "Vocal" : "Ins"} · midi ${n.pitch}`}</title>
-          </rect>
-        ))}
+        {roll.notes.map((n, i) => {
+          const off = drag && drag.i === i ? Math.round(-drag.dy / rowH) : 0;
+          return (
+            <rect key={i} x={n.start * scale + 30} y={y(n.pitch + off) + 1} width={Math.max(2, n.duration * scale - 1)} height={rowH - 2}
+              rx={1} fill={VOICE_COLORS[n.voice]} opacity={drag && drag.i === i ? 1 : 0.9} stroke={drag && drag.i === i ? "#fff" : "none"}
+              className="cursor-ns-resize"
+              onMouseDown={(e) => { e.preventDefault(); setDrag({ i, y0: e.clientY, dy: 0 }); }}>
+              <title>{`${n.voice === 0 ? "Vocal" : "Ins"} · midi ${n.pitch}${off ? ` -> ${n.pitch + off}` : ""}`}</title>
+            </rect>
+          );
+        })}
+        {drag && (
+          // a full-size capture layer so the drag keeps tracking outside the note
+          <rect x={0} y={0} width={width} height={height} fill="transparent"
+            onMouseMove={(e) => setDrag({ ...drag, dy: e.clientY - drag.y0 })}
+            onMouseUp={(e) => {
+              const delta = Math.round(-(e.clientY - drag.y0) / rowH);
+              const n = roll.notes[drag.i];
+              setDrag(null);
+              if (delta === 0) onNote(n); else onDrag(n, delta);
+            }}
+            onMouseLeave={() => setDrag(null)} />
+        )}
       </svg>
     </div>
   );

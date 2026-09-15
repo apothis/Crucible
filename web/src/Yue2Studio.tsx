@@ -52,6 +52,14 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [style, setStyle] = d.use("style", "");
   const [lyrics, setLyrics] = d.use("lyrics", "");
   const [lint, setLint] = useState<string[]>([]);
+  // style writer: a brief -> a PROPOSED line (before/after, accept or discard), never applied blind
+  const [brief, setBrief] = d.use("brief", "");
+  const [writing, setWriting] = useState(false);
+  const [styleProp, setStyleProp] = useState<{ style: string; lyrics: string; provider: string } | null>(null);
+  // agentic score edit: an instruction -> a PROPOSED score with a summary and structural checks
+  const [instruction, setInstruction] = d.use("instruction", "");
+  const [editing, setEditing] = useState(false);
+  const [editProp, setEditProp] = useState<{ abc: string; summary: string; problems: string[]; before: { K?: string; bpm: number | null; bars: number; sections: string[] }; after: { K?: string; bpm: number | null; bars: number; sections: string[] } } | null>(null);
 
   // ---- the score ----
   // abc = the score that will be rendered (empty = let the render plan its own, or "off").
@@ -157,6 +165,30 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   function insertTag(tag: string) {
     const t = lyrics.trim();
     setLyrics((t ? t + "\n\n" : "") + `[${tag}]\n`);
+  }
+
+  // ---------------- the writers ----------------
+  async function writeStyle() {
+    if (!brief.trim() && !style.trim()) { setNote("give the writer a brief, or an existing line to improve"); return; }
+    setWriting(true); setStyleProp(null);
+    try {
+      const r = await api.yue2WriteStyle({ brief, style, lyrics });
+      setStyleProp(r);
+      setNote(r.lyrics ? "the writer proposed a style line and drafted lyrics (the box was empty) - review below" : "the writer proposed a style line - review below");
+    } catch (e) { setNote(`style writer failed: ${e}`); }
+    setWriting(false);
+  }
+  async function askEditor() {
+    if (!abc.trim()) { setNote("load or write a score first"); return; }
+    if (!instruction.trim()) { setNote("say what to change in the score"); return; }
+    setEditing(true); setEditProp(null);
+    setNote("the editor is rewriting the score: the whole ABC comes back, which takes a few minutes for a full song (measured 4.5 min for 140 bars)...");
+    try {
+      const r = await api.yue2AgentEdit({ abc, style, lyrics, instruction });
+      setEditProp(r);
+      setNote(r.problems?.length ? `the editor's score has problems: ${r.problems.join("; ")} - review before accepting` : "the editor proposed a score - review below");
+    } catch (e) { setNote(`score editor failed: ${e}`); }
+    setEditing(false);
   }
 
   // ---------------- conversions to / from the other engines ----------------
@@ -373,6 +405,27 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               </div>
             ))}
           </div>
+          <div className="mt-3 border-t border-[var(--color-line)] pt-2">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">style writer</div>
+            <textarea className={inp + " mt-1 min-h-[52px] text-[11px]"} rows={2} value={brief} onChange={(e) => setBrief(e.target.value)}
+              placeholder="Brief in plain words: the song, the singer, the feel, what must not be in it. With a line already written, the brief edits it ('heavier', 'add a choir on the last chorus'). Empty lyrics box = it drafts lyrics too." />
+            <div className="mt-1 flex items-center gap-2">
+              <GhostButton onClick={writeStyle} disabled={writing} title="one LLM pass by upstream's own style-line rules; lands as a proposal">{writing ? "writing…" : "Write style line"}</GhostButton>
+            </div>
+            {styleProp && (
+              <div className="mt-2 rounded border border-[var(--color-accent2)]/40 bg-[#0e1015] p-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[var(--color-accent2)]">proposed {"·"} via {styleProp.provider}</span>
+                  <span className="flex-1" />
+                  <GhostButton onClick={() => { setStyle(styleProp.style); if (styleProp.lyrics && !lyrics.trim()) setLyrics(styleProp.lyrics); setStyleProp(null); }}>use this</GhostButton>
+                  <GhostButton onClick={() => setStyleProp(null)}>discard</GhostButton>
+                </div>
+                {style.trim() && <div className="mt-1 rounded bg-red-950/20 p-1 text-[10px] leading-relaxed text-red-200/70"><span className="mr-1 opacity-60">now</span>{style}</div>}
+                <div className="mt-1 rounded bg-emerald-950/20 p-1 text-[10px] leading-relaxed text-emerald-200/80"><span className="mr-1 opacity-60">proposed</span>{styleProp.style}</div>
+                {styleProp.lyrics && !lyrics.trim() && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-emerald-950/20 p-1 text-[10px] text-emerald-200/80">{styleProp.lyrics}</pre>}
+              </div>
+            )}
+          </div>
           <div className="mt-2 text-[10px] text-[var(--color-muted)]">
             One compact line, strongest identity first. Living artist names are ignored; describe the audible
             qualities instead. BPM here is a soft prior (honoured about half the time upstream, two of our seeds
@@ -456,6 +509,32 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
 
           <ScoreEditor abc={abc} setAbc={(t) => { setAbc(t); if (t.trim() && abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)"); }}
             info={abcInfo} onClear={() => { setAbc(""); setAbcSource(""); }} />
+
+          <div className="mt-3 border-t border-[var(--color-line)] pt-2">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">ask the editor</div>
+            <div className="mt-1 flex items-center gap-2">
+              <input className={inp} value={instruction} onChange={(e) => setInstruction(e.target.value)} disabled={!abc.trim()}
+                placeholder="e.g. lift the last chorus a tone, make the solo eight bars longer, reharmonise the bridge to the relative major, halve the intro" />
+              <GhostButton onClick={askEditor} disabled={editing || !abc.trim()} title="the app LLM edits the ABC to the instruction; comes back as a proposal with before/after checks">{editing ? "editing…" : "Ask"}</GhostButton>
+            </div>
+            {editProp && (
+              <div className="mt-2 rounded border border-[var(--color-accent2)]/40 bg-[#0e1015] p-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[var(--color-accent2)]">proposed edit</span>
+                  <span className="flex-1" />
+                  <GhostButton onClick={() => { setAbc(editProp.abc); setAbcSource((abcSource || "score") + " (edited by the editor)"); setEditProp(null); }}>use this</GhostButton>
+                  <GhostButton onClick={() => setEditProp(null)}>discard</GhostButton>
+                </div>
+                <div className="mt-1 text-[10px] leading-relaxed text-emerald-200/80">{editProp.summary || "(no summary)"}</div>
+                <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+                  {editProp.before.K || "?"} {editProp.before.bpm ?? "?"} bpm {editProp.before.bars} bars [{editProp.before.sections.join(" ")}]
+                  {" -> "}
+                  {editProp.after.K || "?"} {editProp.after.bpm ?? "?"} bpm {editProp.after.bars} bars [{editProp.after.sections.join(" ")}]
+                </div>
+                {editProp.problems?.length > 0 && <div className="mt-1 text-[10px] text-red-400">{editProp.problems.join("; ")}</div>}
+              </div>
+            )}
+          </div>
 
           {takes.length > 0 && (
             <div className="mt-2">

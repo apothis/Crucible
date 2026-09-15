@@ -352,3 +352,100 @@ def text_outputs(history_entry):
         for t in out.get("text", []) or []:
             texts.append(t if isinstance(t, str) else str(t))
     return "\n".join(texts).strip()
+
+
+# ---------------- LLM helpers: the style writer and the agentic score editor ----------------
+# Both go through backend/llm.py like every other writer in the app (claude_sub by default) and
+# return PROPOSALS: the tab shows before/after and the user accepts, nothing is applied blind.
+
+_STYLE_SYSTEM = (
+    "You write the style line for the YuE2 music model. Output STRICT JSON ONLY: "
+    "{\"style\": \"...\", \"lyrics\": \"...\"}. No prose, no markdown.")
+
+_STYLE_RULES = """Rules for "style" (upstream's guidance: "more adjectives do not automatically create more control"):
+- ONE compact comma-separated line, 8-14 descriptors, under 60 words, strongest identity first:
+  language, ONE genre, the defining instruments and where they sit in the mix, the vocal (gender,
+  register, timbre, delivery), tempo as "NNN BPM" when the brief implies one, a two-word mood, and
+  short absolute negatives ("no growls", "no synthesizers") - upstream uses "no guitar" itself.
+- Upstream's own examples, for register: "English, warm piano pop, expressive female voice,
+  acoustic piano, rounded bass and light drums, lyrical memorable melody, unhurried phrasing, 88 BPM"
+  and "Heavy metal rock, palm-muted riffs, distorted guitars, driving bass, double-kick drums,
+  powerful English vocal, 160 BPM".
+- Describe audible qualities; never name a living artist. Nothing about song sections or timing.
+- For an instrumental: omit language and singer, add "instrumental".
+- If existing style text is given, IMPROVE it in place (keep its genre, instruments and voice
+  unless the brief says otherwise) rather than starting over.
+Rules for "lyrics": ONLY when no lyrics are provided, draft original lyrics structured with bare
+Title-case section tags on their own lines ([Intro] [Verse] [Pre-Chorus] [Chorus] [Bridge]
+[Guitar Solo] [Outro]; [Verse 2] style numbering is fine), nothing else inside the brackets,
+verses 4-8 lines, a chantable chorus, plain ASCII, no parentheses. If lyrics ARE provided return
+"" for lyrics."""
+
+
+def write_style(brief, style, lyrics, provider, model, claude_model):
+    from . import llm
+    prompt = (f"{_STYLE_RULES}\n\nBRIEF: {(brief or '').strip() or '(none - improve the existing style line)'}\n\n"
+              f"EXISTING STYLE LINE: {(style or '').strip() or '(empty)'}\n\n"
+              f"LYRICS: {(lyrics or '').strip()[:4000] or '(none)'}\n\nReturn the JSON now.")
+    text = llm.complete(provider, model, _STYLE_SYSTEM, prompt, claude_model, timeout=240)
+    m = re.search(r"\{.*\}", text or "", re.S)
+    import json as _json
+    data = _json.loads(m.group(0) if m else text)
+    out_style = str(data.get("style") or "").strip()
+    out_lyrics = str(data.get("lyrics") or "").strip() if not (lyrics or "").strip() else ""
+    if not out_style:
+        raise ValueError("the writer returned no style line")
+    return {"style": out_style[:800], "lyrics": normalize_lyrics(out_lyrics) if out_lyrics else "",
+            "provider": provider}
+
+
+_EDIT_SYSTEM = (
+    "You are a music editor working on an ABC score for the YuE2 music model. Output STRICT JSON "
+    "ONLY: {\"abc\": \"...\", \"summary\": \"...\"}. The abc value is the COMPLETE edited score "
+    "as one JSON string with \\n newlines. No prose outside the JSON, no markdown fences.")
+
+_EDIT_RULES = """The YuE2 ABC dialect (anything outside it is rejected by the renderer):
+- Header lines, in order: X:1, T:, M:, L: (keep the given L, usually 1/32 or 1/16), Q:1/4=NN,
+  the two V: declarations exactly as given, K:<key>.
+- Body: bar groups alternate "V: Vocal" and "V: Ins" blocks of 1-4 bars each, bars end with |.
+  Sections are marked by a comment line "% verse" / "% chorus" / "% pre-chorus" / "% bridge" /
+  "% intro" / "% interlude" / "% outro" placed before the first block of the section.
+- Chord symbols are quoted, in the Vocal voice, at the start of the beat they change on: "Am7".
+- Note durations are multiples of L: with L:1/32 use only 1,2,3,4,6,8,12,16,24,32,48. Rests are
+  z<dur>; a whole silent bar is z32 (L:1/32) or z16 (L:1/16); Z, Z2, Z4 = 1/2/4 silent bars.
+- Ties with -, accidentals ^ _ = before the note letter, octaves with , and '.
+- NOT allowed: tuplets, grace notes, chord stacks [CE], repeats |: :|, slurs (), w: lyric lines,
+  decorations, inline field changes.
+- Keep every bar the right length for M:. Keep the section order consistent with the lyric
+  sheet's sections unless the instruction changes the form, in which case say so in the summary
+  so the lyrics can be changed to match.
+- Make ONLY the change asked for; leave everything else byte-identical. Say in "summary" (one or
+  two sentences) exactly what changed, in musical terms (bars, section, interval)."""
+
+
+def edit_score(abc, style, lyrics, instruction, provider, model, claude_model):
+    from . import llm
+    import json as _json
+    if not (abc or "").strip():
+        raise ValueError("no score to edit")
+    if not (instruction or "").strip():
+        raise ValueError("say what to change")
+    prompt = (f"{_EDIT_RULES}\n\nSTYLE LINE: {(style or '').strip()}\n\nLYRIC SHEET (sections):\n"
+              f"{(lyrics or '').strip()[:3000]}\n\nTHE SCORE:\n{abc.strip()}\n\n"
+              f"INSTRUCTION: {instruction.strip()}\n\nReturn the JSON now.")
+    text = llm.complete(provider, model, _EDIT_SYSTEM, prompt, claude_model, timeout=300)
+    m = re.search(r"\{.*\}", text or "", re.S)
+    data = _json.loads(m.group(0) if m else text)
+    out = str(data.get("abc") or "").strip()
+    if not out:
+        raise ValueError("the editor returned no score")
+    if not out.endswith("\n"):
+        out += "\n"
+    before, after = parse_header(abc), parse_header(out)
+    return {"abc": out, "summary": str(data.get("summary") or "").strip(),
+            "problems": validate_abc(out),
+            "before": {"K": before.get("K"), "bpm": before.get("bpm"), "bars": before["bars"],
+                       "sections": [s["name"] for s in before["sections"]]},
+            "after": {"K": after.get("K"), "bpm": after.get("bpm"), "bars": after["bars"],
+                      "sections": [s["name"] for s in after["sections"]]},
+            "provider": provider}
