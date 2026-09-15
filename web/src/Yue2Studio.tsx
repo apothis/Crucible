@@ -243,10 +243,21 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   }
 
   // ---------------- 3 · plans (score only, fast) ----------------
+  // A poll that gives up. /api/yue2/job answers 404 "unknown job" once a job is gone (score-only
+  // jobs live in memory, so a backend restart drops them); a loop that swallowed that spun forever.
+  // Stop at once on "unknown job", and after 20 consecutive failures of any other kind.
+  function pollGone(e: unknown, fails: { n: number }): string | null {
+    const msg = String((e as Error)?.message ?? e);
+    if (/unknown job/i.test(msg)) return "job no longer known to the backend (restarted?)";
+    fails.n += 1;
+    return fails.n >= 20 ? `lost contact with the job (${msg})` : null;
+  }
   function pollText(jobId: string, onDone: (abc: string, seedOut: number) => void, onErr: (e: string) => void) {
+    const fails = { n: 0 };
     const t = window.setInterval(async () => {
-      const j = await api.yue2Job(jobId).catch(() => null);
-      if (!j) return;
+      let j;
+      try { j = await api.yue2Job(jobId); fails.n = 0; }
+      catch (e) { const gone = pollGone(e, fails); if (gone) { clearInterval(t); onErr(gone); } return; }
       if (j.status === "done") { clearInterval(t); onDone(j.abc || "", j.seed); }
       else if (j.status === "error") { clearInterval(t); onErr(j.error || "error"); }
     }, 1500);
@@ -366,9 +377,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
         pollJob(r.job_id, cards[i].id, ctx);
         // remember the take so its generated score can be pulled back in afterwards
+        const fails = { n: 0 };
         const t = window.setInterval(async () => {
-          const j = await api.yue2Job(r.job_id).catch(() => null);
-          if (!j) return;
+          let j;
+          try { j = await api.yue2Job(r.job_id); fails.n = 0; }
+          catch (e) { if (pollGone(e, fails)) clearInterval(t); return; }
           if (j.status === "done" || j.status === "error") {
             clearInterval(t);
             if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || abc, mode: withScore ? "scored" : planMode }, ...ts].slice(0, 12));
