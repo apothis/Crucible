@@ -149,6 +149,24 @@ per-section style cues do NOT go in the tags (same lesson as Music 3).
   % chorus), two voices (Vocal + Ins), chord symbols. **Key and tempo in the prompt were not
   honoured:** asked A major 84 BPM, planned D# minor Q=86. One take, so not yet a rule.
 
+### The full batch (8 takes, full mode, reference sampler) `[measured]`
+
+| Take | Wall | Length | Planned |
+|---|---|---|---|
+| Ones Who Stayed seed 7 | 224 s | 265 s | D#m 86 |
+| Ones Who Stayed seed 8 | 210 s | 253 s | D#m 85 |
+| Ones Who Stayed seed 9 | 203 s | 246 s | D#m 84 |
+| Ones Who Stayed seed 10 | 235 s | 267 s | D#m 82 |
+| Dream of Me seed 7 | 244 s | 300 s (cap hit) | Dm 70 |
+| Dream of Me seed 8 | 198 s | 279 s | Dm 71 |
+| Dream of Me seed 9 | 205 s | 292 s | Dm 70 |
+| Dream of Me seed 10 | 212 s | 276 s | Dm 72 |
+
+Every take -12.1 to -12.9 LUFS integrated. The planner's key/tempo is a function of the
+prompt, not the seed: four seeds of the ballad all landed D# minor 82-86, four seeds of the
+symphonic song all landed D minor 70-72 (half-time of the 140 BPM asked). Dream of Me at 300 s
+is the token cap, so a 5 minute song needs max_seconds 330-360 and shorter outros.
+
 ### Ears (user, 2026-09-15, take 1 only)
 
 "Not bad, better than Music 3. Guitars a little rough. An odd loud humming just before the end.
@@ -157,7 +175,21 @@ passes the gate; the tab build is on. Watch across the other seeds for: rough gu
 (acoustic-stage limitation or seed variance?) and the end-of-song hum (the outro region past
 the last lyric; see whether a shorter max_duration or an explicit `[outro]` line tames it).
 
-## 6. Open questions `[verify]`
+## 6. Built (2026-09-15)
+
+- `backend/yue2.py`: graphs (render / plan-only / SheetSage2 transcribe), prompt assembly from
+  a Song draft, Title-case tag normalisation, lint, ABC header parse/rewrite, validation.
+- `/api/yue2/*`: available, schema, from_song, lint, abc/info, abc/header, generate, plan,
+  transcribe (library id or upload), job (status + score). Score-only jobs stay in memory;
+  rendered takes file as mode `yue2` with `params.abc` = the score they were rendered from.
+- `web/src/Yue2Studio.tsx`: the tab (Song import / Style line / Lyrics / Score / Cover /
+  Render). `web/src/ScoreEditor.tsx` on abcjs 6.7.0: notation, read-only piano roll with the
+  section markers, text editor, note-click to text, transpose (notes + chords), tempo (Q:),
+  MIDI download, GM-sample playback. Verified in the browser against the seed-7 score and a
+  plan written from the tab; a render launched from the tab was in flight at write time.
+- Not built yet: drag editing in the roll, agentic edit via the app LLM, a style writer.
+
+## 7. Open questions `[verify]`
 
 - 3090 wall time and peak VRAM for a 4 min full-mode render.
 - Whether `off` mode is faster and how much quality it loses (upstream: plan modes score higher).
