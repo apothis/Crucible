@@ -1,6 +1,6 @@
 # YUE2_PLAN.md - YuE2-3B as a third music engine, with its own tab
 
-Status: **research done, box provisioning in progress, no render yet.** Created 2026-09-15.
+Status: **engine installed, 8-take trial rendered and passed the user's ears, tab built (commit 3747fb8).** Created 2026-09-15.
 
 Provenance tags: `[cited]` upstream docs/source, `[measured]` seen on our box or in our library,
 `[hyp]` hypothesis, `[verify]` to test before relying on it.
@@ -85,8 +85,9 @@ FLAC plus the .abc from the job history.
 - Style: compact. Language, ONE genre, instruments, vocal character and timbre, tempo/BPM, mood.
   "More adjectives do not automatically create more control." No living-artist names.
   This is the opposite of Music 3's 4000-char schema and closer to ACE-Step's tag list, as prose.
-- Lyrics: bare lowercase section tags on their own line (`[verse]`, `[chorus]`, `[bridge]`,
-  `[intro]`, `[solo]`, `[outro]` seen in use). Lyrics decide length: the model sings everything
+- Lyrics: bare Title-case section tags on their own line (`[Verse]`, `[Verse 2]`, `[Pre-Chorus]`,
+  `[Chorus]`, `[Bridge]`, `[Guitar Solo]`, `[Interlude]`, `[Outro]` all in upstream use; there is no
+  tag parser, the name is what matters and anything else in the brackets is sung). Lyrics decide length: the model sings everything
   given plus intro/breaks/outro. Hitting the token cap is a HARD mid-phrase cut, so max_duration
   needs headroom (we use 300 s for ~4 min songs).
 
