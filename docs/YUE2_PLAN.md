@@ -136,7 +136,28 @@ Song-object mapping: our tags -> compact style string (a writer like `music3_wri
 shrinking rather than expanding), our per-section blocks -> bare lowercase tags + lyrics;
 per-section style cues do NOT go in the tags (same lesson as Music 3).
 
-## 5. Open questions `[verify]`
+## 5. Measured on the box (2026-09-15) `[measured]`
+
+- ComfyUI updated to master 36da3ff (23 commits past the YuE2 merge), reports 0.35.0; both
+  node classes registered after restart; bf16 checkpoint 7.80 GB, SheetSage2 1.39 GB on disk.
+- First render, The Ones Who Stayed seed 7 full mode, reference sampler: **224 s wall for
+  265 s of audio**, first run so it includes model load. Music 3 would take ~485 s for the same
+  length. VRAM seen during the planner stage 6.5 GB (acoustic stage not sampled).
+- Output FLAC 48 kHz stereo, -12.7 LUFS integrated, LRA 9.3 LU, true peak 0.2 dBFS (hot; it
+  will need the master stage's limiter like everything else).
+- The ABC score carries our section order as comments (% intro, % verse, % pre-chorus,
+  % chorus), two voices (Vocal + Ins), chord symbols. **Key and tempo in the prompt were not
+  honoured:** asked A major 84 BPM, planned D# minor Q=86. One take, so not yet a rule.
+
+### Ears (user, 2026-09-15, take 1 only)
+
+"Not bad, better than Music 3. Guitars a little rough. An odd loud humming just before the end.
+Otherwise followed the brief pretty well. Not Suno quality, but it has a place." -> the trial
+passes the gate; the tab build is on. Watch across the other seeds for: rough guitar texture
+(acoustic-stage limitation or seed variance?) and the end-of-song hum (the outro region past
+the last lyric; see whether a shorter max_duration or an explicit `[outro]` line tames it).
+
+## 6. Open questions `[verify]`
 
 - 3090 wall time and peak VRAM for a 4 min full-mode render.
 - Whether `off` mode is faster and how much quality it loses (upstream: plan modes score higher).
