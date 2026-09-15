@@ -77,6 +77,10 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [coverMode, setCoverMode] = d.use<"melody" | "full">("coverMode", "melody");
   const [coverBusy, setCoverBusy] = useState("");
+  // online lyric fetch for the cover source (LRCLIB then lyrics.ovh), sectioned on arrival
+  const [lyArtist, setLyArtist] = d.use("lyArtist", "");
+  const [lyTitle, setLyTitle] = d.use("lyTitle", "");
+  const [lyBusy, setLyBusy] = useState("");
 
   // ---- render ----
   const [seconds, setSeconds] = d.use("seconds", "300");
@@ -301,6 +305,35 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     } catch (e) { setCoverBusy(""); setNote(`transcribe failed: ${e}`); }
   }
 
+  async function fetchLyrics() {
+    const explicit = lyArtist.trim() || lyTitle.trim();
+    if (!explicit && !coverSrc) { setNote("give an artist and title, or pick a library track whose tags name the song"); return; }
+    if (lyrics.trim() && !window.confirm("Replace the lyrics box with the fetched, sectioned lyrics?")) return;
+    setLyBusy("fetching + sectioning…");
+    try {
+      const r = await api.yue2FetchLyrics({
+        artist: lyArtist.trim() || undefined, title: lyTitle.trim() || undefined,
+        src: !explicit && coverSrc ? coverSrc : undefined, abc: abc.trim() || undefined,
+      });
+      setLyrics(r.lyrics); setLyArtist(r.artist || lyArtist); setLyTitle(r.title || lyTitle);
+      if (!title.trim() && r.title) setTitle(r.title);
+      setNote(`lyrics loaded from ${r.source} (${r.artist} - ${r.title}), sectioned by ${r.tagged_by}`
+        + (abc.trim() ? " following the loaded score's sections" : "")
+        + ". Check the tags against the score before rendering.");
+    } catch (e) { setNote(`lyric fetch failed: ${e}`); }
+    setLyBusy("");
+  }
+  async function retagLyrics() {
+    if (!lyrics.trim()) { setNote("nothing in the lyrics box to tag"); return; }
+    setLyBusy("sectioning…");
+    try {
+      const r = await api.yue2SectionLyrics({ lyrics, abc: abc.trim() || undefined });
+      setLyrics(r.lyrics);
+      setNote(`lyrics re-tagged by ${r.tagged_by}${abc.trim() ? " following the loaded score's sections" : ""}`);
+    } catch (e) { setNote(`re-tag failed: ${e}`); }
+    setLyBusy("");
+  }
+
   // ---------------- 5 · render ----------------
   async function run() {
     if (!style.trim()) { setNote("write a style line first"); return; }
@@ -441,6 +474,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <GhostButton key={t} onClick={() => insertTag(t)} title={`append a bare [${t}] section`}>+{t}</GhostButton>
             ))}
             <span className="ml-2 text-[10px] text-[var(--color-muted)]">{sections} sections</span>
+            <span className="flex-1" />
+            <GhostButton onClick={retagLyrics} disabled={!!lyBusy || !lyrics.trim()}
+              title="split untagged or badly tagged words into bare sections (repeats = chorus; a loaded score's markers set the form)">
+              {lyBusy === "sectioning…" ? "sectioning…" : "Re-tag sections"}
+            </GhostButton>
           </div>
           {lint.length > 0 && (
             <div className="mt-2 rounded border border-amber-600/50 bg-amber-950/30 p-2 text-[11px] text-amber-300">
@@ -585,6 +623,24 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             <span className="text-[10px] text-[var(--color-muted)]">
               then set the plan mode to match ({coverMode}) and press Generate.
             </span>
+          </div>
+          <div className="mt-3 border-t border-[var(--color-line)] pt-2">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">the words</div>
+            <div className="mt-1 grid grid-cols-1 gap-2 md:grid-cols-3">
+              <Field label="Artist" hint="blank = from the track's tags"><input className={inp} value={lyArtist} onChange={(e) => setLyArtist(e.target.value)} /></Field>
+              <Field label="Song title"><input className={inp} value={lyTitle} onChange={(e) => setLyTitle(e.target.value)} /></Field>
+              <div className="flex items-end">
+                <GhostButton onClick={fetchLyrics} disabled={!!lyBusy} className="w-full"
+                  title="LRCLIB then lyrics.ovh; the words come untagged, so they are split into bare sections on arrival, following the transcribed score's markers when one is loaded">
+                  {lyBusy === "fetching + sectioning…" ? lyBusy : "Fetch lyrics → sections"}
+                </GhostButton>
+              </div>
+            </div>
+            <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+              Transcribe first, then fetch: the score's section markers (intro, verse, chorus...) decide where the
+              tags go. Online sources carry no tags; repeated stanzas become the chorus. Read the result against
+              the score, the melody is fixed and the words must land in the same sections.
+            </div>
           </div>
         </div>
 

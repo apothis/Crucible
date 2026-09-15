@@ -7191,6 +7191,36 @@ def yue2_agent_edit(p: dict):
         raise HTTPException(500, f"score editor failed ({provider}): {e}")
 
 
+@app.post("/api/yue2/fetch_lyrics")
+def yue2_fetch_lyrics(p: dict):
+    """Online lyrics for a known song (LRCLIB then lyrics.ovh, the chain the Music 3 remix and
+    LoRA captioning use; never transcription), then SECTIONED: the sources come untagged and YuE2
+    paces the song from its tags. A loaded score's section markers steer the tagging."""
+    from . import lyrics_fetch, convert
+    artist = (p.get("artist") or "").strip()
+    title = (p.get("title") or "").strip()
+    path = _lib_source_path((p.get("src") or "").strip()) if p.get("src") else None
+    artist, title = lyrics_fetch.resolve_artist_title(path=path, artist=artist or None, title=title or None)
+    if not (artist and title):
+        raise HTTPException(400, "need an artist and title (could not resolve them from the track)")
+    ly, source = lyrics_fetch.fetch_online(artist, title)
+    if not ly:
+        raise HTTPException(404, f"no lyrics found online for {artist} - {title}")
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    tagged, how = yue2_mod.section_lyrics(ly, p.get("abc") or "", provider, model, claude_model)
+    return {"lyrics": tagged, "raw": ly, "source": source, "tagged_by": how, "artist": artist, "title": title}
+
+
+@app.post("/api/yue2/section_lyrics")
+def yue2_section_lyrics(p: dict):
+    """Re-tag the lyrics box: untagged or badly tagged words -> bare sections, guided by the
+    loaded score's markers."""
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    tagged, how = yue2_mod.section_lyrics(p.get("lyrics") or "", p.get("abc") or "", provider, model, claude_model)
+    return {"lyrics": tagged, "tagged_by": how}
+
+
 # ==================== cross-engine conversions (YuE2 <-> Music 3 <-> Suno) ====================
 # Each tab has push buttons to the other two; the translations live in backend/convert.py.
 

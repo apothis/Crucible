@@ -98,6 +98,8 @@ export const api = {
   yue2Job: (id: string) => jget(`/api/yue2/job/${id}`),          // status + abc for any YuE2 job kind
   yue2WriteStyle: (p: unknown) => jpost("/api/yue2/write_style", p),   // brief -> proposed style line (+ lyrics if empty)
   yue2AgentEdit: (p: unknown) => jpost("/api/yue2/agent_edit", p),     // instruction -> proposed edited score + summary
+  yue2FetchLyrics: (p: { artist?: string; title?: string; src?: string; abc?: string }) => jpost("/api/yue2/fetch_lyrics", p), // online lyrics, sectioned
+  yue2SectionLyrics: (p: { lyrics: string; abc?: string }) => jpost("/api/yue2/section_lyrics", p),   // re-tag the lyrics box
   // cross-engine conversions (YuE2 <-> Music 3 <-> Suno); lyrics keep their words, tags are mapped
   convertYue2ToSuno: (p: unknown) => jpost("/api/convert/yue2_to_suno", p),
   convertSunoToYue2: (p: unknown) => jpost("/api/convert/suno_to_yue2", p),

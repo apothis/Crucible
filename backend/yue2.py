@@ -449,3 +449,128 @@ def edit_score(abc, style, lyrics, instruction, provider, model, claude_model):
             "after": {"K": after.get("K"), "bpm": after.get("bpm"), "bars": after["bars"],
                       "sections": [s["name"] for s in after["sections"]]},
             "provider": provider}
+
+
+# ---------------- sectioning fetched / pasted lyrics ----------------
+# Online lyric sources come untagged (LRCLIB/lyrics.ovh give plain stanzas, sometimes one block).
+# YuE2 paces the song from the section tags, so untagged words would be sung as one long verse.
+# The score's own "% section" markers (from a SheetSage2 transcription in cover mode, or a plan)
+# are the best guide to the form, so they steer the tagging when a score is loaded.
+
+_SECTION_SYSTEM = (
+    "You split song lyrics into tagged sections for a music model. Output STRICT JSON ONLY: "
+    "{\"sections\": [{\"tag\": \"Verse\", \"first\": 1, \"last\": 4}, ...]}. No prose, no markdown.")
+
+_SECTION_RULES = """Rules:
+- The lyric lines are numbered. Return sections in order; each covers a contiguous range of line
+  numbers (first..last inclusive). Every line must be in exactly one section; no gaps, no overlaps,
+  never reorder or rewrite lines.
+- Tags come from: Intro, Verse, Verse 2, Verse 3, Pre-Chorus, Chorus, Bridge, Guitar Solo, Interlude,
+  Outro. Number verses in order. A stanza that repeats (same or nearly the same words) is the Chorus.
+  A short lifting passage right before a chorus is the Pre-Chorus. A one-off passage after the
+  second chorus is the Bridge.
+- Sections with no lyrics (Intro, Guitar Solo, Interlude, Outro) may be included with "first": 0
+  and "last": 0 where the song's form has them - use the SCORE SECTIONS below, which come from the
+  actual recording or plan, as the form to follow when they are given. When they are given, match
+  their order as closely as the words allow (one sung section per score section, in order)."""
+
+
+def _stanzas(text):
+    lines = [l.rstrip() for l in (text or "").replace("\r", "").split("\n")]
+    # LRC timestamps and empty decorations
+    lines = [re.sub(r"^\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*", "", l) for l in lines]
+    out, cur = [], []
+    for l in lines:
+        if l.strip():
+            cur.append(l.strip())
+        elif cur:
+            out.append(cur)
+            cur = []
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _fallback_sections(stanzas):
+    """No LLM: repeated stanzas are choruses, the rest verses in order, a unique stanza after the
+    second chorus is the bridge. One undivided block is cut into 4-line verses."""
+    if len(stanzas) == 1 and len(stanzas[0]) > 6:
+        block = stanzas[0]
+        stanzas = [block[i:i + 4] for i in range(0, len(block), 4)]
+    # near-duplicates count as repeats: choruses often vary a word, so key on the first line
+    norm = [re.sub(r"[^a-z ]", "", s[0].lower()).strip() for s in stanzas]
+    counts = {n: norm.count(n) for n in norm}
+    out, verse_n, chorus_seen, bridged = [], 0, 0, False
+    for s, n in zip(stanzas, norm):
+        if counts[n] > 1:
+            chorus_seen += 1
+            out.append(("Chorus", s))
+        elif chorus_seen >= 2 and not bridged and len(s) <= 6:
+            bridged = True
+            out.append(("Bridge", s))
+        else:
+            verse_n += 1
+            out.append((f"Verse {verse_n}" if verse_n > 1 else "Verse", s))
+    return out
+
+
+def section_lyrics(text, abc="", provider="", model="", claude_model=""):
+    """Plain (untagged) lyrics -> lyrics with bare section tags. Returns (lyrics, how)."""
+    raw = (text or "").strip()
+    if not raw:
+        return "", "empty"
+    if len(re.findall(r"^\s*\[[^\]\n]{1,40}\]\s*$", raw, re.M)) >= 2:
+        return normalize_lyrics(raw), "source tags"
+    stanzas = _stanzas(raw)
+    lines = [l for s in stanzas for l in s]
+    score_sections = [s["name"] for s in parse_header(abc)["sections"]] if (abc or "").strip() else []
+    if provider:
+        try:
+            from . import llm
+            import json as _json
+            numbered = []
+            n = 0
+            for s in stanzas:
+                for l in s:
+                    n += 1
+                    numbered.append(f"{n}. {l}")
+                numbered.append("")
+            prompt = (f"{_SECTION_RULES}\n\nSCORE SECTIONS (in order): "
+                      f"{', '.join(score_sections) if score_sections else '(none given)'}\n\n"
+                      f"LYRIC LINES:\n" + "\n".join(numbered) + "\n\nReturn the JSON now.")
+            txt = llm.complete(provider, model, _SECTION_SYSTEM, prompt, claude_model, timeout=240)
+            m = re.search(r"\{.*\}", txt or "", re.S)
+            data = _json.loads(m.group(0) if m else txt)
+            secs = data.get("sections") or []
+            covered, out, expect = [], [], 1
+            for s in secs:
+                tag = _tag_name(str(s.get("tag") or "Verse"))
+                a, b = int(s.get("first") or 0), int(s.get("last") or 0)
+                if a == 0 and b == 0:
+                    out.append(f"[{tag}]")
+                    continue
+                if b < a or b > len(lines):
+                    raise ValueError(f"bad line range {a}-{b}")
+                if a == expect:
+                    expect = b + 1
+                elif b < expect:
+                    pass        # a REPEAT of lines already placed (a chorus the source wrote once)
+                else:
+                    raise ValueError(f"bad line range {a}-{b} (expected to start at {expect})")
+                out.append(f"[{tag}]\n" + "\n".join(lines[a - 1:b]))
+                covered.extend(range(a, b + 1))
+            if expect != len(lines) + 1:
+                raise ValueError("not every line was placed")
+            return "\n\n".join(out), f"llm ({provider})"
+        except Exception as e:
+            how = f"fallback ({e})"
+    else:
+        how = "fallback"
+    parts = _fallback_sections(stanzas)
+    out = []
+    if "intro" in score_sections:
+        out.append("[Intro]")
+    out += [f"[{tag}]\n" + "\n".join(s) for tag, s in parts]
+    if "outro" in score_sections:
+        out.append("[Outro]")
+    return "\n\n".join(out), how
