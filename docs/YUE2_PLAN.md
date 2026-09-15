@@ -188,7 +188,15 @@ the last lyric; see whether a shorter max_duration or an explicit `[outro]` line
   section markers, text editor, note-click to text, transpose (notes + chords), tempo (Q:),
   MIDI download, GM-sample playback. Verified in the browser against the seed-7 score and a
   plan written from the tab; a render launched from the tab was in flight at write time.
-- Not built yet: drag editing in the roll, agentic edit via the app LLM, a style writer.
+- Also built (same day, commits 50f504d and later): cross-engine conversions (YuE2 <-> Music 3
+  <-> Suno, `backend/convert.py`, push/pull buttons on all three tabs; lyrics keep their words,
+  tags mapped; LLM with deterministic fallbacks, 6-27 s per call); a style writer (brief ->
+  proposed line, drafts lyrics when the box is empty); the agentic score editor (instruction ->
+  proposed ABC with a summary and before/after key/tempo/bars/sections; measured 4.5 min for a
+  140-bar score because the whole ABC is regenerated); pitch dragging in the piano roll
+  (written back with an explicit accidental, other notes in the bar re-pinned).
+- Not built: time/duration dragging in the roll (edit the text), a Suno-cover-of-a-take
+  workflow beyond the prompt handoff (upload the take on suno.com by hand).
 
 ## 7. Direction (user, 2026-09-15, after the batch)
 
