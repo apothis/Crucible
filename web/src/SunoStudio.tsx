@@ -1,14 +1,16 @@
 import { useRef, useState } from "react";
 import { api } from "./api";
-import { useDrafts } from "./drafts";
+import { useDraftCtx, useDrafts } from "./drafts";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, rid, type RunCtx } from "./ui";
 
 // The Suno lane: songs are WRITTEN here (or arrive compiled from the Music 3 tab's
 // Export for Suno), generated on suno.com by hand, and the downloads come back through
 // the import box below - landing in the library as versioned takes of the song, exactly
 // like a local render. docs/SUNO_PROMPTING.md is the rulebook the writer follows.
-export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
+export function SunoStudioForm({ busy, goTo, ...ctx }: { busy: boolean; goTo?: (m: string) => void } & RunCtx) {
   const d = useDrafts("suno");
+  const draftCtx = useDraftCtx();   // send-to-tab writes into the other engines' drafts
+  const [converting, setConverting] = useState("");
   const [title, setTitle] = d.use("title", "");
   const [style, setStyle] = d.use("style", "");
   const [exclude, setExclude] = d.use("exclude", "");
@@ -67,6 +69,27 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
     } finally { setImporting(false); if (fileRef.current) fileRef.current.value = ""; }
   }
 
+  // This prompt -> the other engines. Lyrics keep their words (tags mapped); the style is
+  // translated: YuE2 takes the descriptors nearly as-is, Music 3 expands them into its caption.
+  async function toYue2() {
+    if (!style.trim() && !lyrics.trim()) { setNote("nothing to send yet"); return; }
+    try {
+      const r = await api.convertSunoToYue2({ style, exclude, lyrics }) as { style: string; lyrics: string };
+      draftCtx.set("yue2", "style", r.style); draftCtx.set("yue2", "lyrics", r.lyrics); draftCtx.set("yue2", "title", title);
+      setNote("sent to the YuE2 tab"); goTo?.("yue2");
+    } catch (e) { setNote(`send to YuE2 failed: ${e}`); }
+  }
+  async function toMusic3() {
+    if (!style.trim()) { setNote("write the style first"); return; }
+    setConverting("m3"); setNote("expanding into the 13 Music 3 caption fields (~20 s)...");
+    try {
+      const r = await api.convertSunoToMusic3({ style, exclude, lyrics, title }) as { fields: Record<string, string>; lyrics: string };
+      draftCtx.set("music3", "fields", r.fields); draftCtx.set("music3", "lyrics", r.lyrics); draftCtx.set("music3", "title", title);
+      setNote("sent to the Music 3 tab"); goTo?.("music3");
+    } catch (e) { setNote(`send to Music 3 failed: ${e}`); }
+    setConverting("");
+  }
+
   const copyBtn = (label: string, text: string) => (
     <GhostButton onClick={() => { navigator.clipboard.writeText(text); setCopied(label); }}>
       {copied === label ? "copied ✓" : "copy"}
@@ -88,6 +111,12 @@ export function SunoStudioForm({ busy, ...ctx }: { busy: boolean } & RunCtx) {
         <div className="mt-2 flex items-center gap-2">
           <PrimaryButton onClick={write} disabled={writing || busy}>{writing ? "Writing…" : "Write the prompt"}</PrimaryButton>
           {note && <span className="text-[10px] text-emerald-300">{note}</span>}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">convert</span>
+          <GhostButton onClick={toYue2} title="this prompt as a YuE2 style line + bare-tag lyrics, loaded into the YuE2 tab (no LLM)">→ YuE2 tab</GhostButton>
+          <GhostButton onClick={toMusic3} disabled={converting === "m3"} title="expand this prompt into the 13 Music 3 caption fields with the Music 3 writer">{converting === "m3" ? "writing…" : "→ Music 3 tab"}</GhostButton>
+          <span className="text-[10px] text-[var(--color-muted)]">the Music 3 and YuE2 tabs have the matching buttons back to here</span>
         </div>
       </div>
 

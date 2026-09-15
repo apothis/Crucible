@@ -238,6 +238,23 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...
     setSending(false);
   }
 
+  // Music 3 caption -> the YuE2 tab: the caption compressed to one compact style line (LLM,
+  // deterministic fallback), lyrics verbatim with bare tags. Then switch to that tab.
+  const [sendingY2, setSendingY2] = useState(false);
+  async function sendToYue2() {
+    if (!Object.values(fields).some((v) => (v || "").trim())) { setNote("write a caption first - there is nothing to compress"); return; }
+    setSendingY2(true);
+    setNote("compressing the caption into a YuE2 style line (a few seconds)...");
+    try {
+      const r = await api.convertMusic3ToYue2({ fields, lyrics }) as { style: string; lyrics: string; source: string };
+      draftCtx.set("yue2", "style", r.style); draftCtx.set("yue2", "lyrics", r.lyrics);
+      draftCtx.set("yue2", "title", title || songPageTitle || projectName || "");
+      setNote(`sent to the YuE2 tab (${r.source}): one style line, lyrics with bare tags`);
+      goTo?.("yue2");
+    } catch (e) { setNote(`send to YuE2 failed: ${e}`); }
+    setSendingY2(false);
+  }
+
   async function importProject(id: string) {
     setImportFrom(id);
     if (!id) return;
@@ -342,6 +359,10 @@ export function Music3StudioForm({ cfg: _cfg, busy, song, projectName, goTo, ...
           <GhostButton onClick={sendToSong} disabled={sending || !lyrics.trim()}
             title="the reverse: translate THIS caption + lyrics into a Song tab (ACE-Step) arrangement - lyrics verbatim, caption compressed to dense tags">
             {sending ? "Translating…" : "→ Song tab (ACE)"}
+          </GhostButton>
+          <GhostButton onClick={sendToYue2} disabled={sendingY2}
+            title="this caption compressed to one YuE2 style line + these lyrics with bare tags, loaded into the YuE2 tab">
+            {sendingY2 ? "Compressing…" : "→ YuE2 tab"}
           </GhostButton>
           <select className={inp} value={importFrom} onChange={(e) => importProject(e.target.value)}
             title="copies that project's song arrangement into this caption - it does NOT switch projects; use the top-bar Open for that">

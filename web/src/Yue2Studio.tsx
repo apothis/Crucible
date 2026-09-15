@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, trackLabel, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, pollJob, rid, type RunCtx } from "./ui";
-import { useDrafts } from "./drafts";
+import { useDraftCtx, useDrafts } from "./drafts";
 import { ScoreEditor } from "./ScoreEditor";
 
 // ---------------------------------------------------------------------------------------------
@@ -31,8 +31,15 @@ type Take = { id: string; seed: number; title: string; abc: string; mode: string
 
 const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "restyle", "cover", "mix", "voiceswap", "master", "naturalize"];
 
-export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, goTo: _goTo, ...ctx }: Props) {
+export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, goTo, ...ctx }: Props) {
   const d = useDrafts("yue2");
+  const draftCtx = useDraftCtx();   // imperative writes into the other tabs' drafts (send-to-tab)
+  // the other tabs' drafts, read for the pull buttons
+  const sunoD = useDrafts("suno");
+  const [sunoStyle] = sunoD.use("style", ""); const [sunoExclude] = sunoD.use("exclude", ""); const [sunoLyrics] = sunoD.use("lyrics", ""); const [sunoTitle] = sunoD.use("title", "");
+  const m3D = useDrafts("music3");
+  const [m3Fields] = m3D.use<Record<string, string>>("fields", {}); const [m3Lyrics] = m3D.use("lyrics", ""); const [m3Title] = m3D.use("title", "");
+  const [converting, setConverting] = useState("");
   const [songPageTitle] = useDrafts("song").use("title", "");
   const [schema, setSchema] = useState<Schema | null>(null);
   const [avail, setAvail] = useState<{ available: boolean; reason?: string; cover?: boolean } | null>(null);
@@ -150,6 +157,53 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   function insertTag(tag: string) {
     const t = lyrics.trim();
     setLyrics((t ? t + "\n\n" : "") + `[${tag}]\n`);
+  }
+
+  // ---------------- conversions to / from the other engines ----------------
+  // Lyrics keep their words in every direction (only the bracket tags are mapped); the style
+  // side is a translation because each engine wants a different prompt shape.
+  async function fromSuno() {
+    if (!sunoStyle.trim() && !sunoLyrics.trim()) { setNote("the Suno tab has no prompt to pull"); return; }
+    try {
+      const r = await api.convertSunoToYue2({ style: sunoStyle, exclude: sunoExclude, lyrics: sunoLyrics });
+      setStyle(r.style); setLyrics(r.lyrics); if (sunoTitle.trim()) setTitle(sunoTitle);
+      setNote("pulled the Suno prompt: its descriptors are the style line, its Exclude field became 'no ...' clauses, enriched tags collapsed to bare sections");
+    } catch (e) { setNote(`pull from Suno failed: ${e}`); }
+  }
+  async function fromMusic3() {
+    if (!Object.values(m3Fields).some((v) => (v || "").trim()) && !m3Lyrics.trim()) { setNote("the Music 3 tab has no caption to pull"); return; }
+    setConverting("music3");
+    try {
+      const r = await api.convertMusic3ToYue2({ fields: m3Fields, lyrics: m3Lyrics });
+      if (r.style) setStyle(r.style); if (r.lyrics) setLyrics(r.lyrics); if (m3Title.trim()) setTitle(m3Title);
+      setNote(`pulled the Music 3 caption, compressed to one line (${r.source}); trim it further if it reads like a paragraph`);
+    } catch (e) { setNote(`pull from Music 3 failed: ${e}`); }
+    setConverting("");
+  }
+  async function toSuno() {
+    if (!style.trim()) { setNote("write a style line first"); return; }
+    setConverting("suno");
+    try {
+      const r = await api.convertYue2ToSuno({ style, lyrics, title: title || songPageTitle || projectName });
+      draftCtx.set("suno", "title", title || songPageTitle || projectName || "");
+      draftCtx.set("suno", "style", r.style); draftCtx.set("suno", "exclude", r.exclude); draftCtx.set("suno", "lyrics", r.lyrics);
+      setNote(`sent to the Suno tab (${r.source}); the same lyrics with Suno's tag names, ready for a Suno cover of a YuE2 take`);
+      goTo?.("suno");
+    } catch (e) { setNote(`send to Suno failed: ${e}`); }
+    setConverting("");
+  }
+  async function toMusic3() {
+    if (!style.trim()) { setNote("write a style line first"); return; }
+    setConverting("m3");
+    setNote("expanding the style line into the 13 Music 3 caption fields (the Music 3 writer, ~20 s)...");
+    try {
+      const r = await api.convertYue2ToMusic3({ style, lyrics, title: title || songPageTitle || projectName });
+      draftCtx.set("music3", "fields", r.fields); draftCtx.set("music3", "lyrics", r.lyrics);
+      draftCtx.set("music3", "title", title || songPageTitle || projectName || "");
+      setNote("sent to the Music 3 tab: caption written from the style line, lyrics with Music 3's tag names");
+      goTo?.("music3");
+    } catch (e) { setNote(`send to Music 3 failed: ${e}`); }
+    setConverting("");
   }
 
   // ---------------- 3 · plans (score only, fast) ----------------
@@ -290,6 +344,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             Lyrics decide the length: the model sings everything you give it plus an intro, breaks and an
             outro. Per-section timing does not exist here (same as Music 3); the seconds box is a ceiling.
           </span>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">convert</span>
+          <GhostButton onClick={fromSuno} title="pull the Suno tab's prompt: style descriptors + exclude -> style line, tags -> bare sections (no LLM)">← from Suno</GhostButton>
+          <GhostButton onClick={fromMusic3} disabled={converting === "music3"} title="pull the Music 3 tab's caption, compressed to one style line (LLM with a deterministic fallback)">{converting === "music3" ? "compressing…" : "← from Music 3"}</GhostButton>
+          <GhostButton onClick={toSuno} disabled={converting === "suno" || !style.trim()} title="Suno Custom Mode prompt from this style line + lyrics, loaded into the Suno tab (the handoff for covering a YuE2 take on Suno)">{converting === "suno" ? "compiling…" : "→ Suno tab"}</GhostButton>
+          <GhostButton onClick={toMusic3} disabled={converting === "m3" || !style.trim()} title="expand this style line into the 13 Music 3 caption fields with the Music 3 writer, loaded into the Music 3 tab">{converting === "m3" ? "writing…" : "→ Music 3 tab"}</GhostButton>
         </div>
         {note && <div className="mt-2 text-[11px] text-[var(--color-accent2)]">{note}</div>}
       </div>

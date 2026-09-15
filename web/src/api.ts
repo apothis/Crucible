@@ -96,6 +96,12 @@ export const api = {
   yue2Transcribe: (src: string, mode: string) => jpost("/api/yue2/transcribe", { src, mode }),
   yue2TranscribeFile: (fd: FormData) => jform("/api/yue2/transcribe", fd),
   yue2Job: (id: string) => jget(`/api/yue2/job/${id}`),          // status + abc for any YuE2 job kind
+  // cross-engine conversions (YuE2 <-> Music 3 <-> Suno); lyrics keep their words, tags are mapped
+  convertYue2ToSuno: (p: unknown) => jpost("/api/convert/yue2_to_suno", p),
+  convertSunoToYue2: (p: unknown) => jpost("/api/convert/suno_to_yue2", p),
+  convertMusic3ToYue2: (p: unknown) => jpost("/api/convert/music3_to_yue2", p),
+  convertYue2ToMusic3: (p: unknown) => jpost("/api/convert/yue2_to_music3", p),
+  convertSunoToMusic3: (p: unknown) => jpost("/api/convert/suno_to_music3", p),
   ytConcepts: (p: unknown) => jpost("/api/youtube/concepts", p),   // LLM cover-art concepts from the song
   ytCover: (p: unknown) => jpost("/api/youtube/cover", p),         // one Krea2 cover candidate (title typeset in)
   ytRender: (p: unknown) => jpost("/api/youtube/render", p),       // visuals + track -> upload-ready MP4 (sync for plain still)

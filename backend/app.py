@@ -7163,6 +7163,84 @@ def yue2_job(pid: str):
             "audio_url": f"/api/audio/{pid}" if row["audio"] else None}
 
 
+@app.post("/api/yue2/write_style")
+def yue2_write_style(p: dict):
+    """The style writer: a brief (+ the existing line + the lyrics) -> a proposed style line, and
+    drafted lyrics only when the lyrics box is empty. A proposal, applied by the user."""
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    try:
+        return yue2_mod.write_style(p.get("brief") or "", p.get("style") or "", p.get("lyrics") or "",
+                                    provider, model, claude_model)
+    except Exception as e:
+        raise HTTPException(500, f"style writer failed ({provider}): {e}")
+
+
+@app.post("/api/yue2/agent_edit")
+def yue2_agent_edit(p: dict):
+    """Agentic score editing: a plain-language instruction against the current ABC -> a proposed
+    score with a summary and structural checks (bars, key, tempo, sections before/after)."""
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    try:
+        return yue2_mod.edit_score(p.get("abc") or "", p.get("style") or "", p.get("lyrics") or "",
+                                   p.get("instruction") or "", provider, model, claude_model)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"score editor failed ({provider}): {e}")
+
+
+# ==================== cross-engine conversions (YuE2 <-> Music 3 <-> Suno) ====================
+# Each tab has push buttons to the other two; the translations live in backend/convert.py.
+
+@app.post("/api/convert/yue2_to_suno")
+def convert_yue2_to_suno(p: dict):
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    return convert.yue2_to_suno(p.get("style") or "", p.get("lyrics") or "", p.get("title") or "",
+                                provider, model, claude_model)
+
+
+@app.post("/api/convert/suno_to_yue2")
+def convert_suno_to_yue2(p: dict):
+    from . import convert
+    return convert.suno_to_yue2(p.get("style") or "", p.get("exclude") or "", p.get("lyrics") or "")
+
+
+@app.post("/api/convert/music3_to_yue2")
+def convert_music3_to_yue2(p: dict):
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    return convert.music3_to_yue2(p.get("fields") or {}, p.get("lyrics") or "", provider, model, claude_model)
+
+
+@app.post("/api/convert/yue2_to_music3")
+def convert_yue2_to_music3(p: dict):
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    if not (p.get("style") or "").strip():
+        raise HTTPException(400, "a style line is required")
+    try:
+        return convert.to_music3(p.get("style") or "", p.get("lyrics") or "", p.get("title") or "",
+                                 provider, model, claude_model)
+    except Exception as e:
+        raise HTTPException(500, f"caption writer failed ({provider}): {e}")
+
+
+@app.post("/api/convert/suno_to_music3")
+def convert_suno_to_music3(p: dict):
+    from . import convert
+    provider, model, claude_model = convert.llm_args(p, CFG)
+    if not (p.get("style") or "").strip():
+        raise HTTPException(400, "a Suno style is required")
+    try:
+        return convert.to_music3(p.get("style") or "", p.get("lyrics") or "", p.get("title") or "",
+                                 provider, model, claude_model, negatives=p.get("exclude") or "")
+    except Exception as e:
+        raise HTTPException(500, f"caption writer failed ({provider}): {e}")
+
+
 # ==================== Metal LoRA training (drives the box engine pipeline) ====================
 # Mac orchestration over the box's HTTP pipeline (METAL_LORA_PLAN): enrich+upload a dataset
 # (Mac), then scan -> review -> auto-label -> save -> preprocess -> train -> export -> load.

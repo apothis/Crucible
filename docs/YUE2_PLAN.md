@@ -190,7 +190,13 @@ the last lyric; see whether a shorter max_duration or an explicit `[outro]` line
   plan written from the tab; a render launched from the tab was in flight at write time.
 - Not built yet: drag editing in the roll, agentic edit via the app LLM, a style writer.
 
-## 7. Open questions `[verify]`
+## 7. Direction (user, 2026-09-15, after the batch)
+
+YuE2 "seems to follow section theming better than Suno, but Suno has better sound quality."
+Likely workflow: write and arrange the song here, then cover the take on Suno (same lyrics,
+matching style). Needs testing; the YuE2 -> Suno conversion is that handoff's prompt half.
+
+## 8. Open questions `[verify]`
 
 - 3090 wall time and peak VRAM for a 4 min full-mode render.
 - Whether `off` mode is faster and how much quality it loses (upstream: plan modes score higher).
