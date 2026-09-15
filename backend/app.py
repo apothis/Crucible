@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import comfy
 from . import music3 as music3_mod
+from . import yue2 as yue2_mod
 from . import video as video_mod
 from . import musicvideo as musicvideo_mod
 from . import lyricalign as lyricalign_mod
@@ -254,6 +255,7 @@ def save_done_row(jid, mode, params, audio_path, bucket=""):
 
 # ---------------- WebSocket progress listener ----------------
 VIDEO_MODES = {"videostill", "videoclip", "videolipsync", "musicvideo", "ytvideo"}   # produce image/mp4, not audio
+YUE2_TEXT_MODES = {"yue2_plan", "yue2_transcribe"}   # produce an ABC score (text), no audio, no library row
 MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mkv")
 _MEDIA_CT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4",
@@ -329,6 +331,25 @@ def on_complete(pid):
         h = C.history(pid)
         if pid not in h:
             return
+        mode = JOBS.get(pid, {}).get("mode")
+        if mode in YUE2_TEXT_MODES:
+            # Score-only jobs (a YuE2 plan, or a SheetSage2 transcription): the product is the
+            # ABC text from a PreviewAny node, there is no audio and no library row. Kept in
+            # memory on the job; /api/yue2/job/{pid} hands it to the tab.
+            abc = yue2_mod.text_outputs(h[pid])
+            with LOCK:
+                JOBS[pid]["params"]["abc"] = abc
+                JOBS[pid]["status"] = "done" if abc else "error"
+                if not abc:
+                    JOBS[pid]["error"] = "the job finished without producing a score"
+            return
+        if mode == "yue2":
+            # A rendered take keeps its generated score alongside the audio (params.abc) so it
+            # can be inspected, edited and rendered again from the library.
+            abc = yue2_mod.text_outputs(h[pid])
+            if abc:
+                with LOCK:
+                    JOBS[pid]["params"]["abc"] = abc
         for _, out in h[pid].get("outputs", {}).items():
             for a in out.get("audio", []):
                 data = C.view_bytes(a["filename"], a.get("subfolder", ""), a.get("type", "output"))
@@ -344,7 +365,7 @@ def on_complete(pid):
                     f.write(data)
                 # ACE-specific end-burst/clipping fix. Never run it on another engine's output:
                 # Music 3 ends its own way and this would be a silent, unasked-for edit.
-                if JOBS.get(pid, {}).get("mode") != "music3":
+                if JOBS.get(pid, {}).get("mode") not in ("music3", "yue2"):
                     try:                              # auto-fix ACE end-burst/clipping (only when needed)
                         fixed = postfx_mod.tidy_ending(path)
                         if fixed and fixed != path:
@@ -6964,6 +6985,182 @@ def music3_generate(p: dict):
         JOBS[pid] = _new_job(resolved, "music3")
     save_job(pid)
     return {"job_id": pid, "seed": seed}
+
+
+# ==================== YuE2 (third engine: symbolic planning, scores, covers) ====================
+# Own tab, own routes, additive: nothing in the ACE or Music 3 paths changes. The graphs and prompt
+# rules live in backend/yue2.py. Three kinds of job come through here:
+#   yue2            full render (audio + the score it was rendered from)       -> library row
+#   yue2_plan       score only (fast: the AR planner, no acoustic stage)        -> in-memory, text
+#   yue2_transcribe SheetSage2 transcription of a real recording (cover mode)  -> in-memory, text
+
+@app.get("/api/yue2/available")
+def yue2_available():
+    """Nodes ship in ComfyUI core from 2026-09-11 (a nightly, not the 0.35.x tags); the two
+    weights are a separate download (download_yue2.bat)."""
+    try:
+        nodes = C.has_node("YuE2GenerateMusic") and C.has_node("EmptyYuE2LatentAudio")
+        cover = C.has_node("SheetSage2AudioToABC")
+    except Exception as e:
+        return {"available": False, "reason": f"ComfyUI unreachable: {e}"}
+    if not nodes:
+        return {"available": False, "reason": "ComfyUI has no YuE2 nodes (needs a core build after 2026-09-11)"}
+    try:
+        ckpts = set(C.models("checkpoints"))
+        encs = set(C.models("audio_encoders"))
+    except Exception as e:
+        return {"available": False, "reason": f"could not list models: {e}"}
+    if yue2_mod.MODELS["ckpt"] not in ckpts:
+        return {"available": False, "reason": f"missing weight: {yue2_mod.MODELS['ckpt']} (run download_yue2.bat on the box)"}
+    return {"available": True, "cover": bool(cover and yue2_mod.MODELS["sheetsage"] in encs)}
+
+
+@app.get("/api/yue2/schema")
+def yue2_schema():
+    return {"tags": yue2_mod.SECTION_TAGS, "defaults": yue2_mod.DEFAULTS,
+            "max_seconds": yue2_mod.MAX_SECONDS,
+            "style_guide": [{"key": k, "help": h} for k, h in yue2_mod.STYLE_GUIDE]}
+
+
+@app.post("/api/yue2/from_song")
+def yue2_from_song(p: dict):
+    """Song tab arrangement -> compact style line + bare lowercase-tag lyrics."""
+    song = p.get("song") or {}
+    if not (song.get("blocks") or []):
+        raise HTTPException(400, "that project has no song arrangement to import")
+    return {"style": yue2_mod.song_to_style(song), "lyrics": yue2_mod.song_to_lyrics(song)}
+
+
+@app.post("/api/yue2/lint")
+def yue2_lint(p: dict):
+    return {"notes": yue2_mod.lint(p.get("style") or "", p.get("lyrics") or "",
+                                   float(p.get("max_seconds") or 0)),
+            "lyrics": yue2_mod.normalize_lyrics(p.get("lyrics") or "")}
+
+
+@app.post("/api/yue2/abc/info")
+def yue2_abc_info(p: dict):
+    """Header, voices, section markers, bar count and structural problems of a score."""
+    abc = p.get("abc") or ""
+    return {**yue2_mod.parse_header(abc), "problems": yue2_mod.validate_abc(abc)}
+
+
+@app.post("/api/yue2/abc/header")
+def yue2_abc_header(p: dict):
+    """Rewrite K:/Q:/T: in a score. Q: is the tempo lever the planner actually honours."""
+    return {"abc": yue2_mod.set_header(p.get("abc") or "", key=p.get("key"), bpm=p.get("bpm"),
+                                       title=p.get("title"))}
+
+
+def _yue2_submit(graph, resolved, mode, extra=None):
+    resolved = {**resolved, **(extra or {})}
+    try:
+        res = submit_comfy(graph)
+    except Exception as e:
+        raise HTTPException(500, f"submit failed: {e}")
+    if res.get("node_errors"):
+        raise HTTPException(400, f"node errors: {res['node_errors']}")
+    pid = res["prompt_id"]
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, mode)
+    if mode == "yue2":
+        save_job(pid)
+    return pid
+
+
+@app.post("/api/yue2/generate")
+def yue2_generate(p: dict):
+    """Full render. A supplied `abc` (edited or transcribed) is rendered as-is; otherwise the
+    planner writes one in-graph (mode melody/full) or none at all (mode off)."""
+    seed = int(p.get("seed") or random.randint(1, 2**31 - 1))
+    try:
+        graph, resolved = yue2_mod.build_graph({**p, "seed": seed})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    extra = {"title": (p.get("title") or "").strip(), "note": (p.get("note") or "").strip(),
+             "source": (p.get("source") or "").strip()}   # "cover:<library id>" when re-rendering a transcription
+    pid = _yue2_submit(graph, resolved, "yue2", extra)
+    return {"job_id": pid, "seed": seed}
+
+
+@app.post("/api/yue2/plan")
+def yue2_plan(p: dict):
+    """Score only, for the score-first workflow and plan batches (several seeds, pick one)."""
+    seed = int(p.get("seed") or random.randint(1, 2**31 - 1))
+    try:
+        graph, resolved = yue2_mod.build_plan_graph({**p, "seed": seed})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    pid = _yue2_submit(graph, resolved, "yue2_plan")
+    return {"job_id": pid, "seed": seed}
+
+
+@app.post("/api/yue2/transcribe")
+async def yue2_transcribe(request: Request):
+    """Cover mode step 1: a library track (JSON {src}) or an upload (multipart file) ->
+    SheetSage2 -> ABC. `mode` melody (default, frees the accompaniment) or full (keeps chords).
+    The audio goes to ComfyUI's input dir under a content-hash name, so re-transcribing the same
+    file re-uses the upload and never collides with another track."""
+    ctype = (request.headers.get("content-type") or "")
+    path, cleanup, mode, title = None, None, "melody", ""
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        up = form.get("file")
+        if up is None:
+            raise HTTPException(400, "multipart needs a `file`")
+        suffix = os.path.splitext(getattr(up, "filename", "") or "src")[1] or ".bin"
+        title = os.path.splitext(getattr(up, "filename", "") or "")[0]
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(await up.read())
+            path = cleanup = f.name
+        mode = str(form.get("mode") or "melody")
+    else:
+        p = await request.json()
+        mode = str(p.get("mode") or "melody")
+        src = (p.get("src") or "").strip()
+        path = _lib_source_path(src) if src else None
+        title = src
+    if not path or not os.path.isfile(path):
+        raise HTTPException(404, "source track not found")
+    try:
+        with open(path, "rb") as f:
+            audio = f.read()
+        stem = f"yue2src_{hashlib.md5(audio).hexdigest()[:16]}"
+        try:
+            in_name = C.upload_audio(audio, stem + os.path.splitext(path)[1].lower())
+        except Exception as e:
+            raise HTTPException(502, f"uploading the source audio to the box failed: {e}")
+        graph, resolved = yue2_mod.build_transcribe_graph(in_name, mode)
+        pid = _yue2_submit(graph, resolved, "yue2_transcribe", {"title": title})
+        return {"job_id": pid, "input": in_name, "mode": resolved["mode"]}
+    finally:
+        if cleanup:
+            try:
+                os.unlink(cleanup)
+            except OSError:
+                pass
+
+
+@app.get("/api/yue2/job/{pid}")
+def yue2_job(pid: str):
+    """Job status plus the score. Works for all three YuE2 job kinds; for a finished render the
+    score comes from the library row after a backend restart."""
+    with LOCK:
+        j = JOBS.get(pid)
+        if j:
+            return {"id": pid, "status": j["status"], "progress": j.get("progress", 0),
+                    "max": j.get("max", 0), "error": j.get("error"), "mode": j.get("mode"),
+                    "abc": j.get("params", {}).get("abc") or "",
+                    "seed": j.get("params", {}).get("seed"),
+                    "audio_url": f"/api/audio/{pid}" if j.get("audio_file") else None}
+    with db() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (pid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "unknown job")
+    params = json.loads(row["params"] or "{}")
+    return {"id": pid, "status": row["status"], "error": row["error"], "mode": row["mode"],
+            "abc": params.get("abc") or "", "seed": params.get("seed"),
+            "audio_url": f"/api/audio/{pid}" if row["audio"] else None}
 
 
 # ==================== Metal LoRA training (drives the box engine pipeline) ====================

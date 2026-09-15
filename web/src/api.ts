@@ -83,6 +83,19 @@ export const api = {
   videoInfinitetalk: (p: unknown) => jpost("/api/video/infinitetalk", p),  // v2v lip-sync (keep clip motion, redrive lips)
   videoLoras: () => jget("/api/video/loras"),
   music3ToSong: (p: unknown) => jpost("/api/music3/to_song", p),   // Music 3 caption+lyrics -> Song tab (ACE) arrangement
+  // YuE2 - a third engine with its own tab: compact style line + bare-tag lyrics, an editable
+  // ABC score between the plan and the render, and covers from transcribed audio (SheetSage2).
+  yue2Available: () => jget("/api/yue2/available"),
+  yue2Schema: () => jget("/api/yue2/schema"),
+  yue2FromSong: (song: unknown) => jpost("/api/yue2/from_song", { song }),
+  yue2Lint: (p: unknown) => jpost("/api/yue2/lint", p),
+  yue2AbcInfo: (abc: string) => jpost("/api/yue2/abc/info", { abc }),
+  yue2AbcHeader: (p: { abc: string; key?: string; bpm?: number; title?: string }) => jpost("/api/yue2/abc/header", p),
+  yue2Generate: (p: unknown) => jpost("/api/yue2/generate", p),   // full render (audio + score)
+  yue2Plan: (p: unknown) => jpost("/api/yue2/plan", p),           // score only (fast)
+  yue2Transcribe: (src: string, mode: string) => jpost("/api/yue2/transcribe", { src, mode }),
+  yue2TranscribeFile: (fd: FormData) => jform("/api/yue2/transcribe", fd),
+  yue2Job: (id: string) => jget(`/api/yue2/job/${id}`),          // status + abc for any YuE2 job kind
   ytConcepts: (p: unknown) => jpost("/api/youtube/concepts", p),   // LLM cover-art concepts from the song
   ytCover: (p: unknown) => jpost("/api/youtube/cover", p),         // one Krea2 cover candidate (title typeset in)
   ytRender: (p: unknown) => jpost("/api/youtube/render", p),       // visuals + track -> upload-ready MP4 (sync for plain still)

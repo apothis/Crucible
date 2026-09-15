@@ -1,0 +1,494 @@
+import { useEffect, useMemo, useState } from "react";
+import { api, trackLabel, type Config, type LibItem, type Project, type SongDraft } from "./api";
+import { Field, inp, PrimaryButton, GhostButton, SectionTitle, pollJob, rid, type RunCtx } from "./ui";
+import { useDrafts } from "./drafts";
+import { ScoreEditor } from "./ScoreEditor";
+
+// ---------------------------------------------------------------------------------------------
+// YuE2 studio. A THIRD engine, with its own tab, because it wants a third kind of prompt:
+//
+//   ACE-Step   ~10-12 dense tag phrases            (Song / Generate tabs)
+//   Music 3    a 4000+ character field-schema caption (Music 3 tab)
+//   YuE2       ONE compact style line + lyrics with bare [Section] tags.
+//
+// What no other engine here has: the score. YuE2 writes an ABC plan (melody, and with "full" the
+// chords too) BEFORE it renders audio, and then sings and plays that plan. So this tab has a
+// score stage between the words and the render: write several plans in seconds and pick one,
+// edit the one you like (key, tempo, notes), render it, and render it again with another seed
+// while the tune holds. Cover mode goes the other way round: transcribe a real recording into a
+// score (SheetSage2) and render that in a new style with new words.
+//
+// Measured on our 3090 2026-09-15: about 225 s of wall per 4-minute song (Music 3: ~485 s).
+// The key/tempo written in the style line were ignored on both seeds we tried; Q: and K: in the
+// score header are the levers that hold.
+// ---------------------------------------------------------------------------------------------
+
+type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string; library: LibItem[]; goTo?: (m: string) => void } & RunCtx;
+type Schema = { tags: string[]; defaults: Record<string, number | boolean | string>; max_seconds: number; style_guide: { key: string; help: string }[] };
+type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo };
+export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[] };
+type Take = { id: string; seed: number; title: string; abc: string; mode: string };
+
+const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "restyle", "cover", "mix", "voiceswap", "master", "naturalize"];
+
+export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, goTo: _goTo, ...ctx }: Props) {
+  const d = useDrafts("yue2");
+  const [songPageTitle] = useDrafts("song").use("title", "");
+  const [schema, setSchema] = useState<Schema | null>(null);
+  const [avail, setAvail] = useState<{ available: boolean; reason?: string; cover?: boolean } | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [importFrom, setImportFrom] = useState("");
+  const [note, setNote] = useState("");
+
+  // ---- words ----
+  const [title, setTitle] = d.use("title", "");
+  const [style, setStyle] = d.use("style", "");
+  const [lyrics, setLyrics] = d.use("lyrics", "");
+  const [lint, setLint] = useState<string[]>([]);
+
+  // ---- the score ----
+  // abc = the score that will be rendered (empty = let the render plan its own, or "off").
+  // abcSource says where it came from so the library row and the card can say so.
+  const [planMode, setPlanMode] = d.use<"off" | "melody" | "full">("planMode", "full");
+  const [abc, setAbc] = d.use("abc", "");
+  const [abcSource, setAbcSource] = d.use("abcSource", "");
+  const [abcInfo, setAbcInfo] = useState<AbcInfo | null>(null);
+  const [plans, setPlans] = d.use<Plan[]>("plans", []);
+  const [planCount, setPlanCount] = d.use("planCount", "4");
+  const [planSeed, setPlanSeed] = d.use("planSeed", "");
+
+  // ---- cover ----
+  const [coverSrc, setCoverSrc] = d.use("coverSrc", "");
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverMode, setCoverMode] = d.use<"melody" | "full">("coverMode", "melody");
+  const [coverBusy, setCoverBusy] = useState("");
+
+  // ---- render ----
+  const [seconds, setSeconds] = d.use("seconds", "300");
+  const [seed, setSeed] = d.use("seed", "");
+  const [count, setCount] = d.use("count", "1");
+  const [showAdv, setShowAdv] = useState(false);
+  const [steps, setSteps] = d.use("steps", "");
+  const [cfgv, setCfgv] = d.use("cfg", "");
+  const [temp, setTemp] = d.use("temp", "");
+  const [topP, setTopP] = d.use("topP", "");
+  const [topK, setTopK] = d.use("topK", "");
+  const [rep, setRep] = d.use("rep", "");
+  const [tiled, setTiled] = d.use("tiled", false);
+  const [takes, setTakes] = d.use<Take[]>("takes", []);
+
+  useEffect(() => {
+    api.yue2Schema().then(setSchema).catch(() => setSchema(null));
+    api.yue2Available().then(setAvail).catch(() => setAvail({ available: false, reason: "backend unreachable" }));
+    api.projects().then(setProjects).catch(() => setProjects([]));
+  }, []);
+
+  // lint as you type (cheap, no GPU)
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      api.yue2Lint({ style, lyrics, max_seconds: parseFloat(seconds) || 0 })
+        .then((r) => setLint(r.notes || [])).catch(() => setLint([]));
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [style, lyrics, seconds]);
+
+  // score info as it changes
+  useEffect(() => {
+    if (!abc.trim()) { setAbcInfo(null); return; }
+    const t = window.setTimeout(() => {
+      api.yue2AbcInfo(abc).then(setAbcInfo).catch(() => setAbcInfo(null));
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [abc]);
+
+  const sections = useMemo(() => (lyrics.match(/\[[^\]]+\]/g) || []).length, [lyrics]);
+
+  // ---------------- 1 · words from a song ----------------
+  async function importSong(s: SongDraft | null, label: string, titleGuess?: string) {
+    if (!s || !(s.blocks || []).length) { setNote(`${label} has no song arrangement`); return; }
+    try {
+      const r = await api.yue2FromSong(s);
+      setStyle(r.style); setLyrics(r.lyrics);
+      if (titleGuess?.trim()) setTitle(titleGuess.trim());
+      setNote(`imported ${label}: ${(s.blocks || []).length} sections. The ACE tag list became the style line; `
+        + "trim it to one genre plus the sound around it (upstream: more adjectives do not mean more control). "
+        + "Key and BPM came along at the end; set them for real in the score header once a plan is written.");
+    } catch (e) { setNote(`import failed: ${e}`); }
+  }
+  async function importProject(id: string) {
+    setImportFrom(id);
+    if (!id) return;
+    try {
+      const p = await api.projectGet(id);
+      const canon = (p?.data?.song || {}) as Partial<SongDraft>;
+      const page = (p?.data?.drafts?.song || {}) as Partial<SongDraft> & { title?: string };
+      const m3 = (p?.data?.drafts?.music3 || {}) as { lyrics?: string; fields?: Record<string, string> };
+      const y2 = (p?.data?.drafts?.yue2 || {}) as { style?: string; lyrics?: string; title?: string };
+      if (y2.lyrics) {
+        setStyle(y2.style || ""); setLyrics(y2.lyrics); setTitle(y2.title || p?.name || "");
+        setNote(`copied ${p?.name}'s YuE2 draft`); return;
+      }
+      const blocks = (page.blocks?.length ? page.blocks : canon.blocks) || [];
+      if (blocks.length) {
+        await importSong({ ...canon, ...page, blocks, key: canon.key || "", bpm: canon.bpm || 0, tags: page.tags || canon.tags || "" } as SongDraft,
+          p?.name || "project", (page.title || p?.name || "").trim());
+        return;
+      }
+      if (m3.lyrics) {
+        // Music 3 lyrics already carry bare tags; the caption's genre line seeds the style
+        const basic = String(m3.fields?.["Basic Attributes"] || "");
+        const genre = basic.split(".").map((s) => s.trim()).filter((s) => s && !/bpm|key/i.test(s)).pop() || "";
+        const bpm = /bpm is (\d+)/.exec(basic)?.[1];
+        setLyrics(m3.lyrics); setTitle(p?.name || "");
+        setStyle(["English", genre, bpm ? `${bpm} BPM` : ""].filter(Boolean).join(", "));
+        setNote(`copied ${p?.name}'s Music 3 lyrics; the style line is seeded from its genre only - describe the instruments and the voice`);
+        return;
+      }
+      setNote("that project has no song, Music 3 or YuE2 draft to copy");
+    } catch (e) { setNote(`could not read that project: ${e}`); }
+  }
+  function insertTag(tag: string) {
+    const t = lyrics.trim();
+    setLyrics((t ? t + "\n\n" : "") + `[${tag}]\n`);
+  }
+
+  // ---------------- 3 · plans (score only, fast) ----------------
+  function pollText(jobId: string, onDone: (abc: string, seedOut: number) => void, onErr: (e: string) => void) {
+    const t = window.setInterval(async () => {
+      const j = await api.yue2Job(jobId).catch(() => null);
+      if (!j) return;
+      if (j.status === "done") { clearInterval(t); onDone(j.abc || "", j.seed); }
+      else if (j.status === "error") { clearInterval(t); onErr(j.error || "error"); }
+    }, 1500);
+  }
+  async function writePlans() {
+    if (planMode === "off") { setNote("plan mode is off: pick melody or full to write a score"); return; }
+    if (!style.trim() || !lyrics.trim()) { setNote("a style line and lyrics come first"); return; }
+    const n = Math.max(1, Math.min(8, parseInt(planCount) || 1));
+    const base = planSeed.trim() ? parseInt(planSeed) : Math.floor(Math.random() * 2 ** 31);
+    const fresh: Plan[] = [];
+    for (let i = 0; i < n; i++) {
+      const s = base + i;
+      try {
+        const r = await api.yue2Plan({ style, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 300 });
+        const plan: Plan = { id: r.job_id, seed: r.seed, status: "running", abc: "" };
+        fresh.push(plan);
+        setPlans((ps) => [plan, ...ps].slice(0, 16));
+        pollText(r.job_id,
+          async (text, seedOut) => {
+            const info = await api.yue2AbcInfo(text).catch(() => undefined);
+            setPlans((ps) => ps.map((p) => p.id === r.job_id ? { ...p, status: "done", abc: text, seed: seedOut ?? p.seed, info } : p));
+          },
+          (e) => setPlans((ps) => ps.map((p) => p.id === r.job_id ? { ...p, status: "error", err: e } : p)));
+      } catch (e) { setNote(`plan ${i + 1} failed to queue: ${e}`); }
+    }
+    setNote(`${fresh.length} plan(s) queued (seeds ${base}..${base + fresh.length - 1}); each is seconds of GPU, not minutes`);
+  }
+  function usePlan(p: Plan) {
+    setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode})`);
+    if (!seed.trim()) setSeed(String(p.seed));
+    setNote(`score from plan seed ${p.seed} loaded; edit it below or render it as is`);
+  }
+
+  // ---------------- 4 · cover: transcribe a recording ----------------
+  async function transcribe() {
+    if (!coverSrc && !coverFile) { setNote("pick a library track or upload a file to transcribe"); return; }
+    setCoverBusy("uploading to the box…");
+    try {
+      let r: { job_id: string; mode: string };
+      if (coverFile) {
+        const fd = new FormData(); fd.append("file", coverFile); fd.append("mode", coverMode);
+        r = await api.yue2TranscribeFile(fd);
+      } else {
+        r = await api.yue2Transcribe(coverSrc, coverMode);
+      }
+      setCoverBusy(`transcribing (${r.mode})…`);
+      const label = coverFile ? coverFile.name : (library.find((t) => t.id === coverSrc) ? trackLabel(library.find((t) => t.id === coverSrc)!, library) : coverSrc);
+      pollText(r.job_id,
+        (text) => {
+          setCoverBusy("");
+          setAbc(text); setAbcSource(`cover of ${label} (${r.mode})`);
+          setNote(`transcribed ${label} (${r.mode}). Check the score: transcription errors carry into the cover. `
+            + "Then give it the target style and the lyrics to sing (the original words, or new ones aligned to the same sections).");
+        },
+        (e) => { setCoverBusy(""); setNote(`transcription failed: ${e}`); });
+    } catch (e) { setCoverBusy(""); setNote(`transcribe failed: ${e}`); }
+  }
+
+  // ---------------- 5 · render ----------------
+  async function run() {
+    if (!style.trim()) { setNote("write a style line first"); return; }
+    if (!lyrics.trim()) { setNote("write lyrics with [section] tags first; they decide the length"); return; }
+    const n = Math.max(1, Math.min(8, parseInt(count) || 1));
+    const withScore = !!abc.trim();
+    const label = title || songPageTitle || projectName || "YuE2";
+    const cards = Array.from({ length: n }, (_v, i) => ({
+      id: rid(), status: "pending" as const, pct: 0,
+      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${withScore ? " · scored" : planMode === "off" ? " · direct" : ` · ${planMode} plan`}`,
+    }));
+    ctx.setResults(cards);
+    const base = seed.trim() ? parseInt(seed) : undefined;
+    for (let i = 0; i < n; i++) {
+      try {
+        const r = await api.yue2Generate({
+          style, lyrics, title: label,
+          mode: planMode, abc: withScore ? abc : "",
+          source: withScore ? abcSource : "",
+          seed: base === undefined ? undefined : base + i,
+          max_seconds: parseFloat(seconds) || 300,
+          ...(steps.trim() ? { steps: parseInt(steps) } : {}),
+          ...(cfgv.trim() ? { cfg: parseFloat(cfgv) } : {}),
+          ...(temp.trim() ? { temperature: parseFloat(temp) } : {}),
+          ...(topP.trim() ? { top_p: parseFloat(topP) } : {}),
+          ...(topK.trim() ? { top_k: parseInt(topK) } : {}),
+          ...(rep.trim() ? { repetition_penalty: parseFloat(rep) } : {}),
+          tiled_decode: tiled,
+        });
+        ctx.patch(cards[i].id, { status: "running", pct: 5 });
+        pollJob(r.job_id, cards[i].id, ctx);
+        // remember the take so its generated score can be pulled back in afterwards
+        const t = window.setInterval(async () => {
+          const j = await api.yue2Job(r.job_id).catch(() => null);
+          if (!j) return;
+          if (j.status === "done" || j.status === "error") {
+            clearInterval(t);
+            if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || abc, mode: withScore ? "scored" : planMode }, ...ts].slice(0, 12));
+          }
+        }, 3000);
+      } catch (e) {
+        ctx.patch(cards[i].id, { status: "error", pct: 0, err: String(e) });
+      }
+    }
+  }
+
+  if (!schema) return <div className="text-sm text-[var(--color-muted)]">loading YuE2 schema…</div>;
+  const sources = library.filter((it) => SOURCE_MODES.includes(it.mode) && it.audio_url);
+  const perSong = (parseFloat(seconds) || 300) * 0.85;   // ~225 s of wall per 265 s measured
+
+  return (
+    <div className="space-y-4">
+      {avail && !avail.available && (
+        <div className="rounded border border-amber-600/50 bg-amber-950/30 p-2 text-xs text-amber-300">
+          YuE2 is not ready on the box: {avail.reason}
+        </div>
+      )}
+
+      {/* ---- 1 · words from a song ---- */}
+      <div className="rounded border border-[var(--color-line)] p-3">
+        <SectionTitle>1 {"·"} Song</SectionTitle>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <GhostButton onClick={() => importSong(song, "the loaded song", songPageTitle || projectName)} disabled={!song?.blocks?.length}
+            title={song?.blocks?.length ? "style line + tagged lyrics from the song currently loaded" : "no song loaded"}>
+            Import loaded song
+          </GhostButton>
+          <select className={inp} value={importFrom} onChange={(e) => importProject(e.target.value)}
+            title="copies that project's words into this tab (its YuE2 draft, else its Song arrangement, else its Music 3 lyrics) - it does not switch projects">
+            <option value="">or copy a song from another project…</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <span className="text-[10px] text-[var(--color-muted)]">
+            Lyrics decide the length: the model sings everything you give it plus an intro, breaks and an
+            outro. Per-section timing does not exist here (same as Music 3); the seconds box is a ceiling.
+          </span>
+        </div>
+        {note && <div className="mt-2 text-[11px] text-[var(--color-accent2)]">{note}</div>}
+      </div>
+
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="space-y-4">
+        {/* ---- 2 · style ---- */}
+        <div className="rounded border border-[var(--color-line)] p-3">
+          <div className="flex items-center justify-between">
+            <SectionTitle>2 {"·"} Style line</SectionTitle>
+            <span className="text-[10px] text-[var(--color-muted)]">{style.length} chars</span>
+          </div>
+          <textarea className={inp + " mt-2 min-h-[96px] text-[11px]"} rows={4} value={style}
+            onChange={(e) => setStyle(e.target.value)}
+            placeholder="English, symphonic metal power ballad, 140 BPM, E minor, distorted rhythm guitars panned wide, double-kick drums in the choruses, orchestra behind the guitars, female vocal, operatic soprano with bel canto vibrato, romantic and haunting, no growls" />
+          <div className="mt-2 grid grid-cols-1 gap-1 md:grid-cols-2">
+            {schema.style_guide.map((g) => (
+              <div key={g.key} className="text-[10px] leading-snug text-[var(--color-muted)]">
+                <span className="text-[var(--color-ink)]">{g.key}</span> {"·"} {g.help}
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-[10px] text-[var(--color-muted)]">
+            One compact line, strongest identity first. Living artist names are ignored; describe the audible
+            qualities instead. BPM here is a soft prior (honoured about half the time upstream, two of our seeds
+            ignored it) and a key is never honoured from text; K: and Q: in the score are the levers that hold.
+          </div>
+        </div>
+
+        {/* ---- 2 · lyrics ---- */}
+        <div className="rounded border border-[var(--color-line)] p-3">
+          <SectionTitle>2 {"·"} Lyrics</SectionTitle>
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {schema.tags.map((t) => (
+              <GhostButton key={t} onClick={() => insertTag(t)} title={`append a bare [${t}] section`}>+{t}</GhostButton>
+            ))}
+            <span className="ml-2 text-[10px] text-[var(--color-muted)]">{sections} sections</span>
+          </div>
+          {lint.length > 0 && (
+            <div className="mt-2 rounded border border-amber-600/50 bg-amber-950/30 p-2 text-[11px] text-amber-300">
+              {lint.map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+          )}
+          <textarea className={inp + " mt-2 min-h-[260px] font-mono text-[11px]"} rows={16}
+            value={lyrics} onChange={(e) => setLyrics(e.target.value)}
+            placeholder={"[Intro]\n\n[Verse]\nyour words here\n\n[Chorus]\n…"} />
+          <div className="mt-1 text-[10px] text-[var(--color-muted)]">
+            Tags stay bare: [Verse], [Verse 2], [Pre-Chorus], [Guitar Solo] are all fine; anything else inside the
+            brackets is sung. Empty bodies under every tag = instrumental. Words in parentheses may be sung.
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {/* ---- 3 · score ---- */}
+        <div className="rounded border border-[var(--color-line)] p-3">
+          <div className="flex items-center justify-between">
+            <SectionTitle>3 {"·"} Score</SectionTitle>
+            <span className="text-[10px] text-[var(--color-muted)]">
+              {abc.trim() ? `loaded: ${abcSource || "edited"}` : planMode === "off" ? "none (direct render)" : `the render will plan its own (${planMode})`}
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <Field label="Plan mode" hint="full = melody + chords (default); melody = melody only, accompaniment free (covers); off = no score">
+              <select className={inp} value={planMode} onChange={(e) => setPlanMode(e.target.value as "off" | "melody" | "full")}>
+                <option value="full">full</option>
+                <option value="melody">melody</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
+            <Field label="Plans to write" hint="seeds tried; seconds each">
+              <input className={inp} value={planCount} onChange={(e) => setPlanCount(e.target.value)} />
+            </Field>
+            <Field label="First seed" hint="blank = random">
+              <input className={inp} value={planSeed} onChange={(e) => setPlanSeed(e.target.value)} placeholder="random" />
+            </Field>
+            <div className="flex items-end">
+              <GhostButton onClick={writePlans} disabled={busy || planMode === "off" || !!(avail && !avail.available)} className="w-full"
+                title="run only the planner: write N scores from N seeds, then pick one below">
+                Write plans
+              </GhostButton>
+            </div>
+          </div>
+          {plans.length > 0 && (
+            <div className="mt-2 max-h-48 overflow-auto rounded border border-[var(--color-line)]">
+              {plans.map((p) => (
+                <div key={p.id} className="flex items-center gap-2 border-b border-[var(--color-line)] px-2 py-1 text-[11px] last:border-0">
+                  <span className="w-24 text-[var(--color-ink)]">seed {p.seed}</span>
+                  {p.status === "running" && <span className="text-[var(--color-muted)]">planning…</span>}
+                  {p.status === "error" && <span className="text-red-400">{p.err}</span>}
+                  {p.status === "done" && (
+                    <span className="flex-1 text-[var(--color-muted)]">
+                      {p.info ? `${p.info.K || "?"} · ${p.info.bpm ?? "?"} bpm · ${p.info.bars} bars · ${p.info.sections.map((s) => s.name).join(" ")}` : `${p.abc.length} chars`}
+                    </span>
+                  )}
+                  <span className="flex-1" />
+                  {p.status === "done" && <GhostButton onClick={() => usePlan(p)}>use</GhostButton>}
+                  <GhostButton onClick={() => setPlans((ps) => ps.filter((x) => x.id !== p.id))}>×</GhostButton>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <ScoreEditor abc={abc} setAbc={(t) => { setAbc(t); if (t.trim() && abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)"); }}
+            info={abcInfo} onClear={() => { setAbc(""); setAbcSource(""); }} />
+
+          {takes.length > 0 && (
+            <div className="mt-2">
+              <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">scores from recent takes</div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {takes.map((t) => (
+                  <GhostButton key={t.id} onClick={() => { setAbc(t.abc); setAbcSource(`take ${t.title} seed ${t.seed}`); if (!seed.trim()) setSeed(String(t.seed)); }}
+                    title="load the score this take was rendered from, to edit and render again">
+                    {t.title} {"·"} seed {t.seed} {"·"} {t.mode}
+                  </GhostButton>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ---- 4 · cover ---- */}
+        <div className="rounded border border-[var(--color-line)] p-3">
+          <SectionTitle>4 {"·"} Cover (score from a recording)</SectionTitle>
+          <div className="mt-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
+            SheetSage2 transcribes a recording into a score; the score then renders with the style line and
+            lyrics above. <b>melody</b> keeps the tune and frees the arrangement (recommended for a style
+            change); <b>full</b> keeps the chords too. This is not voice cloning: the singer comes from the
+            style line. Transcription errors carry into the cover, so read the score before rendering.
+          </div>
+          <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
+            <Field label="Library track">
+              <select className={inp} value={coverSrc} onChange={(e) => { setCoverSrc(e.target.value); if (e.target.value) setCoverFile(null); }}>
+                <option value="">— pick a track —</option>
+                {sources.map((t) => <option key={t.id} value={t.id}>{trackLabel(t, library)}</option>)}
+              </select>
+            </Field>
+            <Field label="…or upload" hint="overrides the picker">
+              <input className={inp} type="file" accept="audio/*" onChange={(e) => { setCoverFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setCoverSrc(""); }} />
+            </Field>
+            <Field label="Transcribe as">
+              <select className={inp} value={coverMode} onChange={(e) => setCoverMode(e.target.value as "melody" | "full")}>
+                <option value="melody">melody only</option>
+                <option value="full">melody + chords</option>
+              </select>
+            </Field>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <GhostButton onClick={transcribe} disabled={!!coverBusy || !!(avail && (!avail.available || avail.cover === false))}
+              title={avail?.cover === false ? "SheetSage2 weight missing on the box (download_yue2.bat)" : "transcribe on the box GPU, then load the score above"}>
+              {coverBusy || "Transcribe → score"}
+            </GhostButton>
+            <span className="text-[10px] text-[var(--color-muted)]">
+              then set the plan mode to match ({coverMode}) and press Generate.
+            </span>
+          </div>
+        </div>
+
+        {/* ---- 5 · render ---- */}
+        <div className="rounded border border-[var(--color-line)] p-3">
+          <SectionTitle>5 {"·"} Render</SectionTitle>
+          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <Field label="Title"><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+            <Field label="Max seconds" hint={`ceiling, up to ${schema.max_seconds}; a hard cut if the words run past it`}>
+              <input className={inp} value={seconds} onChange={(e) => setSeconds(e.target.value)} />
+            </Field>
+            <Field label="Seed" hint="blank = random per take; with a score loaded, takes re-perform the same tune">
+              <input className={inp} value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="random" />
+            </Field>
+            <Field label="Takes"><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+          </div>
+          <div className="mt-2">
+            <GhostButton onClick={() => setShowAdv(!showAdv)}>{showAdv ? "hide" : "show"} sampler settings</GhostButton>
+          </div>
+          {showAdv && (
+            <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
+              <Field label="steps" hint="32"><input className={inp} value={steps} onChange={(e) => setSteps(e.target.value)} placeholder="32" /></Field>
+              <Field label="cfg" hint="1.0"><input className={inp} value={cfgv} onChange={(e) => setCfgv(e.target.value)} placeholder="1.0" /></Field>
+              <Field label="temperature" hint="music stage, 1.0"><input className={inp} value={temp} onChange={(e) => setTemp(e.target.value)} placeholder="1.0" /></Field>
+              <Field label="top_p" hint="0.95"><input className={inp} value={topP} onChange={(e) => setTopP(e.target.value)} placeholder="0.95" /></Field>
+              <Field label="top_k" hint="100"><input className={inp} value={topK} onChange={(e) => setTopK(e.target.value)} placeholder="100" /></Field>
+              <Field label="rep. penalty" hint="1.2"><input className={inp} value={rep} onChange={(e) => setRep(e.target.value)} placeholder="1.2" /></Field>
+              <Field label="Tiled decode" hint="lower VRAM; off on 24 GB">
+                <input type="checkbox" checked={tiled} onChange={(e) => setTiled(e.target.checked)} />
+              </Field>
+            </div>
+          )}
+          <div className="mt-3 flex items-center gap-2">
+            <PrimaryButton onClick={run} disabled={busy || !!(avail && !avail.available)}>
+              Generate
+            </PrimaryButton>
+            <span className="text-[10px] text-[var(--color-muted)]">
+              about {Math.round(perSong)} s of GPU per take at this length (measured 225 s for 265 s of audio). 48 kHz
+              stereo FLAC, saved with its score. Weights are CC BY-NC 4.0.
+            </span>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+  );
+}

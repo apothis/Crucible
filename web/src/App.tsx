@@ -7,6 +7,7 @@ import { ImportForm } from "./Import";
 import { LoraTrainingForm } from "./LoraTraining";
 import { MVStudioForm } from "./MVStudio";
 import { Music3StudioForm } from "./Music3Studio";
+import { Yue2StudioForm } from "./Yue2Studio";
 import { SunoStudioForm } from "./SunoStudio";
 import { CharactersForm } from "./Characters";
 import { YouTubeForm } from "./YouTube";
@@ -43,13 +44,14 @@ const MODES = [
   { id: "characters", label: "Characters" },
   { id: "youtube", label: "YouTube" },
   { id: "music3", label: "Music 3" },
+  { id: "yue2", label: "YuE2" },
   { id: "suno", label: "Suno" },
   { id: "loratrain", label: "Train LoRA" },
 ] as const;
 
 // Grouped navigation (replaces the flat tab row) — by workflow stage.
 const GROUPS: { name: string; modes: string[] }[] = [
-  { name: "Create", modes: ["generate", "song", "music3", "suno", "restyle", "repaint", "layer"] },
+  { name: "Create", modes: ["generate", "song", "music3", "yue2", "suno", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "master", "shape", "naturalize", "deglitch", "compare"] },
@@ -193,7 +195,7 @@ function AppInner() {
 
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          <div className={mode === "compare" || mode === "mvstudio" || mode === "music3" ? "w-full" : "max-w-2xl"}>
+          <div className={mode === "compare" || mode === "mvstudio" || mode === "music3" || mode === "yue2" ? "w-full" : "max-w-2xl"}>
             {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} projectName={current?.name} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
@@ -273,6 +275,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "video": return <VideoForm {...p} library={library} />;
     case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
     case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} goTo={goTo} />;
+    case "yue2": return <Yue2StudioForm {...p} song={song} projectName={projectName} library={library} goTo={goTo} />;
     case "suno": return <SunoStudioForm {...p} />;
     case "characters": return <CharactersForm {...p} library={library} />;
     case "youtube": return <YouTubeForm {...p} library={library} />;
@@ -449,6 +452,7 @@ function libDesc(it: LibItem): string {
     ].filter(Boolean);
     return "Vocal Builder · " + parts.join(" · ");
   }
+  if (it.mode === "yue2") return `YuE2 ${p.mode === "off" ? "direct" : p.abc ? `${p.mode} score` : p.mode || ""}${p.source ? " · " + String(p.source).slice(0, 24) : ""}${p.style ? " · " + String(p.style).slice(0, 36) : ""}`;
   if (it.mode === "musicvideo") return `music video: ${p.title || "?"} (${p.shots || "?"} shots)`;
   if (it.mode === "ytvideo") return `youtube video: ${p.title || "?"} (${p.res || "1080p"})`;
   if (it.mode === "videostill") return `still: ${p.prompt ? String(p.prompt).slice(0, 40) : "?"}`;
@@ -489,6 +493,7 @@ const LIB_SECTIONS = [
   { key: "song", label: "Songs" },
   { key: "generate", label: "Generated" },
   { key: "music3", label: "Music 3" },
+  { key: "yue2", label: "YuE2" },
   { key: "suno", label: "Suno" },
   { key: "vocal", label: "Vocals" },
   { key: "voiceswap", label: "Voice swaps" },
