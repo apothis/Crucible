@@ -219,13 +219,25 @@ CARD_LAYOUT = {"card_x": 106, "card_y": 288, "card_w": 896, "card_h": 504,   # e
 
 
 # YouTube end-screen landing zone for layout B (user-approved mock 2026-09-16): for the
-# final N seconds the right column drops the title + waveform and shows two 16:9 panels
-# (YouTube "video" elements) side by side with the subscribe circle under them. The card
-# window and the band wordmark stay exactly where they are. Studio elements are placed
-# over these rectangles ONCE, then "Import from video" copies them to every upload.
+# final N seconds the right column drops the title + waveform; two 16:9 panels (YouTube
+# "video" elements) sit as a row over the window's lower edge with the subscribe circle right. The card window and the
+# band wordmark stay exactly where they are. Studio elements are placed over these
+# rectangles ONCE, then "Import from video" copies them to every upload.
+# Studio's video elements have a MINIMUM size (about a quarter of the frame wide - the
+# user could not shrink one into a 360px panel, 2026-09-16). v3 (user: overlapping the
+# window a little is fine for the last 15s): TWO 560x315 panels as a lower-third row
+# tucked over the window's bottom edge (x 370 / 990, y 720), subscribe circle to the
+# right, 'More from' line under the wordmark. Panels are larger than the element
+# minimum, so any size the editor allows sits inside them.
+# v4 (user's Studio screenshot 2026-09-16): the SMALLEST video element the editor allows is
+# ~34% of the frame wide (~650x365 at 1080p), so each panel is 680x383 - the minimum element
+# sits inside with a margin; the row overlaps the window's lower edge by ~130px.
+# v5: the smallest SUBSCRIBE element is ~16% of the frame wide (~305px) and its hovercard
+# flips to the LEFT at the right edge (user's editor, 2026-09-16), so the row is
+# [panel][panel][circle]: 680 + 40 + 680 + 40 + 320 = 1760 across, 80px side margins.
 ENDCARD_LAYOUT = {"more_y": 470, "more_max_h": 60,
-                  "slot_w": 360, "slot_h": 203, "slot_y": 540, "slot1_x": 1108, "slot2_x": 1488,
-                  "sub_cx": 1478, "sub_cy": 860, "sub_r": 72}
+                  "slot_w": 680, "slot_h": 383, "slot_y": 660, "slot1_x": 80, "slot2_x": 800,
+                  "sub_cx": 1680, "sub_cy": 852, "sub_r": 160}
 
 
 def endcard_layout(width=1920, height=1080):
@@ -266,11 +278,11 @@ def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
         mt = render_wordmark(more_text, band_font, "bone", height=120)
         f = min(L["col_w"] / mt.width, E["more_max_h"] / mt.height, 1.0)
         mt = mt.resize((max(1, round(mt.width * f)), max(1, round(mt.height * f))), Image.LANCZOS)
-        img.alpha_composite(mt, (E["slot1_x"], E["more_y"]))
+        img.alpha_composite(mt, (L["col_x"] + round(30 * width / 1920), E["more_y"]))
     for x0 in (E["slot1_x"], E["slot2_x"]):
         d.rounded_rectangle([x0, E["slot_y"], x0 + E["slot_w"], E["slot_y"] + E["slot_h"]],
-                            radius=round(10 * width / 1920), fill=(0, 0, 0, 170),
-                            outline=(210, 190, 160, 110), width=3)
+                            radius=round(12 * width / 1920), fill=(0, 0, 0, 175),
+                            outline=(210, 190, 160, 120), width=3)
     cx, cy, r = E["sub_cx"], E["sub_cy"], E["sub_r"]
     d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 170),
               outline=(210, 190, 160, 110), width=3)
