@@ -218,74 +218,49 @@ CARD_LAYOUT = {"card_x": 106, "card_y": 288, "card_w": 896, "card_h": 504,   # e
                "wave_x": 1118, "wave_y": 660, "wave_w": 700, "wave_h": 70}
 
 
-# YouTube end-screen landing zone for layout B (user-approved mock 2026-09-16): for the
-# final N seconds the right column drops the title + waveform; two 16:9 panels (YouTube
-# "video" elements) sit as a row over the window's lower edge with the subscribe circle right. The card window and the
-# band wordmark stay exactly where they are. Studio elements are placed over these
-# rectangles ONCE, then "Import from video" copies them to every upload.
-# Studio's video elements have a MINIMUM size (about a quarter of the frame wide - the
-# user could not shrink one into a 360px panel, 2026-09-16). v3 (user: overlapping the
-# window a little is fine for the last 15s): TWO 560x315 panels as a lower-third row
-# tucked over the window's bottom edge (x 370 / 990, y 720), subscribe circle to the
-# right, 'More from' line under the wordmark. Panels are larger than the element
-# minimum, so any size the editor allows sits inside them.
-# v4 (user's Studio screenshot 2026-09-16): the SMALLEST video element the editor allows is
-# ~34% of the frame wide (~650x365 at 1080p), so each panel is 680x383 - the minimum element
-# sits inside with a margin; the row overlaps the window's lower edge by ~130px.
-# v5: the smallest SUBSCRIBE element is ~16% of the frame wide (~305px) and its hovercard
-# flips to the LEFT at the right edge (user's editor, 2026-09-16), so the row is
-# [panel][panel][circle]: 680 + 40 + 680 + 40 + 320 = 1760 across, 80px side margins.
-ENDCARD_LAYOUT = {"more_y": 470, "more_max_h": 60,
-                  "slot_w": 680, "slot_h": 383, "slot_y": 660, "slot1_x": 80, "slot2_x": 800,
-                  "sub_cx": 1680, "sub_cy": 852, "sub_r": 160}
+# YouTube end-screen landing zone for layout B. v6 (2026-09-16, after the user fought
+# Studio's editor): the elements have MINIMUM sizes (video ~34% of the frame wide,
+# subscribe ~16%), a bottom safe margin (~88% of the height) and side margins, and the
+# editor cannot place them precisely - drawn target panels were a losing game. So the
+# plate draws NO panels: the card window is dimmed, title + waveform are off, the
+# wordmark and a "More from ..." line stay top-right, and the rest of the frame is a
+# clean dark stage. YouTube's elements bring their own frames, so any Studio TEMPLATE
+# (e.g. two videos + subscribe) lands looking designed, with no dragging.
+ENDCARD_LAYOUT = {"more_y": 470, "more_max_h": 60, "window_dim": 165, "frame_dim": 60}
 
 
 def endcard_layout(width=1920, height=1080):
-    """ENDCARD_LAYOUT scaled to a canvas, plus the element rectangles as fractions of the
-    frame (what YouTube Studio's end-screen editor shows while you drag elements)."""
+    """ENDCARD_LAYOUT scaled to a canvas (kept for callers; no element rectangles any
+    more - positions come from the Studio template)."""
     s = width / 1920
-    L = {k: round(v * s) for k, v in ENDCARD_LAYOUT.items()}
-    frac = lambda x, y, w, h: {"x": round(x / width, 4), "y": round(y / height, 4),
-                               "w": round(w / width, 4), "h": round(h / height, 4)}
-    L["elements"] = {
-        "video_1": frac(L["slot1_x"], L["slot_y"], L["slot_w"], L["slot_h"]),
-        "video_2": frac(L["slot2_x"], L["slot_y"], L["slot_w"], L["slot_h"]),
-        "subscribe": frac(L["sub_cx"] - L["sub_r"], L["sub_cy"] - L["sub_r"], 2 * L["sub_r"], 2 * L["sub_r"]),
-    }
-    return L
+    return {k: (round(v * s) if k.endswith("_y") or k.endswith("_h") else v) for k, v in ENDCARD_LAYOUT.items()}
 
 
 def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
                   width=1920, height=1080):
-    """The static overlay for the end-card segment of the card-visualizer video: card
-    border + band wordmark (as card_plate) + a 'More from ...' line + the two dark video
-    panels + the subscribe circle. Transparent elsewhere, so the background loop and the
-    living cover keep playing underneath."""
+    """The static overlay for the end-card segment of the card-visualizer video: a light
+    darkening of the whole frame, a heavier dim over the card window (the loop keeps
+    moving underneath, muted), the card border, the band wordmark and a 'More from ...'
+    line. Transparent otherwise; no element panels (see ENDCARD_LAYOUT)."""
     L = {k: round(v * width / 1920) for k, v in CARD_LAYOUT.items()}
     E = endcard_layout(width, height)
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    img = Image.new("RGBA", (width, height), (0, 0, 0, E["frame_dim"]))
     d = ImageDraw.Draw(img)
+    d.rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                fill=(0, 0, 0, E["window_dim"]))
     d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
                  L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
-                outline=(210, 190, 160, 90), width=4)
+                outline=(210, 190, 160, 70), width=4)
     if str(band_text or "").strip():
         wm = render_wordmark(band_text, band_font, band_treatment, height=260)
         f = min(L["col_w"] / wm.width, L["band_max_h"] / wm.height, 1.0)
         wm = wm.resize((max(1, round(wm.width * f)), max(1, round(wm.height * f))), Image.LANCZOS)
         img.alpha_composite(wm, (L["col_x"] + (L["col_w"] - wm.width) // 2, L["band_y"]))
     if str(more_text or "").strip():
-        # same family as the title lettering, bone treatment, small
         mt = render_wordmark(more_text, band_font, "bone", height=120)
         f = min(L["col_w"] / mt.width, E["more_max_h"] / mt.height, 1.0)
         mt = mt.resize((max(1, round(mt.width * f)), max(1, round(mt.height * f))), Image.LANCZOS)
         img.alpha_composite(mt, (L["col_x"] + round(30 * width / 1920), E["more_y"]))
-    for x0 in (E["slot1_x"], E["slot2_x"]):
-        d.rounded_rectangle([x0, E["slot_y"], x0 + E["slot_w"], E["slot_y"] + E["slot_h"]],
-                            radius=round(12 * width / 1920), fill=(0, 0, 0, 175),
-                            outline=(210, 190, 160, 120), width=3)
-    cx, cy, r = E["sub_cx"], E["sub_cy"], E["sub_r"]
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 170),
-              outline=(210, 190, 160, 110), width=3)
     img.save(out_path, format="PNG")
     return out_path
 

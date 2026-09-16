@@ -896,7 +896,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
           </div>
           <p className="text-[10px] text-[var(--color-muted)]">The card shows the living cover when one is picked, otherwise the still art.</p>
           <div className="space-y-1.5 rounded border border-[var(--color-line)] p-2">
-            <label className="flex items-center gap-2 text-[11px] text-[var(--color-ink)]" title="the final seconds drop the title + waveform for two video panels and a subscribe circle - the landing zone for YouTube Studio's end-screen elements">
+            <label className="flex items-center gap-2 text-[11px] text-[var(--color-ink)]" title="the final seconds drop the title + waveform and dim the window - a clean stage for YouTube Studio's end-screen elements (use a template)">
               <input type="checkbox" checked={endCard} onChange={(e) => setEndCard(e.target.checked)} /> YouTube end card in the final
               <select className={inp + " w-16 py-0.5 text-[11px]"} value={endCardSecs} onChange={(e) => setEndCardSecs(e.target.value)} disabled={!endCard}>
                 {["10", "15", "20"].map((s) => <option key={s} value={s}>{s}s</option>)}
@@ -908,7 +908,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                   placeholder="More from Apotheon" title="the line above the panels" />
                 <img src={`/api/youtube/endcard_preview?text=${encodeURIComponent(endCardText)}&t=${encodeURIComponent(endCardText.length)}`} alt=""
                   className="w-full rounded border border-[var(--color-line)]" />
-                <p className="text-[10px] text-[var(--color-muted)]">In Studio, place the two video elements over the panels and the subscribe element on the circle once; every later upload uses "Import from video".</p>
+                <p className="text-[10px] text-[var(--color-muted)]">In Studio pick the "two videos + subscribe" template - the window dims and the frame is a clean stage, so the elements look right wherever the template puts them; every later upload uses "Import from video".</p>
               </>
             )}
           </div>
