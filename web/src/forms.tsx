@@ -1643,6 +1643,7 @@ export function NaturalizeForm({ busy, ...ctx }: FormProps) {
   const [roundtrip, setRoundtrip] = d.use("roundtrip", "mp3");
   const [bitrate, setBitrate] = d.use("bitrate", "320k");
   const [noiseFloor, setNoiseFloor] = d.use("noiseFloor", 65);  // dB below full-scale (positive number)
+  const [levelDrift, setLevelDrift] = d.use("levelDrift", 0);   // 0 = off; flattens the slow loudness climb
   useEffect(() => { api.naturalizeOptions().then(setOpts).catch(() => {}); }, []);
 
   async function run() {
@@ -1658,6 +1659,7 @@ export function NaturalizeForm({ busy, ...ctx }: FormProps) {
       fd.append("roundtrip", roundtrip);
       fd.append("roundtrip_bitrate", bitrate);
       fd.append("noise_floor_db", String(-Math.abs(noiseFloor)));
+      fd.append("level_drift", String(levelDrift));
       const r = await api.naturalize(fd);
       const srcName = job ? trackLabel(targets.find((t) => t.id === job) || ({} as LibItem), targets) : (file?.name || "track");
       ctx.setResults([{ id: rid(), title: `${srcName} (naturalized)`, status: "done", pct: 100, url: r.audio_url }]);
@@ -1686,6 +1688,9 @@ export function NaturalizeForm({ busy, ...ctx }: FormProps) {
       <Field label="…or upload"><input className={inp} type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
 
       <div className="space-y-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
+        <Field label={`Level drift · ${levelDrift === 0 ? "off" : Math.round(levelDrift * 100) + "%"}`} hint="flattens the slow loudness climb some Suno v6 takes have (measured ~4 dB across a song) back to the opening minute's level; only ever pulls down, never boosts; parts shorter than ~40 s keep their contrast. Runs first, before the colour stages">
+          <input type="range" min={0} max={1} step={0.05} value={levelDrift} onChange={(e) => setLevelDrift(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+        </Field>
         <Field label={`Warmth · ${Math.round(warmth * 100)}%`} hint="soft saturation — adds natural harmonics (0 = off)">
           <input type="range" min={0} max={0.5} step={0.02} value={warmth} onChange={(e) => setWarmth(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
         </Field>

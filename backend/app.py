@@ -5187,6 +5187,8 @@ async def naturalize_apply(job_id: str = Form(None),
                            roundtrip: str = Form("none"),        # none | mp3 | aac
                            roundtrip_bitrate: str = Form("320k"),
                            noise_floor_db: float = Form(-65.0),  # injected noise bed dBFS (<0), 0 = off
+                           level_drift: float = Form(0.0),       # flatten the slow loudness climb 0..1, 0 = off
+                           drift_window_s: float = Form(40.0),   # trend window; sections shorter than this keep contrast
                            bit_depth: int = Form(16)):
     """Naturalize an AI-generated track: add back human/analog imperfection so it reads less
     machine-perfect to naive detectors. Cosmetic + unverifiable (see naturalize.py). All Mac DSP."""
@@ -5206,7 +5208,8 @@ async def naturalize_apply(job_id: str = Form(None),
             tgt, out, warmth=float(warmth), hf_tame_db=float(hf_tame_db),
             hf_tame_hz=float(hf_tame_hz), wow_flutter=float(wow_flutter),
             roundtrip=roundtrip, roundtrip_bitrate=str(roundtrip_bitrate),
-            noise_floor_db=float(noise_floor_db), bit_depth=int(bit_depth))
+            noise_floor_db=float(noise_floor_db), bit_depth=int(bit_depth),
+            level_drift=float(level_drift), drift_window_s=float(drift_window_s))
     except HTTPException:
         raise
     except Exception as e:
@@ -5217,6 +5220,7 @@ async def naturalize_apply(job_id: str = Form(None),
     params = {"source": tgt_label, "mode": "naturalize", "warmth": float(warmth),
               "hf_tame_db": float(hf_tame_db), "wow_flutter": float(wow_flutter),
               "roundtrip": roundtrip, "noise_floor_db": float(noise_floor_db),
+              "level_drift": float(level_drift), "drift_window_s": float(drift_window_s),
               "applied": applied, "note": note, "title": f"{base} (naturalized)"}
     out = _keep_lossless(jid, tgt)
     save_done_row(jid, "naturalize", params, out)

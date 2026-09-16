@@ -6,6 +6,12 @@ subset of what tools like undetectr.com sell, MINUS the watermark/SynthID theatr
 generators embed no SynthID/C2PA, so there's nothing to strip).
 
 What it does, in order:
+  0. Level-drift correction (optional) - Suno v6 takes tend to creep louder across a song
+                                       (measured 2026-09-16, Your Fill of Blood: +0.83 dB/min,
+                                       ~4 dB first verse to end). A slow gain ride flattens
+                                       that trend against the opening minute while sections
+                                       shorter than the window keep their contrast. Runs FIRST
+                                       so it sits before Master's normalise + limit.
   1. Subtle harmonic saturation      — natural even/odd harmonics (reuse of the master.py trick).
   2. High-frequency taming           — gentle top-end shelf to soften brittle vocoder fizz.
   3. Micro wow/flutter (optional)    — tiny slow time modulation so timing isn't grid-perfect.
@@ -92,6 +98,75 @@ def _add_noise_floor(x, sr, floor_db: float):
     return x + noise * amp
 
 
+def _short_term_lufs(x, sr, win_s=3.0, hop_s=0.5):
+    """Short-term loudness curve (EBU R128 style: K-weighted, 3 s windows) via pyloudnorm's
+    K-weighting filters. Returns (times, lufs) with times = window END in seconds. Silent
+    windows come back as -inf."""
+    import numpy as np
+    import pyloudnorm as pyln
+    meter = pyln.Meter(sr)
+    ms = np.zeros(x.shape[1], dtype=np.float64)
+    for c in range(x.shape[0]):
+        y = x[c].astype(np.float64)
+        for f in meter._filters.values():
+            y = f.apply_filter(y)
+        ms += y * y                       # channel weights are 1.0 for L/R
+    win, hop = int(win_s * sr), int(hop_s * sr)
+    if x.shape[1] < win:
+        win = x.shape[1]
+    cs = np.concatenate([[0.0], np.cumsum(ms)])
+    ends = np.arange(win, x.shape[1] + 1, hop)
+    mean_sq = (cs[ends] - cs[ends - win]) / win
+    with np.errstate(divide="ignore"):
+        lufs = -0.691 + 10.0 * np.log10(mean_sq)
+    return ends / sr, lufs
+
+
+def _level_drift(x, sr, strength: float, window_s: float = 40.0, anchor_s: float = 60.0,
+                 max_cut_db: float = 9.0):
+    """Flatten the SLOW loudness trend of a song toward its opening minute.
+
+    Measures short-term loudness, smooths it with a `window_s` running mean (so a bridge or a
+    solo shorter than the window keeps its contrast while a creep across the whole song is
+    caught), takes the mean of the first `anchor_s` of that trend as the reference level, and
+    rides the gain by `strength` x (reference - trend). Gain is clamped to (-max_cut_db, 0]:
+    it only ever pulls a climb back, never boosts a quiet ending. Silent windows (intro/outro
+    gaps) are ignored when forming the trend. `strength` 0 = exact no-op.
+    Returns (x, stats) with stats = {drift_db, max_cut_db, ref_lufs}."""
+    import numpy as np
+    k = max(0.0, min(1.0, float(strength)))
+    if k <= 0 or x.shape[1] < int(10 * sr):
+        return x, None
+    t, lufs = _short_term_lufs(x, sr)
+    valid = np.isfinite(lufs)
+    if valid.sum() < 10:
+        return x, None
+    gate = max(np.max(lufs[valid]) - 30.0, -50.0)         # ignore near-silence
+    valid &= lufs > gate
+    if valid.sum() < 10:
+        return x, None
+    tv, lv = t[valid], lufs[valid]
+    # running mean over window_s of the gated curve (normalised by the valid count per window)
+    hop = float(t[1] - t[0]) if len(t) > 1 else 0.5
+    n = max(1, int(round(window_s / hop)))
+    kern = np.ones(n)
+    num = np.convolve(lv, kern, mode="same")
+    den = np.convolve(np.ones_like(lv), kern, mode="same")
+    trend = num / den
+    ref = float(np.mean(trend[tv <= tv[0] + anchor_s]))
+    gain_db = k * (ref - trend)
+    gain_db = np.clip(gain_db, -abs(float(max_cut_db)), 0.0)
+    # per-sample gain: interpolate the (sparse, already-smooth) curve; hold the ends
+    samples = np.arange(x.shape[1]) / sr
+    g = np.interp(samples, tv, gain_db, left=gain_db[0], right=gain_db[-1])
+    y = (x * (10.0 ** (g / 20.0))[None, :]).astype(x.dtype, copy=False)
+    last = trend[tv >= tv[-1] - (tv[-1] - tv[0]) / 3.0]
+    stats = {"drift_db": round(float(np.mean(last) - ref), 2),
+             "max_cut_db": round(float(-gain_db.min()), 2),
+             "ref_lufs": round(ref, 1)}
+    return y, stats
+
+
 def _roundtrip(x, sr, codec: str, bitrate: str):
     """Encode → decode through a lossy codec to smear the frequency-domain synthesis signature,
     then return the decoded PCM (resampled back to `sr`, same channel count). Needs ffmpeg;
@@ -138,10 +213,11 @@ def naturalize(target_path: str, out_path: str, warmth: float = 0.12,
                hf_tame_db: float = -1.5, hf_tame_hz: float = 12000.0,
                wow_flutter: float = 0.0, roundtrip: str = "none",
                roundtrip_bitrate: str = "320k", noise_floor_db: float = -65.0,
-               ceiling_db: float = -1.0, bit_depth: int = 16):
+               ceiling_db: float = -1.0, bit_depth: int = 16,
+               level_drift: float = 0.0, drift_window_s: float = 40.0):
     """Naturalize `target_path`, writing a WAV to out_path. All stages are individually
-    de-fanged by their neutral value (warmth 0, hf_tame_db 0, wow_flutter 0, roundtrip 'none',
-    noise_floor_db >= 0), so any subset can be run. Returns (out_path, applied) where
+    de-fanged by their neutral value (level_drift 0, warmth 0, hf_tame_db 0, wow_flutter 0,
+    roundtrip 'none', noise_floor_db >= 0), so any subset can be run. Returns (out_path, applied) where
     `applied` is a list of short strings describing which stages actually ran."""
     import numpy as np
     import soundfile as sf
@@ -155,6 +231,12 @@ def naturalize(target_path: str, out_path: str, warmth: float = 0.12,
         x = x[:2]
 
     applied = []
+
+    if float(level_drift) > 0:                                          # FIRST: before any colour
+        x, drift = _level_drift(x, sr, level_drift, window_s=float(drift_window_s))
+        if drift:
+            applied.append(f"level drift {round(float(level_drift) * 100)}% "
+                           f"(climb {drift['drift_db']:+.1f}dB, cut up to {drift['max_cut_db']:.1f}dB)")
 
     x = _saturate(x, warmth)
     if float(warmth) > 0:
