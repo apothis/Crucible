@@ -137,6 +137,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
   const [bgs, setBgs] = useState<{ id: string; label: string }[]>([]);
   const [bgPrompt, setBgPrompt] = d.use("bgPrompt", "");
   const [bgLabel, setBgLabel] = d.use("bgLabel", "");
+  // YouTube end-screen landing zone for the final seconds of a card video (opt-in)
+  const [endCard, setEndCard] = d.use("endCard", false);
+  const [endCardText, setEndCardText] = d.use("endCardText", "");
+  const [endCardSecs, setEndCardSecs] = d.use("endCardSecs", "15");
   const [bgBusy, setBgBusy] = useState(false);
   // How the song TITLE gets onto the art. "stamped" (default) = deterministic typography,
   // always spelled right; "model" = Krea2 renders it into the image - beautiful but it
@@ -456,7 +460,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       if (!bgId) { setErr("Pick a background loop."); return; }
       if (!loop && !pickedSrc) { setErr("Pick a cover candidate first."); return; }
       body = { style, bg_id: bgId, clip_id: loop || undefined,
-               image_id: loop ? undefined : pickedSrc, audio_id: audioId, title, res };
+               image_id: loop ? undefined : pickedSrc, audio_id: audioId, title, res,
+               endcard: endCard || undefined,
+               endcard_secs: endCard ? Number(endCardSecs) : undefined,
+               endcard_text: endCard ? (endCardText.trim() || undefined) : undefined };
     } else {
       if (!picked) { setErr("Pick a cover candidate first."); return; }
       body = { image_id: picked, audio_id: audioId, title, res,
@@ -888,6 +895,23 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
             <GhostButton onClick={bgGenerate} disabled={bgBusy}>{bgBusy ? "generating…" : "＋ Generate"}</GhostButton>
           </div>
           <p className="text-[10px] text-[var(--color-muted)]">The card shows the living cover when one is picked, otherwise the still art.</p>
+          <div className="space-y-1.5 rounded border border-[var(--color-line)] p-2">
+            <label className="flex items-center gap-2 text-[11px] text-[var(--color-ink)]" title="the final seconds drop the title + waveform for two video panels and a subscribe circle - the landing zone for YouTube Studio's end-screen elements">
+              <input type="checkbox" checked={endCard} onChange={(e) => setEndCard(e.target.checked)} /> YouTube end card in the final
+              <select className={inp + " w-16 py-0.5 text-[11px]"} value={endCardSecs} onChange={(e) => setEndCardSecs(e.target.value)} disabled={!endCard}>
+                {["10", "15", "20"].map((s) => <option key={s} value={s}>{s}s</option>)}
+              </select>
+            </label>
+            {endCard && (
+              <>
+                <input className={inp} value={endCardText} onChange={(e) => setEndCardText(e.target.value)}
+                  placeholder="More from Apotheon" title="the line above the panels" />
+                <img src={`/api/youtube/endcard_preview?text=${encodeURIComponent(endCardText)}&t=${encodeURIComponent(endCardText.length)}`} alt=""
+                  className="w-full rounded border border-[var(--color-line)]" />
+                <p className="text-[10px] text-[var(--color-muted)]">In Studio, place the two video elements over the panels and the subscribe element on the circle once; every later upload uses "Import from video".</p>
+              </>
+            )}
+          </div>
         </div>
       )}
       {style === "still" && (

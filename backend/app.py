@@ -2831,11 +2831,23 @@ def youtube_render(body: dict):
                                 str(wmc.get("title_treatment") or "bone"), width=w, height=h)
         layout = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
         card_viz = body.get("viz", True) not in (False, "", "0", "off", "none")
+        # opt-in YouTube end-screen landing zone for the final N seconds (body.endcard,
+        # endcard_secs 5-20, endcard_text): see wordmark.endcard_plate
+        ec_plate, ec_secs = None, 0.0
+        if body.get("endcard") not in (None, False, "", "0", "off"):
+            ec_secs = min(20.0, max(5.0, float(body.get("endcard_secs") or 15)))
+            more = str(body.get("endcard_text") or "").strip() or f"More from {wmc.get('text') or ''}".strip()
+            ec_plate = _yt_scratch(f"endcard_{jid}.png")
+            wordmark_mod.endcard_plate(ec_plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
+                                       str(wmc.get("treatment") or "ember"), more, width=w, height=h)
+            params["endcard"] = ec_secs
+            params["endcard_text"] = more
 
         def render():
             musicvideo_mod.card_video(
                 bg, card_src, bool(card_clip), audio, plate, out, layout,
                 width=w, height=h, title=title, artist=artist, viz=card_viz,
+                endcard_plate_path=ec_plate, endcard_secs=ec_secs,
                 progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
     else:
         raise HTTPException(400, f"unknown style: {style}")
@@ -3033,6 +3045,38 @@ def youtube_loopify(body: dict):
                    "source": os.path.basename(str(body.get("clip_id") or "")),
                    "kind": "loop"}, out)
     return {"job_id": jid, "media_url": f"/api/media/{jid}", "status": "done"}
+
+
+@app.get("/api/youtube/endcard_preview")
+def youtube_endcard_preview(text: str = "", res: str = "1080p"):
+    """PNG preview of the end-card plate (wordmark + 'More from' line + the two video
+    panels + subscribe circle) over a dark canvas with the card window marked - what
+    the final seconds of a card-layout video look like before YouTube overlays its
+    elements. Query: text (the 'More from ...' line), res."""
+    import io
+    from PIL import Image, ImageDraw
+    w, h = (3840, 2160) if str(res).lower() == "4k" else (1920, 1080)
+    wmc = _yt_wordmark_cfg()
+    more = str(text or "").strip() or f"More from {wmc.get('text') or ''}".strip()
+    plate = _yt_scratch("endcard_preview.png")
+    wordmark_mod.endcard_plate(plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
+                               str(wmc.get("treatment") or "ember"), more, width=w, height=h)
+    base = Image.new("RGBA", (w, h), (12, 8, 6, 255))
+    L = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
+    ImageDraw.Draw(base).rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                                   fill=(40, 30, 28, 255))
+    base.alpha_composite(Image.open(plate).convert("RGBA"))
+    buf = io.BytesIO()
+    base.convert("RGB").resize((960, 540)).save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
+
+
+@app.get("/api/youtube/endcard_layout")
+def youtube_endcard_layout(res: str = "1080p"):
+    """Where the end-screen elements sit, as fractions of the frame - for placing them
+    in YouTube Studio's end-screen editor (once; then 'Import from video')."""
+    w, h = (3840, 2160) if str(res).lower() == "4k" else (1920, 1080)
+    return wordmark_mod.endcard_layout(w, h)
 
 
 @app.get("/api/youtube/backgrounds")

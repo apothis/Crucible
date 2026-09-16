@@ -591,11 +591,15 @@ def fullbleed_video(loop_path, audio_path, plate_path, out_path,
 
 def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, out_path,
                layout, width=1920, height=1080, title="", artist="",
-               viz=True, progress_cb=None):
+               viz=True, progress_cb=None, endcard_plate_path=None, endcard_secs=15.0):
     """Card-visualizer video, layout B (the user's pick): background loop full-frame,
     the cover (living-cover loop or still) inside the card, the card_plate PNG
     (border + band + title) on top, and an audio-reactive waveform in the text column.
-    `layout` = wordmark.CARD_LAYOUT scaled to the canvas by the caller."""
+    `layout` = wordmark.CARD_LAYOUT scaled to the canvas by the caller.
+    endcard_plate_path (opt-in): for the final `endcard_secs` the title plate and the
+    waveform are switched off and this plate (wordmark + YouTube end-screen panels, see
+    wordmark.endcard_plate) is shown instead - the landing zone for Studio's end-screen
+    elements. The loop and background keep playing; the song plays out underneath."""
     dur = audio_duration(audio_path)
     if dur <= 0:
         raise ValueError("could not read the audio duration")
@@ -607,20 +611,30 @@ def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, o
     else:
         cmd += ["-loop", "1", "-framerate", "25", "-i", card_path]
     cmd += ["-i", audio_path, "-i", plate_path]
+    ec = None
+    if endcard_plate_path and endcard_secs and dur > float(endcard_secs) + 10:
+        ec = max(0.0, dur - float(endcard_secs))       # the end card starts here
+        cmd += ["-i", endcard_plate_path]
+    body_on = f":enable='lt(t,{ec:.3f})'" if ec is not None else ""
     fc = (f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
           f"crop={width}:{height},setsar=1[bg];"
           f"[1:v]scale={L['card_w']}:{L['card_h']}:force_original_aspect_ratio=decrease:"
           f"force_divisible_by=2,"
           f"pad={L['card_w']}:{L['card_h']}:(ow-iw)/2:(oh-ih)/2,setsar=1[card];"
           f"[bg][card]overlay={L['card_x']}:{L['card_y']}[b1];"
-          f"[b1][3:v]overlay=0:0[b2];")
+          f"[b1][3:v]overlay=0:0{body_on}[b2];")
+    if ec is not None:
+        fc += f"[b2][4:v]overlay=0:0:enable='gte(t,{ec:.3f})'[b3];"
+        last = "b3"
+    else:
+        last = "b2"
     if viz:
         fc += (f"[2:a]aformat=channel_layouts=mono,"
                f"showwaves=s={L['wave_w']}x{L['wave_h']}:mode=cline:rate=25:draw=full:"
                f"colors=0xff9a4d[vz0];[vz0]colorkey=0x000000:0.10:0.30[vz];"
-               f"[b2][vz]overlay={L['wave_x']}:{L['wave_y']}[v]")
+               f"[{last}][vz]overlay={L['wave_x']}:{L['wave_y']}{body_on}[v]")
     else:
-        fc += "[b2]null[v]"
+        fc += f"[{last}]null[v]"
     cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "2:a"]
     _run_progress(cmd + _loop_av_cmd(dur, title, artist, out_path), dur, progress_cb)
     return out_path

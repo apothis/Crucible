@@ -218,6 +218,66 @@ CARD_LAYOUT = {"card_x": 106, "card_y": 288, "card_w": 896, "card_h": 504,   # e
                "wave_x": 1118, "wave_y": 660, "wave_w": 700, "wave_h": 70}
 
 
+# YouTube end-screen landing zone for layout B (user-approved mock 2026-09-16): for the
+# final N seconds the right column drops the title + waveform and shows two 16:9 panels
+# (YouTube "video" elements) side by side with the subscribe circle under them. The card
+# window and the band wordmark stay exactly where they are. Studio elements are placed
+# over these rectangles ONCE, then "Import from video" copies them to every upload.
+ENDCARD_LAYOUT = {"more_y": 470, "more_max_h": 60,
+                  "slot_w": 360, "slot_h": 203, "slot_y": 540, "slot1_x": 1108, "slot2_x": 1488,
+                  "sub_cx": 1478, "sub_cy": 860, "sub_r": 72}
+
+
+def endcard_layout(width=1920, height=1080):
+    """ENDCARD_LAYOUT scaled to a canvas, plus the element rectangles as fractions of the
+    frame (what YouTube Studio's end-screen editor shows while you drag elements)."""
+    s = width / 1920
+    L = {k: round(v * s) for k, v in ENDCARD_LAYOUT.items()}
+    frac = lambda x, y, w, h: {"x": round(x / width, 4), "y": round(y / height, 4),
+                               "w": round(w / width, 4), "h": round(h / height, 4)}
+    L["elements"] = {
+        "video_1": frac(L["slot1_x"], L["slot_y"], L["slot_w"], L["slot_h"]),
+        "video_2": frac(L["slot2_x"], L["slot_y"], L["slot_w"], L["slot_h"]),
+        "subscribe": frac(L["sub_cx"] - L["sub_r"], L["sub_cy"] - L["sub_r"], 2 * L["sub_r"], 2 * L["sub_r"]),
+    }
+    return L
+
+
+def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
+                  width=1920, height=1080):
+    """The static overlay for the end-card segment of the card-visualizer video: card
+    border + band wordmark (as card_plate) + a 'More from ...' line + the two dark video
+    panels + the subscribe circle. Transparent elsewhere, so the background loop and the
+    living cover keep playing underneath."""
+    L = {k: round(v * width / 1920) for k, v in CARD_LAYOUT.items()}
+    E = endcard_layout(width, height)
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
+                 L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
+                outline=(210, 190, 160, 90), width=4)
+    if str(band_text or "").strip():
+        wm = render_wordmark(band_text, band_font, band_treatment, height=260)
+        f = min(L["col_w"] / wm.width, L["band_max_h"] / wm.height, 1.0)
+        wm = wm.resize((max(1, round(wm.width * f)), max(1, round(wm.height * f))), Image.LANCZOS)
+        img.alpha_composite(wm, (L["col_x"] + (L["col_w"] - wm.width) // 2, L["band_y"]))
+    if str(more_text or "").strip():
+        # same family as the title lettering, bone treatment, small
+        mt = render_wordmark(more_text, band_font, "bone", height=120)
+        f = min(L["col_w"] / mt.width, E["more_max_h"] / mt.height, 1.0)
+        mt = mt.resize((max(1, round(mt.width * f)), max(1, round(mt.height * f))), Image.LANCZOS)
+        img.alpha_composite(mt, (E["slot1_x"], E["more_y"]))
+    for x0 in (E["slot1_x"], E["slot2_x"]):
+        d.rounded_rectangle([x0, E["slot_y"], x0 + E["slot_w"], E["slot_y"] + E["slot_h"]],
+                            radius=round(10 * width / 1920), fill=(0, 0, 0, 170),
+                            outline=(210, 190, 160, 110), width=3)
+    cx, cy, r = E["sub_cx"], E["sub_cy"], E["sub_r"]
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 170),
+              outline=(210, 190, 160, 110), width=3)
+    img.save(out_path, format="PNG")
+    return out_path
+
+
 def card_plate(out_path, band_text, band_font, band_treatment,
                title_text, title_font, title_treatment, width=1920, height=1080):
     """The static overlay for the card-visualizer video: card border + band wordmark +
