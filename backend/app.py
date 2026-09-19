@@ -2812,24 +2812,33 @@ def youtube_render(body: dict):
                 progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
 
     elif style == "card":
-        bg = _lib_video_path(body.get("bg_id"))
-        if not bg:
-            raise HTTPException(400, "bg_id must reference a library video (a background loop)")
+        wmc = _yt_wordmark_cfg()
+        look = wordmark_mod.look_of(wmc)
         card_clip = _lib_video_path(body.get("clip_id")) if body.get("clip_id") else None
         card_img = _lib_image_path(body.get("image_id") or "") if body.get("image_id") else None
         card_src = card_clip or card_img
         if not card_src:
             raise HTTPException(400, "pass clip_id (living cover) or image_id (still) for the card")
-        params["bg_id"] = os.path.basename(str(body.get("bg_id") or ""))
+        if look.get("backdrop") == "blur":
+            # modern look: the backdrop is the cover art itself, blurred (no background loop)
+            src_png = card_img or thumbnail_mod.video_frame(card_clip, _yt_scratch(f"bgsrc_{jid}.png"))
+            bg = wordmark_mod.blur_backdrop(src_png, _yt_scratch(f"bg_{jid}.png"), w, h)
+            params["backdrop"] = "blur"
+        else:
+            bg = _lib_video_path(body.get("bg_id"))
+            if not bg:
+                raise HTTPException(400, "bg_id must reference a library video (a background loop)")
+            params["bg_id"] = os.path.basename(str(body.get("bg_id") or ""))
         params["clip_id" if card_clip else "image_id"] = os.path.basename(
             str(body.get("clip_id") or body.get("image_id") or ""))
-        wmc = _yt_wordmark_cfg()
+        params["look"] = str(wmc.get("look") or "classic")
         plate = _yt_scratch(f"plate_{jid}.png")
         wordmark_mod.card_plate(plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
                                 str(wmc.get("treatment") or "ember"), title,
                                 str(wmc.get("title_font") or "unifraktur"),
-                                str(wmc.get("title_treatment") or "bone"), width=w, height=h)
-        layout = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
+                                str(wmc.get("title_treatment") or "bone"), width=w, height=h, look=look)
+        layout = wordmark_mod.layout_for(look, w)
+        wave_color = "0xece7dc@0.40" if look.get("backdrop") else "0xff9a4d"
         card_viz = body.get("viz", True) not in (False, "", "0", "off", "none")
         # opt-in YouTube end-screen landing zone for the final N seconds (body.endcard,
         # endcard_secs 5-20, endcard_text): see wordmark.endcard_plate
@@ -2839,7 +2848,7 @@ def youtube_render(body: dict):
             more = str(body.get("endcard_text") or "").strip() or f"More from {wmc.get('text') or ''}".strip()
             ec_plate = _yt_scratch(f"endcard_{jid}.png")
             wordmark_mod.endcard_plate(ec_plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
-                                       str(wmc.get("treatment") or "ember"), more, width=w, height=h)
+                                       str(wmc.get("treatment") or "ember"), more, width=w, height=h, look=look)
             params["endcard"] = ec_secs
             params["endcard_text"] = more
 
@@ -2847,7 +2856,7 @@ def youtube_render(body: dict):
             musicvideo_mod.card_video(
                 bg, card_src, bool(card_clip), audio, plate, out, layout,
                 width=w, height=h, title=title, artist=artist, viz=card_viz,
-                endcard_plate_path=ec_plate, endcard_secs=ec_secs,
+                endcard_plate_path=ec_plate, endcard_secs=ec_secs, wave_color=wave_color,
                 progress_cb=lambda done, total: JOBS[jid].update(progress=int(done)))
     else:
         raise HTTPException(400, f"unknown style: {style}")
@@ -3060,7 +3069,8 @@ def youtube_endcard_preview(text: str = "", res: str = "1080p"):
     more = str(text or "").strip() or f"More from {wmc.get('text') or ''}".strip()
     plate = _yt_scratch("endcard_preview.png")
     wordmark_mod.endcard_plate(plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
-                               str(wmc.get("treatment") or "ember"), more, width=w, height=h)
+                               str(wmc.get("treatment") or "ember"), more, width=w, height=h,
+                               look=wordmark_mod.look_of(wmc))
     base = Image.new("RGBA", (w, h), (12, 8, 6, 255))
     L = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
     ImageDraw.Draw(base).rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
@@ -3274,7 +3284,7 @@ def youtube_wordmark_save(body: dict):
     app_config.json - the band logo is choose-once, reused on every cover. Preserves
     unrelated config keys (same pattern as PUT /api/settings) and refreshes CFG so it
     applies without a restart."""
-    allowed = {"text": str, "font": str, "treatment": str, "position": str, "scale": float,
+    allowed = {"look": str, "text": str, "font": str, "treatment": str, "position": str, "scale": float,
                "title_font": str, "title_treatment": str, "title_position": str, "title_scale": float,
                "cover_model_still": str}   # the canonical cover-model reference still (library id)
     wm = _yt_wordmark_cfg()

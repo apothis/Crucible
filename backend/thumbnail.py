@@ -118,6 +118,36 @@ def panel_thumbnail(src_path, out_path, title, band, cue="", face=(0.5, 0.35), z
         img = _panel(img, 0, 560)
         tx, max_w = 280, 540
     img = _vignette(img, 0.35)
+    look = wordmark_mod.look_of(cfg)
+    if look.get("backdrop"):
+        # modern look (user-approved mock 2026-09-19): flat tracked caps fitted inside the
+        # panel's text column - title small on top, band as the big element, accent
+        # hairline, cue at the bottom; right-aligned on a right panel, left on a left one
+        x0, x1 = (770, 1235) if panel_right else (45, 510)
+        col = x1 - x0
+
+        def fitted(text, size, weight, tracking, treatment, floor=14):
+            while size > floor:
+                wm = wordmark_mod.render_wordmark(text, look["font"], treatment, height=size,
+                                                  weight=weight, tracking=tracking)
+                if wm.width <= col:
+                    return wm
+                size -= 2
+            return wm
+
+        def put(wm, y):
+            img.paste(wm, (x1 - wm.width if panel_right else x0, y), wm)
+        if title:
+            put(fitted(title.upper(), 40, 300, 0.14, look["treatment"]), 160)
+        if band:
+            put(fitted(band.upper(), 72, 300, 0.28, look["treatment"]), 235)
+        d = ImageDraw.Draw(img)
+        lx = (x1 - 70, x1) if panel_right else (x0, x0 + 70)
+        d.line([(lx[0], 340), (lx[1], 340)], fill=look["accent"], width=2)
+        if cue:
+            put(fitted(cue.upper(), 24, 300, 0.45, "muted"), 520)
+        img.save(out_path)
+        return out_path
     y = 130
     if title:
         h = _put_centered(img, title, cfg["title_font"], cfg["title_treatment"], tx, y, 150, max_w)

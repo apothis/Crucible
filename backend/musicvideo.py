@@ -591,7 +591,8 @@ def fullbleed_video(loop_path, audio_path, plate_path, out_path,
 
 def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, out_path,
                layout, width=1920, height=1080, title="", artist="",
-               viz=True, progress_cb=None, endcard_plate_path=None, endcard_secs=15.0):
+               viz=True, progress_cb=None, endcard_plate_path=None, endcard_secs=15.0,
+               wave_color="0xff9a4d"):
     """Card-visualizer video, layout B (the user's pick): background loop full-frame,
     the cover (living-cover loop or still) inside the card, the card_plate PNG
     (border + band + title) on top, and an audio-reactive waveform in the text column.
@@ -604,8 +605,11 @@ def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, o
     if dur <= 0:
         raise ValueError("could not read the audio duration")
     L = layout
-    cmd = [_ffmpeg(), "-y", "-loglevel", "error",
-           "-stream_loop", "-1", "-i", bg_loop_path]
+    cmd = [_ffmpeg(), "-y", "-loglevel", "error"]
+    if bg_loop_path.lower().endswith((".png", ".jpg", ".jpeg")):
+        cmd += ["-loop", "1", "-framerate", "25", "-i", bg_loop_path]   # static backdrop (modern look)
+    else:
+        cmd += ["-stream_loop", "-1", "-i", bg_loop_path]
     if card_is_video:
         cmd += ["-stream_loop", "-1", "-i", card_path]
     else:
@@ -631,7 +635,7 @@ def card_video(bg_loop_path, card_path, card_is_video, audio_path, plate_path, o
     if viz:
         fc += (f"[2:a]aformat=channel_layouts=mono,"
                f"showwaves=s={L['wave_w']}x{L['wave_h']}:mode=cline:rate=25:draw=full:"
-               f"colors=0xff9a4d[vz0];[vz0]colorkey=0x000000:0.10:0.30[vz];"
+               f"colors={wave_color}[vz0];[vz0]colorkey=0x000000:0.10:0.30[vz];"
                f"[{last}][vz]overlay={L['wave_x']}:{L['wave_y']}{body_on}[v]")
     else:
         fc += f"[{last}]null[v]"

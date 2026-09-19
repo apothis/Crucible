@@ -33,6 +33,8 @@ FONTS = [
     {"id": "greatvibes",  "label": "Great Vibes",        "path": os.path.join(_REPO_FONTS, "GreatVibes.ttf")},
     {"id": "italianno",   "label": "Italianno",          "path": os.path.join(_REPO_FONTS, "Italianno.ttf")},
     {"id": "cormorant",   "label": "Cormorant Italic",   "path": os.path.join(_REPO_FONTS, "CormorantItalic.ttf")},
+    # modern sans (the "modern" look, 2026-09-19) - variable weight
+    {"id": "josefin",     "label": "Josefin Sans",       "path": os.path.join(_REPO_FONTS, "JosefinSans.ttf")},
     # macOS faces
     {"id": "luminari",    "label": "Luminari",       "path": "/System/Library/Fonts/Supplemental/Luminari.ttf"},
     {"id": "herculanum",  "label": "Herculanum",     "path": "/System/Library/Fonts/Supplemental/Herculanum.ttf"},
@@ -53,11 +55,31 @@ TREATMENTS = {
     "ember":  {"top": (255, 217, 160), "bottom": (226, 87, 28),   "glow": (45, 6, 0),  "glow_alpha": 225, "glow_blur": 0.14},
     "crimson": {"top": (238, 110, 100), "bottom": (120, 8, 16),   "glow": (30, 0, 2),  "glow_alpha": 230, "glow_blur": 0.12},
     "shadow": {"top": (245, 243, 236), "bottom": (245, 243, 236), "glow": (0, 0, 0),   "glow_alpha": 255, "glow_blur": 0.18},
+    # flat, no glow - the modern look's lettering
+    "flat":   {"top": (236, 231, 220), "bottom": (236, 231, 220), "glow": (0, 0, 0),   "glow_alpha": 0,   "glow_blur": 0.01},
+    "muted":  {"top": (150, 145, 136), "bottom": (150, 145, 136), "glow": (0, 0, 0),   "glow_alpha": 0,   "glow_blur": 0.01},
 }
+
+# The LOOK: a preset that the video plate, end card and thumbnail consult. "classic" =
+# everything as it was (the saved fonts/treatments); "modern" (user-approved mocks
+# 2026-09-19) = Josefin Sans, flat ivory, tracked caps, a short ember accent line, the
+# cover art blurred as the video backdrop, 1px window border.
+LOOKS = {
+    "classic": {},
+    "modern": {"font": "josefin", "band_weight": 300, "band_tracking": 0.60,
+               "title_weight": 200, "title_tracking": 0.12, "title_upper": True,
+               "treatment": "flat", "accent": (220, 120, 60), "ivory": (236, 231, 220),
+               "backdrop": "blur", "border_alpha": 70, "sub_line": "OFFICIAL AUDIO"},
+}
+
+
+def look_of(cfg):
+    return LOOKS.get(str((cfg or {}).get("look") or "classic")) or {}
 
 # `title_*` = the SONG TITLE's stamped lettering (large, top band); the bare keys are the
 # band wordmark. Both live in one saved config blob (app_config `yt_wordmark`).
-DEFAULTS = {"text": "Apotheon", "font": "luminari", "treatment": "bone",
+DEFAULTS = {"look": "classic",
+            "text": "Apotheon", "font": "luminari", "treatment": "bone",
             "position": "bottom", "scale": 0.40,
             "title_font": "unifraktur", "title_treatment": "ember",
             "title_position": "header", "title_scale": 0.72}
@@ -103,12 +125,30 @@ def _gradient(size, top, bottom):
     return g.resize((w, h))
 
 
-def render_wordmark(text, font_id, treatment, height=240):
+def _set_weight(font, weight):
+    """Pick a weight on a variable font (no-op on static faces)."""
+    if weight is None:
+        return font
+    try:
+        vals = []
+        for a in font.get_variation_axes():
+            nm = a.get("name")
+            nm = nm.decode() if isinstance(nm, bytes) else str(nm)
+            vals.append(weight if "eight" in nm else a.get("default", a.get("minimum")))
+        font.set_variation_by_axes(vals)
+    except Exception:
+        pass
+    return font
+
+
+def render_wordmark(text, font_id, treatment, height=240, weight=None, tracking=None):
     """The wordmark as a tight RGBA image (transparent background): gradient-filled
-    letters over a soft glow. `height` is the letter size; the canvas adds glow padding."""
+    letters over a soft glow. `height` is the letter size; the canvas adds glow padding.
+    weight = variable-font weight (modern look); tracking = letter-spacing as a fraction
+    of the size (default 0.06)."""
     spec = TREATMENTS.get(treatment) or TREATMENTS["bone"]
-    font = ImageFont.truetype(_font_path(font_id), size=height)
-    mask = _render_mask(text, font, tracking=round(height * 0.06))
+    font = _set_weight(ImageFont.truetype(_font_path(font_id), size=height), weight)
+    mask = _render_mask(text, font, tracking=round(height * (0.06 if tracking is None else tracking)))
     w, h = mask.size
     pad = max(8, round(height * 0.30))
     W, H = w + pad * 2, h + pad * 2
@@ -237,7 +277,7 @@ def endcard_layout(width=1920, height=1080):
 
 
 def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
-                  width=1920, height=1080):
+                  width=1920, height=1080, look=None):
     """The static overlay for the end-card segment of the card-visualizer video: a light
     darkening of the whole frame, a heavier dim over the card window (the loop keeps
     moving underneath, muted), the card border, the band wordmark and a 'More from ...'
@@ -248,6 +288,12 @@ def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
     d = ImageDraw.Draw(img)
     d.rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
                 fill=(0, 0, 0, E["window_dim"]))
+    if look and look.get("backdrop"):
+        d.rectangle([L["card_x"] - 1, L["card_y"] - 1, L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                    outline=look["ivory"] + (look["border_alpha"],), width=1)
+        _modern_column(img, look, band_text, None, None, width, height, more_text=more_text)
+        img.save(out_path, format="PNG")
+        return out_path
     d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
                  L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
                 outline=(210, 190, 160, 70), width=4)
@@ -265,14 +311,80 @@ def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
     return out_path
 
 
+def layout_for(look, width=1920):
+    """CARD_LAYOUT scaled to the canvas; the modern look moves the waveform to a thin
+    strip under the sub-line (user-approved mock 2026-09-19)."""
+    L = dict(CARD_LAYOUT)
+    if look.get("backdrop"):
+        L.update({"wave_x": 1110, "wave_y": 660, "wave_w": 700, "wave_h": 48})
+    return {k: round(v * width / 1920) for k, v in L.items()}
+
+
+def blur_backdrop(src_png, out_path, width=1920, height=1080, dark=0.74, sat=0.5, blur=70):
+    """The modern look's video backdrop: the cover art itself, blurred, desaturated,
+    darkened and vignetted (each video gets its own palette instead of one shared loop)."""
+    from PIL import ImageEnhance
+    im = Image.open(src_png).convert("RGB").resize((width, height), Image.LANCZOS)
+    im = im.filter(ImageFilter.GaussianBlur(round(blur * width / 1920)))
+    im = ImageEnhance.Color(im).enhance(sat)
+    im = Image.blend(im, Image.new("RGB", (width, height), (0, 0, 0)), dark)
+    m = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(m).ellipse([-width * 0.25, -height * 0.35, width * 1.25, height * 1.35], fill=255)
+    m = m.filter(ImageFilter.GaussianBlur(round(220 * width / 1920)))
+    im = Image.composite(im, Image.blend(im, Image.new("RGB", (width, height), (0, 0, 0)), 0.55), m)
+    im.save(out_path, format="PNG")
+    return out_path
+
+
+def _modern_column(img, look, band_text, title_text, sub_text, width, height, more_text=None):
+    """The modern look's right column: tracked band name, hairline accent, big tracked
+    caps title (or a 'More from' line on the end card), small sub-line. Positions are the
+    approved mock's, scaled from 1920x1080."""
+    s = width / 1920
+    L = {k: round(v * s) for k, v in CARD_LAYOUT.items()}
+    x = L["col_x"] + round(20 * s)
+    ivory, accent = look["ivory"], look["accent"]
+    if str(band_text or "").strip():
+        wm = render_wordmark(band_text.upper(), look["font"], look["treatment"], height=round(34 * s),
+                             weight=look["band_weight"], tracking=look["band_tracking"])
+        img.alpha_composite(wm, (x, round(348 * s)))
+    if title_text:
+        t = title_text.upper() if look.get("title_upper") else title_text
+        size = round(88 * s)
+        while size > round(36 * s):
+            wm = render_wordmark(t, look["font"], look["treatment"], height=size,
+                                 weight=look["title_weight"], tracking=look["title_tracking"])
+            if wm.width <= L["col_w"] - round(20 * s):
+                break
+            size -= round(4 * s)
+        img.alpha_composite(wm, (x, round(430 * s)))
+    elif more_text:
+        wm = render_wordmark(more_text.upper(), look["font"], "muted", height=round(26 * s),
+                             weight=300, tracking=0.35)
+        img.alpha_composite(wm, (x, round(440 * s)))
+    d = ImageDraw.Draw(img)
+    d.line([(x + round(2 * s), round(560 * s)), (x + round(62 * s), round(560 * s))], fill=accent + (255,), width=max(1, round(2 * s)))
+    if sub_text:
+        wm = render_wordmark(sub_text, look["font"], "muted", height=round(18 * s), weight=300, tracking=0.5)
+        img.alpha_composite(wm, (x + round(2 * s), round(588 * s)))
+    return img
+
+
 def card_plate(out_path, band_text, band_font, band_treatment,
-               title_text, title_font, title_treatment, width=1920, height=1080):
+               title_text, title_font, title_treatment, width=1920, height=1080, look=None):
     """The static overlay for the card-visualizer video: card border + band wordmark +
     song title on a transparent canvas. The card interior stays transparent (the living
-    cover / still plays underneath); ffmpeg overlays this plate above it."""
+    cover / still plays underneath); ffmpeg overlays this plate above it.
+    look (wordmark.look_of(cfg)): the modern preset draws its own column + 1px border."""
     L = {k: round(v * width / 1920) for k, v in CARD_LAYOUT.items()}
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
+    if look and look.get("backdrop"):
+        d.rectangle([L["card_x"] - 1, L["card_y"] - 1, L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                    outline=look["ivory"] + (look["border_alpha"],), width=1)
+        _modern_column(img, look, band_text, title_text, look.get("sub_line"), width, height)
+        img.save(out_path, format="PNG")
+        return out_path
     d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
                  L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
                 outline=(210, 190, 160, 90), width=4)

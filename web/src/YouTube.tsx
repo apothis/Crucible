@@ -18,7 +18,7 @@ type Concept = { name: string; overview: string; background: string; aesthetics:
 type Cand = { jobId: string; seed: number; url?: string; err?: string; pct?: number;
   useId?: string; badge?: string; imported?: boolean };   // useId/badge: living-cover tail check (auto-trim)
 // The band wordmark + title lettering are GLOBAL app config (choose-once), not per-project drafts.
-type Wordmark = { text: string; font: string; treatment: string; position: string; scale: number;
+type Wordmark = { look?: string; text: string; font: string; treatment: string; position: string; scale: number;
   title_font: string; title_treatment: string; title_position: string; title_scale: number;
   cover_model_still?: string };
 const WM_SIZES: { label: string; scale: number }[] = [
@@ -457,7 +457,7 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
                title_position: stampTitlePos || undefined,
                title_scale: stampTitleScale ? Number(stampTitleScale) : undefined };
     } else if (style === "card") {
-      if (!bgId) { setErr("Pick a background loop."); return; }
+      if (!bgId && wm?.look !== "modern") { setErr("Pick a background loop."); return; }
       if (!loop && !pickedSrc) { setErr("Pick a cover candidate first."); return; }
       body = { style, bg_id: bgId, clip_id: loop || undefined,
                image_id: loop ? undefined : pickedSrc, audio_id: audioId, title, res,
@@ -636,6 +636,12 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       </label>
       {wm && (
         <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
+          <Field label="Look" hint="modern = Josefin Sans, flat ivory tracked caps, the cover art blurred as the video backdrop; applies to the card video, end card and thumbnail. classic = the fonts chosen below">
+            <select className={inp} value={wm.look || "classic"} onChange={(e) => saveWm({ look: e.target.value })}>
+              <option value="classic">Classic (gradient lettering, background loop)</option>
+              <option value="modern">Modern (Josefin Sans, blurred-art backdrop)</option>
+            </select>
+          </Field>
           <div className="flex items-center gap-2">
             <img src={wmPreview(wm.font, wm.treatment)} alt="" className="h-10 rounded border border-[var(--color-line)]" title="the current band wordmark" />
             <span className="text-[11px] text-[var(--color-muted)]">
@@ -878,7 +884,10 @@ export function YouTubeForm({ busy, library, ...ctx }: { cfg: Config; busy: bool
       </Field>
       {style === "card" && (
         <div className="space-y-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2.5">
-          <Field label="Background loop">
+          {wm?.look === "modern" && (
+            <p className="text-[11px] text-[var(--color-muted)]">Modern look: the backdrop is the cover art itself, blurred - no background loop needed.</p>
+          )}
+          <Field label={wm?.look === "modern" ? "Background loop (unused in the modern look)" : "Background loop"}>
             <select className={inp} value={bgId} onChange={(e) => setBgId(e.target.value)}>
               <option value="">choose…</option>
               {bgs.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
