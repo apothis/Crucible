@@ -2727,18 +2727,34 @@ def _yt_lettering_layers(body, title):
     for k in ("position", "scale", "title_position", "title_scale"):
         if body.get(k) not in (None, ""):
             wm[k] = body[k]
+    return _yt_layers_from_cfg(wm, title), wm
+
+
+def _yt_layers_from_cfg(wm, title):
+    """Title + band layers from a wordmark config. Under the modern look the faces,
+    weights, tracking and case come from the look preset (Josefin Sans, flat ivory,
+    tracked caps); positions/scales stay the user's."""
+    look = wordmark_mod.look_of(wm)
     layers = []
     if title:
-        layers.append({"text": title, "font": wm.get("title_font") or "unifraktur",
-                       "treatment": wm.get("title_treatment") or "ember",
-                       "position": wm.get("title_position") or "header",
-                       "scale": float(wm.get("title_scale") or 0.72), "max_h": 0.22})
+        lay = {"text": title, "font": wm.get("title_font") or "unifraktur",
+               "treatment": wm.get("title_treatment") or "ember",
+               "position": wm.get("title_position") or "header",
+               "scale": float(wm.get("title_scale") or 0.72), "max_h": 0.22}
+        if look.get("font"):
+            lay.update({"font": look["font"], "treatment": look["treatment"], "weight": look["title_weight"],
+                        "tracking": look["title_tracking"], "upper": bool(look.get("title_upper")), "max_h": 0.14})
+        layers.append(lay)
     if str(wm.get("text") or "").strip():
-        layers.append({"text": str(wm["text"]).strip(), "font": str(wm["font"]),
-                       "treatment": str(wm["treatment"]),
-                       "position": str(wm.get("position") or "bottom"),
-                       "scale": float(wm.get("scale") or 0.40)})
-    return layers, wm
+        lay = {"text": str(wm["text"]).strip(), "font": str(wm["font"]),
+               "treatment": str(wm["treatment"]),
+               "position": str(wm.get("position") or "bottom"),
+               "scale": float(wm.get("scale") or 0.40)}
+        if look.get("font"):
+            lay.update({"font": look["font"], "treatment": look["treatment"], "weight": look["band_weight"],
+                        "tracking": look["band_tracking"], "upper": True, "max_h": 0.07})
+        layers.append(lay)
+    return layers
 
 
 def _yt_scratch(name):
@@ -3326,17 +3342,8 @@ def youtube_stamp(body: dict):
             wm[k] = body[k]
     if not str(wm.get("text") or "").strip():
         raise HTTPException(400, "wordmark text is empty - set the band name")
-    layers = []
     song_title = str(body.get("title") or "").strip()
-    if song_title:
-        layers.append({"text": song_title, "font": wm.get("title_font") or "unifraktur",
-                       "treatment": wm.get("title_treatment") or "ember",
-                       "position": wm.get("title_position") or "header",
-                       "scale": float(wm.get("title_scale") or 0.72), "max_h": 0.22})
-    layers.append({"text": str(wm["text"]).strip(), "font": str(wm["font"]),
-                   "treatment": str(wm["treatment"]),
-                   "position": str(wm.get("position") or "bottom"),
-                   "scale": float(wm.get("scale") or 0.40)})
+    layers = _yt_layers_from_cfg(wm, song_title)   # modern look -> Josefin Sans, flat, tracked caps
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.png")
     try:

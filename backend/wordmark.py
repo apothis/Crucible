@@ -216,8 +216,11 @@ def compose_layers(img, layers):
         text = str(l.get("text") or "").strip()
         if not text:
             continue
+        if l.get("upper"):
+            text = text.upper()
         wm = render_wordmark(text, str(l.get("font") or "luminari"),
-                             str(l.get("treatment") or "bone"), height=260)
+                             str(l.get("treatment") or "bone"), height=260,
+                             weight=l.get("weight"), tracking=l.get("tracking"))
         scale = min(0.95, max(0.1, float(l.get("scale") or 0.40)))
         max_h = min(0.35, max(0.06, float(l.get("max_h") or 0.16)))
         f = min((img.width * scale) / wm.width, (img.height * max_h) / wm.height)
