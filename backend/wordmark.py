@@ -56,7 +56,9 @@ TREATMENTS = {
     "crimson": {"top": (238, 110, 100), "bottom": (120, 8, 16),   "glow": (30, 0, 2),  "glow_alpha": 230, "glow_blur": 0.12},
     "shadow": {"top": (245, 243, 236), "bottom": (245, 243, 236), "glow": (0, 0, 0),   "glow_alpha": 255, "glow_blur": 0.18},
     # flat, no glow - the modern look's lettering
-    "flat":   {"top": (236, 231, 220), "bottom": (236, 231, 220), "glow": (0, 0, 0),   "glow_alpha": 0,   "glow_blur": 0.01},
+    # a soft wide dark halo (user 2026-09-20): invisible on dark art, keeps the thin
+    # letters readable over a moonlit sea or pale fabric
+    "flat":   {"top": (236, 231, 220), "bottom": (236, 231, 220), "glow": (0, 0, 0),   "glow_alpha": 150, "glow_blur": 0.22},
     "muted":  {"top": (150, 145, 136), "bottom": (150, 145, 136), "glow": (0, 0, 0),   "glow_alpha": 0,   "glow_blur": 0.01},
 }
 
