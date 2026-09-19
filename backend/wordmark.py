@@ -78,7 +78,7 @@ def look_of(cfg):
 
 # `title_*` = the SONG TITLE's stamped lettering (large, top band); the bare keys are the
 # band wordmark. Both live in one saved config blob (app_config `yt_wordmark`).
-DEFAULTS = {"look": "classic",
+DEFAULTS = {"look": "modern",
             "text": "Apotheon", "font": "luminari", "treatment": "bone",
             "position": "bottom", "scale": 0.40,
             "title_font": "unifraktur", "title_treatment": "ember",
