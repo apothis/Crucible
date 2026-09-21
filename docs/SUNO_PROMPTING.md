@@ -393,3 +393,38 @@ e. Keep our bpm/key/subgenre front-loading and tag grammar; the labelled-field o
   instrumental-outro buffer as house defaults; treat full-band-throughout as neutral
   until a song shows a difference. (Sliders and wording were changed together, so the
   vocal improvement is not attributed to one of them.)
+
+## Pipe-separated style fields (researched 2026-09-21, UNMEASURED by us)
+
+Provenance: `[cited]` = a published guide says it; `[H]` = community claim we could not
+source; `[measured]` = our own takes.
+
+The claim doing the rounds: write the STYLE box as ordered sections split by `|`
+("Genre | Groove | Drums | Bass | Guitars | Vocals | Arrangement | Production") instead
+of a comma list, and v6 follows it better.
+
+What the reachable sources actually say:
+- The mttkllr/suno-field-guide (community-compiled, GitHub) uses pipes INSIDE LYRIC
+  SECTION HEADERS, not in the style box: `[Chorus | Anthemic | Stacked Harmonies | Brass
+  Section | Bass Drop | Wide Stereo]`, order "Mood/Energy | Vocal Style | Key Instruments |
+  Dynamic/Movement | Spatial/Effects | Production Style", "priority flows left to right,
+  most important first", max 7 elements per tag, and "should reinforce the style prompt,
+  not contradict it". No version claim, no mechanism given. `[cited]`
+- Every v6 style-field guide found (hookgenius 2026, sevenskywrite v6, undetectr, the
+  beehiiv lists) recommends COMMA lists in the order genre, mood, instruments, vocals,
+  production, tempo; none recommends pipes in the style box. `[cited]`
+- The "pipes in the style box" version is therefore `[H]`: a community practice without a
+  written source we can reach (Reddit is unreachable from here). It is plausible on the
+  same reasoning as the header form (discrete phrases, left-to-right weight), and Suno's
+  own simple-mode expander already emits discrete comma phrases in a fixed order (section
+  "Suno's own dialect"), so the ORDER part of the claim matches what Suno itself writes.
+- We hold ONE pipe-formatted take: Party Hard (user-authored field, title-cased phrases,
+  13 pipes). One take = no evidence either way. `[measured]`
+
+Test plan (one variable): pick a song with a liked comma-list take, make a "- pipes" copy
+whose style field is the SAME phrases, same order, pipes for commas, title case; same
+lyrics, same sliders (30/85/0); 2-3 takes each; judge by ear for adherence (does the
+vocal register, the guitar placement and the arrangement arc follow the field better?).
+If the pipe copy wins, the follow-up test is the header form
+(`[Chorus | Belted | Gang Vocals | Wall of Guitars]`) on the same song, because that is
+the form the field guide actually documents.
