@@ -52,16 +52,15 @@ songs that must land (1, 5, 7, 9), one v6-wild roll each on 2, 4, 8, 10. Track 3
 
 10. Don't Trust a Man in Skinny Jeans (rockabilly western-swing step, re-keyed
     so it does not duplicate track 3)
-142 bpm A major rockabilly western-swing hillbilly country dubstep, slapping upright bass, twangy hollow-body guitar licks, squelchy talking wobble bass, sneering male country vocal with call-and-response gang vocals, snappy swing brushes, punchy vintage mix, jive verses that flip into ridiculous bass drops and a guitar-versus-bass duel finale
+142 bpm A major rockabilly western-swing hillbilly country dubstep, slapping upright bass, twangy hollow-body guitar, squelchy talking wobble bass, sneering male country vocal with call-and-response gang vocals, snappy swing brushes, punchy mix, jive verses that flip into ridiculous bass drops and a guitar-versus-bass duel finale
 
 Tempo map so the album has a shape: 140, 150, 128, 150, 138, 135, 140, 145, 132, 142.
 Keys avoid repeating back to back.
 
 ## 2. Canon to settle before anything is printed
 
-- Beer: cover shows a "lite" can, bio and DJ-booth photo say Busch Light. Pick one.
-  Recommendation: Busch Light in lyrics and bio (it is the running joke in the
-  origin story); the can on the cover is generic enough to leave alone.
+- Beer: DECIDED 2026-09-22, Busch Light is canon in lyrics and bio. The cover's
+  "lite" can stays as is; generated stills use plain unbranded cans.
 - Origin: Nowhere, Tennessee (pop. 412, mostly chickens). Keep.
 - Contact: looshwoggins.com and baddecisionsmusic.com were both unregistered on
   2026-09-22 (whois). Register both before they appear on any public asset, or
@@ -219,7 +218,6 @@ in the description; the cover on black as the idle frame between tracks.
 
 ## 9. Open decisions for the user
 
-- Beer canon (Busch Light vs the cover's Lite can).
 - Register the domain(s) or remove them from the artwork.
 - ChatGPT Plus go-ahead, and whether to run the local Krea2 A/B in parallel.
 - Whether the photo-story videos are built as standalone ffmpeg scripts or as
