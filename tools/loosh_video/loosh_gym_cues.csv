@@ -1,0 +1,19 @@
+# Gym Membership (1) hoedown-step take, 196.4 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.87), M = measured from bass/loudness curves
+# move: push = slow zoom in, pull = slow zoom out, panL/panR = drift
+start,end,section,still,move,source
+0.0,14.1,intro,GYM-10_empty_armchair,pull,W
+14.1,22.3,verse1a,GYM-01_fitbit_pillow,push,W
+22.3,30.6,verse1b,GYM-02_protein_cupboard,panR,W
+30.6,39.8,prechorus1,GYM-03_climb_a_stair,push,W
+39.8,58.5,chorus1,GYM-04_on_my_knees_thumbnail,pull,W
+58.5,71.7,drop1,GYM-05_the_drop,push,M
+71.7,86.9,verse2,GYM-06_one_pushup,push,W
+86.9,95.2,prechorus2,GYM-07_blake_window,panR,W
+95.2,110.3,chorus2,GYM-04_on_my_knees_thumbnail,push,W
+110.3,127.3,buildup_drop2,GYM-05_the_drop,panL,M
+127.3,144.1,bridge,GYM-08_rotisserie_chicken,push,W
+144.1,163.5,finalchorus,GYM-09_belted_final_chorus,pull,W
+163.5,180.0,drop3_outro_vocal,GYM-05_the_drop,panR,M
+180.0,196.4,outro,GYM-10_empty_armchair,push,M
+# waveform strip shown on: 58.5-71.7, 116.5-127.3, 163.5-180, 183.5-186.5, 189.0-195.0
