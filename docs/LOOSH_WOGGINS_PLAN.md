@@ -18,7 +18,7 @@ Shared Exclude Styles (paste for every track, trim per song if needed):
 female vocals, pop, trance, house, techno, clean radio country, autotune, choir, orchestra
 
 Sliders: Weirdness 50-60, Style Influence 70, Variety Normal. v6 for the
-songs that must land (1, 3, 5, 7, 9), one v6-wild roll each on 2, 4, 8, 10.
+songs that must land (1, 5, 7, 9), one v6-wild roll each on 2, 4, 8, 10. Track 3 is done.
 
 1. Beer, Biscuits, & Bad Decisions (title anthem, singalong)
 140 bpm A minor hillbilly country dubstep anthem, twangy clawhammer banjo riffs, crunchy telecaster chicken-pickin, thunderous growling wobble bass, rowdy gravel-throated male country vocal, tractor-engine sample hits, tape-saturated bar-band mix, opens like a honky tonk singalong before the floor drops out on every chorus
@@ -26,8 +26,11 @@ songs that must land (1, 3, 5, 7, 9), one v6-wild roll each on 2, 4, 8, 10.
 2. Honky Tonk Heart Attack (frantic, palpitation drops)
 150 bpm E minor frantic hillbilly country dubstep, galloping bluegrass banjo rolls, wailing pedal steel, chest-punching stuttering wobble bass, breathless hollering male country vocal with gang shouts, heartbeat kick drum, gritty amp-driven mix, races faster each verse and flatlines into a monstrous final drop
 
-3. She Left Me for a Gym Membership (already generated, weepy variant kept as canon)
-140 bpm D minor weepy hillbilly country dubstep ballad, crying pedal steel, mournful acoustic guitar, filthy grinding wobble bass, heartbroken cracking male country vocal, warm tape-saturated mix, tearjerker verses that collapse into massive bass drops, whispered breakdown then a belted final chorus
+3. She Left Me for a Gym Membership (GENERATED; chosen take = the hoedown-step
+   variant, the 3:16 render "Gym Membership (1).mp4". Field below is reconstructed
+   from the brief "bluegrass hoedown-step, 128 bpm, G major"; the field actually
+   used in Suno is canon, paste it here if it differs)
+128 bpm G major bluegrass hoedown-step hillbilly country dubstep, breakneck flatpicked banjo, sawing fiddle, filthy squelching wobble bass, heartbroken hollering male country vocal, square-dance stomp drums, tape-saturated barn mix, hoedown verses that collapse into massive bass drops, whispered breakdown then a belted final chorus
 
 4. Dirt Road Diet (hick-hop bounce)
 150 bpm G minor bouncy hick-hop hillbilly country dubstep, plucky muted banjo, greasy slide dobro, fat 808 sub bass with growling wobble drops, cocky half-rapped male country drawl, hand claps and boot stomps, punchy trap-style drums, swaggering bounce that keeps piling on bigger drops
@@ -47,10 +50,11 @@ songs that must land (1, 3, 5, 7, 9), one v6-wild roll each on 2, 4, 8, 10.
 9. Three Beers Deep (drunk Bakersfield shuffle)
 132 bpm E major drunken hillbilly country dubstep shuffle, loping Bakersfield telecaster twang, honky-tonk upright piano, sloppy sliding wobble bass, slurred male country vocal, lazy shuffle drums, tape-saturated barroom mix, stumbles happily along then wobbles sideways into woozy drops that get sloppier with every chorus
 
-10. Don't Trust a Man in Skinny Jeans (bluegrass hoedown-step)
-128 bpm G major bluegrass hoedown-step hillbilly country dubstep, breakneck flatpicked banjo, sawing fiddle, squelchy talking wobble bass, sneering male country vocal with call-and-response gang vocals, square-dance stomp drums, punchy mix, hoedown verses that flip into ridiculous bass drops and a fiddle-versus-bass duel finale
+10. Don't Trust a Man in Skinny Jeans (rockabilly western-swing step, re-keyed
+    so it does not duplicate track 3)
+142 bpm A major rockabilly western-swing hillbilly country dubstep, slapping upright bass, twangy hollow-body guitar licks, squelchy talking wobble bass, sneering male country vocal with call-and-response gang vocals, snappy swing brushes, punchy vintage mix, jive verses that flip into ridiculous bass drops and a guitar-versus-bass duel finale
 
-Tempo map so the album has a shape: 140, 150, 140, 150, 138, 135, 140, 145, 132, 128.
+Tempo map so the album has a shape: 140, 150, 128, 150, 138, 135, 140, 145, 132, 142.
 Keys avoid repeating back to back.
 
 ## 2. Canon to settle before anything is printed
@@ -200,7 +204,8 @@ in the description; the cover on black as the idle frame between tracks.
 ## 8. Release order and cadence
 
 1. Register looshwoggins.com; create the channel; upload banner, profile, About.
-2. Gym Membership first (it exists): photo-story video + Short + thumbnail.
+2. Gym Membership first: the hoedown-step take, "Gym Membership (1)" wav/mp4
+   (3:16) in /Volumes/SSD1/Downloads. Photo-story video + Short + thumbnail.
    Publish as the channel trailer. This is the tooling shakedown.
 3. Generate the remaining nine songs in Suno with the fields above, one
    variable at a time (field first, lyrics second). Pick takes by ear.
