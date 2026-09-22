@@ -61,9 +61,8 @@ Keys avoid repeating back to back.
 
 - Beer: DECIDED 2026-09-22, Busch Light is canon in lyrics and bio. The cover's
   "lite" can stays as is; generated stills use plain unbranded cans.
-- Origin: DECIDED 2026-09-22, Nowhere, Arkansas, in the Ozarks (pop. 412, mostly
-  chickens). Real hillbilly country. The Copilot one-sheet image still says
-  Tennessee; regenerate or crop that panel before it goes public.
+- Origin: Nowhere, Tennessee (pop. 412, mostly chickens). DECIDED 2026-09-22, used
+  in the live YouTube About text; matches the one-sheet image.
 - Contact: looshwoggins.com and baddecisionsmusic.com were both unregistered on
   2026-09-22 (whois). Register both before they appear on any public asset, or
   drop them from the artwork. Cheapest path: register looshwoggins.com only and
