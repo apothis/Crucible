@@ -1,0 +1,20 @@
+# Beer, Biscuits, & Bad Decisions (title track), 187.9 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.94), M = measured from bass/loudness curves
+start,end,section,still,move,source
+0.0,21.7,intro,BBBD-00_cover_card,pull,W
+21.7,27.5,verse1a,BBBD-01_porch_biscuit,push,W
+27.5,34.3,verse1b,BBBD-02_truck_pond_dog_hat,panR,W
+34.3,42.2,prechorus1,BBBD-03_sunday_pew,push,W
+42.2,54.8,chorus1,BBBD-04_holy_trinity_thumbnail,pull,W
+54.8,69.0,drop1,BBBD-05_flatbed_drop,push,W
+69.0,75.5,verse2a,BBBD-06_keg_garden,push,W
+75.5,82.3,verse2b,BBBD-07_doctor,panL,W
+82.3,90.6,prechorus2,BBBD-08_mechanical_bull,push,W
+90.6,102.8,chorus2,BBBD-04_holy_trinity_thumbnail,push,W
+102.8,117.5,drop2,BBBD-05_flatbed_drop,panL,M
+117.5,131.0,bridge,BBBD-10_tailgate_roman_candle,push,W
+131.0,145.4,solo,BBBD-11_telecaster_porch,panR,W
+145.4,157.9,finalchorus,BBBD-09_bar_toast,pull,W
+157.9,170.5,outro_chant,BBBD-05_flatbed_drop,push,W
+170.5,187.9,rideout,BBBD-12_porch_sunrise,push,M
+# waveform strip on: 54.8-69, 102.8-117.5, 157.9-170.5, 172.5-181.5, 183.5-186.5
