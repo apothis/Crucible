@@ -221,7 +221,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (!style.trim()) { setNote("write a style line first"); return; }
     setConverting("suno");
     try {
-      const r = await api.convertYue2ToSuno({ style, lyrics, title: title || songPageTitle || projectName });
+      // the loaded score's K:/Q: give the bpm + key the Suno rules want up front
+      const r = await api.convertYue2ToSuno({ style, lyrics, title: title || songPageTitle || projectName, abc });
       draftCtx.set("suno", "title", title || songPageTitle || projectName || "");
       draftCtx.set("suno", "style", r.style); draftCtx.set("suno", "exclude", r.exclude); draftCtx.set("suno", "lyrics", r.lyrics);
       setNote(`sent to the Suno tab (${r.source}); the same lyrics with Suno's tag names, ready for a Suno cover of a YuE2 take`);

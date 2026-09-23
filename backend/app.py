@@ -7294,7 +7294,7 @@ def convert_yue2_to_suno(p: dict):
     from . import convert
     provider, model, claude_model = convert.llm_args(p, CFG)
     return convert.yue2_to_suno(p.get("style") or "", p.get("lyrics") or "", p.get("title") or "",
-                                provider, model, claude_model)
+                                provider, model, claude_model, abc=p.get("abc") or "")
 
 
 @app.post("/api/convert/suno_to_yue2")

@@ -107,31 +107,67 @@ def _negatives(text):
 
 _Y2S_SYSTEM = (
     "You turn a compact music-style line into a Suno Custom Mode prompt. Output STRICT JSON ONLY: "
-    "{\"style\": \"...\", \"exclude\": \"...\"}. No prose, no markdown.")
-_Y2S_RULES = """Rules:
-- "style": Suno's Style of Music field. 6-7 front-loaded comma-separated descriptors, under 700
-  characters: genre first, then instruments/production, then the vocal (gender, register, timbre,
-  delivery), tempo feel, mood. Keep the ORIGINAL line's genre, instruments and voice exactly; do
-  not add new instruments. Drop negatives ("no ...") from the style: they go in "exclude".
-- "exclude": Suno's Exclude Styles field: the line's own negatives plus the genre's natural drift
-  risks (metal: "pop, EDM, country, acoustic, trap, rap"). Single words or two-word phrases, comma
-  separated, no sentences."""
+    "{\"style\": \"...\", \"exclude\": \"...\", \"tags\": {...}}. No prose, no markdown.")
+# The house Suno rules (docs/SUNO_PROMPTING.md): the SAME style/exclude text and the SAME proven
+# tag vocabulary + enrichment rules the Music 3 -> Suno export uses, plus what is specific to
+# starting from a YuE2 line rather than a Music 3 caption.
+_Y2S_RULES = suno_export._RULES + """
+
+Starting from a YuE2 style line (not a Music 3 caption):
+- Keep the line's genre, instruments and singer exactly; add nothing it does not name, except the
+  bpm / key / subgenre header the rules require. bpm: the line's "NNN BPM" if present, else the
+  score tempo given below, else omit. Key: the score key given below, else omit.
+- The line names ONE singer unless it says duet: then ONE vocal phrase (register + timbre +
+  delivery), never invent a second voice.
+- Negatives in the line ("no male vocals") never go in "style"; put them in "exclude".
+- COUNT the style words before answering: 30-45 total, the cap is hard. Over it, cut adjectives
+  from the instrument phrases first, never the bpm / key / subgenre header or the vocal phrase.
+
+""" + suno_export._TAG_RULES + """
+- Here the "caption" is the style line: derive the enrichments from the instruments and the
+  singer it names and from the section flow (an intro tag names the line's lead melodic
+  instrument when it is in the proven vocabulary, else "Quiet Intro"/"Drum Intro" as the line
+  implies; a chanted chorus earns "Chorus / Gang Vocals"; the last chorus "Final Chorus"; an
+  interlude between choruses "Instrumental Break" or "Guitar Solo" as the line implies; the
+  closing section "Outro"). One singer = no vocal casting tags."""
 
 
-def yue2_to_suno(style, lyrics, title, provider, model, claude_model):
-    prompt = f"{_Y2S_RULES}\n\nSong title: {title or 'Untitled'}\nThe style line:\n{style}\n\nReturn the JSON now."
-    out_lyrics = suno_export.map_lyrics(yue2_mod.normalize_lyrics(lyrics))   # Title-case bare tags, then Suno's names
+def yue2_to_suno(style, lyrics, title, provider, model, claude_model, abc=""):
+    hdr = yue2_mod.parse_header(abc) if (abc or "").strip() else {}
+    score = ""
+    if hdr.get("K") or hdr.get("bpm"):
+        score = (f"\nFrom the score header: key {hdr.get('K') or 'unknown'}, tempo "
+                 f"{hdr.get('bpm') or 'unknown'} bpm, meter {hdr.get('M') or 'unknown'}.")
+    base_lyrics = yue2_mod.normalize_lyrics(lyrics)                       # Title-case bare tags
+    tag_list = "\n".join(f"  {n}. [{t}]" for n, (_i, t) in enumerate(suno_export._section_tags(base_lyrics), 1))
+    prompt = (f"{_Y2S_RULES}\n\nSong title: {title or 'Untitled'}\nThe style line:\n{style}{score}\n\n"
+              f"The lyric sheet's section tags, numbered in order:\n{tag_list or '  (none)'}\n\n"
+              "Return the JSON now.")
+
+    def finish(text):
+        # YuE2's [Interlude] -> Suno's name, then the [Solo]/[Instrumental] safety net; the words are untouched
+        out = re.sub(r"(?mi)^\[interlude\]\s*$", "[Instrumental Break]", text)
+        out = suno_export.map_lyrics(out)
+        if not re.search(r"(?mi)^\[end\]\s*$", out):
+            out = out.rstrip() + "\n[End]"                                  # the sheet always closes
+        return out
+
     try:
         data = _json(llm.complete(provider, model, _Y2S_SYSTEM, prompt, claude_model, timeout=240))
-        s, x = str(data.get("style") or "").strip()[:1000], str(data.get("exclude") or "").strip()[:500]
+        s = str(data.get("style") or "").strip().rstrip(",. ")[:1000]
+        x = str(data.get("exclude") or "").strip().rstrip(",. ")[:500]
         if not s:
             raise ValueError("empty style from LLM")
-        return {"style": s, "exclude": x, "lyrics": out_lyrics, "source": "llm"}
+        out_lyrics, enriched_n = base_lyrics, 0
+        enriched = data.get("tags") or {}
+        if isinstance(enriched, dict) and enriched:
+            out_lyrics, enriched_n = suno_export.apply_tag_enrichment(base_lyrics, enriched)
+        return {"style": s, "exclude": x, "lyrics": finish(out_lyrics), "tags_enriched": enriched_n, "source": "llm"}
     except Exception as e:
         negs = _negatives(style)
         kept = [t.strip() for t in re.split(r",", style) if t.strip() and not re.match(r"^(no|without|never)\b", t.strip(), re.I)]
         return {"style": ", ".join(kept)[:1000], "exclude": ", ".join(negs)[:500],
-                "lyrics": out_lyrics, "source": f"fallback ({e})"}
+                "lyrics": finish(base_lyrics), "tags_enriched": 0, "source": f"fallback ({e})"}
 
 
 # ---------------- Suno -> YuE2 ----------------
