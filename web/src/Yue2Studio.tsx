@@ -93,6 +93,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [topP, setTopP] = d.use("topP", "");
   const [topK, setTopK] = d.use("topK", "");
   const [rep, setRep] = d.use("rep", "");
+  const [semCfg, setSemCfg] = d.use("semCfg", "");   // semantic-stage CFG; blank = node default (1.0)
   const [tiled, setTiled] = d.use("tiled", false);
   const [takes, setTakes] = d.use<Take[]>("takes", []);
 
@@ -372,6 +373,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           ...(topP.trim() ? { top_p: parseFloat(topP) } : {}),
           ...(topK.trim() ? { top_k: parseInt(topK) } : {}),
           ...(rep.trim() ? { repetition_penalty: parseFloat(rep) } : {}),
+          ...(semCfg.trim() ? { cfg_scale: parseFloat(semCfg) } : {}),
           tiled_decode: tiled,
         });
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
@@ -681,6 +683,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <Field label="top_p" hint="0.95"><input className={inp} value={topP} onChange={(e) => setTopP(e.target.value)} placeholder="0.95" /></Field>
               <Field label="top_k" hint="100"><input className={inp} value={topK} onChange={(e) => setTopK(e.target.value)} placeholder="100" /></Field>
               <Field label="rep. penalty" hint="1.2"><input className={inp} value={rep} onChange={(e) => setRep(e.target.value)} placeholder="1.2" /></Field>
+              <Field label="text guidance" hint="music stage CFG; 1.0 = off, upstream tries 1.2 to make the style line bind harder (singer, instruments)">
+                <input className={inp} value={semCfg} onChange={(e) => setSemCfg(e.target.value)} placeholder="1.0" /></Field>
               <Field label="Tiled decode" hint="lower VRAM; off on 24 GB">
                 <input type="checkbox" checked={tiled} onChange={(e) => setTiled(e.target.checked)} />
               </Field>

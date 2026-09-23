@@ -238,12 +238,18 @@ def _f(p, k):
 
 
 def _music_node(p, abc_input, mode):
-    return {"class_type": "YuE2GenerateMusic", "inputs": {
+    node = {"class_type": "YuE2GenerateMusic", "inputs": {
         "clip": ["1", 1], "style": p["style"], "lyrics": p["lyrics"], "abc": abc_input,
         "seed": int(p["seed"]), "mode": "melody" if mode == "melody" else "full",
         "max_duration": float(p["max_seconds"]),
         "temperature": float(_f(p, "temperature")), "top_p": float(_f(p, "top_p")),
         "top_k": int(_f(p, "top_k")), "repetition_penalty": float(_f(p, "repetition_penalty"))}}
+    # semantic-stage CFG (upstream: 1.0 = off in full/melody, 1.01 in off mode; 1.2 = "stronger
+    # text guidance", the negative branch keeps the score and drops style + lyrics). Only sent
+    # when the user sets it, so the node keeps its own per-mode default otherwise.
+    if p.get("cfg_scale") is not None:
+        node["inputs"]["cfg_scale"] = float(p["cfg_scale"])
+    return node
 
 
 def _abc_node(p, mode, seed):
@@ -279,6 +285,7 @@ def _resolve(p):
         # the plan seed defaults to the render seed; splitting them lets one score be rendered
         # with several performances, or several scores be tried on one render seed
         "abc_seed": int(p.get("abc_seed") or 0) or int(p.get("seed") or 0),
+        "cfg_scale": (float(p["cfg_scale"]) if p.get("cfg_scale") not in (None, "") else None),
     }
     for k in ("temperature", "top_p", "top_k", "repetition_penalty", "abc_temperature",
               "abc_top_p", "abc_top_k", "abc_repetition_penalty", "abc_penalty_window",
