@@ -1,0 +1,1779 @@
+{
+ "fps": 25,
+ "duration": 187.9,
+ "audio": "audio/bbbd.wav",
+ "sections": [
+  {
+   "start": 0.0,
+   "end": 21.7,
+   "section": "intro",
+   "still": "BBBD-00_cover_card.webp",
+   "move": "pull"
+  },
+  {
+   "start": 21.7,
+   "end": 27.5,
+   "section": "verse1a",
+   "still": "BBBD-01_porch_biscuit.webp",
+   "move": "push"
+  },
+  {
+   "start": 27.5,
+   "end": 34.3,
+   "section": "verse1b",
+   "still": "BBBD-02_truck_pond_dog_hat.webp",
+   "move": "panR"
+  },
+  {
+   "start": 34.3,
+   "end": 42.2,
+   "section": "prechorus1",
+   "still": "BBBD-03_sunday_pew.webp",
+   "move": "push"
+  },
+  {
+   "start": 42.2,
+   "end": 54.8,
+   "section": "chorus1",
+   "still": "BBBD-04_holy_trinity_thumbnail.webp",
+   "move": "pull"
+  },
+  {
+   "start": 54.8,
+   "end": 69.0,
+   "section": "drop1",
+   "still": "BBBD-05_flatbed_drop.webp",
+   "move": "push"
+  },
+  {
+   "start": 69.0,
+   "end": 75.5,
+   "section": "verse2a",
+   "still": "BBBD-06_keg_garden.webp",
+   "move": "push"
+  },
+  {
+   "start": 75.5,
+   "end": 82.3,
+   "section": "verse2b",
+   "still": "BBBD-07_doctor.webp",
+   "move": "panL"
+  },
+  {
+   "start": 82.3,
+   "end": 90.6,
+   "section": "prechorus2",
+   "still": "BBBD-08_mechanical_bull.webp",
+   "move": "push"
+  },
+  {
+   "start": 90.6,
+   "end": 102.8,
+   "section": "chorus2",
+   "still": "BBBD-04_holy_trinity_thumbnail.webp",
+   "move": "push"
+  },
+  {
+   "start": 102.8,
+   "end": 117.5,
+   "section": "drop2",
+   "still": "BBBD-05_flatbed_drop.webp",
+   "move": "panL"
+  },
+  {
+   "start": 117.5,
+   "end": 131.0,
+   "section": "bridge",
+   "still": "BBBD-10_tailgate_roman_candle.webp",
+   "move": "push"
+  },
+  {
+   "start": 131.0,
+   "end": 145.4,
+   "section": "solo",
+   "still": "BBBD-11_telecaster_porch.webp",
+   "move": "panR"
+  },
+  {
+   "start": 145.4,
+   "end": 157.9,
+   "section": "finalchorus",
+   "still": "BBBD-09_bar_toast.webp",
+   "move": "pull"
+  },
+  {
+   "start": 157.9,
+   "end": 170.5,
+   "section": "outro_chant",
+   "still": "BBBD-05_flatbed_drop.webp",
+   "move": "push"
+  },
+  {
+   "start": 170.5,
+   "end": 187.9,
+   "section": "rideout",
+   "still": "BBBD-12_porch_sunrise.webp",
+   "move": "push"
+  }
+ ],
+ "lines": [
+  {
+   "start": 21.66,
+   "end": 24.18,
+   "text": "Woke up on the porch with a biscuit in my hand",
+   "words": [
+    {
+     "w": "Woke",
+     "start": 21.66,
+     "end": 21.66
+    },
+    {
+     "w": "up",
+     "start": 21.66,
+     "end": 21.78
+    },
+    {
+     "w": "on",
+     "start": 21.78,
+     "end": 21.92
+    },
+    {
+     "w": "the",
+     "start": 21.92,
+     "end": 22.06
+    },
+    {
+     "w": "porch",
+     "start": 22.06,
+     "end": 22.44
+    },
+    {
+     "w": "with",
+     "start": 22.44,
+     "end": 22.74
+    },
+    {
+     "w": "a",
+     "start": 22.74,
+     "end": 22.9
+    },
+    {
+     "w": "biscuit",
+     "start": 22.9,
+     "end": 23.2
+    },
+    {
+     "w": "in",
+     "start": 23.2,
+     "end": 23.58
+    },
+    {
+     "w": "my",
+     "start": 23.58,
+     "end": 23.78
+    },
+    {
+     "w": "hand",
+     "start": 23.78,
+     "end": 24.18
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 24.18,
+   "end": 27.52,
+   "text": "Don't remember how I got there, but I'm told it went as planned",
+   "words": [
+    {
+     "w": "Don't",
+     "start": 24.18,
+     "end": 24.46
+    },
+    {
+     "w": "remember",
+     "start": 24.46,
+     "end": 24.78
+    },
+    {
+     "w": "how",
+     "start": 24.78,
+     "end": 25.24
+    },
+    {
+     "w": "I",
+     "start": 25.24,
+     "end": 25.4
+    },
+    {
+     "w": "got",
+     "start": 25.4,
+     "end": 25.62
+    },
+    {
+     "w": "there,",
+     "start": 25.62,
+     "end": 25.92
+    },
+    {
+     "w": "but",
+     "start": 25.96,
+     "end": 26.08
+    },
+    {
+     "w": "I'm",
+     "start": 26.08,
+     "end": 26.3
+    },
+    {
+     "w": "told",
+     "start": 26.3,
+     "end": 26.54
+    },
+    {
+     "w": "it",
+     "start": 26.54,
+     "end": 26.78
+    },
+    {
+     "w": "went",
+     "start": 26.78,
+     "end": 27.0
+    },
+    {
+     "w": "as",
+     "start": 27.0,
+     "end": 27.2
+    },
+    {
+     "w": "planned",
+     "start": 27.2,
+     "end": 27.52
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 27.52,
+   "end": 30.92,
+   "text": "The truck is in the pond and the dog is wearing my hat",
+   "words": [
+    {
+     "w": "The",
+     "start": 27.52,
+     "end": 28.0
+    },
+    {
+     "w": "truck",
+     "start": 28.0,
+     "end": 28.32
+    },
+    {
+     "w": "is",
+     "start": 28.32,
+     "end": 28.58
+    },
+    {
+     "w": "in",
+     "start": 28.58,
+     "end": 28.78
+    },
+    {
+     "w": "the",
+     "start": 28.78,
+     "end": 28.9
+    },
+    {
+     "w": "pond",
+     "start": 28.9,
+     "end": 29.22
+    },
+    {
+     "w": "and",
+     "start": 29.22,
+     "end": 29.6
+    },
+    {
+     "w": "the",
+     "start": 29.6,
+     "end": 29.72
+    },
+    {
+     "w": "dog",
+     "start": 29.72,
+     "end": 29.92
+    },
+    {
+     "w": "is",
+     "start": 29.92,
+     "end": 30.04
+    },
+    {
+     "w": "wearing",
+     "start": 30.04,
+     "end": 30.28
+    },
+    {
+     "w": "my",
+     "start": 30.28,
+     "end": 30.64
+    },
+    {
+     "w": "hat",
+     "start": 30.64,
+     "end": 30.92
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 30.92,
+   "end": 34.34,
+   "text": "And I got a text from Tammy Lynn that just says we need to chat",
+   "words": [
+    {
+     "w": "And",
+     "start": 30.92,
+     "end": 31.02
+    },
+    {
+     "w": "I",
+     "start": 31.02,
+     "end": 31.14
+    },
+    {
+     "w": "got",
+     "start": 31.14,
+     "end": 31.32
+    },
+    {
+     "w": "a",
+     "start": 31.32,
+     "end": 31.48
+    },
+    {
+     "w": "text",
+     "start": 31.48,
+     "end": 31.66
+    },
+    {
+     "w": "from",
+     "start": 31.66,
+     "end": 31.92
+    },
+    {
+     "w": "Tammy",
+     "start": 31.92,
+     "end": 32.18
+    },
+    {
+     "w": "Lynn",
+     "start": 32.18,
+     "end": 32.58
+    },
+    {
+     "w": "that",
+     "start": 32.58,
+     "end": 32.78
+    },
+    {
+     "w": "just",
+     "start": 32.78,
+     "end": 33.04
+    },
+    {
+     "w": "says",
+     "start": 33.04,
+     "end": 33.36
+    },
+    {
+     "w": "we",
+     "start": 33.36,
+     "end": 33.6
+    },
+    {
+     "w": "need",
+     "start": 33.6,
+     "end": 33.84
+    },
+    {
+     "w": "to",
+     "start": 33.84,
+     "end": 34.02
+    },
+    {
+     "w": "chat",
+     "start": 34.02,
+     "end": 34.34
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 34.34,
+   "end": 37.8,
+   "text": "Some folks call it trouble, some folks call it sin",
+   "words": [
+    {
+     "w": "Some",
+     "start": 34.34,
+     "end": 35.0
+    },
+    {
+     "w": "folks",
+     "start": 35.0,
+     "end": 35.32
+    },
+    {
+     "w": "call",
+     "start": 35.32,
+     "end": 35.6
+    },
+    {
+     "w": "it",
+     "start": 35.6,
+     "end": 35.72
+    },
+    {
+     "w": "trouble,",
+     "start": 35.72,
+     "end": 36.08
+    },
+    {
+     "w": "some",
+     "start": 36.2,
+     "end": 36.7
+    },
+    {
+     "w": "folks",
+     "start": 36.7,
+     "end": 37.06
+    },
+    {
+     "w": "call",
+     "start": 37.06,
+     "end": 37.28
+    },
+    {
+     "w": "it",
+     "start": 37.28,
+     "end": 37.5
+    },
+    {
+     "w": "sin",
+     "start": 37.5,
+     "end": 37.8
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 37.8,
+   "end": 41.24,
+   "text": "I call it Saturday, and Sunday's when it sets in",
+   "words": [
+    {
+     "w": "I",
+     "start": 37.8,
+     "end": 38.2
+    },
+    {
+     "w": "call",
+     "start": 38.2,
+     "end": 38.98
+    },
+    {
+     "w": "it",
+     "start": 38.98,
+     "end": 39.18
+    },
+    {
+     "w": "Saturday,",
+     "start": 39.18,
+     "end": 39.58
+    },
+    {
+     "w": "and",
+     "start": 39.58,
+     "end": 40.0
+    },
+    {
+     "w": "Sunday's",
+     "start": 40.0,
+     "end": 40.46
+    },
+    {
+     "w": "when",
+     "start": 40.46,
+     "end": 40.56
+    },
+    {
+     "w": "it",
+     "start": 40.56,
+     "end": 40.7
+    },
+    {
+     "w": "sets",
+     "start": 40.7,
+     "end": 40.92
+    },
+    {
+     "w": "in",
+     "start": 40.92,
+     "end": 41.24
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 42.22,
+   "end": 44.72,
+   "text": "Beer, biscuits, and bad decisions",
+   "words": [
+    {
+     "w": "Beer,",
+     "start": 42.22,
+     "end": 42.48
+    },
+    {
+     "w": "biscuits,",
+     "start": 42.7,
+     "end": 42.96
+    },
+    {
+     "w": "and",
+     "start": 43.2,
+     "end": 43.36
+    },
+    {
+     "w": "bad",
+     "start": 43.36,
+     "end": 44.02
+    },
+    {
+     "w": "decisions",
+     "start": 44.02,
+     "end": 44.72
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 45.44,
+   "end": 47.86,
+   "text": "That's the holy trinity where I'm from",
+   "words": [
+    {
+     "w": "That's",
+     "start": 45.44,
+     "end": 45.44
+    },
+    {
+     "w": "the",
+     "start": 45.44,
+     "end": 45.68
+    },
+    {
+     "w": "holy",
+     "start": 45.68,
+     "end": 45.94
+    },
+    {
+     "w": "trinity",
+     "start": 45.94,
+     "end": 46.46
+    },
+    {
+     "w": "where",
+     "start": 46.46,
+     "end": 47.1
+    },
+    {
+     "w": "I'm",
+     "start": 47.1,
+     "end": 47.58
+    },
+    {
+     "w": "from",
+     "start": 47.58,
+     "end": 47.86
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 48.96,
+   "end": 51.56,
+   "text": "Beer, biscuits, and bad decisions",
+   "words": [
+    {
+     "w": "Beer,",
+     "start": 48.96,
+     "end": 49.36
+    },
+    {
+     "w": "biscuits,",
+     "start": 49.7,
+     "end": 49.82
+    },
+    {
+     "w": "and",
+     "start": 50.1,
+     "end": 50.24
+    },
+    {
+     "w": "bad",
+     "start": 50.24,
+     "end": 50.92
+    },
+    {
+     "w": "decisions",
+     "start": 50.92,
+     "end": 51.56
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 51.56,
+   "end": 54.78,
+   "text": "One for the belly, one for the soul, and one for everyone",
+   "words": [
+    {
+     "w": "One",
+     "start": 51.56,
+     "end": 52.14
+    },
+    {
+     "w": "for",
+     "start": 52.14,
+     "end": 52.42
+    },
+    {
+     "w": "the",
+     "start": 52.42,
+     "end": 52.52
+    },
+    {
+     "w": "belly,",
+     "start": 52.52,
+     "end": 52.76
+    },
+    {
+     "w": "one",
+     "start": 52.8,
+     "end": 53.08
+    },
+    {
+     "w": "for",
+     "start": 53.08,
+     "end": 53.28
+    },
+    {
+     "w": "the",
+     "start": 53.28,
+     "end": 53.38
+    },
+    {
+     "w": "soul,",
+     "start": 53.38,
+     "end": 53.6
+    },
+    {
+     "w": "and",
+     "start": 53.66,
+     "end": 53.78
+    },
+    {
+     "w": "one",
+     "start": 53.78,
+     "end": 53.98
+    },
+    {
+     "w": "for",
+     "start": 53.98,
+     "end": 54.3
+    },
+    {
+     "w": "everyone",
+     "start": 54.3,
+     "end": 54.78
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 68.98,
+   "end": 70.76,
+   "text": "Mama said, son, you're gonna reap what you sow",
+   "words": [
+    {
+     "w": "Mama",
+     "start": 68.97999999999999,
+     "end": 69.44
+    },
+    {
+     "w": "said,",
+     "start": 69.44,
+     "end": 69.9
+    },
+    {
+     "w": "son,",
+     "start": 70.12,
+     "end": 70.3
+    },
+    {
+     "w": "you're",
+     "start": 70.38,
+     "end": 70.56
+    },
+    {
+     "w": "gonna",
+     "start": 70.56,
+     "end": 70.76
+    },
+    {
+     "w": "reap",
+     "start": 70.76,
+     "end": 70.76
+    },
+    {
+     "w": "what",
+     "start": 70.76,
+     "end": 70.76
+    },
+    {
+     "w": "you",
+     "start": 70.76,
+     "end": 70.76
+    },
+    {
+     "w": "sow",
+     "start": 70.76,
+     "end": 70.76
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 72.12,
+   "end": 75.48,
+   "text": "So I planted a keg in the garden, it's the only thing that grows",
+   "words": [
+    {
+     "w": "So",
+     "start": 72.12,
+     "end": 72.36
+    },
+    {
+     "w": "I",
+     "start": 72.36,
+     "end": 72.6
+    },
+    {
+     "w": "planted",
+     "start": 72.6,
+     "end": 72.94
+    },
+    {
+     "w": "a",
+     "start": 72.94,
+     "end": 73.16
+    },
+    {
+     "w": "keg",
+     "start": 73.16,
+     "end": 73.22
+    },
+    {
+     "w": "in",
+     "start": 73.28,
+     "end": 73.44
+    },
+    {
+     "w": "the",
+     "start": 73.44,
+     "end": 73.54
+    },
+    {
+     "w": "garden,",
+     "start": 73.54,
+     "end": 73.8
+    },
+    {
+     "w": "it's",
+     "start": 73.8,
+     "end": 74.22
+    },
+    {
+     "w": "the",
+     "start": 74.22,
+     "end": 74.34
+    },
+    {
+     "w": "only",
+     "start": 74.34,
+     "end": 74.66
+    },
+    {
+     "w": "thing",
+     "start": 74.66,
+     "end": 75.04
+    },
+    {
+     "w": "that",
+     "start": 75.04,
+     "end": 75.2
+    },
+    {
+     "w": "grows",
+     "start": 75.2,
+     "end": 75.48
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 75.48,
+   "end": 78.48,
+   "text": "Doctor said I'm sixty percent gravy and the rest is regret",
+   "words": [
+    {
+     "w": "Doctor",
+     "start": 75.48,
+     "end": 75.9
+    },
+    {
+     "w": "said",
+     "start": 75.9,
+     "end": 76.28
+    },
+    {
+     "w": "I'm",
+     "start": 76.28,
+     "end": 76.5
+    },
+    {
+     "w": "sixty",
+     "start": 76.5,
+     "end": 76.72
+    },
+    {
+     "w": "percent",
+     "start": 76.72,
+     "end": 77.2
+    },
+    {
+     "w": "gravy",
+     "start": 77.2,
+     "end": 77.54
+    },
+    {
+     "w": "and",
+     "start": 77.54,
+     "end": 77.76
+    },
+    {
+     "w": "the",
+     "start": 77.76,
+     "end": 77.88
+    },
+    {
+     "w": "rest",
+     "start": 77.88,
+     "end": 78.02
+    },
+    {
+     "w": "is",
+     "start": 78.02,
+     "end": 78.22
+    },
+    {
+     "w": "regret",
+     "start": 78.22,
+     "end": 78.48
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 78.48,
+   "end": 81.94,
+   "text": "I said, Doc, that's the best physical I ever got yet",
+   "words": [
+    {
+     "w": "I",
+     "start": 78.48,
+     "end": 79.04
+    },
+    {
+     "w": "said,",
+     "start": 79.04,
+     "end": 79.24
+    },
+    {
+     "w": "Doc,",
+     "start": 79.32,
+     "end": 79.56
+    },
+    {
+     "w": "that's",
+     "start": 79.78,
+     "end": 79.98
+    },
+    {
+     "w": "the",
+     "start": 79.98,
+     "end": 80.1
+    },
+    {
+     "w": "best",
+     "start": 80.1,
+     "end": 80.32
+    },
+    {
+     "w": "physical",
+     "start": 80.32,
+     "end": 80.78
+    },
+    {
+     "w": "I",
+     "start": 80.78,
+     "end": 81.32
+    },
+    {
+     "w": "ever",
+     "start": 81.32,
+     "end": 81.52
+    },
+    {
+     "w": "got",
+     "start": 81.52,
+     "end": 81.94
+    },
+    {
+     "w": "yet",
+     "start": 81.94,
+     "end": 81.94
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 82.34,
+   "end": 85.84,
+   "text": "Some folks call it trouble, some folks call it sin",
+   "words": [
+    {
+     "w": "Some",
+     "start": 82.34,
+     "end": 83.04
+    },
+    {
+     "w": "folks",
+     "start": 83.04,
+     "end": 83.34
+    },
+    {
+     "w": "call",
+     "start": 83.34,
+     "end": 83.58
+    },
+    {
+     "w": "it",
+     "start": 83.58,
+     "end": 83.74
+    },
+    {
+     "w": "trouble,",
+     "start": 83.74,
+     "end": 84.06
+    },
+    {
+     "w": "some",
+     "start": 84.26,
+     "end": 84.7
+    },
+    {
+     "w": "folks",
+     "start": 84.7,
+     "end": 85.06
+    },
+    {
+     "w": "call",
+     "start": 85.06,
+     "end": 85.3
+    },
+    {
+     "w": "it",
+     "start": 85.3,
+     "end": 85.5
+    },
+    {
+     "w": "sin",
+     "start": 85.5,
+     "end": 85.84
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 85.84,
+   "end": 89.24,
+   "text": "I call it Saturday, and Sunday's when it sets in",
+   "words": [
+    {
+     "w": "I",
+     "start": 85.84,
+     "end": 86.36
+    },
+    {
+     "w": "call",
+     "start": 86.36,
+     "end": 87.02
+    },
+    {
+     "w": "it",
+     "start": 87.02,
+     "end": 87.18
+    },
+    {
+     "w": "Saturday,",
+     "start": 87.18,
+     "end": 87.6
+    },
+    {
+     "w": "and",
+     "start": 87.6,
+     "end": 87.98
+    },
+    {
+     "w": "Sunday's",
+     "start": 87.98,
+     "end": 88.46
+    },
+    {
+     "w": "when",
+     "start": 88.46,
+     "end": 88.54
+    },
+    {
+     "w": "it",
+     "start": 88.54,
+     "end": 88.7
+    },
+    {
+     "w": "sets",
+     "start": 88.7,
+     "end": 88.9
+    },
+    {
+     "w": "in",
+     "start": 88.9,
+     "end": 89.24
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 90.56,
+   "end": 92.68,
+   "text": "Beer, biscuits, and bad decisions",
+   "words": [
+    {
+     "w": "Beer,",
+     "start": 90.56,
+     "end": 90.56
+    },
+    {
+     "w": "biscuits,",
+     "start": 90.66,
+     "end": 90.96
+    },
+    {
+     "w": "and",
+     "start": 91.14,
+     "end": 91.38
+    },
+    {
+     "w": "bad",
+     "start": 91.38,
+     "end": 92.04
+    },
+    {
+     "w": "decisions",
+     "start": 92.04,
+     "end": 92.68
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 93.38,
+   "end": 95.92,
+   "text": "That's the holy trinity where I'm from",
+   "words": [
+    {
+     "w": "That's",
+     "start": 93.38,
+     "end": 93.38
+    },
+    {
+     "w": "the",
+     "start": 93.38,
+     "end": 93.64
+    },
+    {
+     "w": "holy",
+     "start": 93.64,
+     "end": 93.96
+    },
+    {
+     "w": "trinity",
+     "start": 93.96,
+     "end": 94.42
+    },
+    {
+     "w": "where",
+     "start": 94.42,
+     "end": 95.12
+    },
+    {
+     "w": "I'm",
+     "start": 95.12,
+     "end": 95.58
+    },
+    {
+     "w": "from",
+     "start": 95.58,
+     "end": 95.92
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 96.8,
+   "end": 99.54,
+   "text": "Beer, biscuits, and bad decisions",
+   "words": [
+    {
+     "w": "Beer,",
+     "start": 96.8,
+     "end": 97.42
+    },
+    {
+     "w": "biscuits,",
+     "start": 97.82,
+     "end": 97.82
+    },
+    {
+     "w": "and",
+     "start": 98.08,
+     "end": 98.22
+    },
+    {
+     "w": "bad",
+     "start": 98.22,
+     "end": 98.9
+    },
+    {
+     "w": "decisions",
+     "start": 98.9,
+     "end": 99.54
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 99.54,
+   "end": 102.76,
+   "text": "One for the belly, one for the soul, and one for everyone",
+   "words": [
+    {
+     "w": "One",
+     "start": 99.54,
+     "end": 100.14
+    },
+    {
+     "w": "for",
+     "start": 100.14,
+     "end": 100.42
+    },
+    {
+     "w": "the",
+     "start": 100.42,
+     "end": 100.52
+    },
+    {
+     "w": "belly,",
+     "start": 100.52,
+     "end": 100.72
+    },
+    {
+     "w": "one",
+     "start": 100.78,
+     "end": 101.1
+    },
+    {
+     "w": "for",
+     "start": 101.1,
+     "end": 101.28
+    },
+    {
+     "w": "the",
+     "start": 101.28,
+     "end": 101.38
+    },
+    {
+     "w": "soul,",
+     "start": 101.38,
+     "end": 101.62
+    },
+    {
+     "w": "and",
+     "start": 101.66,
+     "end": 101.8
+    },
+    {
+     "w": "one",
+     "start": 101.8,
+     "end": 102.0
+    },
+    {
+     "w": "for",
+     "start": 102.0,
+     "end": 102.24
+    },
+    {
+     "w": "everyone",
+     "start": 102.24,
+     "end": 102.76
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 117.54,
+   "end": 120.28,
+   "text": "Now I ain't saying I'm proud of everything I've done",
+   "words": [
+    {
+     "w": "Now",
+     "start": 117.54,
+     "end": 117.54
+    },
+    {
+     "w": "I",
+     "start": 117.54,
+     "end": 118.06
+    },
+    {
+     "w": "ain't",
+     "start": 118.06,
+     "end": 118.42
+    },
+    {
+     "w": "saying",
+     "start": 118.42,
+     "end": 118.59
+    },
+    {
+     "w": "I'm",
+     "start": 118.76,
+     "end": 118.88
+    },
+    {
+     "w": "proud",
+     "start": 118.88,
+     "end": 119.16
+    },
+    {
+     "w": "of",
+     "start": 119.16,
+     "end": 119.38
+    },
+    {
+     "w": "everything",
+     "start": 119.38,
+     "end": 119.7
+    },
+    {
+     "w": "I've",
+     "start": 119.7,
+     "end": 120.02
+    },
+    {
+     "w": "done",
+     "start": 120.02,
+     "end": 120.28
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 121.38,
+   "end": 123.36,
+   "text": "But I ain't saying I'm sorry neither",
+   "words": [
+    {
+     "w": "But",
+     "start": 121.38000000000001,
+     "end": 121.9
+    },
+    {
+     "w": "I",
+     "start": 121.9,
+     "end": 122.06
+    },
+    {
+     "w": "ain't",
+     "start": 122.06,
+     "end": 122.26
+    },
+    {
+     "w": "saying",
+     "start": 122.26,
+     "end": 122.39
+    },
+    {
+     "w": "I'm",
+     "start": 122.52,
+     "end": 122.66
+    },
+    {
+     "w": "sorry",
+     "start": 122.66,
+     "end": 122.98
+    },
+    {
+     "w": "neither",
+     "start": 122.98,
+     "end": 123.36
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 124.24,
+   "end": 127.52,
+   "text": "There's a biscuit in my pocket, a cold one in my hand",
+   "words": [
+    {
+     "w": "There's",
+     "start": 124.24000000000001,
+     "end": 124.76
+    },
+    {
+     "w": "a",
+     "start": 124.76,
+     "end": 124.9
+    },
+    {
+     "w": "biscuit",
+     "start": 124.9,
+     "end": 125.2
+    },
+    {
+     "w": "in",
+     "start": 125.2,
+     "end": 125.42
+    },
+    {
+     "w": "my",
+     "start": 125.42,
+     "end": 125.56
+    },
+    {
+     "w": "pocket,",
+     "start": 125.56,
+     "end": 126.0
+    },
+    {
+     "w": "a",
+     "start": 126.1,
+     "end": 126.24
+    },
+    {
+     "w": "cold",
+     "start": 126.24,
+     "end": 126.52
+    },
+    {
+     "w": "one",
+     "start": 126.52,
+     "end": 126.74
+    },
+    {
+     "w": "in",
+     "start": 126.74,
+     "end": 126.88
+    },
+    {
+     "w": "my",
+     "start": 126.88,
+     "end": 127.08
+    },
+    {
+     "w": "hand",
+     "start": 127.08,
+     "end": 127.52
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 128.16,
+   "end": 130.98,
+   "text": "And a bad decision coming up right about now",
+   "words": [
+    {
+     "w": "And",
+     "start": 128.16,
+     "end": 128.42
+    },
+    {
+     "w": "a",
+     "start": 128.42,
+     "end": 128.56
+    },
+    {
+     "w": "bad",
+     "start": 128.56,
+     "end": 128.84
+    },
+    {
+     "w": "decision",
+     "start": 128.84,
+     "end": 129.34
+    },
+    {
+     "w": "coming",
+     "start": 129.34,
+     "end": 129.63
+    },
+    {
+     "w": "up",
+     "start": 129.92,
+     "end": 130.1
+    },
+    {
+     "w": "right",
+     "start": 130.1,
+     "end": 130.36
+    },
+    {
+     "w": "about",
+     "start": 130.36,
+     "end": 130.62
+    },
+    {
+     "w": "now",
+     "start": 130.62,
+     "end": 130.98
+    }
+   ],
+   "size": "std"
+  },
+  {
+   "start": 145.44,
+   "end": 147.56,
+   "text": "Beer, biscuits, and bad decisions",
+   "words": [
+    {
+     "w": "Beer,",
+     "start": 145.44,
+     "end": 145.44
+    },
+    {
+     "w": "biscuits,",
+     "start": 145.58,
+     "end": 145.84
+    },
+    {
+     "w": "and",
+     "start": 146.04,
+     "end": 146.26
+    },
+    {
+     "w": "bad",
+     "start": 146.26,
+     "end": 146.84
+    },
+    {
+     "w": "decisions",
+     "start": 146.84,
+     "end": 147.56
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 148.24,
+   "end": 150.72,
+   "text": "That's the holy trinity where I'm from",
+   "words": [
+    {
+     "w": "That's",
+     "start": 148.24,
+     "end": 148.24
+    },
+    {
+     "w": "the",
+     "start": 148.24,
+     "end": 148.52
+    },
+    {
+     "w": "holy",
+     "start": 148.52,
+     "end": 148.82
+    },
+    {
+     "w": "trinity",
+     "start": 148.82,
+     "end": 149.32
+    },
+    {
+     "w": "where",
+     "start": 149.32,
+     "end": 149.98
+    },
+    {
+     "w": "I'm",
+     "start": 149.98,
+     "end": 150.44
+    },
+    {
+     "w": "from",
+     "start": 150.44,
+     "end": 150.72
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 152.04,
+   "end": 154.36,
+   "text": "Beer, biscuits, and bad decisions",
+   "words": [
+    {
+     "w": "Beer,",
+     "start": 152.04,
+     "end": 152.3
+    },
+    {
+     "w": "biscuits,",
+     "start": 152.46,
+     "end": 152.7
+    },
+    {
+     "w": "and",
+     "start": 152.88,
+     "end": 153.08
+    },
+    {
+     "w": "bad",
+     "start": 153.08,
+     "end": 153.74
+    },
+    {
+     "w": "decisions",
+     "start": 153.74,
+     "end": 154.36
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 154.72,
+   "end": 157.58,
+   "text": "One for the belly, one for the soul, and one for everyone",
+   "words": [
+    {
+     "w": "One",
+     "start": 154.72,
+     "end": 155.0
+    },
+    {
+     "w": "for",
+     "start": 155.0,
+     "end": 155.28
+    },
+    {
+     "w": "the",
+     "start": 155.28,
+     "end": 155.36
+    },
+    {
+     "w": "belly,",
+     "start": 155.36,
+     "end": 155.64
+    },
+    {
+     "w": "one",
+     "start": 155.64,
+     "end": 155.96
+    },
+    {
+     "w": "for",
+     "start": 155.96,
+     "end": 156.14
+    },
+    {
+     "w": "the",
+     "start": 156.14,
+     "end": 156.24
+    },
+    {
+     "w": "soul,",
+     "start": 156.24,
+     "end": 156.48
+    },
+    {
+     "w": "and",
+     "start": 156.54,
+     "end": 156.64
+    },
+    {
+     "w": "one",
+     "start": 156.64,
+     "end": 156.84
+    },
+    {
+     "w": "for",
+     "start": 156.84,
+     "end": 157.12
+    },
+    {
+     "w": "everyone",
+     "start": 157.12,
+     "end": 157.58
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 157.86,
+   "end": 161.34,
+   "text": "Beer! Biscuits! Bad decisions!",
+   "words": [
+    {
+     "w": "Beer!",
+     "start": 157.86,
+     "end": 158.42
+    },
+    {
+     "w": "Biscuits!",
+     "start": 158.62,
+     "end": 159.54
+    },
+    {
+     "w": "Bad",
+     "start": 160.52,
+     "end": 160.64
+    },
+    {
+     "w": "decisions!",
+     "start": 160.64,
+     "end": 161.34
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 162.22,
+   "end": 164.84,
+   "text": "Beer! Biscuits! Bad decisions!",
+   "words": [
+    {
+     "w": "Beer!",
+     "start": 162.22,
+     "end": 162.52
+    },
+    {
+     "w": "Biscuits!",
+     "start": 162.88,
+     "end": 163.16
+    },
+    {
+     "w": "Bad",
+     "start": 163.84,
+     "end": 164.12
+    },
+    {
+     "w": "decisions!",
+     "start": 164.12,
+     "end": 164.84
+    }
+   ],
+   "size": "big"
+  },
+  {
+   "start": 168.9,
+   "end": 169.9,
+   "text": "That's the holy trinity, y'all",
+   "words": [
+    {
+     "w": "That's",
+     "start": 168.9,
+     "end": 168.9
+    },
+    {
+     "w": "the",
+     "start": 168.9,
+     "end": 169.12
+    },
+    {
+     "w": "holy",
+     "start": 169.12,
+     "end": 169.4
+    },
+    {
+     "w": "trinity,",
+     "start": 169.4,
+     "end": 169.9
+    },
+    {
+     "w": "y'all",
+     "start": 169.9,
+     "end": 169.9
+    }
+   ],
+   "size": "big"
+  }
+ ],
+ "drops": [
+  [
+   54.8,
+   69.0
+  ],
+  [
+   102.8,
+   117.5
+  ],
+  [
+   157.9,
+   170.5
+  ],
+  [
+   172.5,
+   181.5
+  ],
+  [
+   183.5,
+   186.5
+  ]
+ ],
+ "title": "Beer, Biscuits, & Bad Decisions",
+ "artist": "LOOSH WOGGINS",
+ "album": "Beer, Biscuits & Bad Decisions",
+ "motto": "Real Country. Real Bass. Real Questionable.",
+ "short": {
+  "start": 41.5,
+  "cut": 54.8,
+  "end": 69.0,
+  "stills": [
+   "BBBD-04p_holy_trinity_portrait.webp",
+   "BBBD-05p_flatbed_drop_portrait.webp"
+  ]
+ }
+}
