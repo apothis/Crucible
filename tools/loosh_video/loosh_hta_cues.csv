@@ -1,0 +1,20 @@
+# Honky Tonk Heart Attack, 230.0 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.92), M = measured from bass/loudness curves, E = estimate
+start,end,section,still,move,source
+0.0,24.5,intro,HTA-00_cover_card,pull,W
+24.5,34.7,verse1a,HTA-01_two_for_one_tuesday,push,W
+34.7,44.4,verse1b,HTA-02_the_thump,push,W
+44.4,56.5,prechorus1,HTA-03_aint_leaving_tonight,pull,W
+56.5,80.5,chorus1,HTA-04_call_my_mama_thumbnail,push,W
+80.5,95.0,drop1,HTA-05_paddles,push,M
+95.0,107.5,verse2a,HTA-06_doug,push,W
+107.5,116.0,verse2b,HTA-07_boot_scoot_on_the_line,panR,W
+116.0,128.5,prechorus2,HTA-03_aint_leaving_tonight,panL,W
+128.5,152.5,chorus2,HTA-04_call_my_mama_thumbnail,pull,W
+152.5,167.7,drop2,HTA-05_paddles,panL,M
+167.7,181.5,bridge,HTA-08_doctors_verdict,push,W
+181.5,186.5,build,HTA-09_flatline,push,W
+186.5,210.2,finalchorus,HTA-10_bury_me_with_the_band,pull,W
+210.2,220.0,outro_clear,HTA-11_clear,push,W
+220.0,230.0,rideout,HTA-12_ride_out,push,E
+# waveform strip on: 80.5-95, 152.5-167.7, 210.2-220, 223-229

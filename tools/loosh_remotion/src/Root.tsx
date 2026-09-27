@@ -14,6 +14,7 @@ export const Root: React.FC = () => {
         id="Landscape"
         component={LyricVideo}
         durationInFrames={Math.round(song.duration * fps)}
+        calculateMetadata={({props}) => ({durationInFrames: Math.round(props.song.duration * props.song.fps)})}
         fps={fps}
         width={1920}
         height={1080}
@@ -23,6 +24,7 @@ export const Root: React.FC = () => {
         id="Short"
         component={ShortVideo}
         durationInFrames={Math.round(shortLen * fps)}
+        calculateMetadata={({props}) => ({durationInFrames: Math.round((props.song.short.end - props.song.short.start) * props.song.fps)})}
         fps={fps}
         width={1080}
         height={1920}
