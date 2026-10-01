@@ -1,0 +1,20 @@
+# 'Merica, Y'all, 189.6 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.85), M = measured from bass/loudness curves
+start,end,section,still,move,source
+0.0,13.0,intro,MRC-00_cover_card,pull,W
+13.0,20.8,verse1a,MRC-01_flag_on_everything,push,W
+20.8,27.5,verse1b,MRC-02_saluting_the_microwave,push,W
+27.5,37.7,prechorus1,MRC-03_turn_that_bass_around,pull,W
+37.7,51.5,chorus1,MRC-04_fireworks_on_a_tuesday_thumbnail,push,W
+51.5,63.1,drop1,MRC-05_home_of_the_drop,push,M
+63.1,70.7,verse2a,MRC-06_mostly_a_chicken,push,W
+70.7,77.2,verse2b,MRC-07_cry_at_the_anthem,panR,W
+77.2,87.4,prechorus2,MRC-08_hand_on_your_heart,push,W
+87.4,101.0,chorus2,MRC-04_fireworks_on_a_tuesday_thumbnail,pull,W
+101.0,113.1,drop2,MRC-05_home_of_the_drop,panL,M
+113.1,132.1,bridge_build,MRC-09_every_one_of_us_standing,push,W
+132.1,143.5,finalchorus,MRC-10_belted_final_chorus,pull,W
+143.5,166.5,outro_chant,MRC-11_merica_yall,push,W
+166.5,178.5,home_of_the_drop,MRC-05_home_of_the_drop,panR,W
+178.5,189.6,rideout,MRC-12_ride_out,push,M
+# waveform strip on: 51.5-63.1, 101-113.1, 147-160.5, 162.5-172, 178.5-189
