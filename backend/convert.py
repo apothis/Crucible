@@ -120,8 +120,10 @@ Starting from a YuE2 style line (not a Music 3 caption):
 - The line names ONE singer unless it says duet: then ONE vocal phrase (register + timbre +
   delivery), never invent a second voice.
 - Negatives in the line ("no male vocals") never go in "style"; put them in "exclude".
-- COUNT the style words before answering: 30-45 total, the cap is hard. Over it, cut adjectives
-  from the instrument phrases first, never the bpm / key / subgenre header or the vocal phrase.
+- Write the four labelled fields exactly as the rules above describe; the line's genre goes in
+  Style:, its instruments (with the build) in Instruments:, its singer in Vocals:. COUNT the
+  characters before answering: under 1000 total. Over it, cut adjectives from Instruments first,
+  never the Vocals placement sentence or the Production ending sentence.
 
 """ + suno_export._TAG_RULES + """
 - Here the "caption" is the style line: derive the enrichments from the instruments and the
@@ -154,7 +156,7 @@ def yue2_to_suno(style, lyrics, title, provider, model, claude_model, abc=""):
 
     try:
         data = _json(llm.complete(provider, model, _Y2S_SYSTEM, prompt, claude_model, timeout=240))
-        s = str(data.get("style") or "").strip().rstrip(",. ")[:1000]
+        s = suno_export.finish_style(str(data.get("style") or ""))
         x = str(data.get("exclude") or "").strip().rstrip(",. ")[:500]
         if not s:
             raise ValueError("empty style from LLM")
@@ -166,16 +168,51 @@ def yue2_to_suno(style, lyrics, title, provider, model, claude_model, abc=""):
     except Exception as e:
         negs = _negatives(style)
         kept = [t.strip() for t in re.split(r",", style) if t.strip() and not re.match(r"^(no|without|never)\b", t.strip(), re.I)]
-        return {"style": ", ".join(kept)[:1000], "exclude": ", ".join(negs)[:500],
+        kept = [t for t in kept if not re.match(r"^english$", t, re.I)]
+        is_voice = lambda t: re.search(r"vocal|voice|singer|soprano|mezzo|tenor|baritone|belt|falsetto", t, re.I) and len(t.split()) <= 10
+        voices = [t for t in kept if is_voice(t)]
+        rest = [t for t in kept if not is_voice(t)]
+        bpm = next((t for t in rest if re.search(r"\d+\s*bpm", t, re.I)), "")
+        rest = [t for t in rest if t != bpm]
+        genre = rest[0] if rest else "as the style line describes"
+        inst = rest[1:] if len(rest) > 1 else []
+        vocals = (", ".join(voices) if voices else "lead vocal")
+        vocals = vocals[0].upper() + vocals[1:] + ", full and close, centred and forward in the mix."
+        fb = (f"Vocals: {vocals}\nStyle: " + ", ".join(b for b in (bpm, genre) if b) + ".\n"
+              f"Instruments: {', '.join(inst) + '. ' if inst else ''}Instruments sit behind the vocal with clear separation.\n"
+              "Production: Polished studio sound. Warm prominent lead vocal, clear separation, chorus lift without burying the vocal.")
+        return {"style": suno_export.finish_style(fb), "exclude": ", ".join(negs)[:500],
                 "lyrics": finish(base_lyrics), "tags_enriched": 0, "source": f"fallback ({e})"}
 
 
 # ---------------- Suno -> YuE2 ----------------
 
+def _suno_fields(style):
+    """The house four-field Suno style ("Vocals: ...\nStyle: ...") -> {label: body}; a plain
+    comma-list style (pre-2026-10 projects) comes back as {} so callers fall through."""
+    out = {}
+    for m in re.finditer(r"(?ms)^(Vocals|Style|Instruments|Production):\s*(.*?)(?=^\w+:|\Z)", style or ""):
+        out[m.group(1)] = " ".join(m.group(2).split())
+    return out
+
+
 def suno_to_yue2(style, exclude, lyrics):
-    """Deterministic: Suno's descriptor list already reads as a YuE2 style line. The exclude
-    field becomes short 'no X' clauses (the form upstream itself uses), capped so the line stays
-    compact; the sheet's enriched tags collapse to bare section names."""
+    """Deterministic: a Suno style line -> a compact YuE2 style line. The house four-field
+    format is flattened first (Style genre + Instruments + the Vocals' first sentence, the
+    mix-placement and Production boilerplate dropped - YuE2 wants a short comma line); a
+    plain comma list passes through. The exclude field becomes short 'no X' clauses (the form
+    upstream itself uses), capped so the line stays compact; enriched tags collapse to bare names."""
+    f = _suno_fields(style)
+    if f:
+        drop = re.compile(r"centred and forward|in the mix|full and close|sit behind the vocal|clear separation|"
+                          r"burying the vocal|instrumental outro|hard stop|vocals only", re.I)
+        chunks = []
+        for body in (f.get("Style", ""), f.get("Instruments", ""), (f.get("Vocals", "").split(". ")[0])):
+            for c in re.split(r"[,;.]\s*", body):
+                c = c.strip()
+                if c and not drop.search(c) and c.lower() not in [x.lower() for x in chunks]:
+                    chunks.append(c)
+        style = ", ".join(chunks)
     parts = [t.strip() for t in re.split(r",", style or "") if t.strip()]
     if parts and not any(p.lower().startswith("english") for p in parts):
         parts.insert(0, "English")

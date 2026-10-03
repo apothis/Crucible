@@ -84,40 +84,47 @@ Rules for "tags" (enriched section tags for the lyric sheet):
   qualifier drawn from the caption: "Melodic Guitar Solo", "Shred Guitar Solo",
   "Blues Guitar Solo", "Harmonized Guitar Solo". Plain "Guitar Solo" when unsure."""
 
-_RULES = """Rules for "style" (Suno's Style of Music field):
-- ONE comma-separated descriptor list, 30-45 words (~250-450 characters). NO full
-  sentences and NO periods: Suno reads descriptors, not grammar, and a period RESETS its
-  context - anything after one is heavily discounted. Commas separate ideas.
-- Order, front-loaded: "<bpm> bpm, <key> <scale>, <one precise subgenre>". THEN, when
-  the song has a distinctive opening, the OPENING COMES NEXT - in the high-weight front
-  zone, fused to the main instrumentation with a transition verb, the proven creator
-  pattern for soft-to-heavy songs: "soft solo piano and strings intro building into
-  downtuned rhythm guitars and double-kick drums". Three measured rules for that opening
-  phrase (Drowned Bell held its intro, Queen of the Hollow Stars did not - this is why):
-  (a) pick an opener instrument OUTSIDE the song's big ensembles - piano, tin whistle,
-  music box, solo acoustic; NOT "strings"/"cello" when an orchestra is in the prompt,
-  because naming a section member puts the whole section on stage from bar one;
-  (b) NO energy words inside the opening phrase ("soaring", "epic", "sweeping" belong to
-  the peak, not the intro descriptor); use small dark words ("lone", "hushed", "distant");
-  (c) genre tokens carry intro priors - celtic folk metal expects quiet folk intros,
-  symphonic metal expects orchestral bombast openings - so when the caption wants a
-  gentle open on a symphonic song, the opening phrase must work HARDER (a+b), and
-  softening the genre token helps when truthful ("cinematic metal" over "symphonic
-  metal"). Then the remaining instruments WITH
-  adjectives (guitars first for rock/metal, tuning + drum-feel words), then ONE vocal
-  phrase translating the caption's vocal timbre (register + weight + grit + delivery as
-  adjectives - "raspy", "breathy", "operatic", "bel canto", "dramatic vibrato" all good;
-  NEVER a real artist name) - except a DUET: when the caption defines two singers, spend
-  one short phrase on EACH voice, distinct in register and grit ("clear bright female
-  soprano, rough raspy gritty male baritone") - describing only one converges Suno to a
-  single voice - then 1-2 production words and 1-2 mood words.
-- The END of the field carries AT MOST 3 short comma phrases for the rest of the arc:
-  the peak and the ending ("colossal full-choir finale, wordless vocalise outro") -
-  NEVER one phrase per section. The opening already lives at the front. Generic ensemble
-  words ("orchestral overture", "epic intro") produce the same stock brass fanfare on
-  every song - always name what actually plays. TOTAL field stays under 45 words.
-- NO section-by-section instructions ("the bridge does X") - the style field is global;
-  per-section direction lives ONLY in the lyric tags.
+HOUSE_ENDING = "Complete every lyric before a short instrumental outro and final hard stop."
+STYLE_LIMIT = 1000
+
+_RULES = """Rules for "style" (Suno's Style of Music field) - the HOUSE FOUR-FIELD FORMAT
+(measured 2026-10: labelled prose fields beat a comma list for vocal placement and arc):
+- Exactly four labelled fields, each on its own line, in this order and with these labels:
+  "Vocals:", "Style:", "Instruments:", "Production:". Plain prose sentences inside each
+  field. CHARACTER BUDGETS, count before answering: Vocals about 380, Style about 110,
+  Instruments about 250, Production about 120 - roughly 860 in all, never over 950 (Suno's
+  hard limit is 1000; the app trims any field over its budget by whole sentences from its
+  end, so an over-long Vocals field LOSES its chorus and backing-singer sentences). Over
+  budget, cut adjectives, not sentences.
+- Vocals: (the longest field) ONE singer unless the brief/caption defines two. State:
+  gender + register + timbre + texture ("husky low register and natural rasp", "clear
+  bright soprano", "bel canto" is fine - NEVER a real artist name); PLACEMENT in the mix
+  in these words: "full and close, centred and forward in the mix"; the texture
+  negatives as prose ("never thin, breathy or operatic" / "no rasp, rattle or
+  harshness") - whichever the voice is NOT; a per-section ARC when lyrics exist
+  ("Verses are low and restrained ... Pre-chorus rises ... Chorus opens into a huge
+  sustained belt"); and BACKING SINGERS as their own voices with character and where
+  they enter ("gritty female rock voices, dark harmonies rising around the lead in the
+  final chorus"). If one voice only, add "female vocals only" (or male).
+- Style: short - "<bpm> bpm, <key> <scale>, <one precise subgenre>" when known, then
+  three to five feel words, e.g. "dark, aching and defiant, slow building, anthemic
+  chorus".
+- Instruments: the named instruments WITH adjectives (guitars first for rock/metal,
+  tuning + drum-feel words) and the BUILD across the song: what plays alone at the
+  open, what enters at the pre-chorus, what crashes in on the chorus, the solo. Measured
+  rules for the opening: (a) name an opener instrument OUTSIDE the song's big ensembles
+  (piano, tin whistle, music box, solo acoustic; NOT "strings"/"cello" when an orchestra
+  is in the prompt - naming a section member puts the whole section on stage from bar
+  one); (b) no energy words in the opening ("lone", "hushed", "distant", not "soaring",
+  "epic"); (c) genre tokens carry intro priors, so a gentle open on a symphonic song
+  needs (a)+(b) worked harder. End the field with "Instruments sit behind the vocal with
+  clear separation."
+- Production: a NAMED studio character ("Polished modern hard rock studio sound",
+  "Polished Nashville studio sound"), the vocal's prominence again ("Warm prominent lead
+  vocal"), width/separation/reverb words, the chorus lift "without burying the vocal",
+  and ALWAYS this exact final sentence: "Complete every lyric before a short instrumental outro and final hard stop."
+- No section-by-section lyric instructions ("the bridge says X"): the arc describes
+  energy and voice, the lyric tags carry the words.
 
 Rules for "exclude" (Suno's Exclude Styles field):
 - A short comma-separated list of what must NOT appear, derived from the caption's explicit
@@ -144,32 +151,130 @@ def _basic_bits(fields: dict):
             genre)
 
 
+def _split_fields(text: str):
+    """House four-field text -> ordered [(label, body)]; anything before the first label (or a
+    plain comma list) comes back as [("", text)]."""
+    parts = re.split(r"(?m)^(Vocals|Style|Instruments|Production):[ \t]*", text)
+    if len(parts) == 1:
+        return [("", text.strip())]
+    out = [("", parts[0].strip())] if parts[0].strip() else []
+    for i in range(1, len(parts), 2):
+        out.append((parts[i], " ".join(parts[i + 1].split())))
+    return out
+
+
+# Per-field character budgets (labels + the ending sentence bring the total to ~980).
+FIELD_BUDGET = {"Vocals": 380, "Style": 110, "Instruments": 250, "Production": 120, "": 60}
+
+
+def _drop_last_sentence(body: str) -> str:
+    """Drop one sentence from the end of a field. A short closing sentence (the house
+    boilerplate: "Female vocals only.", "Instruments sit behind the vocal with clear
+    separation.") is kept and the sentence before it goes instead."""
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", body.strip()) if x]
+    if len(sents) < 2:
+        return body
+    if len(sents[-1]) <= 60 and len(sents) >= 3:
+        return " ".join(sents[:-2] + sents[-1:])
+    return " ".join(sents[:-1])
+
+
+def finish_style(style: str) -> str:
+    """House finishing for EVERY Suno style field the app writes: the ending sentence is
+    present exactly once (at the end of Production), and the whole text fits Suno's
+    1000-character limit. Over the limit, the LONGEST field loses its last sentence,
+    repeatedly, so no field is ever dropped whole or cut mid-phrase."""
+    t = (style or "").strip()
+    if not t:
+        return t
+    t = t.replace(HOUSE_ENDING, "")
+    fields = [(k, " ".join(v.split()).strip()) for k, v in _split_fields(t)]
+    fields = [(k, v) for k, v in fields if v or k]
+    if not any(k == "Production" for k, _ in fields):
+        fields.append(("Production", ""))
+
+    def render():
+        lines = []
+        for k, v in fields:
+            if k == "Production":
+                v = (v.rstrip() + (" " if v.rstrip().endswith((".", "!", "?")) else ". ") if v.strip() else "") + HOUSE_ENDING
+            if k:
+                lines.append(f"{k}: {v}".rstrip())
+            elif v:
+                lines.append(v)
+        return "\n".join(lines)
+
+    out = render()
+    guard = 0
+    while len(out) > STYLE_LIMIT and guard < 40:
+        guard += 1
+        # victim = the field furthest over its budget; if none is over, the rules' own cut
+        # order (Instruments, Production, Style, and Vocals only as a last resort)
+        over = [(len(v) - FIELD_BUDGET.get(k, 60), j) for j, (k, v) in enumerate(fields)]
+        worst = max(over)
+        if worst[0] > 0:
+            i = worst[1]
+        else:
+            prio = {"Instruments": 0, "Production": 1, "Style": 2, "": 3, "Vocals": 4}
+            cands = [j for j in range(len(fields)) if len(fields[j][1]) > 60] or list(range(len(fields)))
+            i = min(cands, key=lambda j: (prio.get(fields[j][0], 3), -len(fields[j][1])))
+        k, v = fields[i]
+        nv = _drop_last_sentence(v)
+        if nv == v:                                     # single sentence: hard-trim it at a word
+            nv = v[: max(40, len(v) - 60)].rsplit(" ", 1)[0].rstrip(",;: ") + "."
+        fields[i] = (k, nv)
+        out = render()
+    return out[:STYLE_LIMIT]
+
+
+def _clip(text: str, n: int) -> str:
+    """Cut at a word boundary, no trailing punctuation."""
+    t = " ".join(str(text).split())
+    if len(t) <= n:
+        return t.rstrip(".,;: ")
+    return t[:n].rsplit(" ", 1)[0].rstrip(".,;: ")
+
+
 def fallback_style(fields: dict) -> str:
-    """No-LLM compile from the caption's structured parts. Plainer than the LLM's version
-    but always available and always on-format."""
+    """No-LLM compile from the caption's structured parts, in the house four-field format.
+    Plainer than the LLM's version but always available and always on-format."""
     bpm, keyscale, genre = _basic_bits(fields)
-    bits = []
-    if bpm:
-        bits.append(f"{bpm} bpm")
-    if keyscale:
-        bits.append(keyscale)
-    if genre:
-        bits.append(genre.replace(" / ", ", ").lower())
     v = str(fields.get("Vocal Gender & Timbre") or "")
-    # one phrase PER singer: a duet caption defines Singer A and Singer B, and Suno
-    # needs both voices described distinctly or they converge into one
     genders = [g.lower() for g in re.findall(r"\((Female|Male)\)", v)]
     timbres = re.findall(r"possesses an? ([^.]+?) timbre", v)
+    voices = []
     for i, t in enumerate(timbres):
         g = genders[i] if i < len(genders) else ""
-        bits.append((f"{g} " if g else "") + t.strip() + " vocals")
-    if len(timbres) > 1:
-        bits.append("duet with alternating vocals")
-    p = str(fields.get("Primary") or "").split(".")[0].strip()
-    if p:
-        p = re.sub(r"^electric guitars:\s*", "", p[:140].lower())
-        bits.append(p)
-    return ", ".join(bits)[:700]
+        voices.append(((g + " ") if g else "") + t.strip() + " vocal")
+    if not voices:
+        voices = [(genders[0] + " vocal") if genders else "lead vocal"]
+    vs = str(fields.get("Vocal Style") or "").split(".")[0].strip()
+    vocals = (voices[0][0].upper() + voices[0][1:]) + ", full and close, centred and forward in the mix."
+    if vs:
+        vocals += " " + _clip(vs, 200) + "."
+    if len(voices) > 1:
+        vocals += " A duet: " + "; ".join(voices[1:]) + ", each voice distinct in register and grit."
+    else:
+        vocals += f" {'Female' if genders and genders[0] == 'female' else 'Male' if genders else 'Lead'} vocals only."
+    hb = str(fields.get("Harmony/Backing Vocals") or "").split(".")[0].strip()
+    if hb:
+        vocals += f" Backing singers: {_clip(hb, 160)}."
+    style_bits = [b for b in (f"{bpm} bpm" if bpm else "", keyscale or "",
+                              genre.replace(" / ", ", ").lower() if genre else "") if b]
+    mood = str(fields.get("Global Emotional Progression") or "").split(".")[0].strip()
+    style_line = ", ".join(style_bits) + (f", {mood[:90].lower().rstrip('.')}" if mood else "")
+    inst = []
+    for key in ("Primary", "Secondary", "Groove & Foundation Progression"):
+        t = str(fields.get(key) or "").split(".")[0].strip()
+        if t:
+            inst.append(re.sub(r"^electric guitars:\s*", "", _clip(t, 160).lower()))
+    instruments = ("; ".join(inst).rstrip(".") + ". " if inst else "") + "Instruments sit behind the vocal with clear separation."
+    prod = str(fields.get("Sonics & Production Profile") or "").split(".")[0].strip()
+    production = (_clip(prod, 160) + ". " if prod else "Polished studio sound. ") + \
+        "Warm prominent lead vocal, clear separation, chorus lift without burying the vocal."
+    out = (f"Vocals: {vocals}\nStyle: {style_line or 'as the caption describes'}.\n"
+           f"Instruments: {instruments}\nProduction: {production}")
+    return finish_style(out)
 
 
 def fallback_exclude(fields: dict) -> str:
@@ -308,7 +413,7 @@ def compile_suno(fields: dict, lyrics: str, title: str,
         text = llm.complete(provider, model, _SYSTEM, prompt, claude_model, timeout=240)
         mjson = re.search(r"\{.*\}", text, re.DOTALL)
         data = json.loads(mjson.group(0) if mjson else text)
-        style = str(data.get("style") or "").strip()[:1000]
+        style = finish_style(str(data.get("style") or ""))
         exclude = str(data.get("exclude") or "").strip()[:500]
         if not style:
             raise ValueError("empty style from LLM")
@@ -369,7 +474,7 @@ def write_suno(brief: str, title: str, style: str, exclude: str, lyrics: str,
     m = re.search(r"\{.*\}", text, re.DOTALL)
     data = json.loads(m.group(0) if m else text)
     return {"title": str(data.get("title") or "").strip()[:120],
-            "style": str(data.get("style") or "").strip()[:1000],
+            "style": finish_style(str(data.get("style") or "")),
             "exclude": str(data.get("exclude") or "").strip()[:500],
             "lyrics": sanitize_tags(
                 _scrub_delivery_parens(str(data.get("lyrics") or "").strip()[:8000]))}

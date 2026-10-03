@@ -130,9 +130,9 @@ export function SunoStudioForm({ busy, goTo, ...ctx }: { busy: boolean; goTo?: (
             <div className="flex items-center gap-2">
               <span className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Style of Music</span>
               {copyBtn("style", style)}
-              <span className="text-[10px] text-[var(--color-muted)]">{style.length}/1000 {style.length > 700 ? "· over the ~700 sweet spot" : ""}</span>
+              <span className="text-[10px] text-[var(--color-muted)]">{style.length}/1000 {style.length > 1000 ? "· over Suno's limit" : "· house format: Vocals / Style / Instruments / Production"}</span>
             </div>
-            <textarea className={inp + " mt-1"} rows={3} value={style} onChange={(e) => setStyle(e.target.value)} />
+            <textarea className={inp + " mt-1"} rows={8} value={style} onChange={(e) => setStyle(e.target.value)} />
           </div>
           <div>
             <div className="flex items-center gap-2">

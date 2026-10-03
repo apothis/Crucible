@@ -428,3 +428,48 @@ vocal register, the guitar placement and the arrangement arc follow the field be
 If the pipe copy wins, the follow-up test is the header form
 (`[Chorus | Belted | Gang Vocals | Wall of Guitars]`) on the same song, because that is
 the form the field guide actually documents.
+
+## House style-field format: four labelled fields (adopted 2026-10-03)
+
+Provenance: the user's own iteration log on a country-pop song (Prompt 5.5 -> Final Test),
+each pass fixing one heard defect by adding explicit prose; adopted house-wide after Bury
+Me in Black was written in it. `[measured]` on that log, `[H]` for metal until our own
+takes confirm.
+
+The style box is written as four labelled prose fields, one per line, in this order:
+
+```
+Vocals: <gender + register + timbre + texture>, full and close, centred and forward in
+  the mix. <texture negatives as prose: "never thin, breathy or operatic" / "no rasp,
+  rattle or harshness">. <per-section arc: verses ... pre-chorus ... chorus ...>.
+  <backing singers as their own voices + where they enter>. Female vocals only.
+Style: <bpm> bpm, <key>, <one subgenre>, <three to five feel words>.
+Instruments: <named instruments with adjectives> + <the build: what opens alone, what
+  enters at the pre-chorus, what crashes in on the chorus, the solo>. Instruments sit
+  behind the vocal with clear separation.
+Production: <named studio character>. Warm prominent lead vocal, <width / separation /
+  reverb>, chorus lift without burying the vocal. Complete every lyric before a short
+  instrumental outro and final hard stop.
+```
+
+The lessons the log taught, in order: (1) one concern per labelled field, Vocals longest;
+(2) the vocal's PLACEMENT in the mix stated in words, twice (Vocals + Production); (3)
+texture negatives written as prose inside the field, not only in Exclude; (4) a
+per-section emotional arc inside Vocals once lyrics exist; (5) backing singers described
+as their own voices with character and entry point; (6) instruments with placement and
+build; (7) a named studio character, and Style kept short. Target ~850 characters; Suno's
+limit is 1000.
+
+Built into the app (2026-10-03): `suno_export._RULES` (shared by the Suno tab writer, the
+Music 3 "Export for Suno" compile and the YuE2 "-> Suno tab" conversion), both no-LLM
+fallbacks (`fallback_style`, the yue2_to_suno fallback), and `finish_style()` which every
+path runs: ending sentence present once, over-length text trimmed by whole sentences from
+Instruments first, then Production, then Style, never Vocals. `suno_to_yue2` flattens the
+four fields back to a compact comma line for YuE2 (mix-placement boilerplate dropped).
+Old comma-list projects are untouched; the Suno tab shows the format in its hint and the
+style box is taller.
+
+Measured on the three live routes the day it shipped (claude-sonnet-5): all three returned
+the format, 936-983 chars before the headroom rule, ending sentence once. Watch on first
+takes: whether the backing voices stay where the Vocals field puts them (the "only in the
+final chorus" phrasing is the least-proven part).
