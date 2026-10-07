@@ -1,0 +1,31 @@
+# start,end,size,text  (whisper-measured line times, cover 0.96)
+15.76,21.66,std,Beer number one's a handshake, beer number two's a hug
+22.84,28.61,std,Beer number three's a sunrise coming up inside the mug
+28.66,34.10,std,I'm sharp as a tack, I'm steady as a fence post
+34.50,41.48,std,Three beers deep is the Loosh that you love the most
+41.70,50.30,std,But the band's just getting started and the night is young
+51.08,56.93,std,Bartender, keep 'em coming, I ain't near done
+56.98,60.51,big,Three beers deep, I was sharp as a tack
+60.56,64.19,big,Three beers deep, I had my life on track
+64.24,67.61,big,Three beers deep, Lord, I was doing fine
+67.66,73.40,big,Now I'm six beers deep and I'm looking for the line
+86.24,93.25,std,Beer number four was a handshake with a fella named Clyde
+93.30,100.38,std,Beer number five, I was singing, beer six, I cried
+101.02,104.11,std,Seven and eight, well, they came as a pair
+104.16,107.89,std,And somewhere in there, I lost my chair
+107.94,111.51,std,And the band's still playing and the night's still young
+111.56,117.89,std,Bartender, keep 'em coming, I ain't near done
+117.94,121.37,big,Three beers deep, I was sharp as a tack
+121.42,125.09,big,Three beers deep, I had my life on track
+125.14,128.49,big,Three beers deep, Lord, I was doing fine
+128.54,134.52,big,Now I'm nine beers deep and I'm looking for the time
+146.60,153.20,std,Now I'm somewhere past ten, I quit counting at the dog
+154.56,160.30,std,I been talking to the jukebox, and the jukebox talked back
+161.00,168.44,std,It said, Loosh, you remember three beers deep? I said, I do
+168.76,174.87,std,That was a hell of a time. I'll get back there. Tomorrow. About noon.
+174.92,178.69,big,Three beers deep, I was sharp as a tack
+178.74,182.68,big,Three beers deep, I had my life on track
+182.68,185.83,big,Three beers deep, Lord, I was doing fine
+185.88,192.53,big,Now I'm twelve beers deep and I'm looking for my mind
+192.58,195.54,big,Three beers deep
+199.22,202.38,big,Tomorrow, about noon

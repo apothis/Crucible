@@ -1,0 +1,19 @@
+# Three Beers Deep, 220.2 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.96), M = measured from bass/loudness curves
+start,end,section,still,move,source
+0.0,15.7,intro,TBD-00_cover_card,pull,W
+15.7,28.6,verse1a,TBD-01_beer_number_three,push,W
+28.6,41.7,verse1b,TBD-02_sharp_as_a_tack,push,W
+41.7,57.0,prechorus1,TBD-03_keep_em_coming,pull,W
+57.0,73.5,chorus1,TBD-04_straight_line_thumbnail,push,W
+73.5,86.2,drop1,TBD-05_woozy_drop,push,M
+86.2,101.0,verse2a,TBD-06_fella_named_clyde,push,W
+101.0,107.9,verse2b,TBD-07_lost_my_chair,panR,W
+107.9,117.9,prechorus2,TBD-08_i_aint_near_done,push,W
+117.9,134.5,chorus2,TBD-04_straight_line_thumbnail,pull,W
+134.5,146.6,drop2,TBD-05_woozy_drop,panL,M
+146.6,174.9,bridge_build,TBD-09_talking_to_the_jukebox,push,W
+174.9,192.6,finalchorus,TBD-10_looking_for_the_line,pull,W
+192.6,202.0,outro,TBD-11_hat_over_face,push,W
+202.0,220.2,rideout,TBD-12_tomorrow_about_noon,push,M
+# waveform strip on: 73.5-84.5, 134.5-144.5, 197-219.5
