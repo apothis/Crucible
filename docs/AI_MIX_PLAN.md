@@ -138,7 +138,21 @@ de-essing or breath control [V absence]; that stays DSP.
                                                                   [6 A/B] compare player, blind
 ```
 
-### 3.1 Two mix modes, chosen by Gate 0
+### 3.0 Scope decision (user, 2026-10-11)
+
+The product is an AI-driven mix BUILT FROM SUNO'S STEMS (Mode B below). That is the
+brief. Mode A (corrective delta on a box re-separation of the full mix) is out of the
+main path: it is a different product (polishing Suno's mixdown), parked as a possible
+later option only. The box separation models stay in scope ONLY as cleanup tools applied
+to Suno's own stems (debleed, drum split, lead/backing split, dereverb, denoise).
+
+Consequences:
+- Suno's full mix is used as a REFERENCE (A/B baseline and optional target for balance),
+  never as audio in the output.
+- The output is the sum of processed Suno stems through the console.
+- Stems arrive hot (sum +7.2 dB over the mix [M]), so ingest gain-stages them first.
+
+### 3.1 Two mix modes (Mode B is the product; Mode A parked)
 
 **Mode A: Corrective (base = Suno's full mix).**
 `out = mix + sum_i (processed_i - source_i)` with latency-align + optional gain hold,
@@ -328,34 +342,43 @@ de-esser / dynamic EQ). Stored next to the job; re-render needs no AI.
 
 ## 5. Phases (each ends in a listening gate; nothing fires without a go-ahead)
 
-**Phase 0: Gate 0 tooling (Mac, no GPU).**
-Ingest a real Suno stem pack (user supplies one song: full mix WAV + Auto Split WAVs,
-plus a Studio multitrack export if available). ffprobe, align, null test, coherence vs a
-box BS-RoFormer split. Deliverable: a measured [M] answer to "do Suno stems null?" and the
-mode decision rule calibrated.
+Re-scoped 2026-10-11 to the brief: every phase mixes SUNO'S STEMS.
 
-**Phase 1: Mode A corrective MVP.**
-N-stem delta recombine + Layer 1 rules limited to safe moves (vocal level/EQ, low-end
-tightening, harshness dynamic EQ, de-ess). Mix doc + render + compare. Gate: blind A/B
-vs Suno original on 3 songs, user's ears.
+**Phase 0: Gate 0 tooling. DONE.**
+Measured on "Dream Of Me" (results #1 and #2 in 3.2). Suno stems are the same arrangement
+as the mix but different waveforms, delivered hot. They behave like a multitrack source (bleed quality still unjudged),
+not a decomposition of the mixdown.
 
-**Phase 2: Cleanup chain on the box.**
-Multi-model separation endpoint + installer. A/B each model in isolation on the same
-stem (labelled files, one variable). Gate: per-model keep/drop.
+**Phase 1: Suno-stem console MVP (Mac, DSP only).**
+- Ingest a Suno zip: map file names to roles (Vocals, Backing_Vocals, Drums, Bass, Guitar,
+  Keyboard, Synth, Strings, Brass, Woodwinds, Percussion, FX), drop silent stems, gain-stage
+  so the plain sum sits near the Suno mix's loudness.
+- Analysis (3.4): per-stem LUFS, crest, bands, width, masking matrix, sections; the Suno
+  full mix analysed as the baseline balance.
+- Layer 1 rules (3.5) write a mix doc: role-relative levels, HPFs, masking-aware EQ cuts,
+  low-end mono, pan spread, gentle comp, one verb + one delay bus.
+- Render with pedalboard, master with existing master.py, file it in the library.
+- Gate: blind A/B in the compare player, loudness-matched: Suno full mix vs plain stem sum
+  vs rules mix, on Dream Of Me plus 2 more songs. User's ears.
 
-**Phase 3: Mode B remix + full Layer 1.**
-Summing console, drum sub-stems, sends/buses, masking EQ, pan. Gate: A/B vs Mode A and
-Suno original.
+**Phase 2: Claude planner + mix panel.**
+Analysis JSON + mix doc + schema + notes box -> Claude returns a mix-doc diff, shown before
+render. Fader/EQ/send panel bound to the mix doc, re-render without AI. Gate: does the diff
+move the mix the way the note asked (ears).
 
-**Phase 4: Claude planner + mix UI.**
-Fader/EQ panel bound to the mix doc, notes box, diff preview, re-render. Gate: does the
-planner's diff move the mix the way the note asked (ears).
+**Phase 3: Stem cleanup on the box (applied to Suno stems).**
+Multi-model separation endpoint + installer. Per stem, optional: debleed (Bleed Suppressor /
+Revive 2), lead/backing split, drum split into kick/snare/toms/cymbals, dereverb, denoise,
+Apollo top-end restore. Conservation rule (3.3) keeps sums honest. Gate: A/B each model in
+isolation on one stem, labelled files, one variable; keep/drop per model. Order vs Phase 2
+can swap if bleed turns out to be the main audible problem in Phase 1.
 
-**Phase 5: Reference match.**
-ST-ITO-style search on the box over the pedalboard params. Confirm AFx-Rep license first.
+**Phase 4: Reference match.**
+ST-ITO-style search on the box over the same pedalboard params, target = a reference track
+the user owns OR Suno's own full mix (as a balance target). Confirm AFx-Rep license first.
 
-**Later / experiments:** Apollo and xlance-msr restoration A/B; Mega 53 re-split;
-dasp-pytorch gradient fit for speed.
+**Later / parked:** Mode A corrective polish of the mixdown via box re-separation (measured
+viable, result #2, but not the brief); Mega 53 re-split; dasp-pytorch gradient fit for speed.
 
 ---
 
