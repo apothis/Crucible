@@ -189,6 +189,24 @@ scripts in `.mvwork/aimix/scripts/gate0.py`, `gate0b.py`; numbers in
   re-separation of the full mix; Suno stems are a Mode B (full remix) source, gain-staged
   down first. Residual bus in Mode B is meaningless here and stays off.
 
+**Gate 0 result #2 [M], 2026-10-11, same song, box BS-RoFormer SW split of the mix**
+(app route `/api/stems/separate engine=roformer`, 101 s, output 48 kHz; script
+`.mvwork/aimix/scripts/gate0c.py`):
+- 6 stems (vocals/drums/bass/guitar/piano/other) sum to the mix at waveform r = 0.9995,
+  lag 0, sum level -0.22 dB.
+- Null: -22.5 dB overall; per band sub -33, low -32, lowmid -23, highmid -17, high -18 dB.
+  Per second: median -29.8, p90 -24.6, worst -9.0 dB. Most of the loss sits in 2-6 kHz.
+- Stem levels rel mix: vocals -4.1, other -6.1, drums -10.0, bass -11.0, piano -24.6,
+  guitar -32.6 dB (the SW model put almost no guitar in "guitar"; that content lands in
+  "other" for this song [M], so per-instrument control from this split is coarse).
+- The extra "instrumental" output is NOT mix minus vocals here (vocals + instrumental is
+  +3.3 dB over the mix); unexplained, unused.
+- Verdict: Mode A via box re-separation is viable. In the delta method the output keeps
+  the original mix untouched and adds only `processed_i - stem_i`, so the -22.5 dB
+  residual never matters; what matters is that each stem is coherent with its slot in
+  the mix, which r = 0.9995 supports. Finer per-instrument control in Mode A needs the
+  Phase 2 models (karaoke, drumsep, Mega 53), run on the MIX for coherence.
+
 Decision rule [H, thresholds to calibrate by ear]:
 - residual <= -30 dB: Suno stems usable for Mode A directly.
 - residual -30..-15 dB: Mode A via box re-separation; Suno stems for Mode B only.
