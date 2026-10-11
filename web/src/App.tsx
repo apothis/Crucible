@@ -15,6 +15,7 @@ import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
 import { ABPlayer } from "./ABPlayer";
+import { AIMixForm } from "./AIMix";
 import { DraftProvider, useDraftCtx } from "./drafts";
 import { Lightbox, openLightbox } from "./Lightbox";
 import type { Result, RunCtx } from "./ui";
@@ -40,6 +41,7 @@ const MODES = [
   { id: "deglitch", label: "De-glitch" },
   { id: "compare", label: "Compare" },
   { id: "mix", label: "Mix" },
+  { id: "aimix", label: "AI Mix" },
   { id: "video", label: "Video" },
   { id: "mvstudio", label: "MV Studio" },
   { id: "characters", label: "Characters" },
@@ -55,7 +57,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Create", modes: ["generate", "song", "music3", "yue2", "suno", "restyle", "repaint", "layer"] },
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
-  { name: "Finish", modes: ["stems", "mix", "master", "shape", "naturalize", "deglitch", "compare"] },
+  { name: "Finish", modes: ["stems", "mix", "aimix", "master", "shape", "naturalize", "deglitch", "compare"] },
   { name: "Video", modes: ["video", "mvstudio", "characters", "youtube"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
@@ -273,6 +275,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "naturalize": return <NaturalizeForm {...p} />;
     case "deglitch": return <DeglitchForm {...p} />;
     case "mix": return <MixForm {...p} />;
+    case "aimix": return <AIMixForm {...p} setCompare={setCompare} goTo={goTo} />;
     case "video": return <VideoForm {...p} library={library} />;
     case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
     case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} goTo={goTo} />;

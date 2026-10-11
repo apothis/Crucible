@@ -349,7 +349,25 @@ Measured on "Dream Of Me" (results #1 and #2 in 3.2). Suno stems are the same ar
 as the mix but different waveforms, delivered hot. They behave like a multitrack source (bleed quality still unjudged),
 not a decomposition of the mixdown.
 
-**Phase 1: Suno-stem console MVP (Mac, DSP only).**
+**Phase 1: Suno-stem console MVP (Mac, DSP only). BUILT 2026-10-11, awaiting the ears gate.**
+Code: `backend/aimix.py`, routes `/api/aimix/run`, `/api/aimix/{sid}`, `/api/aimix/{sid}/render`
+in `backend/app.py`, UI `web/src/AIMix.tsx` (Finish -> AI Mix). Session data in
+`library/aimix/<sid>/` (extracted stems, session/analysis/mixdoc JSON).
+As built:
+- Suno balance = NNLS fit of per-stem gains to the mix's 10-band x 100 ms POWER envelopes
+  (each band weighted equally). Dream Of Me: log-envelope fit r = 0.97 [M]; the plain sum
+  lands within 1.4 dB of the Suno mix in every band [M]. Brass/Woodwinds fit to -30/-25 dB,
+  i.e. Suno barely used them in its own mix.
+- Rules: role HPF (capped below the stem's own 2%-energy point), masking cuts on maskers
+  in 1-8 kHz where they cover the lead (score > 0.30, max -4 dB), role compression with
+  threshold set from the stem's p95 100 ms level, width + low-mono below 120-200 Hz
+  (zero-phase M/S split), verb + tempo-synced delay sends. All constants [H].
+- Each stem is gain-landed on a target LUFS AFTER its chain, so compression never moves
+  the balance; profile offsets (rock/vocal/suno) sit on top.
+- Both renders mastered with master_auto tone=flat, glue off, to the Suno mix's LUFS,
+  -1 dBTP, 24-bit: the A/B hears mix decisions, not loudness.
+- Not yet: de-esser, dynamic (sidechain) EQ, per-section moves, editable panel (Phase 2).
+Original scope:
 - Ingest a Suno zip: map file names to roles (Vocals, Backing_Vocals, Drums, Bass, Guitar,
   Keyboard, Synth, Strings, Brass, Woodwinds, Percussion, FX), drop silent stems, gain-stage
   so the plain sum sits near the Suno mix's loudness.

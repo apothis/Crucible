@@ -37,6 +37,7 @@ from . import asr as asr_mod
 from . import voices as voices_mod
 from . import stems as stems_mod
 from . import mix as mix_mod
+from . import aimix as aimix_mod
 from . import postfx as postfx_mod
 from . import master as master_mod
 from . import naturalize as naturalize_mod
@@ -6277,6 +6278,109 @@ def mix_tracks(body: dict):
     save_done_row(jid, "mix", {"sources": [t.get("src") for t in tracks]},
                   _keep_lossless(jid, *[_lib_source_path(str(t.get("src") or "")) for t in tracks]))
     return {"job_id": jid, "audio_url": f"/api/audio/{jid}"}
+
+
+# ---------------- AI Mix (docs/AI_MIX_PLAN.md, Phase 1): mix a Suno stem download from its stems
+AIMIX_DIR = os.path.join(LIBRARY, "aimix")
+
+
+def _aimix_session_dir(sid):
+    if not re.fullmatch(r"[0-9a-f]{32}", sid or ""):
+        raise HTTPException(400, "bad session id")
+    d = os.path.join(AIMIX_DIR, sid)
+    if not os.path.isdir(d):
+        raise HTTPException(404, "AI mix session not found")
+    return d
+
+
+def _aimix_file(sid, d, doc, variant, label, processed):
+    """Render one variant, master it to the doc's loudness (flat tone, no glue: loudness-matched
+    A/B), and file it in the library. Returns {job_id, label, audio_url}."""
+    pre = os.path.join(d, f"{variant}_pre.wav")
+    aimix_mod.render(doc, pre, processed=processed)
+    jid = uuid.uuid4().hex
+    out = os.path.join(LIBRARY, f"{jid}.wav")
+    m = doc["master"]
+    tgt = m.get("target_lufs")
+    master_mod.master_auto(pre, out, target_lufs=(tgt if tgt is not None else -14.0), tone=m.get("tone", "flat"),
+                           glue=bool(m.get("glue", False)), ceiling_db=float(m.get("ceiling_db", -1.0)), bit_depth=24)
+    try:
+        os.remove(pre)
+    except Exception:
+        pass
+    title = f"{doc['title']} (AI mix: {label})"
+    save_done_row(jid, "mix", {"title": title, "aimix": sid, "variant": variant,
+                               "profile": doc.get("profile"), "source": doc["title"]}, out)
+    return {"job_id": jid, "label": title, "audio_url": f"/api/audio/{jid}"}
+
+
+@app.post("/api/aimix/run")
+def aimix_run(body: dict):
+    """Phase 1 AI mix of a Suno stem download. body: {path: zip or folder on this Mac,
+    profile: suno|rock|vocal}. Ingest -> analyse -> rules mix doc -> render two variants
+    (Suno-balance plain sum, rules mix), both mastered to the Suno mix's loudness, plus the
+    Suno full mix itself filed for the A/B. Synchronous (Mac DSP, ~1 min for 12 stems)."""
+    path = os.path.expanduser(str(body.get("path") or "").strip())
+    if not path or not os.path.exists(path):
+        raise HTTPException(400, "path to a Suno stems zip or folder required")
+    profile = body.get("profile") or "rock"
+    sid = uuid.uuid4().hex
+    d = os.path.join(AIMIX_DIR, sid)
+    os.makedirs(d, exist_ok=True)
+    try:
+        sess = aimix_mod.ingest(path, d)
+        an = aimix_mod.analyse(sess)
+        doc = aimix_mod.build_mixdoc(sess, an, profile)
+        aimix_mod.save_json(os.path.join(d, "session.json"), sess)
+        aimix_mod.save_json(os.path.join(d, "analysis.json"), an)
+        aimix_mod.save_json(os.path.join(d, "mixdoc.json"), doc)
+        tracks = []
+        if sess.get("mix"):
+            iid = uuid.uuid4().hex
+            ref = os.path.join(LIBRARY, iid + ".wav")
+            shutil.copy(sess["mix"], ref)
+            title = f"{sess['title']} (Suno mix)"
+            save_done_row(iid, "suno", {"title": title, "engine": "suno", "imported": True, "aimix": sid}, ref)
+            tracks.append({"job_id": iid, "label": title, "audio_url": f"/api/audio/{iid}"})
+        tracks.append(_aimix_file(sid, d, doc, "plain", "Suno-balance stem sum", processed=False))
+        tracks.append(_aimix_file(sid, d, doc, "rules", f"rules, {profile}", processed=True))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"AI mix failed: {e}")
+    return {"session": sid, "title": sess["title"], "tracks": tracks, "mixdoc": doc,
+            "summary": {"fit_r": (an.get("fit") or {}).get("log_env_r"), "bpm": an.get("bpm"),
+                        "silent": an.get("silent"), "mix_lufs": (an.get("mix") or {}).get("lufs")}}
+
+
+@app.get("/api/aimix/{sid}")
+def aimix_get(sid: str):
+    d = _aimix_session_dir(sid)
+    with open(os.path.join(d, "mixdoc.json")) as f:
+        doc = json.load(f)
+    with open(os.path.join(d, "analysis.json")) as f:
+        an = json.load(f)
+    return {"session": sid, "mixdoc": doc, "analysis": an}
+
+
+@app.post("/api/aimix/{sid}/render")
+def aimix_render(sid: str, body: dict):
+    """Re-render the rules variant from an edited mix doc (no AI). Stem files stay the
+    session's own; only parameters come from the client."""
+    d = _aimix_session_dir(sid)
+    with open(os.path.join(d, "mixdoc.json")) as f:
+        base = json.load(f)
+    doc = body.get("mixdoc") or base
+    for n, s in doc.get("stems", {}).items():          # never trust client file paths
+        if n not in base["stems"]:
+            raise HTTPException(400, f"unknown stem: {n}")
+        s["file"] = base["stems"][n]["file"]
+    aimix_mod.save_json(os.path.join(d, "mixdoc.json"), doc)
+    try:
+        t = _aimix_file(sid, d, doc, "rules", body.get("label") or "edited", processed=True)
+    except Exception as e:
+        raise HTTPException(500, f"AI mix render failed: {e}")
+    return {"track": t, "mixdoc": doc}
 
 
 @app.post("/api/reference/analyze")
