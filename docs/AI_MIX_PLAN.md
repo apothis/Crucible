@@ -173,6 +173,22 @@ For a given song:
 - Output a short report in the UI: "Suno stems null to -X dB: Mode A on Suno stems
   OK / not OK; Mode A will use box re-separation instead."
 
+**Gate 0 result #1 [M], 2026-10-11, "Dream Of Me" (Suno Auto Split, 12 stems + mix):**
+scripts in `.mvwork/aimix/scripts/gate0.py`, `gate0b.py`; numbers in
+`.mvwork/aimix/dream_of_me/gate0.json`.
+- Format: every file 32-bit float WAV, 48 kHz stereo, 289.18 s, identical length.
+- Stems do NOT null. `mix - sum(stems)` is +7.7 dB LOUDER than the mix (all bands
+  +6..+9 dB). Sum of stems is +7.2 dB hotter than the mix (stems are delivered hot,
+  roughly individually levelled [H]). Best least-squares gain per stem only reaches
+  -0.04 dB, i.e. no gain setting makes them add up to the mix.
+- Same music, same timing, different waveforms: sum-of-stems loudness envelope vs mix
+  r = 0.90 (log-env 0.91) at lag 0, but waveform correlation only 0.23. Per stem
+  waveform r is 0.0-0.17 while envelope r reaches 0.55-0.75 (Vocals, Drums, Bass, Synth,
+  Guitar). Consistent with Suno's "regenerated" statement.
+- Verdict: Mode A cannot use Suno stems (no coherence to subtract). Mode A must use a box
+  re-separation of the full mix; Suno stems are a Mode B (full remix) source, gain-staged
+  down first. Residual bus in Mode B is meaningless here and stays off.
+
 Decision rule [H, thresholds to calibrate by ear]:
 - residual <= -30 dB: Suno stems usable for Mode A directly.
 - residual -30..-15 dB: Mode A via box re-separation; Suno stems for Mode B only.
