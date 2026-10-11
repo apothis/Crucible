@@ -43,11 +43,12 @@ ROLE_PATTERNS = [
 
 # Per-role defaults [H]. hpf = high-pass Hz (lowered automatically if the stem has real content
 # below it); comp = (ratio, gain-reduction dB at the stem's loud moments, attack ms, release ms)
-# or None; width = side gain above low_mono_hz; sends in dB (None = no send).
+# or None; width = side gain above low_mono_hz; sends in dB (None = no send); punch = transient-
+# shaper attack boost in dB (0 = off). No reverb on vocals: Suno vocal stems arrive wet (user, 2026-10-11).
 ROLE_RULES = {
-    "vocals":     dict(hpf=80,  comp=(3.0, 5.0, 8, 120),   width=1.0,  low_mono_hz=150, verb=-22, delay=-26),
-    "backing":    dict(hpf=140, comp=(2.5, 4.0, 10, 150),  width=1.15, low_mono_hz=150, verb=-18, delay=None),
-    "drums":      dict(hpf=30,  comp=(2.0, 3.0, 25, 120),  width=1.0,  low_mono_hz=120, verb=None, delay=None),
+    "vocals":     dict(hpf=80,  comp=(3.0, 5.0, 8, 120),   width=1.0,  low_mono_hz=150, verb=None, delay=-26),
+    "backing":    dict(hpf=140, comp=(2.5, 4.0, 10, 150),  width=1.15, low_mono_hz=150, verb=None, delay=None),
+    "drums":      dict(hpf=30,  comp=(2.0, 3.0, 25, 120),  width=1.0,  low_mono_hz=120, verb=None, delay=None, punch=6.0),
     "bass":       dict(hpf=30,  comp=(4.0, 5.0, 15, 150),  width=1.0,  low_mono_hz=200, verb=None, delay=None),
     "guitar":     dict(hpf=70,  comp=None,                 width=1.1,  low_mono_hz=150, verb=None, delay=None),
     "keys":       dict(hpf=100, comp=(2.0, 3.0, 15, 150),  width=1.1,  low_mono_hz=150, verb=-24, delay=None),
@@ -292,6 +293,8 @@ def build_mixdoc(session: dict, analysis: dict, profile: str = "rock") -> dict:
                 cuts.append({"hz": round(_band_center(int(k))), "q": 1.0, "db": cut})
         if cuts:
             chain.append({"fx": "peq", "bands": cuts, "why": "unmask lead vocal"})
+        if r.get("punch"):
+            chain.append({"fx": "transient", "attack_db": r["punch"], "sustain_db": 0.0})
         if r["comp"]:
             ratio, gr, att, rel = r["comp"]
             thr = st["p95_frame_db"] - gr / (1.0 - 1.0 / ratio)
@@ -339,6 +342,56 @@ def _width_lowmono(x, sr, width, low_hz):
     return np.stack([mid + side, mid - side]).astype(np.float32)
 
 
+def _transient(x, sr, attack_db, sustain_db=0.0, block_ms=1.0):
+    """Differential-envelope transient shaper on x (ch, frames). A fast and a slow peak follower
+    run on 1 ms blocks of a LOW-BAND (<250 Hz, kick/snare body) detector, so dense hats don't
+    keep it engaged; where the fast one leads (an attack) the gain rises by up to attack_db, where
+    it trails (the tail) by sustain_db. The gain hits the full band, interpolated to sample rate
+    (no zipper, no latency). Timings picked as the most attack-focused of four tried on Dream Of
+    Me (boost active ~21% of the time vs 35% for a full-band detector) [M]; the amount is by ear."""
+    if not attack_db and not sustain_db:
+        return x
+    b = max(1, int(sr * block_ms / 1000.0))
+    n = x.shape[1] // b
+    from scipy.signal import butter, sosfilt
+    det = sosfilt(butter(4, 250, "lowpass", fs=sr, output="sos"), x.mean(0))
+    pk = np.abs(det[:n * b]).reshape(n, b).max(1)
+
+    def follow(att_ms, rel_ms):
+        a = np.exp(-block_ms / att_ms)
+        r = np.exp(-block_ms / rel_ms)
+        out = np.empty(n)
+        e = 0.0
+        for i in range(n):
+            v = pk[i]
+            e = a * e + (1 - a) * v if v > e else r * e + (1 - r) * v
+            out[i] = e
+        return out
+
+    fast, slow = follow(0.1, 8.0), follow(20.0, 120.0)
+    diff = 20 * np.log10((fast + 1e-9) / (slow + 1e-9))       # + on attacks, - in tails
+    g_db = np.where(diff > 0, attack_db * np.clip(diff / 6.0, 0, 1),
+                    sustain_db * np.clip(-diff / 6.0, 0, 1))
+    t = (np.arange(n) + 0.5) * b
+    g = 10 ** (np.interp(np.arange(x.shape[1]), t, g_db) / 20.0)
+    return (x * g).astype(np.float32)
+
+
+def _apply_chain(chain, x, sr):
+    """Run a chain: consecutive pedalboard-native steps as one board, custom DSP in between."""
+    run = []
+    for c in chain + [None]:
+        if c is not None and c["fx"] != "transient":
+            run.append(c)
+            continue
+        if run:
+            x = _board(run)(x, sr)
+            run = []
+        if c is not None:
+            x = _transient(x, sr, float(c.get("attack_db", 0)), float(c.get("sustain_db", 0)))
+    return x
+
+
 def _board(chain):
     import pedalboard as pb
     plugins = []
@@ -374,7 +427,7 @@ def render(doc: dict, out_path: str, processed: bool = True) -> dict:
         x, srx = _read(s["file"])
         x = x.T.copy()                                        # (ch, frames)
         if processed:
-            y = _board(s["chain"])(x, sr) if s["chain"] else x
+            y = _apply_chain(s["chain"], x, sr) if s["chain"] else x
             y = _width_lowmono(y, sr, float(s.get("width", 1.0)), float(s.get("low_mono_hz") or 0))
         else:
             y = x
