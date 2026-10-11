@@ -14,6 +14,7 @@ import { YouTubeForm } from "./YouTube";
 import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
+import { ABPlayer } from "./ABPlayer";
 import { DraftProvider, useDraftCtx } from "./drafts";
 import { Lightbox, openLightbox } from "./Lightbox";
 import type { Result, RunCtx } from "./ui";
@@ -693,6 +694,8 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
           Drop tracks here to compare them.<br />Each shows its waveform and the exact params + LoRA/settings it was generated with,<br />so you can A/B versions side by side.
         </div>
       ) : (
+        <>
+        <ABPlayer tracks={picked.filter((it) => !!it.audio_url).map((it) => ({ id: it.id, label: libTitle(it), url: it.audio_url as string }))} />
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
           {picked.map((it) => {
             const vi = versionInfo(it, items);
@@ -719,6 +722,7 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
             );
           })}
         </div>
+        </>
       )}
     </div>
   );
