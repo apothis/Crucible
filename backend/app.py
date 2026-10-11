@@ -5154,6 +5154,8 @@ async def master_apply(job_id: str = Form(None),
                        width: float = Form(1.0),            # auto: M/S stereo width (1.0 = unchanged)
                        bass_mono_hz: float = Form(0.0),     # auto: keep Side mono below this Hz (0 = off)
                        warmth: float = Form(0.0),           # auto: harmonic saturation amount 0..1
+                       leveller: float = Form(0.0),         # auto: slow programme leveller amount 0..1 (0 = off)
+                       glue: bool = Form(True),             # auto: glue compressor on/off
                        ref_name: str = Form(None),          # gold: which curated reference
                        tone_only: bool = Form(False),       # reference: match TONE + keep dynamics
                        match_amount: float = Form(1.0),     # reference tone-only: 0..1 tonal match strength
@@ -5176,16 +5178,19 @@ async def master_apply(job_id: str = Form(None),
             _, lufs = master_mod.master_auto(tgt, out, target_lufs=float(target_lufs),
                                              tone=tone, bit_depth=int(bit_depth),
                                              width=float(width), bass_mono_hz=float(bass_mono_hz),
-                                             warmth=float(warmth))
+                                             warmth=float(warmth), leveller=float(leveller), glue=bool(glue))
             extras = []
             if float(width) != 1.0: extras.append(f"width {float(width):.2f}")
             if float(bass_mono_hz) > 0: extras.append(f"bass-mono <{round(float(bass_mono_hz))}Hz")
             if float(warmth) > 0: extras.append(f"warmth {round(float(warmth) * 100)}%")
-            note = f"auto master · {tone} · {round(float(target_lufs))} LUFS" + (" · " + " · ".join(extras) if extras else "")
+            if float(leveller) > 0: extras.append(f"leveller {round(float(leveller) * 100)}%")
+            if not glue: extras.append("no glue")
+            lufs_txt = "keep loudness" if float(target_lufs) >= 0 else f"{round(float(target_lufs))} LUFS"
+            note = f"auto master · {tone} · {lufs_txt}" + (" · " + " · ".join(extras) if extras else "")
             params = {"source": tgt_label, "mode": "auto", "tone": tone,
                       "target_lufs": float(target_lufs), "lufs": lufs,
                       "width": float(width), "bass_mono_hz": float(bass_mono_hz),
-                      "warmth": float(warmth), "note": note}
+                      "warmth": float(warmth), "leveller": float(leveller), "glue": bool(glue), "note": note}
         elif mode == "gold":
             if not master_mod.available():
                 raise HTTPException(500, "matchering not installed on the Mac (pip install matchering)")

@@ -56,10 +56,23 @@ TONE_CURVES = {
                  ("PeakFilter", {"cutoff_frequency_hz": 250, "gain_db": -1.5, "q": 1.0}),
                  ("HighShelfFilter", {"cutoff_frequency_hz": 8000, "gain_db": 3.0, "q": 0.7})],
     "flat":     [("HighpassFilter", {"cutoff_frequency_hz": 20})],   # loudness/limit only, no tone shaping
+    # "neutral" = the static EQ measured on a Mixea "Medium Neutral" master vs its Suno source
+    # (1/3-octave LTAS difference, Even the Rain, 2026-10-11): +1.5..2 dB 50-160 Hz, a broad
+    # -3..-4.5 dB dip 300 Hz-1.3 kHz deepest at 800 Hz, +2..3 dB 3-10 kHz peaking near 7 kHz.
+    # Pair with leveller=1, glue off, width ~1.26 + bass-mono 150 Hz, keep-loudness, -1 dBTP.
+    # Filter values are a least-squares fit of pedalboard's responses to that measured curve
+    # (.mvwork/etr_master/fit_eq.py): 0.19 dB rms error 40 Hz-12 kHz. The shelf+bell pair at
+    # ~300 Hz is what the fit needed for the asymmetric dip; don't "tidy" it by eye.
+    "neutral":  [("HighpassFilter", {"cutoff_frequency_hz": 25}),
+                 ("LowShelfFilter", {"cutoff_frequency_hz": 300, "gain_db": 3.28, "q": 0.7}),
+                 ("PeakFilter", {"cutoff_frequency_hz": 302, "gain_db": -3.20, "q": 0.97}),
+                 ("PeakFilter", {"cutoff_frequency_hz": 898, "gain_db": -3.80, "q": 1.23}),
+                 ("PeakFilter", {"cutoff_frequency_hz": 6348, "gain_db": 3.59, "q": 0.47})],
 }
 
 # Loudness presets (integrated LUFS). −14 = streaming-safe; −9 = loud modern master.
-LUFS_PRESETS = {"apple": -16.0, "streaming": -14.0, "balanced": -12.0, "loud": -9.0}
+# "keep" (0) = no loudness push: the target is the source's own integrated LUFS (tone/limit only).
+LUFS_PRESETS = {"apple": -16.0, "streaming": -14.0, "balanced": -12.0, "loud": -9.0, "keep": 0.0}
 
 
 def auto_available():
@@ -87,6 +100,58 @@ def _stereo_width(x, sr, width: float, bass_mono_hz: float):
     return np.stack([mid + side, mid - side], axis=0)
 
 
+# Per-band levelling ratios measured on the Mixea "Medium Neutral" master vs its Suno source
+# (Even the Rain, 2026-10-11, 0.4 s RMS windows, 3 bands split at 250 Hz / 2.5 kHz): the
+# out/in slope per band was 0.93 / 0.76 / 0.82 -> ratios 1.08 / 1.32 / 1.21. Mids are levelled
+# hardest, lows barely; quiet passages come up ~+2 dB overall, loud ones are untouched.
+# The ratios below are CALIBRATED, not the raw measured ones: the attack/release smoothing
+# lowers the achieved slope, so nominal 1.08/1.32/1.21 measured back as 1.02/1.25/1.12 on the
+# first run; these values are scaled so the achieved per-band slopes land on Mixea's
+# (verified 2026-10-11: achieved 0.93 / 0.74 / 0.82 vs Mixea 0.93 / 0.76 / 0.82).
+LEVELLER_BANDS = ((250.0, 1.15), (2500.0, 1.41), (None, 1.39))   # (upper edge Hz, ratio)
+
+
+def _leveller(x, sr, amount: float, win_s: float = 0.4, attack_s: float = 0.05,
+              release_s: float = 1.5, max_db: float = 6.0):
+    """Three-band slow programme leveller (the level-dependent gain measured on the Mixea
+    master). Each band's momentary RMS (win_s) in dB is compared with that band's whole-track
+    RMS; gain = amount * (1 - 1/ratio) * (ref - level), clamped to +-max_db, smoothed with a
+    fast attack and slow release so sudden drops stay ducked for a moment like a real
+    leveller. The band split is zero-phase 2nd-order Butterworth (power-complementary, so
+    the bands sum back exactly flat). amount 0 = bypass (exact no-op). Not a limiter:
+    crest factor is preserved."""
+    import numpy as np
+    from scipy.signal import butter, sosfiltfilt
+    a = max(0.0, min(1.0, float(amount)))
+    if a <= 0:
+        return x
+    x64 = x.astype("float64")
+    w = max(1, int(win_s * sr)); kern = np.ones(w) / w
+    ca = np.exp(-1.0 / (attack_s * sr)); cr = np.exp(-1.0 / (release_s * sr))
+    out = np.zeros_like(x64)
+    rest = x64
+    for upper, ratio in LEVELLER_BANDS:
+        if upper is None:
+            band = rest
+        else:
+            lp = butter(2, upper, "low", fs=sr, output="sos"); hp = butter(2, upper, "high", fs=sr, output="sos")
+            band = sosfiltfilt(lp, rest, axis=-1); rest = sosfiltfilt(hp, rest, axis=-1)
+        mono = band.mean(axis=0)
+        env = np.sqrt(np.convolve(mono * mono, kern, mode="same") + 1e-12)
+        level = 20.0 * np.log10(env)
+        ref = 20.0 * np.log10(np.sqrt(np.mean(mono * mono)) + 1e-12)
+        target = a * (1.0 - 1.0 / float(ratio)) * (ref - level)
+        target = np.clip(np.where(level < ref - 40.0, 0.0, target), -max_db, max_db)
+        g = np.empty_like(target); prev = 0.0
+        for i in range(len(target)):
+            t = target[i]
+            c = ca if t < prev else cr
+            prev = c * prev + (1.0 - c) * t
+            g[i] = prev
+        out += band * (10.0 ** (g / 20.0))[None, :]
+    return out.astype(x.dtype)
+
+
 def _saturate(x, amount: float):
     """Gentle harmonic 'warmth' via soft (tanh) saturation, dry/wet-blended by `amount`
     (0 = bypass, 1 = max). Adds analog-style glue/density without a hard distortion edge."""
@@ -101,10 +166,12 @@ def _saturate(x, amount: float):
 
 def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
                 tone: str = "balanced", ceiling_db: float = -1.0, bit_depth: int = 16,
-                width: float = 1.0, bass_mono_hz: float = 0.0, warmth: float = 0.0):
-    """Reference-free master: tone curve → glue comp → (stereo width) → (warmth) →
-    normalize to target_lufs → limit. Writes a WAV to out_path.
-    Returns (out_path, measured_lufs_after)."""
+                width: float = 1.0, bass_mono_hz: float = 0.0, warmth: float = 0.0,
+                leveller: float = 0.0, glue: bool = True):
+    """Reference-free master: tone curve → glue comp (glue=False skips it) → (leveller) →
+    (stereo width) → (warmth) → normalize to target_lufs → limit. target_lufs >= 0 means
+    "keep": the source's own integrated loudness is the target (no push, no squash).
+    Writes a WAV to out_path. Returns (out_path, measured_lufs_after)."""
     import numpy as np
     import soundfile as sf
     import pedalboard as pb
@@ -119,8 +186,10 @@ def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
 
     moves = TONE_CURVES.get(tone, TONE_CURVES["balanced"])
     plugins = [getattr(pb, name)(**kw) for name, kw in moves]
-    plugins.append(pb.Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=15.0, release_ms=180.0))  # gentle glue
+    if glue:
+        plugins.append(pb.Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=15.0, release_ms=180.0))  # gentle glue
     pre = pb.Pedalboard(plugins)(x, sr)                                 # (ch, frames) — tone-shaped, pre-loudness
+    pre = _leveller(pre, sr, leveller)                                  # slow programme leveller (0 = no-op)
 
     # Stereo + harmonic enhancement BEFORE the loudness/limit stage, so the limiter
     # catches any peak lift these add (width=1 + bass_mono=0 + warmth=0 = exact no-op).
@@ -129,6 +198,9 @@ def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
     pre = _saturate(pre, warmth)
 
     meter = pyln.Meter(sr)
+    if float(target_lufs) >= 0:                                         # "keep": no loudness push
+        src_l = meter.integrated_loudness(x.T)
+        target_lufs = float(src_l) if np.isfinite(src_l) else -12.0
     limiter = pb.Pedalboard([pb.Limiter(threshold_db=ceiling_db, release_ms=120.0)])
     ceil_lin = 10.0 ** (ceiling_db / 20.0)
 
@@ -144,7 +216,7 @@ def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
         y, after = pre, base
         for _ in range(6):
             cand = limiter(pre * (10.0 ** (gain_db / 20.0)), sr)
-            peak = float(np.max(np.abs(cand))) if cand.size else 0.0
+            peak = _true_peak_lin(cand) if cand.size else 0.0
             if peak > ceil_lin and peak > 0:                           # enforce the true-peak ceiling
                 cand = cand * (ceil_lin / peak)
             cur = meter.integrated_loudness(cand.T)
@@ -159,6 +231,16 @@ def master_auto(target_path: str, out_path: str, target_lufs: float = -12.0,
 
     sf.write(out_path, y.T, sr, format="WAV", subtype=("PCM_24" if bit_depth == 24 else "PCM_16"))
     return out_path, (float(after) if after is not None else None)
+
+
+def _true_peak_lin(x):
+    """Inter-sample (true) peak, linear, via 4x oversampling (ITU-R BS.1770 style). The
+    pedalboard Limiter is sample-peak only, so the ceiling check must look between samples
+    or a -1 dBTP master can land at 0 dBTP (measured 2026-10-11)."""
+    import numpy as np
+    from scipy.signal import resample_poly
+    y = resample_poly(x, 4, 1, axis=-1)
+    return float(np.max(np.abs(y)))
 
 
 def _lufs(path):

@@ -1490,6 +1490,8 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
   const [width, setWidth] = d.use("width", 1);
   const [bassMono, setBassMono] = d.use("bassMono", 0);
   const [warmth, setWarmth] = d.use("warmth", 0);
+  const [leveller, setLeveller] = d.use("leveller", 0);   // slow programme leveller (0 = off)
+  const [glue, setGlue] = d.use("glue", true);             // glue compressor (default on = original chain)
   const [goldRef, setGoldRef] = d.use("goldRef", "");
   useEffect(() => { api.masterOptions().then(setOpts).catch(() => {}); }, []);
 
@@ -1498,7 +1500,7 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
     if (mode === "reference" && !refFile && !refJob) return fail(ctx, "Choose a reference master (a pro track whose sound to match).");
     if (mode === "gold" && !(opts?.gold_refs.length)) return fail(ctx, "No gold-standard references yet — drop a few well-mastered tracks into library/master_refs/.");
     const id = rid();
-    const title = mode === "auto" ? `auto master · ${tone} · ${lufs} LUFS` : mode === "gold" ? `gold master · ${goldRef || opts?.gold_refs[0]}` : "matching to reference…";
+    const title = mode === "auto" ? `auto master · ${tone} · ${lufs === 0 ? "keep loudness" : `${lufs} LUFS`}` : mode === "gold" ? `gold master · ${goldRef || opts?.gold_refs[0]}` : "matching to reference…";
     ctx.setResults([{ id, title, status: "running", pct: 45 }]);
     try {
       const fd = new FormData();
@@ -1506,7 +1508,7 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
       if (file) fd.append("file", file); else fd.append("job_id", job);
       if (mode === "auto") {
         fd.append("target_lufs", String(lufs)); fd.append("tone", tone);
-        if (enhance) { fd.append("width", String(width)); fd.append("bass_mono_hz", String(bassMono)); fd.append("warmth", String(warmth)); }
+        if (enhance) { fd.append("width", String(width)); fd.append("bass_mono_hz", String(bassMono)); fd.append("warmth", String(warmth)); fd.append("leveller", String(leveller)); fd.append("glue", glue ? "true" : "false"); }
       }
       else if (mode === "gold") { if (goldRef) fd.append("ref_name", goldRef); }
       else {
@@ -1551,11 +1553,20 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
 
       {mode === "auto" && (
         <div className="space-y-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
-          <Field label="Loudness target" hint="integrated LUFS — streaming −14 · loud −9">
+          <Field label="Quick preset" hint="one click sets every control below; adjust after if you like">
             <div className="flex flex-wrap gap-1.5">
-              {Object.entries(opts?.lufs_presets || { apple: -16, streaming: -14, balanced: -12, loud: -9 }).map(([name, v]) => (
+              <button onClick={() => { setTone("neutral"); setLufs(0); setEnhance(true); setWidth(1.25); setBassMono(60); setWarmth(0); setLeveller(1); setGlue(false); }}
+                className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-2.5 py-1 text-xs text-[var(--color-muted)]">Neutral open master</button>
+              <button onClick={() => { setTone("metal"); setLufs(-12); setEnhance(false); setWidth(1); setBassMono(0); setWarmth(0); setLeveller(0); setGlue(true); }}
+                className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] px-2.5 py-1 text-xs text-[var(--color-muted)]">Default chain</button>
+            </div>
+            <p className="mt-1 text-[11px] text-[var(--color-muted)]">Neutral open master = measured from a Mixea "Medium Neutral" master: neutral EQ, keep loudness, +2 dB width above 60 Hz, 3-band leveller, no glue, −1 dBTP. Opens the sound up without pushing loudness.</p>
+          </Field>
+          <Field label="Loudness target" hint="integrated LUFS — streaming −14 · loud −9 · keep = the track's own loudness, no push">
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(opts?.lufs_presets || { apple: -16, streaming: -14, balanced: -12, loud: -9, keep: 0 }).map(([name, v]) => (
                 <button key={name} onClick={() => setLufs(v)}
-                  className={`rounded-lg border px-2.5 py-1 text-xs ${lufs === v ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{name} ({v})</button>
+                  className={`rounded-lg border px-2.5 py-1 text-xs ${lufs === v ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{v === 0 ? "keep (source)" : `${name} (${v})`}</button>
               ))}
             </div>
           </Field>
@@ -1565,7 +1576,7 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
             </select>
           </Field>
           <label className="flex items-center gap-2 border-t border-[var(--color-line)] pt-3 text-sm text-[var(--color-muted)]">
-            <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} /> Enhancements <span className="text-[10px] opacity-70">(optional — stereo width · warmth)</span>
+            <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} /> Enhancements <span className="text-[10px] opacity-70">(optional — stereo width · warmth · leveller · glue)</span>
           </label>
           {enhance && (
             <div className="space-y-3 border-l-2 border-[var(--color-line)] pl-3">
@@ -1574,7 +1585,7 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
               </Field>
               <Field label="Keep bass mono" hint="centres lows below this freq so widening doesn't smear the low end">
                 <div className="flex flex-wrap gap-1.5">
-                  {[[0, "off"], [100, "100 Hz"], [120, "120 Hz"], [150, "150 Hz"]].map(([v, lbl]) => (
+                  {[[0, "off"], [60, "60 Hz"], [100, "100 Hz"], [120, "120 Hz"], [150, "150 Hz"]].map(([v, lbl]) => (
                     <button key={String(v)} onClick={() => setBassMono(v as number)}
                       className={`rounded-lg border px-2.5 py-1 text-xs ${bassMono === v ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] bg-[var(--color-panel)] text-[var(--color-muted)]"}`}>{lbl}</button>
                   ))}
@@ -1583,6 +1594,12 @@ export function MasterForm({ busy, ...ctx }: FormProps) {
               <Field label={`Warmth · ${Math.round(warmth * 100)}%`} hint="gentle harmonic saturation for analog-style glue (0 = off)">
                 <input type="range" min={0} max={1} step={0.05} value={warmth} onChange={(e) => setWarmth(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
               </Field>
+              <Field label={`Leveller · ${leveller === 0 ? "off" : `${Math.round(leveller * 100)}%`}`} hint="slow programme leveller: lifts quiet passages ~2 dB, leaves loud ones alone, keeps punch (Mixea-style)">
+                <input type="range" min={0} max={1} step={0.05} value={leveller} onChange={(e) => setLeveller(parseFloat(e.target.value))} className="w-full accent-[var(--color-accent)]" />
+              </Field>
+              <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
+                <input type="checkbox" checked={glue} onChange={(e) => setGlue(e.target.checked)} /> Glue compressor <span className="text-[10px] opacity-70">(off = keep the source's dynamics; pair with the leveller)</span>
+              </label>
             </div>
           )}
         </div>
