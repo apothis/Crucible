@@ -379,6 +379,29 @@ Original scope:
 - Gate: blind A/B in the compare player, loudness-matched: Suno full mix vs plain stem sum
   vs rules mix, on Dream Of Me plus 2 more songs. User's ears.
 
+**Phase 1b: Adaptive, measurement-led rules (user direction 2026-10-11). BUILT, presets building.**
+User feedback on Phase 1: rules mix slightly better than Suno's; no added vocal reverb (Suno
+vocals arrive wet); drums lack punch (in Suno's mix too). Direction: no fixed defaults, every
+element tuned per song from measurements.
+- Style presets = distributions of per-role measurements over reference songs (box split of the
+  middle 2 min, numbers only): `backend/aimix_refs.py`, routes `/api/aimix/presets[/build]`.
+  First three: symphonic (11 Nightwish + 4 Tarja), power (8 Battle Beast + 7 Beast in Black),
+  hardrock (15 The Pretty Reckless). Per-song caches in `library/aimix/presets/_cache_<name>/`.
+- Measurements (`backend/aimix_features.py`), per separator role (vocals, drums, bass, guitar,
+  piano, other; Suno stems grouped onto them): share of mix (rel LUFS), third-octave LTAS shape,
+  loudness range, short-term crest, punch (attack 0-15 ms over body 30-120 ms at low-band hits),
+  sibilance (5-9 kHz bursts), width + low-end width, wetness (dip depth inside phrases),
+  vocal presence over the rest in 1-5 kHz. Punch and wetness are proxies [H].
+- Rules (`backend/aimix_adaptive.py`): target = clip(current, p25, p75); inside the band = no
+  move. Joint level solve in power; EQ from the smoothed third-octave gap (<= 4 moves, +-3 dB);
+  compression only on excess loudness range; drum punch and de-ess are closed loops (search the
+  amount until the measure reaches the band); width only for gaps >= 2 dB; mono lows / reverb
+  only when off-style. Masking cuts and content-capped HPF kept. Auto preset = nearest by whole-
+  mix shape. Roles > 24 dB below the mix count as absent (separation residue) on both sides.
+- Calibration [M], Dream Of Me separated vs its Suno stems: vocals/other offsets <= 1.6 dB;
+  drums/guitar/piano offsets large but dominated by near-empty separated stems; one song cannot
+  separate separation bias from regenerated-stem difference. NOT applied; needs more Suno packs.
+
 **Phase 2: Claude planner + mix panel.**
 Analysis JSON + mix doc + schema + notes box -> Claude returns a mix-doc diff, shown before
 render. Fader/EQ/send panel bound to the mix doc, re-render without AI. Gate: does the diff
