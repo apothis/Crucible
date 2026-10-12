@@ -68,18 +68,25 @@ def _wav_arrays(stem_bytes):
     return out, sr
 
 
-def measure_reference(path, host):
-    """Excerpt -> box split -> features. Returns the song's feature dict."""
+def measure_reference(path, host, keep_dir=None):
+    """Excerpt -> box split -> features. Returns the song's feature dict. keep_dir: also save the
+    6 stems there as FLAC, so a later measurement change re-runs on the Mac, not the box."""
     data, start, dur = _excerpt_wav(path)
     res = roformer_py.separate(data, "excerpt.wav", host, stems="all")
     arrs, sr = _wav_arrays(res["stems"])
+    if keep_dir:
+        import soundfile as sf
+        os.makedirs(keep_dir, exist_ok=True)
+        for k, v in arrs.items():
+            if k in F.ROLES:
+                sf.write(os.path.join(keep_dir, f"{k}.flac"), v, sr, subtype="PCM_16")
     stems = {k: v for k, v in arrs.items() if k in F.ROLES}      # drop the extra 'instrumental'
     f = F.song_features(stems, sr)
     f["source"] = {"file": os.path.basename(path), "excerpt_start_s": round(start, 1), "duration_s": round(dur, 1)}
     return f
 
 
-def build(root, name, label, files, host, free_gpu=None):
+def build(root, name, label, files, host, free_gpu=None, refresh=False):
     """Blocking build (run it in a thread). Writes presets/<name>.json when done; per-song cache in
     presets/_cache_<name>/."""
     cache = os.path.join(preset_dir(root), f"_cache_{name}")
@@ -93,7 +100,7 @@ def build(root, name, label, files, host, free_gpu=None):
         cp = os.path.join(cache, f"{key}.json")
         st["current"] = key
         try:
-            if os.path.exists(cp):
+            if os.path.exists(cp) and not refresh:
                 with open(cp) as fh:
                     f = json.load(fh)
             else:
@@ -102,7 +109,7 @@ def build(root, name, label, files, host, free_gpu=None):
                         free_gpu("roformer")
                     except Exception:
                         pass
-                f = measure_reference(path, host)
+                f = measure_reference(path, host, keep_dir=os.path.join(cache, "stems", key))
                 with open(cp, "w") as fh:
                     json.dump(f, fh)
             songs.append(f)
@@ -136,9 +143,9 @@ def resummarize(root, name):
     return p
 
 
-def start_build(root, name, label, files, host, free_gpu=None):
+def start_build(root, name, label, files, host, free_gpu=None, refresh=False):
     with _LOCK:
         if STATUS.get(name, {}).get("state") == "running":
             raise RuntimeError(f"preset '{name}' is already building")
-    t = threading.Thread(target=build, args=(root, name, label, files, host, free_gpu), daemon=True)
+    t = threading.Thread(target=build, args=(root, name, label, files, host, free_gpu, refresh), daemon=True)
     t.start()

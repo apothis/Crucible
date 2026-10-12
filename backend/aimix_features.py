@@ -63,7 +63,18 @@ def dynamics(mono, sr):
     rms1 = np.sqrt((seg1 ** 2).mean(1) + 1e-20)
     act1 = 20 * np.log10(rms1) > 20 * np.log10(rms1.max()) - 40
     crest = 20 * np.log10(np.abs(seg1).max(1)[act1] / rms1[act1]) if act1.any() else np.array([0.0])
+    # within-phrase range: the same p95-p10, but inside 10 s windows (25 x 400 ms), median over
+    # active windows. Arrangement builds (quiet intro, loud chorus) inflate range_db but not this,
+    # so compression keys off how unevenly a part is PLAYED, not how the song is arranged.
+    w = 25
+    k = len(l4) // w
+    pr = []
+    for i in range(k):
+        L, A = l4[i * w:(i + 1) * w], act4[i * w:(i + 1) * w]
+        if A.sum() >= w // 2:
+            pr.append(np.percentile(L[A], 95) - np.percentile(L[A], 10))
     return {"range_db": float(np.percentile(l4[act4], 95) - np.percentile(l4[act4], 10)) if act4.any() else 0.0,
+            "phrase_range_db": float(np.median(pr)) if pr else None,
             "crest_db": float(np.median(crest)),
             "active_frac": float(act4.mean())}
 
@@ -160,6 +171,20 @@ def stem_features(x, sr, mix_lufs, meter):
     out.update(sibilance(mono, sr))
     out.update(stereo(x, sr))
     out.update(wetness(mono, sr))
+    return out
+
+
+def presence_windows(voc, rest, sr, win_s=10.0):
+    """presence_ratio per win_s window where the vocal is active (list of dB)."""
+    n = int(win_s * sr)
+    out = []
+    for i in range(len(voc) // n):
+        v, r = voc[i * n:(i + 1) * n], rest[i * n:(i + 1) * n]
+        if np.sqrt(np.mean(v ** 2)) < 1e-4:
+            continue
+        p = presence_ratio(v, r, sr)
+        if p is not None:
+            out.append(p)
     return out
 
 

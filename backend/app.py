@@ -6397,7 +6397,8 @@ def aimix_presets_build(body: dict):
     if not ROFORMER_HOST:
         raise HTTPException(400, "roformer_host not set in app_config.json")
     try:
-        aimix_refs_mod.start_build(AIMIX_DIR, name, body.get("label") or name, files, ROFORMER_HOST, free_gpu)
+        aimix_refs_mod.start_build(AIMIX_DIR, name, body.get("label") or name, files, ROFORMER_HOST, free_gpu,
+                                   refresh=bool(body.get("refresh")))
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     return {"ok": True, "name": name, "total": len(files)}

@@ -100,15 +100,53 @@ def solve_levels(feat, preset):
         for r in roles:
             cur = lufs[r] + g[r] - tot
             if r == "vocals" and voc_pres is not None and pst.get("vocals", {}).get("presence_db"):
-                # presence moves ~dB for dB with vocal gain; the rest moves a little the other way
+                # presence moves ~dB for dB with vocal gain; the rest moves a little the other way.
+                # The lead is the priority element: raised toward the band, never cut below Suno's
+                # own placement (user, 2026-10-12: a style-driven vocal cut buried the verses).
                 cur_p = voc_pres + g[r] - (tot - 10 * np.log10(sum(10 ** ((lufs[q]) / 10) for q in roles)))
-                want = _clip_target(cur_p, pst["vocals"]["presence_db"])
-                g[r] += 0.5 * (want - cur_p)
+                want = max(cur_p, pst["vocals"]["presence_db"]["p25"])
+                g[r] = max(0.0, g[r] + 0.5 * (want - cur_p))
             elif pst.get(r, {}).get("rel_lufs"):
                 want = _clip_target(cur, pst[r]["rel_lufs"])
                 g[r] += 0.5 * (want - cur)
             g[r] = float(np.clip(g[r], -MAX_LEVEL_DB, MAX_LEVEL_DB))
     return g
+
+
+def _vocal_section_guard(session, analysis, members, gains, pst, notes):
+    """Whole-song check: vocal presence (vocal over the rest, 1-5 kHz) per 10 s vocal window at
+    the solved levels. If the weakest sections (20th percentile) fall below the style band's
+    p25, lift the vocal by the deficit (max +4 dB). Catches sparse intros/verses that a
+    song-wide number misses. (A per-section ride was tried on Dream Of Me and made the verse
+    weaker: it spent its lift on breath/bleed windows; uniform guard matched the user's preferred
+    verse level within 0.1 dB [M].)"""
+    st = pst.get("vocals", {}).get("presence_db")
+    if not st or "vocals" not in members:
+        return 0.0
+    voc = rest = None
+    sr = None
+    by_name = {s["name"]: s for s in session["stems"]}
+    for role, names in members.items():
+        for n in names:
+            x, sr = aimix._read(by_name[n]["path"])
+            x = x.mean(1) * (10 ** ((analysis["gains_db"][n] + gains.get(role, 0.0)) / 20.0))
+            if role == "vocals":
+                voc = x if voc is None else voc[:len(x)] + x[:len(voc)]
+            else:
+                rest = x if rest is None else rest[:len(x)] + x[:len(rest)]
+    if voc is None or rest is None:
+        return 0.0
+    n = min(len(voc), len(rest))
+    w = F.presence_windows(voc[:n], rest[:n], sr)
+    if len(w) < 3:
+        return 0.0
+    weak = float(np.percentile(w, 20))
+    if weak >= st["p25"]:
+        notes.append(f"vocals: weakest sections at {weak:.1f} dB presence, inside style (>= {st['p25']:.1f}): no lift")
+        return 0.0
+    lift = float(min(4.0, st["p25"] - weak))
+    notes.append(f"vocals: +{lift:.1f} dB section guard (weakest sections {weak:.1f} dB presence < style {st['p25']:.1f})")
+    return lift
 
 
 # ------------------------------------------------------------------ tonal EQ
@@ -199,6 +237,7 @@ def build(session, analysis, preset, calib=None):
 
     gains = solve_levels(feat, preset_c)
     stems_doc, notes = {}, []
+    gains["vocals"] = gains.get("vocals", 0.0) + _vocal_section_guard(session, analysis, members, gains, pst, notes)
     stem_by_name = {s["name"]: s for s in session["stems"]}
     for role, names in members.items():
         rf, rs = feat["roles"].get(role), pst.get(role)
@@ -211,17 +250,27 @@ def build(session, analysis, preset, calib=None):
             notes.append(f"{role}: level {g:+.1f} dB (share of mix {rf['rel_lufs']:.1f} dB vs style "
                          f"{rs['rel_lufs']['p25']:.1f}..{rs['rel_lufs']['p75']:.1f})")
         eq = eq_moves(rf["ltas"], rs["ltas"]) if rf and rs.get("ltas") else []
+        if role == "vocals" and eq:
+            # no air/presence cuts on vocals unless the vocal is measured sibilant beyond the style
+            # (a top-band cut there boxed the vocal in, user 2026-10-12); brightness is fixed on
+            # the instruments instead
+            sib_st = rs.get("sib_db")
+            sibilant = bool(sib_st and rf.get("sib_db") is not None and rf["sib_db"] > sib_st["p75"])
+            eq = [m for m in eq if not (m["hz"] >= 5000 and m["db"] < 0 and not sibilant)]
         if role == "other":                                       # catch-all: half-strength
             eq = [{**m, "db": round(m["db"] / 2, 1)} for m in eq if abs(m["db"] / 2) >= EQ_MIN_DB]
         if eq:
             notes.append(f"{role}: tonal EQ " + ", ".join(f"{m['db']:+.1f} dB @ {m['hz']:.0f}" for m in eq))
         # compression: only if the loudness swings exceed the style band
+        # compression keys off WITHIN-PHRASE range (how unevenly it is played), never the whole-song
+        # range (an arrangement build would get flattened and lift sparse intros over the vocal).
+        # Presets measured before phrase_range_db existed get no range compression.
         comp = None
-        rng = rs.get("range_db")
-        if rf and rng and rf["range_db"] > rng["p75"]:
-            excess = rf["range_db"] - rng["p75"]
+        rng = rs.get("phrase_range_db")
+        if rf and rng and rf.get("phrase_range_db") is not None and rf["phrase_range_db"] > rng["p75"]:
+            excess = rf["phrase_range_db"] - rng["p75"]
             comp = {"ratio": 3.0, "gr_db": float(min(excess, 8.0))}
-            notes.append(f"{role}: compress ~{comp['gr_db']:.1f} dB (loudness range {rf['range_db']:.1f} dB "
+            notes.append(f"{role}: compress ~{comp['gr_db']:.1f} dB (within-phrase range {rf['phrase_range_db']:.1f} dB "
                          f"> style {rng['p75']:.1f})")
         # width
         wst, width = rs.get("width_db"), 1.0
