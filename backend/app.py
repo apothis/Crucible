@@ -6335,6 +6335,9 @@ def aimix_run(body: dict):
     os.makedirs(d, exist_ok=True)
     try:
         sess = aimix_mod.ingest(path, d)
+        up = os.path.join(AIMIX_DIR, "uploads") + os.sep
+        if path.startswith(up) and path.lower().endswith(".zip"):
+            shutil.rmtree(os.path.dirname(path), ignore_errors=True)   # unpacked into the session: drop the upload copy
         an = aimix_mod.analyse(sess)
         picked, scores = None, None
         if want_preset:
@@ -6381,6 +6384,28 @@ def aimix_run(body: dict):
             "summary": {"fit_r": (an.get("fit") or {}).get("log_env_r"), "bpm": an.get("bpm"),
                         "silent": an.get("silent"), "mix_lufs": (an.get("mix") or {}).get("lufs"),
                         "preset": picked, "preset_scores": scores, "notes": doc.get("notes", [])}}
+
+
+@app.post("/api/aimix/upload")
+async def aimix_upload(request: Request, name: str, batch: str = ""):
+    """Browser-side fallback (drag-drop or the browser picker, e.g. from another device): the raw
+    request body is ONE file, streamed straight into library/aimix/uploads/<batch>/ (no temp
+    spooling on the system disk). A zip returns its file path; a folder is uploaded file by file
+    with the same batch and its path is the batch folder."""
+    batch = batch if re.fullmatch(r"[0-9a-f]{32}", batch or "") else uuid.uuid4().hex
+    base = os.path.basename(name or "")
+    if not base or base.startswith(".") or os.path.splitext(base)[1].lower() not in (".zip", ".wav", ".flac", ".mp3"):
+        raise HTTPException(400, "only .zip, .wav, .flac or .mp3 files")
+    d = os.path.join(AIMIX_DIR, "uploads", batch)
+    os.makedirs(d, exist_ok=True)
+    out = os.path.join(d, base)
+    n = 0
+    with open(out + ".part", "wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+            n += len(chunk)
+    os.replace(out + ".part", out)
+    return {"batch": batch, "path": out if base.lower().endswith(".zip") else d, "bytes": n}
 
 
 @app.get("/api/aimix/presets")

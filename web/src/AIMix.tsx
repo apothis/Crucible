@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useDrafts } from "./drafts";
 import { inp, PrimaryButton, rid, type RunCtx } from "./ui";
@@ -34,7 +34,10 @@ function Chip({ k, v }: { k: string; v: string }) {
 
 export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; setCompare: (f: (ids: string[]) => string[]) => void; goTo: (m: string) => void } & RunCtx) {
   const d = useDrafts("aimix");
-  const [path, setPath] = d.use("path", "");
+  const [path, setPath] = d.use("path", "");          // server-side path of the uploaded stems
+  const [picked, setPicked] = d.use("picked", "");      // what the user chose, for display
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [upPct, setUpPct] = useState<number | null>(null);
   const [profile, setProfile] = d.use("profile", "rock");
   const [preset, setPreset] = d.use("preset", "auto");
   const [presets, setPresets] = useState<PresetInfo[]>([]);
@@ -73,7 +76,7 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
   }, []);
 
   async function run() {
-    if (!path.trim()) { ctx.setResults([{ id: rid(), title: "Give the path to a Suno stems zip or folder.", status: "error", pct: 0 }]); return; }
+    if (!path.trim()) { ctx.setResults([{ id: rid(), title: "Choose the Suno stems first (the zip, or the stem WAVs).", status: "error", pct: 0 }]); return; }
     const id = rid();
     setRunning(true);
     ctx.setResults([{ id, title: "AI mix: measuring stems against the style + rendering (Mac, about a minute)…", status: "running", pct: 40 }]);
@@ -83,9 +86,38 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
       ctx.onDone();
       await loadSessions();
       openSession(r.session, r.summary);
+      if (/\/aimix\/uploads\/.*\.zip$/i.test(path)) { setPath(""); setPicked(""); }   // upload copy is removed once unpacked
       setCmp(r.tracks.map((t) => t.job_id));
     } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
     finally { setRunning(false); }
+  }
+
+  // Upload the chosen zip (or stem files) one file per request, streamed into the session area;
+  // XHR for a real progress bar on big stem packs.
+  function sendFile(f: File, batch: string, done: number, total: number): Promise<{ batch: string; path: string }> {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open("POST", `/api/aimix/upload?name=${encodeURIComponent(f.name)}&batch=${batch}`);
+      x.upload.onprogress = (e) => { if (e.lengthComputable) setUpPct(Math.round(((done + e.loaded) / total) * 100)); };
+      x.onload = () => x.status === 200 ? resolve(JSON.parse(x.responseText)) : reject(new Error(x.responseText || `upload failed (${x.status})`));
+      x.onerror = () => reject(new Error("upload failed"));
+      x.send(f);
+    });
+  }
+  async function choose(files: FileList | null) {
+    const list = Array.from(files || []).filter((f) => /\.(zip|wav|flac|mp3)$/i.test(f.name));
+    if (!list.length) return;
+    const zip = list.find((f) => /\.zip$/i.test(f.name));
+    const send = zip ? [zip] : list;
+    const total = send.reduce((a, f) => a + f.size, 0);
+    setUpPct(0); setPath("");
+    try {
+      let batch = "", last = { batch: "", path: "" }, done = 0;
+      for (const f of send) { last = await sendFile(f, batch, done, total); batch = last.batch; done += f.size; }
+      setPath(last.path);
+      setPicked(zip ? zip.name : send.length === 1 ? send[0].name : `${send.length} stem files`);
+    } catch (e) { ctx.setResults([{ id: rid(), title: "Upload failed", status: "error", pct: 0, err: (e as Error).message }]); }
+    finally { setUpPct(null); if (fileRef.current) fileRef.current.value = ""; }
   }
 
   async function render() {
@@ -125,11 +157,29 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
     <div className="grid grid-cols-1 items-start gap-4 @5xl:grid-cols-[320px_minmax(0,1fr)] @5xl:grid-rows-[auto_auto_1fr]">
         <div className={`${card} @5xl:col-start-1 @5xl:row-start-1`}>
           <h2 className={h}>New AI mix</h2>
-          <p className={`${hint} mb-3`}>Point at a Suno stem download (zip or folder). The AI measures every stem group against a style made from real reference songs and only fixes what is outside that style.</p>
-          <label className="mb-3 block">
-            <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Suno stems zip or folder</span>
-            <input className={inp} value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Volumes/SSD1/Downloads/Song.zip" />
-          </label>
+          <p className={`${hint} mb-3`}>Choose a Suno stem download: the zip, or all the stem WAVs. The AI measures every stem group against a style made from real reference songs and only fixes what is outside that style.</p>
+          <input ref={fileRef} type="file" multiple accept=".zip,.wav,.flac,.mp3" className="hidden" onChange={(e) => choose(e.target.files)} />
+          <div className="mb-3">
+            <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Suno stems</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => fileRef.current?.click()} disabled={upPct !== null || running}
+                className="flex-none rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-3 py-2 text-xs text-[var(--color-ink)] transition hover:border-[var(--color-accent)] disabled:opacity-50">
+                {picked ? "Change…" : "Choose stems…"}
+              </button>
+              <span className={`min-w-0 flex-1 truncate text-xs ${path ? "text-[var(--color-ink)]" : "text-[var(--color-muted)]"}`} title={picked}>
+                {upPct !== null ? `Uploading… ${upPct}%` : path ? `✓ ${picked || path.split("/").pop()}` : "zip or stem WAVs"}
+              </span>
+              {path && upPct === null && !running && (
+                <button onClick={() => { setPath(""); setPicked(""); }} title="Clear the chosen stems"
+                  className="flex-none rounded-md px-1.5 text-[var(--color-muted)] hover:bg-[var(--color-panel2)] hover:text-red-400">✕</button>
+              )}
+            </div>
+            {upPct !== null && (
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-[#0e1015]">
+                <div className="h-full bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-accent2)] transition-all" style={{ width: `${upPct}%` }} />
+              </div>
+            )}
+          </div>
           <label className="mb-1 block">
             <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Style</span>
             <select className={inp} value={presets.length ? preset : ""} onChange={(e) => setPreset(e.target.value)}>
@@ -146,7 +196,7 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
               </select>
             </label>
           )}
-          <PrimaryButton onClick={run} disabled={busy || running}>{running ? "Measuring + mixing…" : "Analyse + mix"}</PrimaryButton>
+          <PrimaryButton onClick={run} disabled={busy || running || upPct !== null || !path}>{running ? "Measuring + mixing…" : "Analyse + mix"}</PrimaryButton>
         </div>
 
       {/* right column: the mixer */}
