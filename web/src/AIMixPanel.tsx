@@ -22,7 +22,7 @@ const SEND_OFF = -41;
 
 // ---------------------------------------------------------------- controls
 
-function Fader({ value, onChange, min = -12, max = 12, height = 132 }: { value: number; onChange: (v: number) => void; min?: number; max?: number; height?: number }) {
+function Fader({ value, onChange, mark, min = -15, max = 15, height = 132 }: { value: number; onChange: (v: number) => void; mark?: number; min?: number; max?: number; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   const pct = (value - min) / (max - min);
@@ -50,6 +50,10 @@ function Fader({ value, onChange, min = -12, max = 12, height = 132 }: { value: 
       <div className="absolute left-1/2 w-1 -translate-x-1/2 rounded-full bg-[var(--color-accent2)]"
         style={{ bottom: `${Math.min(pct, zero) * 100}%`, height: `${Math.abs(pct - zero) * 100}%` }} />
       <div className="absolute left-0 right-0 h-px bg-[var(--color-line)]" style={{ bottom: `${zero * 100}%` }} />
+      {mark !== undefined && Math.abs(mark) > 0.05 && (
+        <div className="absolute -left-1 h-0.5 w-2 rounded bg-[var(--color-accent2)]" title={`AI level: ${mark > 0 ? "+" : ""}${mark.toFixed(1)} dB`}
+          style={{ bottom: `${((Math.min(max, Math.max(min, mark)) - min) / (max - min)) * 100}%` }} />
+      )}
       <div className="absolute left-1/2 h-3 w-7 -translate-x-1/2 translate-y-1/2 rounded-md border border-[#3a3f4d] bg-[#d9dbe3] shadow"
         style={{ bottom: `${pct * 100}%` }} />
     </div>
@@ -89,6 +93,7 @@ function Strip({ name, s, selected, onSelect, set, edited }: { name: string; s: 
   const color = colorOf(groupOf(s));
   const lit = new Set(s.chain.map((c) => FX_SHORT[c.fx]).filter(Boolean));
   const aiCount = s.chain.filter((c) => c.by === "ai").length;
+  const aiDb = s.suno_lufs !== undefined ? Math.round((s.target_lufs - s.suno_lufs) * 10) / 10 : 0;   // AI's level vs Suno balance
   const send = (b: "verb" | "delay") => s.sends[b] ?? SEND_OFF;
   const setSend = (b: "verb" | "delay", v: number) => { const sends = { ...s.sends }; if (v <= SEND_OFF) delete sends[b]; else sends[b] = v; set({ sends }); };
   return (
@@ -117,8 +122,12 @@ function Strip({ name, s, selected, onSelect, set, edited }: { name: string; s: 
         </button>
       </div>
       <div onClick={(e) => e.stopPropagation()}>
-        <Fader value={s.trim_db || 0} onChange={(v) => set({ trim_db: v })} />
-        <div className="mt-1 text-center text-[11px] tabular-nums text-[var(--color-ink)]">{(s.trim_db || 0) > 0 ? "+" : ""}{(s.trim_db || 0).toFixed(1)} dB</div>
+        {/* 0 dB = Suno's own balance; the fader shows the AI's level change plus your trim, the
+            orange tick marks where the AI put it. Dragging only changes your trim. */}
+        <Fader value={aiDb + (s.trim_db || 0)} mark={aiDb} onChange={(v) => set({ trim_db: Math.round((v - aiDb) * 2) / 2 })} />
+        <div className="mt-1 text-center text-[11px] tabular-nums text-[var(--color-ink)]" title={`AI ${aiDb > 0 ? "+" : ""}${aiDb.toFixed(1)} dB${s.trim_db ? `, your trim ${s.trim_db > 0 ? "+" : ""}${s.trim_db.toFixed(1)} dB` : ""} (0 = Suno's balance)`}>
+          {aiDb + (s.trim_db || 0) > 0 ? "+" : ""}{(aiDb + (s.trim_db || 0)).toFixed(1)} dB
+        </div>
       </div>
       <button onClick={(e) => { e.stopPropagation(); set({ mute: !s.mute }); }} title="Mute this stem in the next render"
         className={`rounded-md py-1 text-[11px] font-bold ${s.mute ? "bg-[var(--color-accent)] text-white" : "bg-[#0e1015] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>M</button>

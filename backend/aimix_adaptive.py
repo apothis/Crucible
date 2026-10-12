@@ -25,6 +25,32 @@ WIDTH_MIN_GAP_DB = 2.0     # separated stems measure narrower than generated one
                            # small width gaps are inside the measurement bias and are left alone
 
 
+_PEAK_CACHE = {}
+
+
+def peak_p95(analysis, name, path):
+    """p95 of 10 ms block PEAKS (dBFS) over the stem's active frames. Compressor thresholds are set
+    from this, not from RMS: the detector follows peaks (~10 dB over RMS on vocals), so an
+    RMS-based threshold compressed far harder than its label (Even the Rain, 2026-10-12 [M])."""
+    v = (analysis.get("stats", {}).get(name) or {}).get("p95_peak_db")
+    if v is not None:
+        return v
+    if path not in _PEAK_CACHE:
+        x, sr = aimix._read(path)
+        m = np.abs(x).max(1)
+        b = int(0.01 * sr)
+        n = len(m) // b
+        pk = 20 * np.log10(m[:n * b].reshape(n, b).max(1) + 1e-9)
+        act = pk > pk.max() - 40
+        _PEAK_CACHE[path] = float(np.percentile(pk[act], 95)) if act.any() else -120.0
+    return _PEAK_CACHE[path]
+
+
+def comp_threshold(analysis, name, path, gr_db, ratio):
+    """Threshold giving ~gr_db of gain reduction on the stem's loud peaks."""
+    return peak_p95(analysis, name, path) - gr_db / (1.0 - 1.0 / ratio)
+
+
 def _clip_target(v, st):
     if v is None or st is None:
         return v
@@ -253,7 +279,7 @@ def _vocal_comp_loop(session, analysis, members, groups, gains, pst, stems_doc, 
         for n, x in raw.items():
             y = x
             if gr > 0:
-                thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
+                thr = comp_threshold(analysis, n, stem_by_name[n]["path"], gr, VOCAL_COMP["ratio"])
                 y = aimix._board([{"fx": "compressor", "threshold_db": thr, **VOCAL_COMP}])(x, sr)
                 a, b = meter.integrated_loudness(x.T), meter.integrated_loudness(y.T)
                 if np.isfinite(a) and np.isfinite(b):
@@ -273,11 +299,34 @@ def _vocal_comp_loop(session, analysis, members, groups, gains, pst, stems_doc, 
     if gr < 0.5:
         return
     for n in names:
-        thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
+        thr = comp_threshold(analysis, n, stem_by_name[n]["path"], gr, VOCAL_COMP["ratio"])
         stems_doc[n]["chain"].append({"fx": "compressor", "threshold_db": round(thr, 1), **VOCAL_COMP,
                                       "why": f"vocal spread {base:.1f} -> {-got:.1f} dB, style <= {st['p75']:.1f}"})
     notes.append(f"vocals: compress ~{gr:.1f} dB (weak moments drop {base:.1f} dB under typical vs the band; "
                  f"-> {-got:.1f}, style <= {st['p75']:.1f})")
+
+
+MAX_TASTE_GR_DB = 8.0
+TAIL_LIFT_MAX_DB = 3.0
+MAX_TASTE_SEND_DB = -16.0
+
+
+def _gap_depths(x, sr, ref):
+    """Per vocal-active 10 s window: depth of the quiet moments between words (p90 minus p10 of
+    20 ms levels). Windows are chosen on ref (the unprocessed signal) so before/after line up."""
+    b = int(0.02 * sr)
+    w = 500                                            # 10 s of 20 ms frames
+    def lv(a):
+        n = len(a) // b
+        return 10 * np.log10((a[:n * b].reshape(n, b) ** 2).mean(1) + 1e-12)
+    l, r = lv(x), lv(ref)
+    out = []
+    for i in range(min(len(l), len(r)) // w):
+        if r[i * w:(i + 1) * w].mean() < r.max() - 35:  # vocal not really present here
+            continue
+        L = l[i * w:(i + 1) * w]
+        out.append(np.percentile(L, 90) - np.percentile(L, 10))
+    return np.array(out)
 
 
 def _taste_vocals(doc, analysis, taste, notes):
@@ -292,43 +341,63 @@ def _taste_vocals(doc, analysis, taste, notes):
     lead = [n for n, s in voc.items() if s["role"] == "vocals"]
     back = [n for n, s in voc.items() if s["role"] == "backing"]
 
-    # 1. lead over backing
-    want = tv.get("lead_over_backing_db")
-    if want is not None and lead and back:
-        lv, bv, _, _, _ = T.render_vocal(doc, with_verb=False, vocals_only=True)
-        now = float(10 * np.log10(np.mean(lv ** 2) / max(np.mean(bv ** 2), 1e-20)))
-        delta = now - want
-        if abs(delta) >= 0.5:
-            for n in back:
-                doc["stems"][n]["target_lufs"] = round(doc["stems"][n]["target_lufs"] + delta, 2)
-            notes.append(f"vocals: backing {delta:+.1f} dB (lead over backing {now:.1f} -> {want:.1f} dB, {who})")
+    # 1. lead over backing: the taste's CHANGE applied to this song's own lead/backing ratio
+    dlob = tv.get("delta_lead_over_backing_db")
+    if dlob is not None and lead and back and abs(dlob) >= 0.5:
+        for n in back:
+            doc["stems"][n]["target_lufs"] = round(doc["stems"][n]["target_lufs"] - dlob, 2)
+        notes.append(f"vocals: backing {-dlob:+.1f} dB relative to the lead (the change in {who})")
 
-    # 2. compression toward the taste's within-phrase range (dry vocal)
-    want = tv.get("vocal_phrase_range_db")
-    if want is not None:
-        def pr(gr, d=doc):
-            dd = copy.deepcopy(d)
+    # 2. compression: the taste's change in within-phrase range, applied to this song's vocal;
+    #    capped, and a tail guard: in no 10 s window of the whole song may compression lift the
+    #    quiet moments between words by more than TAIL_LIFT_MAX_DB (that lift is what made the
+    #    baked-in echo of Suno's vocal audible on a sparse intro)
+    dpr = tv.get("delta_phrase_range_db")
+    if dpr is not None and dpr <= -0.5:
+        lead_x = {n: aimix._read(doc["stems"][n]["file"])[0].T.copy() for n in voc}
+
+        def comp(n, gr):
+            thr = comp_threshold(analysis, n, doc["stems"][n]["file"], gr, VOCAL_COMP["ratio"])
+            return {"fx": "compressor", "threshold_db": thr, **VOCAL_COMP}
+
+        def pr(gr):
+            dd = copy.deepcopy(doc)
             if gr > 0:
                 for n in voc:
-                    thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
-                    dd["stems"][n]["chain"] = dd["stems"][n]["chain"] + [{"fx": "compressor", "threshold_db": thr, **VOCAL_COMP}]
+                    dd["stems"][n]["chain"] = dd["stems"][n]["chain"] + [comp(n, gr)]
             _, _, v, _, sr = T.render_vocal(dd, with_verb=False, vocals_only=True)
             return F.dynamics(v.mean(1), sr)["phrase_range_db"] or 0.0
-        base = pr(0.0)
-        if base > want + 0.3:
-            gr, got = _search(lambda g: -pr(g), 0.0, 12.0, -want)
-            if gr >= 0.5:
-                for n in voc:
-                    thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
-                    doc["stems"][n]["chain"].append({"fx": "compressor", "threshold_db": round(thr, 1), **VOCAL_COMP,
-                                                     "why": f"within-phrase range {base:.1f} -> {-got:.1f} dB, {who} {want:.1f}"})
-                notes.append(f"vocals: compress ~{gr:.1f} dB (within-phrase range {base:.1f} -> {-got:.1f} dB, {who} {want:.1f})")
-        else:
-            notes.append(f"vocals: already as dense as {who} ({base:.1f} dB within-phrase range): no compression")
 
-    # 3. reverb send toward the taste's wetness (vocal + its reverb return)
-    want = tv.get("vocal_dip_db")
-    if want is not None:
+        def tail_lift(gr):
+            n0 = lead[0] if lead else next(iter(voc))
+            x = lead_x[n0]
+            sr_ = analysis["sr"]
+            y = aimix._board([comp(n0, gr)])(x, sr_)
+            before, after = _gap_depths(x.mean(0), sr_, x.mean(0)), _gap_depths(y.mean(0), sr_, x.mean(0))
+            return float(max(0.0, np.max(before - after))) if len(before) else 0.0
+
+        base = pr(0.0)
+        want = base + dpr
+        gr, got = _search(lambda g: -pr(g), 0.0, MAX_TASTE_GR_DB, -want)
+        lift = tail_lift(gr) if gr >= 0.5 else 0.0
+        while gr >= 0.5 and lift > TAIL_LIFT_MAX_DB:
+            gr -= 0.5
+            lift = tail_lift(gr)
+        if gr >= 0.5:
+            got = -pr(gr)
+            for n in voc:
+                c = comp(n, gr)
+                c["threshold_db"] = round(c["threshold_db"], 1)
+                c["why"] = f"density {base:.1f} -> {-got:.1f} dB (change in {who}: {dpr:+.1f}); tails lifted {lift:.1f} dB max"
+                doc["stems"][n]["chain"].append(c)
+            notes.append(f"vocals: compress ~{gr:.1f} dB (within-phrase range {base:.1f} -> {-got:.1f} dB, aiming {dpr:+.1f} like {who}; "
+                         f"quiet moments lifted <= {lift:.1f} dB)")
+        else:
+            notes.append(f"vocals: no compression (any amount would lift the tails between words more than {TAIL_LIFT_MAX_DB:.0f} dB)")
+
+    # 3. reverb: only if the taste's change asks for wetter AND a send actually makes it wetter
+    ddip = tv.get("delta_dip_db")
+    if ddip is not None and ddip <= -0.5:
         def dip(send):
             dd = copy.deepcopy(doc)
             for n in voc:
@@ -339,14 +408,16 @@ def _taste_vocals(doc, analysis, taste, notes):
             _, _, v, _, sr = T.render_vocal(dd, with_verb=True, vocals_only=True)
             return F.wetness(v.mean(1), sr)["dip_db"]
         base = dip(-41)
-        if base > want + 0.3:
-            send, got = _search(lambda s: -dip(s), -40.0, -12.0, -want, tol=0.3, steps=6)
+        want = base + ddip
+        top = dip(MAX_TASTE_SEND_DB)
+        if base - top < 0.5:
+            notes.append(f"vocals: no reverb (even {MAX_TASTE_SEND_DB:.0f} dB of send barely changes how wet it measures)")
+        else:
+            send, got = _search(lambda x: -dip(x), -40.0, MAX_TASTE_SEND_DB, -want, tol=0.3, steps=6)
             if send > -40:
                 for n in voc:
                     doc["stems"][n]["sends"]["verb"] = round(send)
-                notes.append(f"vocals: reverb send {round(send)} dB (gaps {base:.1f} -> {-got:.1f} dB, {who} {want:.1f})")
-        else:
-            notes.append(f"vocals: already as wet as {who} (gaps {base:.1f} dB): no reverb")
+                notes.append(f"vocals: reverb send {round(send)} dB (gaps {base:.1f} -> {-got:.1f} dB, aiming {ddip:+.1f} like {who})")
 
     # 4. vocal level LAST (after compression + reverb change its loudness): vocal over the rest,
     # broadband, toward the taste; the lead never drops below Suno's own placement
@@ -458,7 +529,7 @@ def build(session, analysis, preset, calib=None, taste=None):
             if cuts:
                 chain.append({"fx": "peq", "bands": cuts, "why": "unmask lead vocal"})
             if comp:
-                thr = st["p95_frame_db"] - comp["gr_db"] / (1.0 - 1.0 / comp["ratio"])
+                thr = comp_threshold(analysis, n, s["path"], comp["gr_db"], comp["ratio"])
                 chain.append({"fx": "compressor", "threshold_db": round(thr, 1), "ratio": comp["ratio"],
                               "attack_ms": 15, "release_ms": 150})
             stems_doc[n] = {

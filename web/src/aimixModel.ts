@@ -8,7 +8,7 @@ export type Fx = {
   attack_db?: number; sustain_db?: number; range_db?: number;
 };
 export type Stem = {
-  role: string; group?: string; mute: boolean; target_lufs: number; trim_db: number;
+  role: string; group?: string; mute: boolean; target_lufs: number; suno_lufs?: number; trim_db: number;
   width: number; low_mono_hz: number; chain: Fx[]; sends: { verb?: number; delay?: number };
 };
 export type Bus = { room_size?: number; damping?: number; predelay_ms?: number; ms?: number; feedback?: number; hpf?: number; lpf?: number };

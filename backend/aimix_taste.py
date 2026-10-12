@@ -15,7 +15,11 @@ import numpy as np
 from . import aimix
 from . import aimix_features as F
 
-TASTE_KEYS = ("vocal_phrase_range_db", "vocal_dip_db", "lead_over_backing_db", "vocal_over_rest_db")
+TASTE_KEYS = ("vocal_phrase_range_db", "vocal_dip_db", "lead_over_backing_db", "vocal_over_rest_db",
+              "delta_phrase_range_db", "delta_dip_db", "delta_lead_over_backing_db")
+# Density, wetness and lead/backing are applied as CHANGES relative to each song's own raw vocal
+# (an absolute target from one song forced 12 dB of compression onto a far more dynamic song and
+# lifted its baked-in echo, Even the Rain 2026-10-12 [M]); vocal level stays absolute.
 
 
 def path(root):
@@ -87,8 +91,18 @@ def render_vocal(doc, with_verb=True, vocals_only=False):
     return lead, back, voc, rest, sr
 
 
-def measure(doc):
-    """The vocal treatment of a mix doc, in taste terms."""
+def _raw(doc):
+    """The same doc with no processing: Suno balance, no chains, sends, width or mono lows."""
+    import copy
+    d = copy.deepcopy(doc)
+    for st in d["stems"].values():
+        st["chain"], st["sends"], st["width"], st["low_mono_hz"], st["trim_db"] = [], {}, 1.0, 0, 0.0
+        if st.get("suno_lufs") is not None:
+            st["target_lufs"] = st["suno_lufs"]
+    return d
+
+
+def _vals(doc):
     lead, back, voc, rest, sr = render_vocal(doc)
     m = voc.mean(1)
     n = min(len(voc), len(rest)) if rest is not None else 0
@@ -98,6 +112,19 @@ def measure(doc):
         out["lead_over_backing_db"] = float(10 * np.log10(np.mean(lead ** 2) / max(np.mean(back ** 2), 1e-20)))
     if n:
         out["vocal_over_rest_db"] = float(10 * np.log10(np.mean(voc[:n] ** 2) / max(np.mean(rest[:n] ** 2), 1e-20)))
+    return out
+
+
+def measure(doc):
+    """The vocal treatment of a mix doc, in taste terms: absolute values plus the change from the
+    song's own raw vocal (delta_*), which is what transfers to other songs."""
+    out = _vals(doc)
+    raw = _vals(_raw(doc))
+    out["raw"] = raw
+    for k, dk in (("vocal_phrase_range_db", "delta_phrase_range_db"), ("vocal_dip_db", "delta_dip_db"),
+                  ("lead_over_backing_db", "delta_lead_over_backing_db")):
+        if out.get(k) is not None and raw.get(k) is not None:
+            out[dk] = float(out[k] - raw[k])
     return out
 
 
