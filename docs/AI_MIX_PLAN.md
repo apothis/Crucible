@@ -402,6 +402,19 @@ element tuned per song from measurements.
   drums/guitar/piano offsets large but dominated by near-empty separated stems; one song cannot
   separate separation bias from regenerated-stem difference. NOT applied; needs more Suno packs.
 
+Ears check #1 on Dream Of Me (2026-10-12): adaptive (symphonic, auto) had the opening vocal
+"much quieter and boxed in" vs the preferred rules mix. Measured [M] at 0:15-0:50, vocal vs rest
+broadband: preferred +5.2 dB, adaptive -1.0 dB; vocal air -2.5 dB. Causes, all three confirmed:
+style-driven vocal cut (-2.1 dB), guitar compression keyed to whole-song range flattening the
+arrangement build (lifted the intro guitar), and a -3 dB 12.5 kHz shelf on vocals. Fixes
+(f65d673): lead vocal never cut below Suno placement + whole-song section guard (weakest 10 s
+windows vs style p25, max +4 dB); no vocal top cuts unless measured sibilant; compression keyed
+to within-phrase range (phrase_range_db). Adaptive v2 measured +5.3 dB at the opening, +0.9 dB
+whole song (1.9 dB above preferred). A per-section ride was tried and rejected (spent its lift on
+breath/bleed windows; opening +1.6 dB). The preferred mix's vocal openness also came from 5 dB of
+vocal compression, which v2 lacks until references carry phrase_range_db (box re-run, stems now
+kept as FLAC under _cache_<name>/stems/ so later re-measures stay on the Mac).
+
 **Phase 2: Claude planner + mix panel.**
 Analysis JSON + mix doc + schema + notes box -> Claude returns a mix-doc diff, shown before
 render. Fader/EQ/send panel bound to the mix doc, re-render without AI. Gate: does the diff
