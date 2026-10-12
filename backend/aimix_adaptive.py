@@ -348,6 +348,22 @@ def _taste_vocals(doc, analysis, taste, notes):
         else:
             notes.append(f"vocals: already as wet as {who} (gaps {base:.1f} dB): no reverb")
 
+    # 4. vocal level LAST (after compression + reverb change its loudness): vocal over the rest,
+    # broadband, toward the taste; the lead never drops below Suno's own placement
+    want = tv.get("vocal_over_rest_db")
+    if want is not None:
+        _, _, v, r, _ = T.render_vocal(doc, with_verb=True)
+        m = min(len(v), len(r))
+        now = float(10 * np.log10(np.mean(v[:m] ** 2) / max(np.mean(r[:m] ** 2), 1e-20)))
+        delta = want - now
+        leads = [voc[n] for n in lead] or list(voc.values())
+        floor = min(0.0, max(s["suno_lufs"] - s["target_lufs"] for s in leads))   # lead never below Suno placement
+        delta = max(delta, floor)
+        if abs(delta) >= 0.5:
+            for n in voc:
+                doc["stems"][n]["target_lufs"] = round(doc["stems"][n]["target_lufs"] + delta, 2)
+            notes.append(f"vocals: level {delta:+.1f} dB (vocal over the band {now:.1f} -> {now + delta:.1f} dB, {who} {want:.1f})")
+
 
 # ------------------------------------------------------------------ the mix doc
 
@@ -367,7 +383,10 @@ def build(session, analysis, preset, calib=None, taste=None):
 
     gains = solve_levels(feat, preset_c)
     stems_doc, notes = {}, []
-    gains["vocals"] = gains.get("vocals", 0.0) + _vocal_section_guard(session, analysis, members, gains, pst, notes)
+    if not (taste and (taste.get("vocals") or {}).get("vocal_over_rest_db") is not None):
+        # with a taste level the vocal level loop below replaces the guard (the guard, sized before
+        # compression, stacked with it: +1.9 dB over the preferred mix on Dream Of Me [M])
+        gains["vocals"] = gains.get("vocals", 0.0) + _vocal_section_guard(session, analysis, members, gains, pst, notes)
     stem_by_name = {s["name"]: s for s in session["stems"]}
     for role, names in members.items():
         rf, rs = feat["roles"].get(role), pst.get(role)

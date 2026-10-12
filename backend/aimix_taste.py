@@ -15,7 +15,7 @@ import numpy as np
 from . import aimix
 from . import aimix_features as F
 
-TASTE_KEYS = ("vocal_phrase_range_db", "vocal_dip_db", "lead_over_backing_db")
+TASTE_KEYS = ("vocal_phrase_range_db", "vocal_dip_db", "lead_over_backing_db", "vocal_over_rest_db")
 
 
 def path(root):
@@ -91,10 +91,13 @@ def measure(doc):
     """The vocal treatment of a mix doc, in taste terms."""
     lead, back, voc, rest, sr = render_vocal(doc)
     m = voc.mean(1)
+    n = min(len(voc), len(rest)) if rest is not None else 0
     out = {"vocal_phrase_range_db": F.dynamics(m, sr)["phrase_range_db"],
            "vocal_dip_db": F.wetness(m, sr)["dip_db"]}
     if lead is not None and back is not None:
         out["lead_over_backing_db"] = float(10 * np.log10(np.mean(lead ** 2) / max(np.mean(back ** 2), 1e-20)))
+    if n:
+        out["vocal_over_rest_db"] = float(10 * np.log10(np.mean(voc[:n] ** 2) / max(np.mean(rest[:n] ** 2), 1e-20)))
     return out
 
 

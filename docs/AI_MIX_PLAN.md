@@ -415,6 +415,18 @@ breath/bleed windows; opening +1.6 dB). The preferred mix's vocal openness also 
 vocal compression, which v2 lacks until references carry phrase_range_db (box re-run, stems now
 kept as FLAC under _cache_<name>/stems/ so later re-measures stay on the Mac).
 
+Ears check #2 (2026-10-12): v2 still worse than preferred - vocals quiet-ish and boxed. Measured
+[M] the preferred mix vs v2 vs symphonic refs: preferred vocal is MORE compressed (within-phrase
+range 1.7 vs 3.5 vs refs 6.7), wetter (dip 2.6 vs 4.7 vs 9.7), backing further under the lead
+(8.5 vs 7.1 dB), while v2's vocal was actually LOUDER in 1-5 kHz. The user's vocal taste diverges
+from the style references, so vocals now follow TASTE: star a version in Versions ->
+backend/aimix_taste.py measures its vocal treatment from the render's mix-doc snapshot
+(render_<jid>.json) into library/aimix/taste.json; adaptive closed loops then match backing level,
+vocal compression, reverb send and (last) vocal level. Dream Of Me with 1 star: compress ~6 dB,
+backing -1.4, no reverb needed after compression, level +2.6; vocal vs rest whole song -0.5 dB vs
+preferred -1.0, air -17.2 vs -17.4 [M]. Manual console (channel strips + inspector) shipped
+(086ab5b and later).
+
 **Phase 2: Claude planner + mix panel.**
 Analysis JSON + mix doc + schema + notes box -> Claude returns a mix-doc diff, shown before
 render. Fader/EQ/send panel bound to the mix doc, re-render without AI. Gate: does the diff
