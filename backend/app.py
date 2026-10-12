@@ -38,6 +38,7 @@ from . import voices as voices_mod
 from . import stems as stems_mod
 from . import mix as mix_mod
 from . import aimix as aimix_mod
+from . import aimix_refs as aimix_refs_mod
 from . import postfx as postfx_mod
 from . import master as master_mod
 from . import naturalize as naturalize_mod
@@ -6351,6 +6352,33 @@ def aimix_run(body: dict):
     return {"session": sid, "title": sess["title"], "tracks": tracks, "mixdoc": doc,
             "summary": {"fit_r": (an.get("fit") or {}).get("log_env_r"), "bpm": an.get("bpm"),
                         "silent": an.get("silent"), "mix_lufs": (an.get("mix") or {}).get("lufs")}}
+
+
+@app.get("/api/aimix/presets")
+def aimix_presets():
+    """Built style presets + any build in progress."""
+    return {"presets": aimix_refs_mod.list_presets(AIMIX_DIR), "builds": aimix_refs_mod.STATUS}
+
+
+@app.post("/api/aimix/presets/build")
+def aimix_presets_build(body: dict):
+    """Build a style preset from reference songs on this Mac: body {name, label, files:[paths]}.
+    Each song's middle 2 min is split on the box (RoFormer) and measured; only numbers are kept.
+    Runs in the background; poll GET /api/aimix/presets."""
+    name = re.sub(r"[^a-z0-9_-]", "", str(body.get("name") or "").lower())
+    files = [os.path.expanduser(str(f)) for f in body.get("files") or []]
+    if not name or not files:
+        raise HTTPException(400, "name and files required")
+    missing = [f for f in files if not os.path.isfile(f)]
+    if missing:
+        raise HTTPException(400, f"missing files: {missing[:5]}")
+    if not ROFORMER_HOST:
+        raise HTTPException(400, "roformer_host not set in app_config.json")
+    try:
+        aimix_refs_mod.start_build(AIMIX_DIR, name, body.get("label") or name, files, ROFORMER_HOST, free_gpu)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True, "name": name, "total": len(files)}
 
 
 @app.get("/api/aimix/{sid}")
