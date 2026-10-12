@@ -1,37 +1,16 @@
-import { useEffect, useState } from "react";
-import { api } from "./api";
-import { GhostButton, PrimaryButton, inp, rid, type RunCtx } from "./ui";
+import { useRef, useState } from "react";
+import { inp } from "./ui";
+import { GROUPS, clone, colorOf, groupOf, type EqMove, type Fx, type MixDoc, type Stem } from "./aimixModel";
 
-// Manual control of an AI mix (docs/AI_MIX_PLAN.md, Phase 2): the mix doc the AI wrote is the
-// starting point; every fader, send and processor here is editable, and Render files a new
-// library track from exactly what is on screen. The AI's own doc is kept separately, so any
-// stem (or the whole mix) can be reverted to the AI's version.
+// AI Mix console (docs/AI_MIX_PLAN.md, Phase 2): vertical channel strips bound to the mix doc,
+// plus an inspector for the selected strip's processors. The AI's doc is the starting point;
+// everything here is editable and Render files exactly what is on screen.
 
-type EqMove = { type: string; hz: number; db: number; q?: number };
-type Band = { hz: number; db: number; q?: number };
-export type Fx = {
-  fx: string; by?: string; why?: string;
-  hz?: number; moves?: EqMove[]; bands?: Band[];
-  threshold_db?: number; ratio?: number; attack_ms?: number; release_ms?: number;
-  attack_db?: number; sustain_db?: number; range_db?: number;
-};
-type Stem = {
-  role: string; group?: string; mute: boolean; target_lufs: number; trim_db: number;
-  width: number; low_mono_hz: number; chain: Fx[]; sends: { verb?: number; delay?: number };
-};
-type Bus = { room_size?: number; damping?: number; predelay_ms?: number; ms?: number; feedback?: number; hpf?: number; lpf?: number };
-export type MixDoc = {
-  title: string; preset?: string; notes?: string[]; stems: Record<string, Stem>;
-  buses: { verb: Bus; delay: Bus }; [k: string]: unknown;
-};
-type Render = { job_id: string; label: string; audio_url: string };
-type Session = { session: string; title: string; preset?: string; updated: number; renders: Render[] };
-
-const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 const FX_LABEL: Record<string, string> = {
   highpass: "High-pass", eq: "EQ", peq: "Unmask EQ", compressor: "Compressor", transient: "Punch", deess: "De-ess",
 };
-// Manual "add" starting values: only used when YOU add a processor; the AI sizes its own.
+const FX_SHORT: Record<string, string> = { eq: "EQ", peq: "EQ", compressor: "COMP", transient: "PUNCH", deess: "DE-ESS" };
+// Starting values only for processors YOU add; the AI sizes its own from measurements.
 const NEW_FX: Record<string, Fx> = {
   highpass: { fx: "highpass", hz: 80 },
   eq: { fx: "eq", moves: [{ type: "bell", hz: 1000, db: 0, q: 1.4 }] },
@@ -39,194 +18,241 @@ const NEW_FX: Record<string, Fx> = {
   transient: { fx: "transient", attack_db: 3, sustain_db: 0 },
   deess: { fx: "deess", range_db: 3 },
 };
+const SEND_OFF = -41;
 
-function Num({ v, set, step = 0.5, w = "w-16", title }: { v: number | undefined; set: (n: number) => void; step?: number; w?: string; title?: string }) {
-  return <input type="number" title={title} step={step} className={`${inp} ${w} px-1 py-0.5 text-xs`} value={v ?? 0}
-    onChange={(e) => set(parseFloat(e.target.value) || 0)} />;
-}
+// ---------------------------------------------------------------- controls
 
-function FxEditor({ f, set, remove }: { f: Fx; set: (p: Partial<Fx>) => void; remove: () => void }) {
-  const lab = (t: string) => <span className="text-[var(--color-muted)]">{t}</span>;
+function Fader({ value, onChange, min = -12, max = 12, height = 132 }: { value: number; onChange: (v: number) => void; min?: number; max?: number; height?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const pct = (value - min) / (max - min);
+  const zero = (0 - min) / (max - min);
+  const fromY = (clientY: number) => {
+    const r = ref.current!.getBoundingClientRect();
+    const p = 1 - Math.min(1, Math.max(0, (clientY - r.top) / r.height));
+    return Math.round((min + p * (max - min)) * 2) / 2;
+  };
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded border border-[var(--color-line)] px-2 py-1 text-xs">
-      <b>{FX_LABEL[f.fx] || f.fx}</b>
-      {f.by === "ai" && <span className="rounded bg-[var(--color-accent2)]/20 px-1 text-[10px]" title={f.why || "set by the AI from measurements"}>AI</span>}
-      {f.by === "edited" && <span className="rounded bg-[var(--color-line)] px-1 text-[10px]">edited</span>}
-      {f.fx === "highpass" && <>{lab("Hz")}<Num v={f.hz} step={5} set={(n) => set({ hz: n })} /></>}
-      {f.fx === "compressor" && <>
-        {lab("thr")}<Num v={f.threshold_db} set={(n) => set({ threshold_db: n })} />
-        {lab("ratio")}<Num v={f.ratio} step={0.5} w="w-12" set={(n) => set({ ratio: n })} />
-        {lab("att ms")}<Num v={f.attack_ms} step={1} w="w-12" set={(n) => set({ attack_ms: n })} />
-        {lab("rel ms")}<Num v={f.release_ms} step={10} w="w-14" set={(n) => set({ release_ms: n })} />
-      </>}
-      {f.fx === "transient" && <>{lab("attack dB")}<Num v={f.attack_db} set={(n) => set({ attack_db: n })} />
-        {lab("sustain dB")}<Num v={f.sustain_db} set={(n) => set({ sustain_db: n })} /></>}
-      {f.fx === "deess" && <>{lab("range dB")}<Num v={f.range_db} set={(n) => set({ range_db: n })} /></>}
-      {(f.fx === "eq" || f.fx === "peq") && (
-        <div className="flex w-full flex-col gap-1">
-          {(f.fx === "eq" ? f.moves || [] : f.bands || []).map((m, i) => (
-            <div key={i} className="flex items-center gap-2">
-              {f.fx === "eq" && (
-                <select className={`${inp} w-24 px-1 py-0.5 text-xs`} value={(m as EqMove).type}
-                  onChange={(e) => { const mv = clone(f.moves || []); mv[i].type = e.target.value; set({ moves: mv }); }}>
-                  <option value="bell">bell</option><option value="lowshelf">low shelf</option><option value="highshelf">high shelf</option>
-                </select>
-              )}
-              {lab("Hz")}<Num v={m.hz} step={10} w="w-20" set={(n) => { const k = f.fx === "eq" ? "moves" : "bands"; const a = clone((f[k] || []) as Band[]); a[i].hz = n; set({ [k]: a } as Partial<Fx>); }} />
-              {lab("dB")}<Num v={m.db} set={(n) => { const k = f.fx === "eq" ? "moves" : "bands"; const a = clone((f[k] || []) as Band[]); a[i].db = n; set({ [k]: a } as Partial<Fx>); }} />
-              {lab("Q")}<Num v={m.q ?? 1} step={0.1} w="w-12" set={(n) => { const k = f.fx === "eq" ? "moves" : "bands"; const a = clone((f[k] || []) as Band[]); a[i].q = n; set({ [k]: a } as Partial<Fx>); }} />
-              <button className="text-[var(--color-muted)] hover:text-red-400" title="Remove band"
-                onClick={() => { const k = f.fx === "eq" ? "moves" : "bands"; const a = clone((f[k] || []) as Band[]); a.splice(i, 1); set({ [k]: a } as Partial<Fx>); }}>✕</button>
-            </div>
-          ))}
-          {f.fx === "eq" && <button className="self-start text-[var(--color-accent2)]" onClick={() => set({ moves: [...(f.moves || []), { type: "bell", hz: 1000, db: 0, q: 1.4 }] })}>+ band</button>}
-        </div>
-      )}
-      {f.why && <span className="text-[var(--color-muted)]" title={f.why}>· {f.why}</span>}
-      <button className="ml-auto text-[var(--color-muted)] hover:text-red-400" title="Remove processor" onClick={remove}>✕</button>
+    <div ref={ref} role="slider" tabIndex={0} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value}
+      title="Drag to set level · double-click resets to 0 dB · arrow keys nudge"
+      className="relative mx-auto w-7 cursor-ns-resize rounded-full bg-[#0e1015] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+      style={{ height }}
+      onPointerDown={(e) => { dragging.current = true; e.currentTarget.setPointerCapture(e.pointerId); onChange(fromY(e.clientY)); }}
+      onPointerMove={(e) => { if (dragging.current) onChange(fromY(e.clientY)); }}
+      onPointerUp={() => { dragging.current = false; }}
+      onPointerCancel={() => { dragging.current = false; }}
+      onLostPointerCapture={() => { dragging.current = false; }}
+      onDoubleClick={() => onChange(0)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowUp") { e.preventDefault(); onChange(Math.min(max, value + 0.5)); }
+        if (e.key === "ArrowDown") { e.preventDefault(); onChange(Math.max(min, value - 0.5)); }
+      }}>
+      <div className="absolute left-1/2 w-1 -translate-x-1/2 rounded-full bg-[var(--color-accent2)]"
+        style={{ bottom: `${Math.min(pct, zero) * 100}%`, height: `${Math.abs(pct - zero) * 100}%` }} />
+      <div className="absolute left-0 right-0 h-px bg-[var(--color-line)]" style={{ bottom: `${zero * 100}%` }} />
+      <div className="absolute left-1/2 h-3 w-7 -translate-x-1/2 translate-y-1/2 rounded-md border border-[#3a3f4d] bg-[#d9dbe3] shadow"
+        style={{ bottom: `${pct * 100}%` }} />
     </div>
   );
 }
 
-export function AIMixPanel({ sid: initialSid, ctx, setCompare, goTo }: { sid?: string; ctx: RunCtx; setCompare: (f: (ids: string[]) => string[]) => void; goTo: (m: string) => void }) {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [sid, setSid] = useState(initialSid || "");
-  const [doc, setDoc] = useState<MixDoc | null>(null);
-  const [ai, setAi] = useState<MixDoc | null>(null);
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [label, setLabel] = useState("manual edit");
-  const [rendering, setRendering] = useState(false);
-  const [cmp, setCmp] = useState<string[]>([]);
+function Mini({ label, value, min, max, step, onChange, fmt }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; fmt: (v: number) => string }) {
+  return (
+    <label className="block w-full" title={`${label}: ${fmt(value)}`}>
+      <div className="flex justify-between text-[10px] text-[var(--color-muted)]"><span>{label}</span><span className="tabular-nums text-[var(--color-ink)]">{fmt(value)}</span></div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="h-1 w-full cursor-pointer" style={{ accentColor: "var(--color-accent2)" }} />
+    </label>
+  );
+}
 
-  const loadSessions = () => api.aimixSessions().then((r) => setSessions((r as { sessions: Session[] }).sessions)).catch(() => setSessions([]));
-  const loadDoc = (s: string) => api.aimixGet(s)
-    .then((r) => { const x = r as { mixdoc: MixDoc; mixdoc_ai: MixDoc }; setDoc(x.mixdoc); setAi(x.mixdoc_ai); })
-    .catch(() => setDoc(null));
-  const openSession = (s: string) => { setSid(s); setCmp([]); if (s) loadDoc(s); else setDoc(null); };
-  // the parent remounts this panel (key) when a new run finishes, so mount = (re)load
-  useEffect(() => { loadSessions(); if (initialSid) loadDoc(initialSid); }, [initialSid]);
+function Field({ label, unit, v, set, step = 0.5 }: { label: string; unit?: string; v: number | undefined; set: (n: number) => void; step?: number }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-muted)]">{label}{unit ? ` (${unit})` : ""}</span>
+      <input type="number" step={step} value={v ?? 0} onChange={(e) => set(parseFloat(e.target.value) || 0)}
+        className={`${inp} px-2 py-1 text-xs tabular-nums`} />
+    </label>
+  );
+}
 
-  if (!sessions.length && !doc) return null;
-  const cur = sessions.find((s) => s.session === sid);
+function Badge({ by, why }: { by?: string; why?: string }) {
+  if (by === "ai") return <span className="rounded-full bg-[var(--color-accent2)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent2)]" title={why || "Set by the AI from measurements"}>AI</span>;
+  if (by === "edited") return <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-[10px] font-semibold text-sky-300">Edited</span>;
+  if (by === "user") return <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-[10px] font-semibold text-sky-300">Added</span>;
+  return null;
+}
 
-  const setStem = (n: string, p: Partial<Stem>) => setDoc((d) => d && { ...d, stems: { ...d.stems, [n]: { ...d.stems[n], ...p } } });
-  const setFx = (n: string, i: number, p: Partial<Fx>) => setDoc((d) => {
-    if (!d) return d;
-    const chain = clone(d.stems[n].chain);
+// ---------------------------------------------------------------- strip
+
+function Strip({ name, s, selected, onSelect, set, edited }: { name: string; s: Stem; selected: boolean; onSelect: () => void; set: (p: Partial<Stem>) => void; edited: boolean }) {
+  const color = colorOf(groupOf(s));
+  const lit = new Set(s.chain.map((c) => FX_SHORT[c.fx]).filter(Boolean));
+  const aiCount = s.chain.filter((c) => c.by === "ai").length;
+  const send = (b: "verb" | "delay") => s.sends[b] ?? SEND_OFF;
+  const setSend = (b: "verb" | "delay", v: number) => { const sends = { ...s.sends }; if (v <= SEND_OFF) delete sends[b]; else sends[b] = v; set({ sends }); };
+  return (
+    <div onClick={onSelect}
+      className={`flex w-[92px] flex-none cursor-pointer flex-col gap-2 rounded-xl border p-2 transition ${selected ? "border-[var(--color-accent)] bg-[#221a19]" : "border-[var(--color-line)] bg-[var(--color-panel2)] hover:border-[#3a3f4d]"} ${s.mute ? "opacity-55" : ""}`}>
+      <div className="h-1 rounded-full" style={{ background: color }} />
+      <div className="min-h-[44px]">
+        <div className="line-clamp-2 break-words text-xs font-semibold leading-tight text-[var(--color-ink)]" title={name}>{name.replace(/_/g, " ")}</div>
+        <div className="flex items-center gap-1 text-[10px] text-[var(--color-muted)]">
+          {aiCount > 0 && <span className="text-[var(--color-accent2)]" title={`${aiCount} AI-set processor(s)`}>AI·{aiCount}</span>}
+          {edited && <span className="text-sky-300" title="You changed this strip">● edited</span>}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {["EQ", "COMP", "PUNCH", "DE-ESS"].map((k) => (
+          <span key={k} className={`rounded px-1 py-px text-[9px] font-semibold ${lit.has(k) ? "bg-[var(--color-accent2)]/20 text-[var(--color-accent2)]" : "bg-[#0e1015] text-[#4b5060]"}`}>{k}</span>
+        ))}
+      </div>
+      <div onClick={(e) => e.stopPropagation()} className="space-y-1.5">
+        <Mini label="Width" value={s.width ?? 1} min={0} max={2} step={0.05} onChange={(v) => set({ width: v })} fmt={(v) => `${Math.round(v * 100)}%`} />
+        <Mini label="Reverb" value={send("verb")} min={SEND_OFF} max={-10} step={1} onChange={(v) => setSend("verb", v)} fmt={(v) => v <= SEND_OFF ? "off" : `${v}`} />
+        <Mini label="Delay" value={send("delay")} min={SEND_OFF} max={-10} step={1} onChange={(v) => setSend("delay", v)} fmt={(v) => v <= SEND_OFF ? "off" : `${v}`} />
+        <button onClick={() => set({ low_mono_hz: s.low_mono_hz ? 0 : 150 })} title="Make everything below this frequency mono"
+          className={`w-full whitespace-nowrap rounded-full border px-1 py-0.5 text-[10px] ${s.low_mono_hz ? "border-[var(--color-accent)] bg-[#2a1c19] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-muted)]"}`}>
+          {s.low_mono_hz ? `Mono <${s.low_mono_hz} Hz` : "Mono lows"}
+        </button>
+      </div>
+      <div onClick={(e) => e.stopPropagation()}>
+        <Fader value={s.trim_db || 0} onChange={(v) => set({ trim_db: v })} />
+        <div className="mt-1 text-center text-[11px] tabular-nums text-[var(--color-ink)]">{(s.trim_db || 0) > 0 ? "+" : ""}{(s.trim_db || 0).toFixed(1)} dB</div>
+      </div>
+      <button onClick={(e) => { e.stopPropagation(); set({ mute: !s.mute }); }} title="Mute this stem in the next render"
+        className={`rounded-md py-1 text-[11px] font-bold ${s.mute ? "bg-[var(--color-accent)] text-white" : "bg-[#0e1015] text-[var(--color-muted)] hover:text-[var(--color-ink)]"}`}>M</button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- inspector
+
+function FxCard({ f, set, remove }: { f: Fx; set: (p: Partial<Fx>) => void; remove: () => void }) {
+  const list = (f.fx === "eq" ? f.moves : f.bands) || [];
+  const key = f.fx === "eq" ? "moves" : "bands";
+  const setBand = (i: number, p: Partial<EqMove>) => { const a = clone(list) as EqMove[]; a[i] = { ...a[i], ...p }; set({ [key]: a } as Partial<Fx>); };
+  return (
+    <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel2)] p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <b className="text-sm text-[var(--color-ink)]">{FX_LABEL[f.fx] || f.fx}</b>
+        <Badge by={f.by} why={f.why} />
+        <button onClick={remove} title="Remove this processor" className="ml-auto rounded-md px-2 text-[var(--color-muted)] hover:bg-[#0e1015] hover:text-red-400">✕</button>
+      </div>
+      {f.why && <p className="mb-2 text-[11px] text-[var(--color-muted)]">{f.why}</p>}
+      {f.fx === "highpass" && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Field label="Cutoff" unit="Hz" step={5} v={f.hz} set={(n) => set({ hz: n })} /></div>}
+      {f.fx === "compressor" && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Field label="Threshold" unit="dB" v={f.threshold_db} set={(n) => set({ threshold_db: n })} />
+          <Field label="Ratio" unit=":1" v={f.ratio} set={(n) => set({ ratio: n })} />
+          <Field label="Attack" unit="ms" step={1} v={f.attack_ms} set={(n) => set({ attack_ms: n })} />
+          <Field label="Release" unit="ms" step={10} v={f.release_ms} set={(n) => set({ release_ms: n })} />
+        </div>
+      )}
+      {f.fx === "transient" && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Field label="Attack boost" unit="dB" v={f.attack_db} set={(n) => set({ attack_db: n })} />
+          <Field label="Sustain" unit="dB" v={f.sustain_db} set={(n) => set({ sustain_db: n })} />
+        </div>
+      )}
+      {f.fx === "deess" && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Field label="Max reduction" unit="dB" v={f.range_db} set={(n) => set({ range_db: n })} /></div>}
+      {(f.fx === "eq" || f.fx === "peq") && (
+        <div className="space-y-2">
+          {list.map((m, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] items-end gap-2">
+              {f.fx === "eq" ? (
+                <label className="block"><span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-muted)]">Type</span>
+                  <select className={`${inp} px-2 py-1 text-xs`} value={(m as EqMove).type} onChange={(e) => setBand(i, { type: e.target.value })}>
+                    <option value="bell">Bell</option><option value="lowshelf">Low shelf</option><option value="highshelf">High shelf</option>
+                  </select></label>
+              ) : <div className="pb-1.5 text-[11px] text-[var(--color-muted)]">Cut</div>}
+              <Field label="Freq" unit="Hz" step={10} v={m.hz} set={(n) => setBand(i, { hz: n })} />
+              <Field label="Gain" unit="dB" v={m.db} set={(n) => setBand(i, { db: n })} />
+              <Field label="Q" step={0.1} v={m.q ?? 1} set={(n) => setBand(i, { q: n })} />
+              <button title="Remove band" className="pb-1.5 text-[var(--color-muted)] hover:text-red-400"
+                onClick={() => { const a = clone(list); a.splice(i, 1); set({ [key]: a } as Partial<Fx>); }}>✕</button>
+            </div>
+          ))}
+          {f.fx === "eq" && <button className="text-xs text-[var(--color-accent2)] hover:underline" onClick={() => set({ moves: [...(f.moves || []), { type: "bell", hz: 1000, db: 0, q: 1.4 }] })}>+ Add band</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Console({ doc, ai, setDoc }: { doc: MixDoc; ai: MixDoc | null; setDoc: (f: (d: MixDoc) => MixDoc) => void }) {
+  const names = Object.keys(doc.stems).sort((a, b) =>
+    GROUPS.findIndex((g) => g.id === groupOf(doc.stems[a])) - GROUPS.findIndex((g) => g.id === groupOf(doc.stems[b])));
+  const [sel, setSel] = useState<string>(names[0] || "");
+  const s = doc.stems[sel];
+  const setStem = (n: string, p: Partial<Stem>) => setDoc((d) => ({ ...d, stems: { ...d.stems, [n]: { ...d.stems[n], ...p } } }));
+  const setFx = (i: number, p: Partial<Fx>) => setDoc((d) => {
+    const chain = clone(d.stems[sel].chain);
     chain[i] = { ...chain[i], ...p, by: chain[i].by === "user" ? "user" : "edited" };
-    return { ...d, stems: { ...d.stems, [n]: { ...d.stems[n], chain } } };
+    return { ...d, stems: { ...d.stems, [sel]: { ...d.stems[sel], chain } } };
   });
-  const delFx = (n: string, i: number) => setDoc((d) => {
-    if (!d) return d;
-    const chain = clone(d.stems[n].chain); chain.splice(i, 1);
-    return { ...d, stems: { ...d.stems, [n]: { ...d.stems[n], chain } } };
-  });
-  const addFx = (n: string, kind: string) => setDoc((d) => {
-    if (!d || !NEW_FX[kind]) return d;
-    return { ...d, stems: { ...d.stems, [n]: { ...d.stems[n], chain: [...d.stems[n].chain, { ...clone(NEW_FX[kind]), by: "user" }] } } };
-  });
-  const setBus = (b: "verb" | "delay", p: Partial<Bus>) => setDoc((d) => d && { ...d, buses: { ...d.buses, [b]: { ...d.buses[b], ...p } } });
-  const notesFor = (n: string, s: Stem) => (doc?.notes || []).filter((t) => t.startsWith(`${s.group || s.role}:`) || t.startsWith(`${n}:`));
-
-  async function render() {
-    if (!doc || !sid) return;
-    const id = rid();
-    setRendering(true);
-    ctx.setResults([{ id, title: `rendering "${label}"… (Mac, ~30 s)`, status: "running", pct: 40 }]);
-    try {
-      const r = await api.aimixRender(sid, { mixdoc: doc, label }) as { track: Render };
-      ctx.setResults([{ id: rid(), title: r.track.label, status: "done", pct: 100, url: r.track.audio_url }]);
-      ctx.onDone();
-      setCmp((c) => [...c, r.track.job_id]);
-      loadSessions();
-    } catch (e) { ctx.patch(id, { status: "error", pct: 0, err: (e as Error).message }); }
-    finally { setRendering(false); }
-  }
+  const delFx = (i: number) => setDoc((d) => { const chain = clone(d.stems[sel].chain); chain.splice(i, 1); return { ...d, stems: { ...d.stems, [sel]: { ...d.stems[sel], chain } } }; });
+  const addFx = (k: string) => setDoc((d) => ({ ...d, stems: { ...d.stems, [sel]: { ...d.stems[sel], chain: [...d.stems[sel].chain, { ...clone(NEW_FX[k]), by: "user" }] } } }));
+  const edited = (n: string) => !!ai?.stems[n] && JSON.stringify(ai.stems[n]) !== JSON.stringify(doc.stems[n]);
+  const notes = s ? (doc.notes || []).filter((t) => t.startsWith(`${groupOf(s)}:`) || t.startsWith(`${sel}:`)) : [];
 
   return (
-    <div className="space-y-3 border-t border-[var(--color-line)] pt-4">
-      <div className="flex items-center gap-2">
-        <b className="text-sm">Mixer</b>
-        <select className={`${inp} flex-1 text-xs`} value={sid} onChange={(e) => openSession(e.target.value)}>
-          <option value="">— open an AI mix session —</option>
-          {sessions.map((s) => <option key={s.session} value={s.session}>{s.title} · {s.preset || "fixed rules"} · {new Date(s.updated * 1000).toLocaleString()}</option>)}
-        </select>
-      </div>
-      {doc && (
-        <>
-          <p className="text-xs text-[var(--color-muted)]">
-            Start from the AI's mix, change anything, then Render: each render is a new library track, so nothing is lost.
-            Items marked <b>AI</b> were set from measurements (hover for why); <b>edited</b> = changed by you.
-          </p>
-          <div className="space-y-1">
-            {Object.entries(doc.stems).map(([n, s]) => (
-              <div key={n} className={`rounded border border-[var(--color-line)] ${s.mute ? "opacity-50" : ""}`}>
-                <div className="flex flex-wrap items-center gap-2 px-2 py-1 text-xs">
-                  <button className="w-4 text-[var(--color-muted)]" onClick={() => setOpen((o) => ({ ...o, [n]: !o[n] }))}>{open[n] ? "▾" : "▸"}</button>
-                  <b className="w-28 truncate" title={`${s.role} (${s.group || s.role})`}>{n}</b>
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={s.mute} onChange={(e) => setStem(n, { mute: e.target.checked })} />mute</label>
-                  <span className="text-[var(--color-muted)]">level</span>
-                  <input type="range" min={-12} max={12} step={0.5} value={s.trim_db || 0} onChange={(e) => setStem(n, { trim_db: parseFloat(e.target.value) })} className="w-24" />
-                  <span className="w-12 tabular-nums">{(s.trim_db || 0) > 0 ? "+" : ""}{(s.trim_db || 0).toFixed(1)}</span>
-                  <span className="text-[var(--color-muted)]">width</span><Num v={s.width} step={0.05} w="w-14" set={(v) => setStem(n, { width: v })} />
-                  <span className="text-[var(--color-muted)]">mono &lt;</span>
-                  <select className={`${inp} w-20 px-1 py-0.5 text-xs`} value={s.low_mono_hz || 0} onChange={(e) => setStem(n, { low_mono_hz: parseInt(e.target.value) })}>
-                    {[0, 100, 120, 150, 200].map((v) => <option key={v} value={v}>{v ? `${v} Hz` : "off"}</option>)}
-                  </select>
-                  {(["verb", "delay"] as const).map((b) => (
-                    <span key={b} className="flex items-center gap-1">
-                      <span className="text-[var(--color-muted)]">{b}</span>
-                      <select className={`${inp} w-20 px-1 py-0.5 text-xs`} value={s.sends[b] ?? "off"}
-                        onChange={(e) => { const sends = { ...s.sends }; if (e.target.value === "off") delete sends[b]; else sends[b] = parseFloat(e.target.value); setStem(n, { sends }); }}>
-                        <option value="off">off</option>
-                        {[-34, -30, -28, -26, -24, -22, -20, -18, -16, -14, -12].map((v) => <option key={v} value={v}>{v} dB</option>)}
-                      </select>
-                    </span>
-                  ))}
-                  {ai?.stems[n] && <button className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Put this stem back to what the AI chose"
-                    onClick={() => setDoc((d) => d && { ...d, stems: { ...d.stems, [n]: clone(ai.stems[n]) } })}>↺ AI</button>}
-                </div>
-                {open[n] && (
-                  <div className="space-y-1 border-t border-[var(--color-line)] px-2 py-2">
-                    {notesFor(n, s).map((t, i) => <div key={i} className="text-[11px] text-[var(--color-muted)]">AI: {t}</div>)}
-                    {s.chain.map((f, i) => <FxEditor key={i} f={f} set={(p) => setFx(n, i, p)} remove={() => delFx(n, i)} />)}
-                    <select className={`${inp} w-44 text-xs`} value="" onChange={(e) => { addFx(n, e.target.value); }}>
-                      <option value="">+ add processor…</option>
-                      {Object.keys(NEW_FX).map((k) => <option key={k} value={k}>{FX_LABEL[k]}</option>)}
-                    </select>
-                  </div>
-                )}
+    <div className="space-y-4">
+      <div className="overflow-x-auto pb-2">
+        <div className="flex gap-2">
+          {names.map((n, i) => {
+            const g = groupOf(doc.stems[n]);
+            const first = i === 0 || groupOf(doc.stems[names[i - 1]]) !== g;
+            return (
+              <div key={n} className={`flex flex-col ${first && i > 0 ? "ml-2" : ""}`}>
+                <div className="mb-1 h-4 text-[10px] font-semibold uppercase tracking-wide" style={{ color: colorOf(g) }}>{first ? GROUPS.find((x) => x.id === g)?.label : ""}</div>
+                <Strip name={n} s={doc.stems[n]} selected={n === sel} onSelect={() => setSel(n)} set={(p) => setStem(n, p)} edited={edited(n)} />
               </div>
-            ))}
+            );
+          })}
+        </div>
+      </div>
+
+      {s && (
+        <div className="rounded-[14px] border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="h-3 w-3 rounded-full" style={{ background: colorOf(groupOf(s)) }} />
+            <h3 className="text-[15px] font-semibold text-[var(--color-ink)]">{sel.replace(/_/g, " ")}</h3>
+            <span className="text-xs text-[var(--color-muted)]">processors run top to bottom, then the strip's level, width and sends</span>
+            {ai?.stems[sel] && edited(sel) && (
+              <button onClick={() => setDoc((d) => ({ ...d, stems: { ...d.stems, [sel]: clone(ai.stems[sel]) } }))}
+                className="ml-auto rounded-full border border-[var(--color-line)] px-3 py-1 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">↺ Revert strip to AI</button>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2 rounded border border-[var(--color-line)] px-2 py-1 text-xs">
-            <b>Reverb bus</b>
-            <span className="text-[var(--color-muted)]">size</span><Num v={doc.buses.verb.room_size} step={0.05} w="w-14" set={(v) => setBus("verb", { room_size: v })} />
-            <span className="text-[var(--color-muted)]">damping</span><Num v={doc.buses.verb.damping} step={0.05} w="w-14" set={(v) => setBus("verb", { damping: v })} />
-            <span className="text-[var(--color-muted)]">pre-delay ms</span><Num v={doc.buses.verb.predelay_ms} step={5} w="w-14" set={(v) => setBus("verb", { predelay_ms: v })} />
-            <b className="ml-3">Delay bus</b>
-            <span className="text-[var(--color-muted)]">ms</span><Num v={doc.buses.delay.ms} step={5} w="w-16" set={(v) => setBus("delay", { ms: v })} />
-            <span className="text-[var(--color-muted)]">feedback</span><Num v={doc.buses.delay.feedback} step={0.05} w="w-14" set={(v) => setBus("delay", { feedback: v })} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input className={`${inp} w-60 text-xs`} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="label for this render" title="Shown in the library title" />
-            <PrimaryButton onClick={render} disabled={rendering}>{rendering ? "Rendering…" : "Render"}</PrimaryButton>
-            {ai && <GhostButton onClick={() => setDoc(clone(ai))} title="Discard all edits and go back to the AI's mix">↺ Revert all to AI</GhostButton>}
-          </div>
-          {cur && cur.renders.length > 0 && (
-            <div className="space-y-1 text-xs">
-              <div className="text-[var(--color-muted)]">Renders from this session: tick the ones to A/B, then open Compare.</div>
-              {cur.renders.map((r) => (
-                <label key={r.job_id} className="flex items-center gap-2">
-                  <input type="checkbox" checked={cmp.includes(r.job_id)} onChange={(e) => setCmp((c) => e.target.checked ? [...c, r.job_id] : c.filter((x) => x !== r.job_id))} />
-                  {r.label}
-                </label>
-              ))}
-              <GhostButton onClick={() => { setCompare(() => cmp); goTo("compare"); }} disabled={cmp.length < 2}>Compare ticked ({cmp.length})</GhostButton>
+          {notes.length > 0 && (
+            <div className="mb-3 rounded-lg bg-[#0e1015] p-2.5 text-[11px] leading-relaxed text-[var(--color-muted)]">
+              <div className="mb-1 font-semibold text-[var(--color-accent2)]">Why the AI did this ({GROUPS.find((x) => x.id === groupOf(s))?.label} group)</div>
+              {notes.map((t, i) => <div key={i}>· {t.replace(/^[^:]+:\s*/, "")}</div>)}
             </div>
           )}
-        </>
+          <div className="space-y-2">
+            {s.chain.length === 0 && <p className="text-xs text-[var(--color-muted)]">No processors on this stem.</p>}
+            {s.chain.map((f, i) => <FxCard key={i} f={f} set={(p) => setFx(i, p)} remove={() => delFx(i)} />)}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-[var(--color-muted)]">Add:</span>
+            {Object.keys(NEW_FX).map((k) => (
+              <button key={k} onClick={() => addFx(k)} className="se-pill hover:text-[var(--color-ink)]">+ {FX_LABEL[k]}</button>
+            ))}
+          </div>
+        </div>
       )}
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border border-[var(--color-line)] bg-[var(--color-panel)] px-4 py-3 text-xs">
+        <b className="text-[var(--color-ink)]">Reverb bus</b>
+        <div className="w-28"><Mini label="Size" value={doc.buses.verb.room_size ?? 0.35} min={0} max={1} step={0.05} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, verb: { ...d.buses.verb, room_size: v } } }))} fmt={(v) => v.toFixed(2)} /></div>
+        <div className="w-28"><Mini label="Damping" value={doc.buses.verb.damping ?? 0.5} min={0} max={1} step={0.05} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, verb: { ...d.buses.verb, damping: v } } }))} fmt={(v) => v.toFixed(2)} /></div>
+        <div className="w-28"><Mini label="Pre-delay" value={doc.buses.verb.predelay_ms ?? 30} min={0} max={120} step={5} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, verb: { ...d.buses.verb, predelay_ms: v } } }))} fmt={(v) => `${v} ms`} /></div>
+        <span className="mx-1 h-6 w-px bg-[var(--color-line)]" />
+        <b className="text-[var(--color-ink)]">Delay bus</b>
+        <div className="w-28"><Mini label="Time" value={doc.buses.delay.ms ?? 500} min={50} max={1200} step={5} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, delay: { ...d.buses.delay, ms: v } } }))} fmt={(v) => `${Math.round(v)} ms`} /></div>
+        <div className="w-28"><Mini label="Feedback" value={doc.buses.delay.feedback ?? 0.25} min={0} max={0.8} step={0.05} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, delay: { ...d.buses.delay, feedback: v } } }))} fmt={(v) => `${Math.round(v * 100)}%`} /></div>
+      </div>
     </div>
   );
 }

@@ -219,9 +219,139 @@ def deess(x, sr, range_db, lo=5000.0, hi=9000.0):
     return (x - band * (1 - g)).astype(np.float32)
 
 
+VOCAL_COMP = {"ratio": 3.0, "attack_ms": 8, "release_ms": 120}
+MAX_VOCAL_GR_DB = 10.0
+
+
+def _vocal_comp_loop(session, analysis, members, groups, gains, pst, stems_doc, stem_by_name, sr, notes):
+    """Closed loop: compress the vocal stems (same gain reduction on lead and backing), restore
+    their loudness (as the renderer's level landing does), and re-measure presence_spread_db
+    (median minus p10 of vocal-over-rest, 1-5 kHz) against the rest of the mix at the solved
+    levels. Search the gain reduction until the spread is inside the style band. Off when the
+    preset lacks the measure or the vocal is already even enough."""
+    import pyloudnorm as pyln
+    st = pst.get("vocals", {}).get("presence_spread_db")
+    names = members.get("vocals", [])
+    if not st or not names:
+        return
+    meter = pyln.Meter(sr)
+    rest = None
+    for role, x in groups.items():
+        if role != "vocals":
+            y = x * (10 ** (gains.get(role, 0.0) / 20.0))
+            rest = y if rest is None else rest[:len(y)] + y[:len(rest)]
+    if rest is None:
+        return
+    raw = {}
+    for n in names:
+        x, _ = aimix._read(stem_by_name[n]["path"])
+        raw[n] = _excerpt(x, sr).T.copy()
+    gv = gains.get("vocals", 0.0)
+
+    def spread(gr):
+        voc = None
+        for n, x in raw.items():
+            y = x
+            if gr > 0:
+                thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
+                y = aimix._board([{"fx": "compressor", "threshold_db": thr, **VOCAL_COMP}])(x, sr)
+                a, b = meter.integrated_loudness(x.T), meter.integrated_loudness(y.T)
+                if np.isfinite(a) and np.isfinite(b):
+                    y = y * (10 ** ((a - b) / 20.0))           # level landing
+            y = y.T * (10 ** ((analysis["gains_db"][n] + gv) / 20.0))
+            voc = y if voc is None else voc[:len(y)] + y[:len(voc)]
+        m = min(len(voc), len(rest))
+        return F.presence_spread(voc[:m].mean(1), rest[:m].mean(1), sr)
+
+    base = spread(0.0)
+    if base is None:
+        return
+    if base <= st["p75"]:
+        notes.append(f"vocals: spread {base:.1f} dB already inside style (<= {st['p75']:.1f}): no vocal compression")
+        return
+    gr, got = _search(lambda g: -(spread(g) or 0.0), 0.0, MAX_VOCAL_GR_DB, -st["p75"])
+    if gr < 0.5:
+        return
+    for n in names:
+        thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
+        stems_doc[n]["chain"].append({"fx": "compressor", "threshold_db": round(thr, 1), **VOCAL_COMP,
+                                      "why": f"vocal spread {base:.1f} -> {-got:.1f} dB, style <= {st['p75']:.1f}"})
+    notes.append(f"vocals: compress ~{gr:.1f} dB (weak moments drop {base:.1f} dB under typical vs the band; "
+                 f"-> {-got:.1f}, style <= {st['p75']:.1f})")
+
+
+def _taste_vocals(doc, analysis, taste, notes):
+    """Closed loops toward the user's starred versions, on the vocal group only: backing level
+    (lead over backing), vocal compression (within-phrase range of the dry vocal), vocal reverb
+    send (dip depth of vocal + its reverb). Each loop measures the actual rendered vocal."""
+    import copy
+    from . import aimix_taste as T
+    tv, k = taste["vocals"], len(taste.get("picks", []))
+    who = f"your taste ({k} starred version{'s' if k != 1 else ''})"
+    voc = {n: s for n, s in doc["stems"].items() if s.get("group") == "vocals"}
+    lead = [n for n, s in voc.items() if s["role"] == "vocals"]
+    back = [n for n, s in voc.items() if s["role"] == "backing"]
+
+    # 1. lead over backing
+    want = tv.get("lead_over_backing_db")
+    if want is not None and lead and back:
+        lv, bv, _, _, _ = T.render_vocal(doc, with_verb=False, vocals_only=True)
+        now = float(10 * np.log10(np.mean(lv ** 2) / max(np.mean(bv ** 2), 1e-20)))
+        delta = now - want
+        if abs(delta) >= 0.5:
+            for n in back:
+                doc["stems"][n]["target_lufs"] = round(doc["stems"][n]["target_lufs"] + delta, 2)
+            notes.append(f"vocals: backing {delta:+.1f} dB (lead over backing {now:.1f} -> {want:.1f} dB, {who})")
+
+    # 2. compression toward the taste's within-phrase range (dry vocal)
+    want = tv.get("vocal_phrase_range_db")
+    if want is not None:
+        def pr(gr, d=doc):
+            dd = copy.deepcopy(d)
+            if gr > 0:
+                for n in voc:
+                    thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
+                    dd["stems"][n]["chain"] = dd["stems"][n]["chain"] + [{"fx": "compressor", "threshold_db": thr, **VOCAL_COMP}]
+            _, _, v, _, sr = T.render_vocal(dd, with_verb=False, vocals_only=True)
+            return F.dynamics(v.mean(1), sr)["phrase_range_db"] or 0.0
+        base = pr(0.0)
+        if base > want + 0.3:
+            gr, got = _search(lambda g: -pr(g), 0.0, 12.0, -want)
+            if gr >= 0.5:
+                for n in voc:
+                    thr = analysis["stats"][n]["p95_frame_db"] - gr / (1.0 - 1.0 / VOCAL_COMP["ratio"])
+                    doc["stems"][n]["chain"].append({"fx": "compressor", "threshold_db": round(thr, 1), **VOCAL_COMP,
+                                                     "why": f"within-phrase range {base:.1f} -> {-got:.1f} dB, {who} {want:.1f}"})
+                notes.append(f"vocals: compress ~{gr:.1f} dB (within-phrase range {base:.1f} -> {-got:.1f} dB, {who} {want:.1f})")
+        else:
+            notes.append(f"vocals: already as dense as {who} ({base:.1f} dB within-phrase range): no compression")
+
+    # 3. reverb send toward the taste's wetness (vocal + its reverb return)
+    want = tv.get("vocal_dip_db")
+    if want is not None:
+        def dip(send):
+            dd = copy.deepcopy(doc)
+            for n in voc:
+                if send <= -40:
+                    dd["stems"][n]["sends"].pop("verb", None)
+                else:
+                    dd["stems"][n]["sends"]["verb"] = send
+            _, _, v, _, sr = T.render_vocal(dd, with_verb=True, vocals_only=True)
+            return F.wetness(v.mean(1), sr)["dip_db"]
+        base = dip(-41)
+        if base > want + 0.3:
+            send, got = _search(lambda s: -dip(s), -40.0, -12.0, -want, tol=0.3, steps=6)
+            if send > -40:
+                for n in voc:
+                    doc["stems"][n]["sends"]["verb"] = round(send)
+                notes.append(f"vocals: reverb send {round(send)} dB (gaps {base:.1f} -> {-got:.1f} dB, {who} {want:.1f})")
+        else:
+            notes.append(f"vocals: already as wet as {who} (gaps {base:.1f} dB): no reverb")
+
+
 # ------------------------------------------------------------------ the mix doc
 
-def build(session, analysis, preset, calib=None):
+def build(session, analysis, preset, calib=None, taste=None):
     """Adaptive mix doc. calib: optional role -> feature -> offset (separated minus generated),
     subtracted from preset bands so the comparison happens in the Suno-stem domain."""
     groups, members, sr = suno_groups(session, analysis)
@@ -266,7 +396,7 @@ def build(session, analysis, preset, calib=None):
         # range (an arrangement build would get flattened and lift sparse intros over the vocal).
         # Presets measured before phrase_range_db existed get no range compression.
         comp = None
-        rng = rs.get("phrase_range_db")
+        rng = rs.get("phrase_range_db") if role != "vocals" else None   # vocals: spread loop below
         if rf and rng and rf.get("phrase_range_db") is not None and rf["phrase_range_db"] > rng["p75"]:
             excess = rf["phrase_range_db"] - rng["p75"]
             comp = {"ratio": 3.0, "gr_db": float(min(excess, 8.0))}
@@ -338,6 +468,8 @@ def build(session, analysis, preset, calib=None):
                              f"{pst_d['p25']:.1f}..{pst_d['p75']:.1f})")
         else:
             notes.append(f"drums: punch already in style range ({base:.1f} dB, style {pst_d['p25']:.1f}..{pst_d['p75']:.1f}): no shaper")
+    if not (taste and (taste.get("vocals") or {}).get("vocal_phrase_range_db") is not None):
+        _vocal_comp_loop(session, analysis, members, groups, gains, pst, stems_doc, stem_by_name, sr, notes)
     pst_s = pst.get("vocals", {}).get("sib_db")
     if pst_s:
         for n in members.get("vocals", []):
@@ -352,7 +484,7 @@ def build(session, analysis, preset, calib=None):
                     notes.append(f"{n}: de-ess up to {amt:.1f} dB (bursts {base:.1f} dB -> {-got:.1f}, style <= {pst_s['p75']:.1f})")
 
     mix_lufs = (analysis.get("mix") or {}).get("lufs")
-    return {
+    doc = {
         "version": 2, "title": session["title"], "mode": "remix", "source": "suno_stems",
         "preset": preset["name"], "preset_label": preset.get("label"), "sample_rate": analysis["sr"],
         "calibrated": bool(calib), "notes": notes, "measured": feat,
@@ -365,3 +497,7 @@ def build(session, analysis, preset, calib=None):
         "master": {"tone": "flat", "glue": False, "target_lufs": mix_lufs, "ceiling_db": -1.0},
         "provenance": [{"layer": "adaptive", "preset": preset["name"]}],
     }
+    if taste and taste.get("vocals"):
+        _taste_vocals(doc, analysis, taste, notes)
+        doc["provenance"].append({"layer": "taste", "picks": len(taste.get("picks", []))})
+    return doc

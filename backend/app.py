@@ -40,6 +40,7 @@ from . import mix as mix_mod
 from . import aimix as aimix_mod
 from . import aimix_refs as aimix_refs_mod
 from . import aimix_adaptive as aimix_adaptive_mod
+from . import aimix_taste as aimix_taste_mod
 from . import postfx as postfx_mod
 from . import master as master_mod
 from . import naturalize as naturalize_mod
@@ -6313,6 +6314,8 @@ def _aimix_file(sid, d, doc, variant, label, processed):
     title = f"{doc['title']} (AI mix: {label})"
     save_done_row(jid, "mix", {"title": title, "aimix": sid, "variant": variant,
                                "profile": doc.get("profile"), "source": doc["title"]}, out)
+    aimix_mod.save_json(os.path.join(d, f"render_{jid}.json"),            # snapshot: lets a star re-measure it
+                        {**doc, "_render": {"processed": processed}})
     return {"job_id": jid, "label": title, "audio_url": f"/api/audio/{jid}"}
 
 
@@ -6347,7 +6350,7 @@ def aimix_run(body: dict):
                 picked = want_preset
             else:
                 raise HTTPException(400, f"unknown preset: {want_preset}")
-            doc = aimix_adaptive_mod.build(sess, an, presets[picked])
+            doc = aimix_adaptive_mod.build(sess, an, presets[picked], taste=aimix_taste_mod.load(AIMIX_DIR))
             doc["preset_scores"] = scores
         else:
             doc = aimix_mod.build_mixdoc(sess, an, profile)
@@ -6431,6 +6434,32 @@ def aimix_sessions():
     for o in out:
         o["renders"] = renders.get(o["session"], [])
     return {"sessions": sorted(out, key=lambda o: -o["updated"])}
+
+
+@app.get("/api/aimix/taste")
+def aimix_taste_get():
+    return aimix_taste_mod.load(AIMIX_DIR) or {"picks": [], "vocals": {}}
+
+
+@app.post("/api/aimix/{sid}/prefer")
+def aimix_prefer(sid: str, body: dict):
+    """Star (or unstar) a version: its vocal treatment, measured from the render's mix-doc
+    snapshot, becomes part of the taste targets the AI uses for vocals on every song."""
+    d = _aimix_session_dir(sid)
+    jid = os.path.basename(str(body.get("job_id") or ""))
+    if body.get("remove"):
+        return aimix_taste_mod.remove_preferred(AIMIX_DIR, jid) or {"picks": []}
+    snap = os.path.join(d, f"render_{jid}.json")
+    if not os.path.exists(snap):
+        raise HTTPException(400, "this version has no mix-doc snapshot (only versions rendered by the mixer can be starred)")
+    with open(snap) as f:
+        doc = json.load(f)
+    if not doc.get("_render", {}).get("processed", True):
+        raise HTTPException(400, "the plain stem sum has no vocal treatment to learn from")
+    try:
+        return aimix_taste_mod.add_preferred(AIMIX_DIR, doc, {"session": sid, "job_id": jid, "title": doc.get("title")})
+    except Exception as e:
+        raise HTTPException(500, f"could not measure that version: {e}")
 
 
 @app.get("/api/aimix/{sid}")

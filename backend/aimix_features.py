@@ -188,8 +188,8 @@ def presence_windows(voc, rest, sr, win_s=10.0):
     return out
 
 
-def presence_ratio(voc, rest, sr):
-    """Vocal over everything else in 1-5 kHz, median over vocal-active 100 ms frames (dB)."""
+def presence_frames(voc, rest, sr):
+    """Vocal-over-rest in 1-5 kHz per vocal-active 100 ms frame (dB array, may be empty)."""
     from scipy.signal import butter, sosfilt
     sos = butter(4, [1000, 5000], "bandpass", fs=sr, output="sos")
     v, r = sosfilt(sos, voc), sosfilt(sos, rest)
@@ -197,7 +197,21 @@ def presence_ratio(voc, rest, sr):
     sr_, _ = _frames(r, sr, 100)
     lv, lr = _db((sv ** 2).mean(1)), _db((sr_ ** 2).mean(1))
     act = lv > np.percentile(lv, 40)
-    return float(np.median(lv[act] - lr[act])) if act.any() else None
+    return lv[act] - lr[act]
+
+
+def presence_ratio(voc, rest, sr):
+    """Vocal over everything else in 1-5 kHz, median over vocal-active 100 ms frames (dB)."""
+    d = presence_frames(voc, rest, sr)
+    return float(np.median(d)) if len(d) else None
+
+
+def presence_spread(voc, rest, sr):
+    """Median minus 10th percentile of the per-frame vocal-over-rest (dB): how far the vocal's
+    weak moments (soft syllables, tails, breaths) drop under the band relative to its typical
+    level. Vocal compression narrows exactly this; it is independent of overall vocal level."""
+    d = presence_frames(voc, rest, sr)
+    return float(np.median(d) - np.percentile(d, 10)) if len(d) > 20 else None
 
 
 def song_features(stems: dict, sr: int) -> dict:
@@ -219,6 +233,7 @@ def song_features(stems: dict, sr: int) -> dict:
     if "vocals" in stems and "vocals" in out["roles"]:
         rest = (mix - stems["vocals"]).mean(1)
         out["roles"]["vocals"]["presence_db"] = presence_ratio(stems["vocals"].mean(1), rest, sr)
+        out["roles"]["vocals"]["presence_spread_db"] = presence_spread(stems["vocals"].mean(1), rest, sr)
     return out
 
 

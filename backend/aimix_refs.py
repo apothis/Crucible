@@ -143,6 +143,36 @@ def resummarize(root, name):
     return p
 
 
+def remeasure_from_stems(root, name):
+    """Re-run the feature extractor on a preset's SAVED reference stems (FLAC, from a build with
+    keep_dir) and rebuild its stats. Mac-only: no box time for measurement-rule changes."""
+    import soundfile as sf
+    cache = os.path.join(preset_dir(root), f"_cache_{name}")
+    sdir = os.path.join(cache, "stems")
+    n = 0
+    for key in sorted(os.listdir(sdir)):
+        cp = os.path.join(cache, f"{key}.json")
+        if not os.path.exists(cp):
+            continue
+        with open(cp) as fh:
+            old = json.load(fh)
+        stems, sr = {}, None
+        for role in F.ROLES:
+            p = os.path.join(sdir, key, f"{role}.flac")
+            if os.path.exists(p):
+                x, sr = sf.read(p, dtype="float32", always_2d=True)
+                stems[role] = x
+        if not stems:
+            continue
+        f = F.song_features(stems, sr)
+        f["source"] = old.get("source")
+        with open(cp, "w") as fh:
+            json.dump(f, fh)
+        n += 1
+    resummarize(root, name)
+    return n
+
+
 def start_build(root, name, label, files, host, free_gpu=None, refresh=False):
     with _LOCK:
         if STATUS.get(name, {}).get("state") == "running":
