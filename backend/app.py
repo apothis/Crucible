@@ -39,6 +39,7 @@ from . import stems as stems_mod
 from . import mix as mix_mod
 from . import aimix as aimix_mod
 from . import aimix_refs as aimix_refs_mod
+from . import aimix_adaptive as aimix_adaptive_mod
 from . import postfx as postfx_mod
 from . import master as master_mod
 from . import naturalize as naturalize_mod
@@ -6325,13 +6326,31 @@ def aimix_run(body: dict):
     if not path or not os.path.exists(path):
         raise HTTPException(400, "path to a Suno stems zip or folder required")
     profile = body.get("profile") or "rock"
+    want_preset = str(body.get("preset") or "")          # "" = fixed rules, "auto" = nearest preset
     sid = uuid.uuid4().hex
     d = os.path.join(AIMIX_DIR, sid)
     os.makedirs(d, exist_ok=True)
     try:
         sess = aimix_mod.ingest(path, d)
         an = aimix_mod.analyse(sess)
-        doc = aimix_mod.build_mixdoc(sess, an, profile)
+        picked, scores = None, None
+        if want_preset:
+            names = [p["name"] for p in aimix_refs_mod.list_presets(AIMIX_DIR)]
+            if not names:
+                raise HTTPException(400, "no style presets built yet")
+            presets = {n: aimix_refs_mod.load_preset(AIMIX_DIR, n) for n in names}
+            if want_preset == "auto":
+                if not sess.get("mix"):
+                    raise HTTPException(400, "auto preset needs the full mix in the download")
+                picked, scores = aimix_adaptive_mod.pick_preset(aimix_adaptive_mod.mix_features(sess["mix"]), presets)
+            elif want_preset in presets:
+                picked = want_preset
+            else:
+                raise HTTPException(400, f"unknown preset: {want_preset}")
+            doc = aimix_adaptive_mod.build(sess, an, presets[picked])
+            doc["preset_scores"] = scores
+        else:
+            doc = aimix_mod.build_mixdoc(sess, an, profile)
         aimix_mod.save_json(os.path.join(d, "session.json"), sess)
         aimix_mod.save_json(os.path.join(d, "analysis.json"), an)
         aimix_mod.save_json(os.path.join(d, "mixdoc.json"), doc)
@@ -6344,14 +6363,17 @@ def aimix_run(body: dict):
             save_done_row(iid, "suno", {"title": title, "engine": "suno", "imported": True, "aimix": sid}, ref)
             tracks.append({"job_id": iid, "label": title, "audio_url": f"/api/audio/{iid}"})
         tracks.append(_aimix_file(sid, d, doc, "plain", "Suno-balance stem sum", processed=False))
-        tracks.append(_aimix_file(sid, d, doc, "rules", f"rules, {profile}", processed=True))
+        tracks.append(_aimix_file(sid, d, doc, "rules",
+                                  (f"adaptive, {picked}" + (" (auto)" if want_preset == "auto" else "")) if picked
+                                  else f"rules, {profile}", processed=True))
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"AI mix failed: {e}")
     return {"session": sid, "title": sess["title"], "tracks": tracks, "mixdoc": doc,
             "summary": {"fit_r": (an.get("fit") or {}).get("log_env_r"), "bpm": an.get("bpm"),
-                        "silent": an.get("silent"), "mix_lufs": (an.get("mix") or {}).get("lufs")}}
+                        "silent": an.get("silent"), "mix_lufs": (an.get("mix") or {}).get("lufs"),
+                        "preset": picked, "preset_scores": scores, "notes": doc.get("notes", [])}}
 
 
 @app.get("/api/aimix/presets")

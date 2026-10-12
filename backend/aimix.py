@@ -381,14 +381,17 @@ def _apply_chain(chain, x, sr):
     """Run a chain: consecutive pedalboard-native steps as one board, custom DSP in between."""
     run = []
     for c in chain + [None]:
-        if c is not None and c["fx"] != "transient":
+        if c is not None and c["fx"] not in ("transient", "deess"):
             run.append(c)
             continue
         if run:
             x = _board(run)(x, sr)
             run = []
-        if c is not None:
+        if c is not None and c["fx"] == "transient":
             x = _transient(x, sr, float(c.get("attack_db", 0)), float(c.get("sustain_db", 0)))
+        elif c is not None and c["fx"] == "deess":
+            from .aimix_adaptive import deess
+            x = deess(x, sr, float(c.get("range_db", 0)))
     return x
 
 
@@ -400,6 +403,15 @@ def _board(chain):
             plugins.append(pb.HighpassFilter(cutoff_frequency_hz=float(c["hz"])))
         elif c["fx"] == "lowpass":
             plugins.append(pb.LowpassFilter(cutoff_frequency_hz=float(c["hz"])))
+        elif c["fx"] == "eq":
+            for m in c["moves"]:
+                if m["type"] == "lowshelf":
+                    plugins.append(pb.LowShelfFilter(cutoff_frequency_hz=float(m["hz"]), gain_db=float(m["db"]), q=0.7))
+                elif m["type"] == "highshelf":
+                    plugins.append(pb.HighShelfFilter(cutoff_frequency_hz=float(m["hz"]), gain_db=float(m["db"]), q=0.7))
+                else:
+                    plugins.append(pb.PeakFilter(cutoff_frequency_hz=float(m["hz"]), gain_db=float(m["db"]),
+                                                 q=float(m.get("q", 1.4))))
         elif c["fx"] == "peq":
             for b in c["bands"]:
                 plugins.append(pb.PeakFilter(cutoff_frequency_hz=float(b["hz"]), gain_db=float(b["db"]),

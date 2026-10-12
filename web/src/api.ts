@@ -174,6 +174,7 @@ export const api = {
   mix: (p: unknown) => jpost("/api/mix", p),
   aimixRun: (p: unknown) => jpost("/api/aimix/run", p),
   aimixGet: (sid: string) => jget(`/api/aimix/${sid}`),
+  aimixPresets: () => jget("/api/aimix/presets"),
   aimixRender: (sid: string, p: unknown) => jpost(`/api/aimix/${sid}/render`, p),
   stitch: (p: unknown) => jpost("/api/stitch", p),
   voiceSearch: (q: string, sort: string) =>

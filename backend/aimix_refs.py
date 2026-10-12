@@ -119,6 +119,23 @@ def build(root, name, label, files, host, free_gpu=None):
     return st
 
 
+def resummarize(root, name):
+    """Rebuild a preset's stats from its per-song cache (after a measurement-rule change),
+    without touching the box."""
+    p = load_preset(root, name)
+    cache = os.path.join(preset_dir(root), f"_cache_{name}")
+    songs = []
+    for f in sorted(os.listdir(cache)):
+        if f.endswith(".json"):
+            with open(os.path.join(cache, f)) as fh:
+                songs.append(json.load(fh))
+    p["stats"] = F.summarize(songs)
+    p["songs"] = [s["source"] for s in songs]
+    with open(os.path.join(preset_dir(root), f"{name}.json"), "w") as fh:
+        json.dump(p, fh, indent=1)
+    return p
+
+
 def start_build(root, name, label, files, host, free_gpu=None):
     with _LOCK:
         if STATUS.get(name, {}).get("state") == "running":

@@ -197,6 +197,14 @@ def song_features(stems: dict, sr: int) -> dict:
     return out
 
 
+ABSENT_REL_DB = -24.0      # a role this far below the mix is separation residue, not a part
+
+
+def present(role_feat) -> bool:
+    r = role_feat.get("rel_lufs")
+    return r is not None and r > ABSENT_REL_DB
+
+
 def summarize(songs: list) -> dict:
     """Preset = per role, per scalar feature: median / p25 / p75 / n; LTAS as per-band median
     and IQR. Songs missing a role simply don't count for it."""
@@ -217,7 +225,7 @@ def summarize(songs: list) -> dict:
     out["mix"] = {k: agg([s["mix"].get(k) for s in songs]) for k in keys}
     out["mix"]["ltas"] = agg_vec([s["mix"]["ltas"] for s in songs])
     for role in ROLES:
-        rs = [s["roles"][role] for s in songs if role in s["roles"]]
+        rs = [s["roles"][role] for s in songs if role in s["roles"] and present(s["roles"][role])]
         if not rs:
             continue
         ks = sorted({k for r in rs for k in r if k != "ltas"})
