@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { useDrafts } from "./drafts";
 import { Field, inp, PrimaryButton, GhostButton, rid, type RunCtx } from "./ui";
+import { AIMixPanel } from "./AIMixPanel";
 
 // AI Mix (docs/AI_MIX_PLAN.md, Phase 1): builds a new mix FROM a Suno stem download. The
 // full mix in the zip is only the reference: its balance seeds the stem levels, its loudness
@@ -116,6 +117,7 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
           </table>
         </div>
       )}
+      <AIMixPanel key={res?.session || "none"} sid={res?.session} ctx={ctx} setCompare={setCompare} goTo={goTo} />
     </div>
   );
 }

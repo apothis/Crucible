@@ -6353,7 +6353,11 @@ def aimix_run(body: dict):
             doc = aimix_mod.build_mixdoc(sess, an, profile)
         aimix_mod.save_json(os.path.join(d, "session.json"), sess)
         aimix_mod.save_json(os.path.join(d, "analysis.json"), an)
+        for st_ in doc["stems"].values():               # provenance for the manual panel
+            for c in st_.get("chain", []):
+                c.setdefault("by", "ai")
         aimix_mod.save_json(os.path.join(d, "mixdoc.json"), doc)
+        aimix_mod.save_json(os.path.join(d, "mixdoc_ai.json"), doc)   # never overwritten: "Revert to AI"
         tracks = []
         if sess.get("mix"):
             iid = uuid.uuid4().hex
@@ -6404,14 +6408,43 @@ def aimix_presets_build(body: dict):
     return {"ok": True, "name": name, "total": len(files)}
 
 
+@app.get("/api/aimix/sessions")
+def aimix_sessions():
+    """AI mix sessions, newest first, with the library renders filed from each."""
+    out = []
+    if os.path.isdir(AIMIX_DIR):
+        for sid in os.listdir(AIMIX_DIR):
+            p = os.path.join(AIMIX_DIR, sid, "mixdoc.json")
+            if not re.fullmatch(r"[0-9a-f]{32}", sid) or not os.path.exists(p):
+                continue
+            with open(p) as f:
+                doc = json.load(f)
+            out.append({"session": sid, "title": doc.get("title"), "preset": doc.get("preset"),
+                        "updated": os.path.getmtime(p)})
+    with db() as conn:
+        rows = conn.execute("SELECT id, params, created FROM jobs WHERE params LIKE '%\"aimix\"%' ORDER BY created").fetchall()
+    renders = {}
+    for r in rows:
+        prm = json.loads(r["params"])
+        renders.setdefault(prm.get("aimix"), []).append({"job_id": r["id"], "label": prm.get("title"),
+                                                        "audio_url": f"/api/audio/{r['id']}"})
+    for o in out:
+        o["renders"] = renders.get(o["session"], [])
+    return {"sessions": sorted(out, key=lambda o: -o["updated"])}
+
+
 @app.get("/api/aimix/{sid}")
 def aimix_get(sid: str):
     d = _aimix_session_dir(sid)
     with open(os.path.join(d, "mixdoc.json")) as f:
         doc = json.load(f)
-    with open(os.path.join(d, "analysis.json")) as f:
-        an = json.load(f)
-    return {"session": sid, "mixdoc": doc, "analysis": an}
+    ai = os.path.join(d, "mixdoc_ai.json")
+    if os.path.exists(ai):
+        with open(ai) as f:
+            ai_doc = json.load(f)
+    else:
+        ai_doc = doc
+    return {"session": sid, "mixdoc": doc, "mixdoc_ai": ai_doc}
 
 
 @app.post("/api/aimix/{sid}/render")
