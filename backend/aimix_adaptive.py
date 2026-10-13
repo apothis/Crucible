@@ -198,6 +198,10 @@ def eq_moves(ltas, st):
             break
         db = float(np.clip(gap[k], -MAX_EQ_DB, MAX_EQ_DB))
         hz = F.THIRD_OCT[k]
+        n_ = len(gap)
+        if (k <= 2 and used[:6].any()) or (k >= n_ - 2 and used[n_ - 6:].any()):
+            used[k] = True                       # a bell already covers this edge: no shelf stacked on it
+            continue
         if k <= 2:
             moves.append({"type": "lowshelf", "hz": 63.0, "db": round(db, 1)})
             used[:6] = True                      # a shelf covers the bottom: no bell stacked on it
@@ -207,6 +211,10 @@ def eq_moves(ltas, st):
         else:
             moves.append({"type": "bell", "hz": float(hz), "q": 1.4, "db": round(db, 1)})
             used[max(0, k - 2):k + 3] = True
+            if k <= 5:
+                used[:k] = True                  # nothing below a low bell either (no shelf under it)
+            if k >= len(gap) - 6:
+                used[k:] = True
     return moves
 
 

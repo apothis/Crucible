@@ -135,7 +135,18 @@ def ingest(path: str, work_dir: str) -> dict:
                     shutil.copy2(os.path.join(path, f), os.path.join(src, f))
             title = os.path.splitext(zips[0])[0]
         else:
-            src = path
+            # link (same volume) or copy the stems into the session, so the session never depends
+            # on the chosen folder staying where it is
+            import shutil
+            src = os.path.join(work_dir, "src")
+            os.makedirs(src, exist_ok=True)
+            for f in os.listdir(path):
+                if os.path.splitext(f)[1].lower() in AUDIO_EXT and not f.startswith("."):
+                    dst = os.path.join(src, f)
+                    try:
+                        os.link(os.path.join(path, f), dst)
+                    except OSError:
+                        shutil.copy2(os.path.join(path, f), dst)
             base = os.path.basename(os.path.normpath(path))
             title = None if re.fullmatch(r"[0-9a-f]{32}", base) else base
     else:
