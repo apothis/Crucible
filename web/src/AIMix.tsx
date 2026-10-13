@@ -108,14 +108,16 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
     const list = Array.from(files || []).filter((f) => /\.(zip|wav|flac|mp3)$/i.test(f.name));
     if (!list.length) return;
     const zip = list.find((f) => /\.zip$/i.test(f.name));
-    const send = zip ? [zip] : list;
+    const send = zip ? [zip, ...list.filter((f) => f !== zip && /\.(wav|flac)$/i.test(f.name))] : list;
     const total = send.reduce((a, f) => a + f.size, 0);
     setUpPct(0); setPath("");
     try {
       let batch = "", last = { batch: "", path: "" }, done = 0;
       for (const f of send) { last = await sendFile(f, batch, done, total); batch = last.batch; done += f.size; }
-      setPath(last.path);
-      setPicked(zip ? zip.name : send.length === 1 ? send[0].name : `${send.length} stem files`);
+      // several files (e.g. stems zip + the full song) -> hand the backend the whole batch folder
+      setPath(send.length > 1 && /\.zip$/i.test(last.path) ? last.path.replace(/\/[^/]+$/, "") : last.path);
+      setPicked(zip ? (send.length > 1 ? `${zip.name} + ${send.length - 1} file${send.length > 2 ? "s" : ""}` : zip.name)
+        : send.length === 1 ? send[0].name : `${send.length} files`);
     } catch (e) { ctx.setResults([{ id: rid(), title: "Upload failed", status: "error", pct: 0, err: (e as Error).message }]); }
     finally { setUpPct(null); if (fileRef.current) fileRef.current.value = ""; }
   }
@@ -157,7 +159,7 @@ export function AIMixForm({ busy, setCompare, goTo, ...ctx }: { busy: boolean; s
     <div className="grid grid-cols-1 items-start gap-4 @5xl:grid-cols-[320px_minmax(0,1fr)] @5xl:grid-rows-[auto_auto_1fr]">
         <div className={`${card} @5xl:col-start-1 @5xl:row-start-1`}>
           <h2 className={h}>New AI mix</h2>
-          <p className={`${hint} mb-3`}>Choose a Suno stem download: the zip, or all the stem WAVs. The AI measures every stem group against a style made from real reference songs and only fixes what is outside that style.</p>
+          <p className={`${hint} mb-3`}>Choose a Suno stem download: the zip, or all the stem WAVs. If the download has no full mix (Suno's regular library download), also select the full song WAV for a better starting balance. The AI measures every stem group against a style made from real reference songs and only fixes what is outside that style.</p>
           <input ref={fileRef} type="file" multiple accept=".zip,.wav,.flac,.mp3" className="hidden" onChange={(e) => choose(e.target.files)} />
           <div className="mb-3">
             <span className="mb-1.5 block text-xs text-[var(--color-muted)]">Suno stems</span>

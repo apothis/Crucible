@@ -39,6 +39,7 @@ ROLE_PATTERNS = [
     ("woodwinds", r"woodwind|flute|clarinet|sax|oboe"),
     ("percussion", r"perc|shaker|tamb|conga"),
     ("fx", r"^fx$|sfx|effect|riser|ambien"),
+    ("other", r"\bother\b"),
 ]
 
 # Per-role defaults [H]. hpf = high-pass Hz (lowered automatically if the stem has real content
@@ -88,51 +89,84 @@ def role_of(name: str) -> str:
     return ""
 
 
+def _extract_zip(zpath, src):
+    with zipfile.ZipFile(zpath) as z:
+        for m in z.infolist():
+            base = os.path.basename(m.filename)
+            if m.is_dir() or base.startswith(".") or os.path.splitext(base)[1].lower() not in AUDIO_EXT:
+                continue
+            with z.open(m) as fi, open(os.path.join(src, base), "wb") as fo:
+                while True:
+                    chunk = fi.read(1 << 20)
+                    if not chunk:
+                        break
+                    fo.write(chunk)
+
+
+AUDIO_EXT = (".wav", ".flac")
+
+
 def ingest(path: str, work_dir: str) -> dict:
-    """Locate stems + full mix in a Suno zip or folder. Zip members are extracted (wav only,
-    flattened, no path components) into work_dir/src. Returns
-    {title, mix: path|None, stems: [{name, role, path}]}."""
+    """Locate stems + (optional) full mix in a Suno zip, a folder, or a folder holding a zip plus
+    loose files (e.g. the stems zip + the full song chosen together). Zip members are extracted
+    (audio only, flattened) into work_dir/src. Returns {title, mix: path|None, stems: [...]}.
+
+    Both Suno download kinds are handled: Studio "Get Stems" numbers the full mix "0 <title>"
+    and the stems 1..12; the regular library download has NO full mix and numbers stems from
+    "0 Lead Vocals" incl. an "Other" stem. A file only counts as the full mix if it is the one
+    file whose name is not a stem name; an unknown stem name is never mistaken for the mix when
+    there are several (Gleipnir, 2026-10-14: "9 Other" was taken for the mix)."""
+    title = None
     if os.path.isfile(path) and path.lower().endswith(".zip"):
         src = os.path.join(work_dir, "src")
         os.makedirs(src, exist_ok=True)
-        with zipfile.ZipFile(path) as z:
-            for m in z.infolist():
-                base = os.path.basename(m.filename)
-                if m.is_dir() or not base.lower().endswith(".wav") or base.startswith("."):
-                    continue
-                with z.open(m) as fi, open(os.path.join(src, base), "wb") as fo:
-                    while True:
-                        chunk = fi.read(1 << 20)
-                        if not chunk:
-                            break
-                        fo.write(chunk)
+        _extract_zip(path, src)
         title = os.path.splitext(os.path.basename(path))[0]
     elif os.path.isdir(path):
-        src = path
-        title = os.path.basename(os.path.normpath(path))
+        zips = [f for f in os.listdir(path) if f.lower().endswith(".zip") and not f.startswith(".")]
+        if zips:
+            src = os.path.join(work_dir, "src")
+            os.makedirs(src, exist_ok=True)
+            for zf in zips:
+                _extract_zip(os.path.join(path, zf), src)
+            for f in os.listdir(path):                      # loose files chosen alongside the zip
+                if os.path.splitext(f)[1].lower() in AUDIO_EXT and not f.startswith("."):
+                    import shutil
+                    shutil.copy2(os.path.join(path, f), os.path.join(src, f))
+            title = os.path.splitext(zips[0])[0]
+        else:
+            src = path
+            base = os.path.basename(os.path.normpath(path))
+            title = None if re.fullmatch(r"[0-9a-f]{32}", base) else base
     else:
         raise ValueError(f"not a zip or folder: {path}")
 
-    wavs = sorted(f for f in os.listdir(src) if f.lower().endswith(".wav") and not f.startswith("."))
+    files = sorted(f for f in os.listdir(src) if os.path.splitext(f)[1].lower() in AUDIO_EXT and not f.startswith("."))
     stems, unmatched = [], []
-    for f in wavs:
+    for f in files:
         name = os.path.splitext(f)[0]
         role = role_of(name)
         (stems if role else unmatched).append({"name": re.sub(r"^\d+\s*", "", name), "role": role,
                                                "path": os.path.join(src, f)})
     mix = None
-    if unmatched:
-        # Suno numbers the full mix "0 <title>.wav"; otherwise the one named like the title.
-        zero = [u for u in unmatched if re.match(r"^0\s", os.path.basename(u["path"]))]
-        pick = zero[0] if zero else unmatched[0]
-        mix = pick["path"]
-        title = pick["name"] or title
-        for u in unmatched:
-            if u is not pick:
-                stems.append({**u, "role": "other"})
+    if len(unmatched) == 1:
+        mix = unmatched[0]["path"]
+    elif len(unmatched) > 1:
+        # several unknown names: only a "0 <x>" file or one named like the zip is the mix
+        cand = [u for u in unmatched if re.match(r"^0\s", os.path.basename(u["path"]))
+                or (title and u["name"].lower() == re.sub(r"\s*\(.*\)$", "", title).lower())]
+        if len(cand) == 1:
+            mix = cand[0]["path"]
+    for u in unmatched:
+        if u["path"] != mix:
+            stems.append({**u, "role": "other"})
+    if mix and not title:
+        title = re.sub(r"^\d+\s*", "", os.path.splitext(os.path.basename(mix))[0])
+    if title:
+        title = re.sub(r"\s*[-_(]*\s*stems?\s*\)?\s*$", "", title, flags=re.I).strip() or title
     if not stems:
         raise ValueError("no stems found")
-    return {"title": title, "mix": mix, "stems": stems}
+    return {"title": title or "Untitled", "mix": mix, "stems": stems}
 
 
 # ---------------------------------------------------------------- analysis
@@ -227,9 +261,14 @@ def analyse(session: dict) -> dict:
         for n, wi in zip(names, w):
             rep["gains_db"][n] = float(np.clip(10 * np.log10(wi), -30, 12)) if wi > 0 else -30.0
     else:
-        # no mix: level every stem to -24 LUFS as a neutral start
+        # No full mix (Suno's regular library download): start from the stems' own delivered
+        # levels. Those stems sum to a plausible finished level (Gleipnir: -13.4 LUFS) so they
+        # look mix-balanced [H, unverifiable without the mix]; the adaptive level solve then
+        # pulls any group outside the style's range back in. (The old -24 LUFS-each fallback
+        # made every stem equally loud.)
         for n in names:
-            rep["gains_db"][n] = float(-24.0 - stats[n]["lufs"])
+            rep["gains_db"][n] = 0.0
+        rep["fit"] = {"no_mix": True}
 
     # masking of the lead vocal by every other stem, in the vocal bands (after Suno balance)
     voc = next((s["name"] for s in live if s["role"] == "vocals"), None)

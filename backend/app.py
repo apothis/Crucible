@@ -6346,9 +6346,9 @@ def aimix_run(body: dict):
                 raise HTTPException(400, "no style presets built yet")
             presets = {n: aimix_refs_mod.load_preset(AIMIX_DIR, n) for n in names}
             if want_preset == "auto":
-                if not sess.get("mix"):
-                    raise HTTPException(400, "auto preset needs the full mix in the download")
-                picked, scores = aimix_adaptive_mod.pick_preset(aimix_adaptive_mod.mix_features(sess["mix"]), presets)
+                feats = (aimix_adaptive_mod.mix_features(sess["mix"]) if sess.get("mix")
+                         else aimix_adaptive_mod.mix_features(session=sess))      # no full mix: the stems' sum
+                picked, scores = aimix_adaptive_mod.pick_preset(feats, presets)
             elif want_preset in presets:
                 picked = want_preset
             else:
@@ -6357,6 +6357,17 @@ def aimix_run(body: dict):
             doc["preset_scores"] = scores
         else:
             doc = aimix_mod.build_mixdoc(sess, an, profile)
+        if not sess.get("mix") and doc.get("master", {}).get("target_lufs") is None:
+            # no Suno mix to match loudness to: master to the stems' own summed loudness (what the
+            # song was delivered at), kept inside a sane -16..-10 LUFS window
+            import pyloudnorm as _pyln
+            tot, sr_ = None, None
+            for st_ in sess["stems"]:
+                y_, sr_ = aimix_mod._read(st_["path"])
+                tot = y_ if tot is None else tot[:len(y_)] + y_[:len(tot)]
+            l_ = _pyln.Meter(sr_).integrated_loudness(tot)
+            doc["master"]["target_lufs"] = float(min(-10.0, max(-16.0, l_))) if l_ == l_ else -14.0
+            doc.setdefault("notes", []).append(f"master: no Suno full mix in this download, so loudness matches the stems' own sum ({doc['master']['target_lufs']:.1f} LUFS)")
         aimix_mod.save_json(os.path.join(d, "session.json"), sess)
         aimix_mod.save_json(os.path.join(d, "analysis.json"), an)
         for st_ in doc["stems"].values():               # provenance for the manual panel

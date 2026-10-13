@@ -82,9 +82,16 @@ def suno_groups(session, analysis, gains_db=None):
     return groups, members, sr
 
 
-def mix_features(path):
-    """Whole-mix shape features of a full mix (middle excerpt), comparable to preset['stats']['mix']."""
-    x, sr = aimix._read(path)
+def mix_features(path=None, session=None):
+    """Whole-mix shape features of a full mix (middle excerpt), comparable to preset['stats']['mix'].
+    Without a full mix, the plain sum of the session's stems stands in for it."""
+    if path:
+        x, sr = aimix._read(path)
+    else:
+        x, sr = None, None
+        for st in session["stems"]:
+            y, sr = aimix._read(st["path"])
+            x = y if x is None else x[:len(y)] + y[:len(x)]
     x = _excerpt(x, sr)
     out = {"ltas": F.ltas(x.mean(1), sr)}
     out.update(F.dynamics(x.mean(1), sr))
@@ -193,11 +200,13 @@ def eq_moves(ltas, st):
         hz = F.THIRD_OCT[k]
         if k <= 2:
             moves.append({"type": "lowshelf", "hz": 63.0, "db": round(db, 1)})
+            used[:6] = True                      # a shelf covers the bottom: no bell stacked on it
         elif k >= len(gap) - 2:
             moves.append({"type": "highshelf", "hz": 12500.0, "db": round(db, 1)})
+            used[len(gap) - 6:] = True
         else:
             moves.append({"type": "bell", "hz": float(hz), "q": 1.4, "db": round(db, 1)})
-        used[max(0, k - 2):k + 3] = True
+            used[max(0, k - 2):k + 3] = True
     return moves
 
 
