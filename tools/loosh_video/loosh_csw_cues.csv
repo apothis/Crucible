@@ -1,0 +1,19 @@
+# Country Boy Can't Survive in a Salad World, 185.8 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.96), M = measured from bass/loudness curves
+start,end,section,still,move,source
+0.0,13.4,intro,CSW-00_cover_card,pull,W
+13.4,17.6,verse1a,CSW-01_kale_gas_station,push,W
+17.6,21.0,verse1b,CSW-02_quinoa_menu,push,W
+21.0,28.1,verse1c,CSW-06_salad_bar,panR,W
+28.1,36.8,prechorus1,CSW-03_last_man_standing,pull,W
+36.8,52.0,chorus1,CSW-04_skillet_thumbnail,push,W
+52.0,72.1,drop1,CSW-05_gravy_drop,push,M
+72.1,85.4,verse2,CSW-07_smoothie,panL,W
+85.4,92.5,prechorus2,CSW-08_pass_the_gravy,push,W
+92.5,108.0,chorus2,CSW-04_skillet_thumbnail,pull,W
+108.0,121.6,drop2,CSW-05_gravy_drop,panL,M
+121.6,137.5,bridge_build,CSW-09_aint_going_nowhere,push,W
+137.5,156.5,finalchorus,CSW-10_whole_town_comes_back,pull,W
+156.5,170.5,outro,CSW-11_gang_vocal,push,W
+170.5,185.8,rideout,CSW-12_ride_out,push,M
+# waveform strip on: 52-63.5, 66-70.5, 108-120.5, 145.5-153, 158.5-179
