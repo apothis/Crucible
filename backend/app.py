@@ -6301,6 +6301,15 @@ def _aimix_file(sid, d, doc, variant, label, processed):
     A/B), and file it in the library. Returns {job_id, label, audio_url}."""
     pre = os.path.join(d, f"{variant}_pre.wav")
     aimix_mod.render(doc, pre, processed=processed)
+    macro = None
+    if processed and doc.get("master", {}).get("macro_match"):
+        try:
+            with open(os.path.join(d, "session.json")) as f:
+                ref = json.load(f).get("mix")
+            if ref and os.path.exists(ref):
+                macro = aimix_mod.match_macro(pre, ref)
+        except Exception as e:
+            macro = {"applied": False, "error": str(e)[:200]}
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.wav")
     m = doc["master"]
@@ -6315,7 +6324,7 @@ def _aimix_file(sid, d, doc, variant, label, processed):
     save_done_row(jid, "mix", {"title": title, "aimix": sid, "variant": variant,
                                "profile": doc.get("profile"), "source": doc["title"]}, out)
     aimix_mod.save_json(os.path.join(d, f"render_{jid}.json"),            # snapshot: lets a star re-measure it
-                        {**doc, "_render": {"processed": processed}})
+                        {**doc, "_render": {"processed": processed, "macro": macro}})
     return {"job_id": jid, "label": title, "audio_url": f"/api/audio/{jid}"}
 
 
@@ -6357,6 +6366,8 @@ def aimix_run(body: dict):
             doc["preset_scores"] = scores
         else:
             doc = aimix_mod.build_mixdoc(sess, an, profile)
+        if sess.get("mix"):
+            doc["master"]["macro_match"] = True        # follow Suno's mastered section levels (off without a mix)
         if not sess.get("mix") and doc.get("master", {}).get("target_lufs") is None:
             # no Suno mix to match loudness to: master to the stems' own summed loudness (what the
             # song was delivered at), kept inside a sane -16..-10 LUFS window

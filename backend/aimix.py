@@ -536,6 +536,53 @@ def render(doc: dict, out_path: str, processed: bool = True) -> dict:
     return report
 
 
+def match_macro(pre_path, ref_path, max_db=6.0, win_s=3.0, hop_s=0.5, smooth_s=4.0):
+    """Section-level match: give our render the same SLOW loudness shape as Suno's own mix.
+    Suno's regular-download stems are pre-master and exaggerate section changes vs its mastered
+    mix (Gleipnir: stems-sum minus mix ran +0.8..+4.9 dB across the song [M]), which sounds
+    jumpy. Both loudness curves (3 s windows, 100 Hz high-passed so bass doesn't dominate) are
+    median-normalised; the difference, gaussian-smoothed over smooth_s and clamped +-max_db,
+    becomes a gain curve. Only changes over several seconds are touched, never hits or phrases.
+    Rewrites pre_path in place; returns stats."""
+    import soundfile as sf
+    from scipy.signal import butter, sosfilt, resample_poly
+    from scipy.ndimage import gaussian_filter1d
+    x, sr = sf.read(pre_path, dtype="float32", always_2d=True)
+    r, srr = _read(ref_path)
+    if srr != sr:
+        r = resample_poly(r, sr, srr, axis=0).astype(np.float32)
+    hp = butter(2, 100, "highpass", fs=sr, output="sos")
+    w, hop = int(win_s * sr), int(hop_s * sr)
+
+    def curve(a):
+        m = sosfilt(hp, a.mean(1))
+        cs = np.concatenate([[0.0], np.cumsum(m.astype(np.float64) ** 2)])
+        idx = np.arange(0, max(1, len(m) - w), hop)
+        return idx + w // 2, 10 * np.log10((cs[np.minimum(idx + w, len(m))] - cs[idx]) / w + 1e-12)
+
+    t, co = curve(x)
+    _, cr = curve(r[:len(x)] if len(r) >= len(x) else np.pad(r, ((0, len(x) - len(r)), (0, 0))))
+    n = min(len(co), len(cr))
+    t, co, cr = t[:n], co[:n], cr[:n]
+    live = (cr > cr.max() - 35) & (co > co.max() - 35)
+    if live.sum() < 10:
+        return {"applied": False}
+    g = np.zeros(n)
+    g[live] = (cr[live] - np.median(cr[live])) - (co[live] - np.median(co[live]))
+    if (~live).any():                                    # silence/tails: carry the neighbours' gain
+        g[~live] = np.interp(np.where(~live)[0], np.where(live)[0], g[live])
+    g = np.clip(gaussian_filter1d(g, smooth_s / hop_s), -max_db, max_db)
+    gs = np.interp(np.arange(len(x)), t, g)
+    x = (x * (10 ** (gs / 20.0))[:, None]).astype(np.float32)
+    peak = float(np.abs(x).max())
+    if peak > 0:
+        x *= (10 ** (-6 / 20.0)) / peak
+    sf.write(pre_path, x, sr, subtype="FLOAT")
+    return {"applied": True, "max_db": round(float(np.abs(g).max()), 1),
+            "rms_db": round(float(np.sqrt(np.mean(g ** 2))), 1),
+            "shape_diff_before_db": round(float(np.std((cr - co)[live])), 1)}
+
+
 def save_json(path, obj):
     with open(path, "w") as f:
         json.dump(obj, f, indent=1, default=float)

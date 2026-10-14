@@ -261,6 +261,12 @@ export function Console({ doc, ai, setDoc }: { doc: MixDoc; ai: MixDoc | null; s
         <b className="text-[var(--color-ink)]">Delay bus</b>
         <div className="w-28"><Mini label="Time" value={doc.buses.delay.ms ?? 500} min={50} max={1200} step={5} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, delay: { ...d.buses.delay, ms: v } } }))} fmt={(v) => `${Math.round(v)} ms`} /></div>
         <div className="w-28"><Mini label="Feedback" value={doc.buses.delay.feedback ?? 0.25} min={0} max={0.8} step={0.05} onChange={(v) => setDoc((d) => ({ ...d, buses: { ...d.buses, delay: { ...d.buses.delay, feedback: v } } }))} fmt={(v) => `${Math.round(v * 100)}%`} /></div>
+        <span className="mx-1 h-6 w-px bg-[var(--color-line)]" />
+        <label className="flex cursor-pointer items-center gap-2" title="Give the mix the same slow section-to-section loudness shape as Suno's own (mastered) mix. Needs the Suno full mix in the download; only changes over several seconds are touched.">
+          <input type="checkbox" style={{ accentColor: "var(--color-accent)" }} checked={!!doc.master?.macro_match}
+            onChange={(e) => setDoc((d) => ({ ...d, master: { ...(d.master || {}), macro_match: e.target.checked } }))} />
+          <b className="text-[var(--color-ink)]">Match Suno's section levels</b>
+        </label>
       </div>
     </div>
   );

@@ -14,7 +14,9 @@ export type Stem = {
 export type Bus = { room_size?: number; damping?: number; predelay_ms?: number; ms?: number; feedback?: number; hpf?: number; lpf?: number };
 export type MixDoc = {
   title: string; preset?: string; preset_label?: string; notes?: string[]; stems: Record<string, Stem>;
-  buses: { verb: Bus; delay: Bus }; [k: string]: unknown;
+  buses: { verb: Bus; delay: Bus };
+  master?: { macro_match?: boolean; target_lufs?: number | null; [k: string]: unknown };
+  [k: string]: unknown;
 };
 
 export const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
