@@ -231,12 +231,16 @@ reached the model this time. User's ears: **2.0 better.** Now a per-render field
 2.0. Render wall on ComfyUI 0.41: ~125-155 s per ~310 s song; guidance adds ~5%, not the 2x
 claimed in community posts.
 
-### Tag test: descriptors in lyric tags (2026-10-16) - awaiting ears
+### Tag test: descriptors in lyric tags (2026-10-16)
 
 4 takes with descriptors sent as written (opt-in toggle), same score / seeds / style / cfg 2.0 as
 the step B cfg 2.0 takes. The takes differ from their bare-tag partners (residual -12.7 to -14.7
 dB), but per pytraveler any text change reshuffles the performance, so only ears can tell whether
 the change FOLLOWS the descriptors.
+
+User's ears: **tag words not sung, but not convinced the descriptors do anything. The guitar
+solo is present in BOTH versions**: the bare `[Guitar Solo]` tag + the planner's `% interlude`
+(Ins line with a short high lead phrase) already yields a solo. Toggle stays opt-in, default off.
 
 ## 9. Guitar solos and per-section style: the levers (research 2026-10-16)
 
