@@ -141,13 +141,17 @@ def normalize_lyrics(lyrics):
                        for s in lyrics_to_sections(lyrics))
 
 
-def lint(style, lyrics, max_seconds):
+def lint(style, lyrics, max_seconds, keep_tag_text=False):
     """Cheap pre-flight checks surfaced in the UI; none of them block a render."""
     notes = []
     tags = re.findall(r"\[([^\]\n]+)\]", lyrics or "")
     loaded = [t for t in tags if re.search(r"[,:]|\s-\s", t)]
-    if loaded:
-        notes.append("loaded tags (only the section name is safe inside brackets): " + ", ".join(loaded))
+    if loaded and keep_tag_text:
+        notes.append("tag descriptors are SENT as written (experimental; training lyrics only had bare "
+                     "section names, so listen for them being sung): " + ", ".join(loaded))
+    elif loaded:
+        notes.append("loaded tags (only the section name is sent; tick 'send tag descriptors' to keep "
+                     "the rest): " + ", ".join(loaded))
     words = len(re.findall(r"\S+", re.sub(r"\[[^\]]*\]", "", lyrics or "")))
     # ~2.3 words/second of singing is a slow-ballad rate; above that the song runs past the cap
     if max_seconds and words > max_seconds * 2.3:
@@ -263,7 +267,10 @@ def _abc_node(p, mode, seed):
 
 def _resolve(p):
     style = (p.get("style") or "").strip()
-    lyrics = normalize_lyrics(p.get("lyrics") or "")
+    keep_tag_text = bool(p.get("keep_tag_text"))
+    # opt-in experiment: send the lyrics exactly as written, descriptors inside the brackets and all
+    # ("[Chorus - powerful belt]"). Default strips them to the bare section name.
+    lyrics = (p.get("lyrics") or "").strip() if keep_tag_text else normalize_lyrics(p.get("lyrics") or "")
     if not style:
         raise ValueError("a style line is required")
     mode = (p.get("mode") or DEFAULTS["mode"]).strip().lower()
@@ -273,7 +280,7 @@ def _resolve(p):
     if abc and mode == "off":
         mode = "full"     # a supplied score implies planning; the node itself ignores mode when abc is empty
     r = {
-        "style": style, "lyrics": lyrics, "mode": mode, "abc": abc,
+        "style": style, "lyrics": lyrics, "mode": mode, "abc": abc, "keep_tag_text": keep_tag_text,
         "seed": int(p.get("seed") or 0),
         "max_seconds": max(1.0, min(float(p.get("max_seconds") or DEFAULTS["max_seconds"]), MAX_SECONDS)),
         "steps": int(_f(p, "steps")), "cfg": float(_f(p, "cfg")),

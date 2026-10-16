@@ -7368,7 +7368,7 @@ def yue2_from_song(p: dict):
 @app.post("/api/yue2/lint")
 def yue2_lint(p: dict):
     return {"notes": yue2_mod.lint(p.get("style") or "", p.get("lyrics") or "",
-                                   float(p.get("max_seconds") or 0)),
+                                   float(p.get("max_seconds") or 0), bool(p.get("keep_tag_text"))),
             "lyrics": yue2_mod.normalize_lyrics(p.get("lyrics") or "")}
 
 

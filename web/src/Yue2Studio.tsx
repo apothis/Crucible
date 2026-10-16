@@ -93,7 +93,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [topP, setTopP] = d.use("topP", "");
   const [topK, setTopK] = d.use("topK", "");
   const [rep, setRep] = d.use("rep", "");
-  const [semCfg, setSemCfg] = d.use("semCfg", "");   // semantic-stage CFG; blank = node default (1.0)
+  // semantic-stage CFG ("text guidance"), per render. 2.0 = the user's pick from ladder step B
+  // (2026-10-16: 1.0 / 1.5 / 2.0 on one score + 4 seeds); blank = node default (1.0, off)
+  const [guidance, setGuidance] = d.use("guidance", "2.0");
+  // opt-in experiment: send "[Chorus - powerful belt]" as written instead of stripping to "[Chorus]"
+  const [keepTagText, setKeepTagText] = d.use("keepTagText", false);
   const [tiled, setTiled] = d.use("tiled", false);
   const [takes, setTakes] = d.use<Take[]>("takes", []);
 
@@ -106,11 +110,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // lint as you type (cheap, no GPU)
   useEffect(() => {
     const t = window.setTimeout(() => {
-      api.yue2Lint({ style, lyrics, max_seconds: parseFloat(seconds) || 0 })
+      api.yue2Lint({ style, lyrics, max_seconds: parseFloat(seconds) || 0, keep_tag_text: keepTagText })
         .then((r) => setLint(r.notes || [])).catch(() => setLint([]));
     }, 400);
     return () => window.clearTimeout(t);
-  }, [style, lyrics, seconds]);
+  }, [style, lyrics, seconds, keepTagText]);
 
   // score info as it changes
   useEffect(() => {
@@ -374,7 +378,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           ...(topP.trim() ? { top_p: parseFloat(topP) } : {}),
           ...(topK.trim() ? { top_k: parseInt(topK) } : {}),
           ...(rep.trim() ? { repetition_penalty: parseFloat(rep) } : {}),
-          ...(semCfg.trim() ? { cfg_scale: parseFloat(semCfg) } : {}),
+          ...(guidance.trim() ? { cfg_scale: parseFloat(guidance) } : {}),
+          keep_tag_text: keepTagText,
           tiled_decode: tiled,
         });
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
@@ -398,7 +403,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
 
   if (!schema) return <div className="text-sm text-[var(--color-muted)]">loading YuE2 schema…</div>;
   const sources = library.filter((it) => SOURCE_MODES.includes(it.mode) && it.audio_url);
-  const perSong = (parseFloat(seconds) || 360) * 0.85;   // ~225 s of wall per 265 s measured
+  const perSong = (parseFloat(seconds) || 360) * 0.45;   // ~135 s of wall per 310 s measured (ComfyUI 0.41, 2026-10-16)
 
   return (
     <div className="space-y-4">
@@ -506,8 +511,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             placeholder={"[Intro]\n\n[Verse]\nyour words here\n\n[Chorus]\n…"} />
           <div className="mt-1 text-[10px] text-[var(--color-muted)]">
             Tags stay bare: [Verse], [Verse 2], [Pre-Chorus], [Guitar Solo] are all fine; anything else inside the
-            brackets is sung. Empty bodies under every tag = instrumental. Words in parentheses may be sung.
+            brackets is stripped before sending. Empty bodies under every tag = instrumental. Words in parentheses may be sung.
           </div>
+          <label className="mt-1 flex items-center gap-2 text-[11px]"
+            title="sends tags exactly as written; untested on YuE2 (its training lyrics only had bare section names)">
+            <input type="checkbox" checked={keepTagText} onChange={(e) => setKeepTagText(e.target.checked)} />
+            send tag descriptors as written, e.g. [Chorus - powerful belt] (experimental)
+          </label>
         </div>
       </div>
 
@@ -663,7 +673,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         {/* ---- 5 · render ---- */}
         <div className="rounded border border-[var(--color-line)] p-3">
           <SectionTitle>5 {"·"} Render</SectionTitle>
-          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-5">
             <Field label="Title"><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
             <Field label="Max seconds" hint={`ceiling, up to ${schema.max_seconds}; a hard cut if the words run past it`}>
               <input className={inp} value={seconds} onChange={(e) => setSeconds(e.target.value)} />
@@ -672,6 +682,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <input className={inp} value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="random" />
             </Field>
             <Field label="Takes"><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+            <Field label="Text guidance" hint="1.0 = off; 2.0 our pick; 2.4 the stable max">
+              <input className={inp} value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="1.0" />
+            </Field>
           </div>
           <div className="mt-2">
             <GhostButton onClick={() => setShowAdv(!showAdv)}>{showAdv ? "hide" : "show"} sampler settings</GhostButton>
@@ -684,8 +697,6 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <Field label="top_p" hint="0.95"><input className={inp} value={topP} onChange={(e) => setTopP(e.target.value)} placeholder="0.95" /></Field>
               <Field label="top_k" hint="100"><input className={inp} value={topK} onChange={(e) => setTopK(e.target.value)} placeholder="100" /></Field>
               <Field label="rep. penalty" hint="1.2; 1.0-1.05 keeps repeated hooks"><input className={inp} value={rep} onChange={(e) => setRep(e.target.value)} placeholder="1.2" /></Field>
-              <Field label="text guidance" hint="1.0 = off; 1.4-1.6 steady, 2.4 max; above 1.0 is ~2x slower">
-                <input className={inp} value={semCfg} onChange={(e) => setSemCfg(e.target.value)} placeholder="1.0" /></Field>
               <Field label="Tiled decode" hint="lower VRAM; off on 24 GB">
                 <input type="checkbox" checked={tiled} onChange={(e) => setTiled(e.target.checked)} />
               </Field>
@@ -696,7 +707,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               Generate
             </PrimaryButton>
             <span className="text-[10px] text-[var(--color-muted)]">
-              about {Math.round(perSong)} s of GPU per take at this length (measured 225 s for 265 s of audio). 48 kHz
+              about {Math.round(perSong)} s of GPU per take at this length (measured ~135 s for 310 s of audio, guidance 2.0 included). 48 kHz
               stereo FLAC, saved with its score. Weights CC BY-NC 4.0 with a creator permission: personal creators may monetize outputs.
             </span>
           </div>
