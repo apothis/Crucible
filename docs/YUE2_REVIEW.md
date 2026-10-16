@@ -222,3 +222,45 @@ Upstream and ComfyUI docs: only sung words + section tags in the lyrics. No YuE2
 delivery descriptor exists; the "big effect" belief is most likely carried over from Suno /
 ACE-Step. NOTE: our normalize_lyrics strips anything after `-`, `,` or `:` inside brackets, so
 the app cannot currently send a descriptor even to test one.
+
+### Step B: text guidance (2026-10-16) `[verified]`
+
+Short style, same score + seeds as A, cfg_scale 1.0 (= step A short takes) vs 1.5 vs 2.0. Each
+guided take differs from its 1.0 partner at music level (null residual about -13 dB), so the input
+reached the model this time. User's ears: **2.0 better.** Now a per-render field defaulting to
+2.0. Render wall on ComfyUI 0.41: ~125-155 s per ~310 s song; guidance adds ~5%, not the 2x
+claimed in community posts.
+
+### Tag test: descriptors in lyric tags (2026-10-16) - awaiting ears
+
+4 takes with descriptors sent as written (opt-in toggle), same score / seeds / style / cfg 2.0 as
+the step B cfg 2.0 takes. The takes differ from their bare-tag partners (residual -12.7 to -14.7
+dB), but per pytraveler any text change reshuffles the performance, so only ears can tell whether
+the change FOLLOWS the descriptors.
+
+## 9. Guitar solos and per-section style: the levers (research 2026-10-16)
+
+The model has ONE style line per song; nothing in training conditions text per section `[O]`.
+audio.cpp's authors: "YuE2 continues what it has already sung far more than it follows its style
+prompt, so changing the prompt part-way through a song does little" `[C]`.
+
+Guitar solos, ranked:
+1. **Write the solo into the score's Ins voice** (official recipe `[O]`): section `% interlude`,
+   Vocal = chord symbols over rests, Ins = a monophonic lead line in guitar register; style line
+   names the solo ("melodic electric guitar solo, the singer rests during the guitar solo"). The
+   official sax-solo demo does exactly this. Works on core nodes today via the abc input; needs
+   a solo writer/editor in our app. Ins-voice adherence unmeasured.
+2. Let the planner write it: solo request in the style prose + plan batch + auto-pick plans
+   whose solo bars have dense Ins notes and Vocal rests (official J-rock gallery, n=1).
+3. pytraveler Edit Track `notes` retake of just the solo bars (needs the pack; it only edits
+   songs it rendered itself).
+
+Per-section style, ranked:
+1. **The score**: vocal register per section (voice follows the melody's register, #216), vocal
+   density, Ins activity, chords. Core nodes today.
+2. Semantic-history splice (audio.cpp recipe; needs semantic_prefix, not in core ComfyUI).
+3. Section-contrast phrases in the one style line ("intimate breathy verses, belted choruses");
+   upstream's own demo captions do this; unmeasured on the base model. Cheap A/B.
+4. GRVL v2 LoRA (captions describe verses and choruses separately; Halestorm-adjacent).
+5. pytraveler per-region guidance/temperature/notes retakes (text stays fixed).
+Not levers: lyric-tag descriptors (pending our test), dual guidance (global only).
