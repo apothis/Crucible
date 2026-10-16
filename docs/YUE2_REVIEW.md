@@ -195,3 +195,17 @@ listen between steps.
   huggingface.co/becausereasons/yue2-grvl-raspy-rock-soul,
   huggingface.co/monsterovich/yue2-industrial-rock-lora, Mothersuperior realaudio tokenizer v4.
 - Not reachable: Reddit and the YuE Discord (seen only second-hand).
+
+## 8. Ladder results
+
+### Step A: style line length (2026-10-16) `[verified]`
+
+Box on ComfyUI 0.41.0 (updated today; cfg_scale now declared). Bad Kind of Beautiful, the
+library's fixed score (plan seed 1184589206, 4040 chars), same lyrics (310 words), seeds
+1184589207-210, cfg default, full mode, max 360. Only the style line differed:
+long = the 994-char library line, short = `English, modern hard rock, husky powerful female vocal
+with a gritty belt, drop-tuned heavy guitars, dark synth bass, big tight rock drums, dark and
+seductive, 118 BPM` (167 chars). Takes 302-312 s, none capped; short takes 0.7-1.6 dB louder in
+3 of 4 pairs (a loudness bias to allow for).
+
+User's ears: **short slightly better, not night and day.** Short lines carry forward.
