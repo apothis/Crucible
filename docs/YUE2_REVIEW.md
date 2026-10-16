@@ -272,3 +272,14 @@ Not levers: lyric-tag descriptors (pending our test), dual guidance (global only
 Parked by the user to come back to (2026-10-16): score-based section control (raise the chorus
 line to push a belt, thin the verse; existing editor) and the solo writer (Ins lead line written
 into the solo section).
+
+### Step C: plan mode (2026-10-16) `[verified]` + ears
+
+Fresh in-graph plan per mode from the same seed (4 seeds), short style, cfg 2.0, bare tags.
+Structure from the scores: melody plans kept the lyric form in 4/4 seeds; full plans dropped or
+re-ordered sections in 3/4 (no pre-choruses, missing bridge, extra verse); seeds 209/210 planned
+at 78-79 BPM in both modes (118 asked); off ran ~70 s wall vs 110-125 s and came out 190-207 s
+against 224-260 s planned. User's ears: **off bad; melody not as good as full.** Full stays the
+default for new songs; melody's job is covers (upstream: melody score -> accompaniment free, best
+style/quality on covers; full transcription keeps the harmony for identity). Because full plans
+drop sections, the plan batch + pick step matters: pick a plan whose sections match the lyrics.
