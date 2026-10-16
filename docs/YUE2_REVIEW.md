@@ -209,3 +209,16 @@ seductive, 118 BPM` (167 chars). Takes 302-312 s, none capped; short takes 0.7-1
 3 of 4 pairs (a loudness bias to allow for).
 
 User's ears: **short slightly better, not night and day.** Short lines carry forward.
+
+### Side question: descriptive tags in the lyrics (`[Chorus - powerful belt]`) (2026-10-16)
+
+Research only, nothing rendered. Training lyrics = SongFormer functional labels + ASR words, so
+descriptors were never seen `[O: tech report App. C]`; the planner's section labels are a closed
+vocabulary and can disagree with the lyric tags `[O/Cm]`. The only YuE2 tests of per-section
+descriptors are negative: YuE issue #216 (voice tags, several methods, no effect) and
+pytraveler's README (voice tags tried on 12 songs, none worked) `[Cm]`. Empty tags give
+instrumental passages ~50% of the time; the reliable lever is the score (Vocal notes -> Ins).
+Upstream and ComfyUI docs: only sung words + section tags in the lyrics. No YuE2 A/B of a
+delivery descriptor exists; the "big effect" belief is most likely carried over from Suno /
+ACE-Step. NOTE: our normalize_lyrics strips anything after `-`, `,` or `:` inside brackets, so
+the app cannot currently send a descriptor even to test one.
