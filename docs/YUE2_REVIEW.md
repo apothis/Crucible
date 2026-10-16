@@ -268,3 +268,7 @@ Per-section style, ranked:
 4. GRVL v2 LoRA (captions describe verses and choruses separately; Halestorm-adjacent).
 5. pytraveler per-region guidance/temperature/notes retakes (text stays fixed).
 Not levers: lyric-tag descriptors (pending our test), dual guidance (global only).
+
+Parked by the user to come back to (2026-10-16): score-based section control (raise the chorus
+line to push a belt, thin the verse; existing editor) and the solo writer (Ins lead line written
+into the solo section).
