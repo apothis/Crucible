@@ -66,6 +66,17 @@ class Comfy:
         except Exception:
             return False
 
+    def node_inputs(self, class_type):
+        """Every input name (required + optional) a node declares on the box, or None when the
+        node is unknown or the box is unreachable. ComfyUI silently DROPS inputs a node does not
+        declare, so a graph field the box's build predates never reaches the model."""
+        try:
+            r = requests.get(f"{self.base}/object_info/{class_type}", timeout=8).json()
+            spec = r[class_type]["input"]
+        except Exception:
+            return None
+        return set(spec.get("required") or {}) | set(spec.get("optional") or {})
+
     def available_variants(self):
         have = set(self.models("diffusion_models"))
         out = []

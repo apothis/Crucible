@@ -40,7 +40,7 @@ FRAMES_PER_SECOND = 25
 # are both AR decoders inside the "CLIP"; the KSampler is the acoustic flow-matching stage.
 DEFAULTS = {
     "mode": "full",                # off | melody | full  (plan mode; "off" = no score at all)
-    "max_seconds": 300.0,          # ceiling; the model ends the song itself, cap != target
+    "max_seconds": 360.0,          # ceiling = upstream's (semantic max_tokens 9000); the model ends the song itself
     # acoustic stage
     "steps": 32, "cfg": 1.0, "sampler": "dpm_2", "scheduler": "sgm_uniform", "tiled_decode": False,
     # ABC planner sampling
@@ -101,9 +101,10 @@ def song_to_lyrics(song):
 
 
 def song_to_style(song):
-    """SongDraft tags + key/bpm -> one compact style line. The ACE tag list is already a comma
-    list of descriptors, so it is kept as-is (trimmed, deduplicated); key and bpm are added at
-    the end because that is where upstream's example puts tempo."""
+    """SongDraft tags + bpm -> one compact style line. The ACE tag list is already a comma
+    list of descriptors, so it is kept as-is (trimmed, deduplicated); bpm goes at the end because
+    that is where upstream's example puts tempo. No key: text never sets it (our 8-take batch and
+    a community 0-of-18 test); transposing the score does."""
     song = song or {}
     tags = [t.strip() for t in (song.get("tags") or "").split(",") if t.strip()]
     seen, parts = set(), []
@@ -117,9 +118,6 @@ def song_to_style(song):
     bpm = song.get("bpm")
     if bpm:
         parts.append(f"{int(bpm)} BPM")
-    key = (song.get("key") or "").strip()
-    if key:
-        parts.append(key)
     return ", ".join(parts)
 
 

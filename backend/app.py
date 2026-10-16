@@ -7386,8 +7386,29 @@ def yue2_abc_header(p: dict):
                                        title=p.get("title"))}
 
 
+def _yue2_undeclared(graph):
+    """Inputs in the graph that the box's node does not declare -> ["Node.input", ...]. ComfyUI
+    drops those without an error: until 2026-10-16 the box's YuE2GenerateMusic had no cfg_scale,
+    so every "text guidance" take rendered at the default (the cfg 1.0 / 1.2 A/B nulled to -91 dB)."""
+    bad, seen = [], {}
+    for node in graph.values():
+        ct = node["class_type"]
+        if ct not in seen:
+            seen[ct] = C.node_inputs(ct)
+        declared = seen[ct]
+        if declared is None:
+            continue    # unknown class or box unreachable: ComfyUI's own validation reports it
+        bad += [f"{ct}.{k}" for k in node["inputs"] if k not in declared]
+    return bad
+
+
 def _yue2_submit(graph, resolved, mode, extra=None):
     resolved = {**resolved, **(extra or {})}
+    bad = _yue2_undeclared(graph)
+    if bad:
+        raise HTTPException(400, "the box's ComfyUI does not have these inputs, so they would be "
+                            f"silently ignored: {', '.join(bad)}. Update ComfyUI on the box, or "
+                            "clear those settings.")
     try:
         res = submit_comfy(graph)
     except Exception as e:

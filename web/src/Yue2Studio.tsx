@@ -83,7 +83,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [lyBusy, setLyBusy] = useState("");
 
   // ---- render ----
-  const [seconds, setSeconds] = d.use("seconds", "300");
+  const [seconds, setSeconds] = d.use("seconds", "360");
   const [seed, setSeed] = d.use("seed", "");
   const [count, setCount] = d.use("count", "1");
   const [showAdv, setShowAdv] = useState(false);
@@ -273,7 +273,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     for (let i = 0; i < n; i++) {
       const s = base + i;
       try {
-        const r = await api.yue2Plan({ style, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 300 });
+        const r = await api.yue2Plan({ style, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360 });
         const plan: Plan = { id: r.job_id, seed: r.seed, status: "running", abc: "" };
         fresh.push(plan);
         setPlans((ps) => [plan, ...ps].slice(0, 16));
@@ -367,7 +367,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           mode: planMode, abc: withScore ? abc : "",
           source: withScore ? abcSource : "",
           seed: base === undefined ? undefined : base + i,
-          max_seconds: parseFloat(seconds) || 300,
+          max_seconds: parseFloat(seconds) || 360,
           ...(steps.trim() ? { steps: parseInt(steps) } : {}),
           ...(cfgv.trim() ? { cfg: parseFloat(cfgv) } : {}),
           ...(temp.trim() ? { temperature: parseFloat(temp) } : {}),
@@ -398,7 +398,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
 
   if (!schema) return <div className="text-sm text-[var(--color-muted)]">loading YuE2 schema…</div>;
   const sources = library.filter((it) => SOURCE_MODES.includes(it.mode) && it.audio_url);
-  const perSong = (parseFloat(seconds) || 300) * 0.85;   // ~225 s of wall per 265 s measured
+  const perSong = (parseFloat(seconds) || 360) * 0.85;   // ~225 s of wall per 265 s measured
 
   return (
     <div className="space-y-4">
@@ -683,8 +683,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <Field label="temperature" hint="music stage, 1.0"><input className={inp} value={temp} onChange={(e) => setTemp(e.target.value)} placeholder="1.0" /></Field>
               <Field label="top_p" hint="0.95"><input className={inp} value={topP} onChange={(e) => setTopP(e.target.value)} placeholder="0.95" /></Field>
               <Field label="top_k" hint="100"><input className={inp} value={topK} onChange={(e) => setTopK(e.target.value)} placeholder="100" /></Field>
-              <Field label="rep. penalty" hint="1.2"><input className={inp} value={rep} onChange={(e) => setRep(e.target.value)} placeholder="1.2" /></Field>
-              <Field label="text guidance" hint="music stage CFG; 1.0 = off, upstream tries 1.2 to make the style line bind harder (singer, instruments)">
+              <Field label="rep. penalty" hint="1.2; 1.0-1.05 keeps repeated hooks"><input className={inp} value={rep} onChange={(e) => setRep(e.target.value)} placeholder="1.2" /></Field>
+              <Field label="text guidance" hint="1.0 = off; 1.4-1.6 steady, 2.4 max; above 1.0 is ~2x slower">
                 <input className={inp} value={semCfg} onChange={(e) => setSemCfg(e.target.value)} placeholder="1.0" /></Field>
               <Field label="Tiled decode" hint="lower VRAM; off on 24 GB">
                 <input type="checkbox" checked={tiled} onChange={(e) => setTiled(e.target.checked)} />
@@ -697,7 +697,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             </PrimaryButton>
             <span className="text-[10px] text-[var(--color-muted)]">
               about {Math.round(perSong)} s of GPU per take at this length (measured 225 s for 265 s of audio). 48 kHz
-              stereo FLAC, saved with its score. Weights are CC BY-NC 4.0.
+              stereo FLAC, saved with its score. Weights CC BY-NC 4.0 with a creator permission: personal creators may monetize outputs.
             </span>
           </div>
         </div>
