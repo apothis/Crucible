@@ -100,3 +100,36 @@ ending), thin top, same riff everywhere. Judge a fixed-seed checkpoint ladder by
 
 Open user decisions: trainer (AI Toolkit vs in-Comfy speedyrulz), first band, caption source
 (LLM rewrite of the ACE prose vs AI Toolkit's audio captioner on the box).
+
+## 6. Battle Beast run log (2026-10-17)
+
+Setup that is now built and remote-controlled from the Mac (nothing done at the box after one
+helper restart): AI Toolkit at `E:\AI\MusicGen\ai-toolkit` (installed via the helper, torch
+2.13+cu130, 11.5 GB); helper endpoints /aitk/install|run|status|log|stop + /helper/restart;
+patches (complete files in tools/aitk/patches): K/V repeat instead of enable_gqa, per-step
+empty_cache on Windows, @torch.no_grad on merge_nar_lora (PR #1068 - the v9 run died without it).
+
+Dataset (tools/yue2_dataset.py): 40 Battle Beast songs, all LRCLIB lyrics, sectioned by the YuE2
+sectioner + hand rules (Let It Roar chorus split out; sung "solo/interlude" -> Bridge; repeated
+tags merged). Captions = fixed user-approved "English, modern power metal with 80s heavy metal
+and synth influences, powerful raspy female rock belt with a soaring high range" + per-song parts.
+Qwen2.5-Omni-7B captioner: run 1 copied the prompt's example phrases into ~15 captions and got
+language/genre/voice wrong (German, melodic death metal, operatic, male guttural); run 2
+(example-free) was correct but vague. Final per-song parts = the app LLM condensing the ACE 4B
+LM's existing audio descriptions (section-by-section, instruments) + Qwen's tempo feel; 4
+"operatic" leaks and one tempo contradiction fixed by hand. No BPM numbers (librosa unreliable).
+
+Run 1 (v4 tokenizer, rank 32, LR 5e-5, planner x0.5 + KL 0.2, 800 steps): latent cache 13 min,
+training 1 h 7 min at ~5 s/step, VRAM 14-22 GB (user's reading). ComfyUI's core LoraLoader applies
+it (log: 112 patches on both halves, no key warnings; takes null to -11.3 dB vs no-LoRA).
+Skyborn test (original song shaped like Wings of Light, one plan, seed 7101): **450 and 600 OK,
+strong hints of Noora but the song doesn't push the voice where she shows; 800 good in much of it
+with a little voice breakup.**
+
+Run 2 (v9 tokenizer + merged nar_lora_joint_v9, otherwise identical): started 18:16. Generation
+needs nar_lora_joint_v9_comfyui (loras/yue2/companions/) under the band LoRA - the tab's
+"Tokenizer adapter" slot.
+
+Not yet tried (AI Toolkit has them): LoKr, DoRA, dropout/rank/module dropout, rank 64, Prodigy,
+EMA, warmup, regularisation songs (is_reg / anchor trick), output preservation, do_separation
+(author: "doesn't work as expected"). One change per run on the Skyborn score + seed.
