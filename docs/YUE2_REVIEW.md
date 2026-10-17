@@ -334,3 +334,12 @@ Meter is mostly decided by the seed (the first three wordings give near-identica
 seed); only the jig wording flipped any. The two 6/8 plans (seeds 6005, 6008) keep the lyric
 form, valid 24-unit bars, Q:1/4=78 (= dotted quarter 52, near the Suno 46).
 Saved: .mvwork/yue2_ladder/otim_plan_68_seed6005.abc / 6008.abc.
+
+### 6/8 render check + meter filter built (2026-10-17)
+
+The two jig-worded 6/8 plans rendered with the non-Celtic house style + "in 6/8" (2 takes each,
+cfg 2.0): user's ears **"it feels like 6/8"**. So the renderer follows a supplied 6/8 score; the
+planner is the only obstacle. Built: Score step "Wanted meter" (rounds of 4 plans until N match,
+try cap) + "Planning-only feel words" (inserted after the genre for plans only) + meter on plan
+cards. The inserted form ("<genre>, lilting jig-like sway") is not the exact tested wording
+("Celtic-tinged <genre> with a lilting jig-like sway"); its hit rate is unmeasured.
