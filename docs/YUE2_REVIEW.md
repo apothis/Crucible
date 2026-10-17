@@ -313,3 +313,24 @@ seed, cfg 2.0. User's ears: **contrast works, worth keeping** (second song after
 format: the style writer and the Music 3 -> YuE2 conversion add a 2-3 phrase contrast clause
 right after the vocal; order = language, genre, vocal, contrasts, instruments, mood, <=2
 negatives, BPM last; no key or meter in the text.
+
+### Meter test (2026-10-17) `[verified]`
+
+(a) SheetSage2 (box ComfyUI node, full mode) on the Suno render of Only This Is Mine (prompted
+as 6/8, 46 BPM): **M:4/4, Q:1/4=65, K:Em**, 98 lines, sections intro/verse/chorus/interlude/...
+No inline meter changes. The core node has no meter hint, so the transcription route does not
+give 6/8 here. Saved: .mvwork/yue2_ladder/otim_suno_transcription_full.abc.
+
+(b) Plan-only, same 8 seeds (6001-6008) per wording, house-format style otherwise identical:
+
+| Wording | 6/8 | 2/4 | 4/4 |
+|---|---|---|---|
+| "slow metal power ballad in 6/8" | 0 | 5 | 3 |
+| "...with a rolling triplet feel" | 0 | 3 | 5 |
+| "compound-time ... swaying 6/8 lilt" | 0 | 5 | 3 |
+| "Celtic-tinged ... lilting jig-like sway" | **2** | 3 | 3 |
+
+Meter is mostly decided by the seed (the first three wordings give near-identical meters per
+seed); only the jig wording flipped any. The two 6/8 plans (seeds 6005, 6008) keep the lyric
+form, valid 24-unit bars, Q:1/4=78 (= dotted quarter 52, near the Suno 46).
+Saved: .mvwork/yue2_ladder/otim_plan_68_seed6005.abc / 6008.abc.
