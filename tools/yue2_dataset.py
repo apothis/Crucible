@@ -15,6 +15,10 @@ Steps (run from the repo root with the backend up on :8000):
   python3 tools/yue2_dataset.py caption <name>   write the caption job (Qwen2.5-Omni hears each song and
                                                 writes <stem>.parts: section contrast, instruments, mood,
                                                 tempo feel; language/genre/voice are FIXED per band)
+  python3 tools/yue2_dataset.py enrich  <name>   per-song parts rewritten by the app LLM from the ACE engine's
+                                                existing audio description of each song (ACE 4B LM prose,
+                                                far more specific than the captioner's), keeping the
+                                                captioner's tempo feel; -> .mvwork/.../parts_final/
   python3 tools/yue2_dataset.py merge   <name>   style line + reviewed lyrics -> <stem>.txt on the box
                                                 (copies kept in .mvwork/yue2_train/<name>/txt/)
   python3 tools/yue2_dataset.py train   <name>   write the training job (one LoRA over planner + decoder)
@@ -22,6 +26,7 @@ Lyrics are never transcribed from audio (house rule): they come from the online 
 pipeline already did (<stem>.lyrics.txt beside the source audio).
 """
 import json
+import ntpath
 import os
 import re
 import sys
@@ -143,16 +148,54 @@ def train(name, steps=800):
     print(f"wrote {r['path']} ({steps} steps, checkpoint every 50); run with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
 
 
+ENRICH_SYSTEM = (
+    "You condense a detailed description of one song into a short training caption fragment for a "
+    "music model. Output STRICT JSON ONLY: {\"parts\": \"...\"}. No prose, no markdown.")
+ENRICH_RULES = """Write ONE lowercase line of short comma-separated descriptors, at most 45 words, in this order:
+1. how the song moves through its sections: 2-4 short phrases naming sections and what happens in them
+   (e.g. "atmospheric piano intro, belted choruses, shred guitar solo, chugging breakdown, piano outro");
+2. the defining instruments and production (2-4 phrases);
+3. a two-word mood;
+4. the tempo feel: use the CAPTIONER TEMPO given below (slow, mid-tempo or fast) unless the description
+   plainly contradicts it.
+Use ONLY what the description states. Never mention genre or style names, the singer's voice type, gender,
+register or vocal technique, the language, lyrics, artist/song names, keys or numbers."""
+
+
+def enrich(name):
+    src, _dst, local = _paths(name)
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from backend import llm
+    ds = json.loads(_get("/fs/read", path=ntpath.dirname(src) + "\\dataset.json")["content"])
+    prose = {s["filename"].rsplit(".", 1)[0]: s.get("caption") or "" for s in ds["samples"]}
+    os.makedirs(os.path.join(local, "parts_final"), exist_ok=True)
+    for stem in _stems(src):
+        out = os.path.join(local, "parts_final", stem + ".txt")
+        if os.path.exists(out):
+            print(f"{stem:38s} kept: {open(out).read().strip()}")
+            continue
+        desc = prose.get(stem, "")
+        desc = desc.split(". ", 1)[1] if ". " in desc else desc      # drop the curated tag prefix
+        qwen = open(os.path.join(local, "parts", stem + ".txt")).read().strip()
+        tempo = next((t for t in ("mid-tempo", "slow", "fast") if t in qwen.lower()), "mid-tempo")
+        prompt = f"{ENRICH_RULES}\n\nCAPTIONER TEMPO: {tempo}\n\nDESCRIPTION:\n{desc}\n\nReturn the JSON now."
+        text = llm.complete("claude_sub", "claude-sonnet-5", ENRICH_SYSTEM, prompt, "", timeout=180)
+        m = re.search(r"\{.*\}", text or "", re.S)
+        parts = " ".join(json.loads(m.group(0) if m else text)["parts"].split()).strip(" ,.").lower()
+        open(out, "w").write(parts + "\n")
+        print(f"{stem:38s} {parts}", flush=True)
+
+
 def merge(name):
     _src, dst, local = _paths(name)
     os.makedirs(os.path.join(local, "txt"), exist_ok=True)
     done, missing = 0, []
     for stem in _stems(dst):
-        st = _get("/fs/stat", path=dst + "\\" + stem + ".parts")
-        if not st.get("exists"):
+        final = os.path.join(local, "parts_final", stem + ".txt")
+        if not os.path.exists(final):
             missing.append(stem)
             continue
-        parts = " ".join(_get("/fs/read", path=dst + "\\" + stem + ".parts")["content"].split()).strip(" ,.")
+        parts = " ".join(open(final).read().split()).strip(" ,.")
         f = FIXED[name]
         style = f"{f['language']}, {f['genre']}, {f['voice']}, {parts}"
         lyrics = open(os.path.join(local, "lyrics", stem + ".txt")).read().strip()
@@ -160,10 +203,11 @@ def merge(name):
         open(os.path.join(local, "txt", stem + ".txt"), "w").write(text)
         _post(HELPER, "/fs/write", {"path": dst + "\\" + stem + ".txt", "content": text})
         done += 1
-    print(f"{done} .txt written to {dst}" + (f"; no style line yet for {missing}" if missing else ""))
+    print(f"{done} .txt written to {dst}" + (f"; no per-song parts yet for {missing} (run enrich)" if missing else ""))
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3 or sys.argv[1] not in ("stage", "caption", "merge", "train") or sys.argv[2] not in SOURCES:
+    cmds = {"stage": stage, "caption": caption, "enrich": enrich, "merge": merge, "train": train}
+    if len(sys.argv) != 3 or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
-    {"stage": stage, "caption": caption, "merge": merge, "train": train}[sys.argv[1]](sys.argv[2])
+    cmds[sys.argv[1]](sys.argv[2])
