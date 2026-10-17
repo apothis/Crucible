@@ -93,7 +93,7 @@ export const api = {
   yue2AbcHeader: (p: { abc: string; key?: string; bpm?: number; title?: string }) => jpost("/api/yue2/abc/header", p),
   yue2Generate: (p: unknown) => jpost("/api/yue2/generate", p),   // full render (audio + score)
   yue2Plan: (p: unknown) => jpost("/api/yue2/plan", p),           // score only (fast)
-  yue2ToCompound: (abc: string) => jpost("/api/yue2/abc/to_compound", { abc }),   // 2/4 or 4/4 score -> 6/8
+  yue2ToCompound: (abc: string, mode = "lilt") => jpost("/api/yue2/abc/to_compound", { abc, mode }),   // 2/4 or 4/4 score -> 6/8
   yue2Transcribe: (src: string, mode: string) => jpost("/api/yue2/transcribe", { src, mode }),
   yue2TranscribeFile: (fd: FormData) => jform("/api/yue2/transcribe", fd),
   yue2Job: (id: string) => jget(`/api/yue2/job/${id}`),          // status + abc for any YuE2 job kind

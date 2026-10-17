@@ -300,12 +300,49 @@ def _lilt(x, beat):
     return k * (beat + half) + (2 * r if r < half else r + half)
 
 
-def _convert_bar(events, beat, bar_len):
+def _even_spans(events, beat, bar_len):
+    """mode "even": every onset goes to the nearest of the pulse's three eighths (sixteenth slots
+    0 / 1 / 2-3 -> eighths 0 / 1 / 2, so a sixteenth push into the next pulse lands on the third
+    eighth), each event lasting to the next onset. Order and count are kept: an onset that would
+    land on or before the previous one moves a sixteenth past it. Returns [(a, b)] per non-chord
+    event, or None when the bar cannot hold that (the caller falls back to the plain lilt)."""
+    pulse, eighth, six = beat + beat // 2, beat // 2, beat // 4
+    sounding = [e for e in events if e["k"] != "chord"]
+    ons = []
+    for ev in sounding:
+        k, r = divmod(ev["on"], beat)
+        slot = r * 4 / beat
+        a = k * pulse + (0 if slot < 0.5 else eighth if slot < 1.5 else 2 * eighth)
+        if ons and a <= ons[-1]:
+            # two onsets want the same eighth: slide the earlier one back an eighth when that is
+            # free and still in this pulse (d . c d -> d c d, even threes); else a sixteenth pair
+            back = ons[-1] - eighth
+            if a == ons[-1] and back >= k * pulse and (len(ons) < 2 or back > ons[-2]):
+                ons[-1] = back
+            else:
+                a = ons[-1] + six
+        ons.append(a)
+    new_len = _lilt(bar_len, beat)
+    if ons and ons[-1] >= new_len:
+        return None
+    return list(zip(ons, ons[1:] + [new_len]))
+
+
+def _convert_bar(events, beat, bar_len, mode="lilt"):
     """Map one bar's events onto the compound grid -> list of output bars (strings)."""
     def f(x):
         return _lilt(x, beat)
 
     new_len = f(bar_len)
+    spans = _even_spans(events, beat, bar_len) if mode == "even" else None
+    span_of = {}
+    if spans:
+        for ev, sp in zip([e for e in events if e["k"] != "chord"], spans):
+            span_of[id(ev)] = sp
+    onset_of = {}                     # source onset -> new onset, so a chord follows its note
+    for ev in events:
+        if id(ev) in span_of:
+            onset_of.setdefault(ev["on"], span_of[id(ev)][0])
     cuts = [new_len // 2, new_len] if new_len == 6 * beat else [new_len]   # 4/4 -> two 6/8 bars
     segs = [[] for _ in cuts]
     active, written = {}, [dict() for _ in cuts]   # source-bar accidentals / written per output bar
@@ -315,9 +352,9 @@ def _convert_bar(events, beat, bar_len):
 
     for ev in events:
         if ev["k"] == "chord":
-            segs[seg_of(min(f(ev["on"]), new_len - 1))].append(ev["text"])
+            segs[seg_of(min(onset_of.get(ev["on"], f(ev["on"])), new_len - 1))].append(ev["text"])
             continue
-        a, b = f(ev["on"]), f(ev["on"] + ev["dur"])
+        a, b = span_of.get(id(ev)) or (f(ev["on"]), f(ev["on"] + ev["dur"]))
         key = ev.get("letter", "") + ev.get("oct", "")
         if ev["k"] == "note" and ev["acc"]:
             active[key] = ev["acc"]
@@ -352,8 +389,10 @@ def _convert_bar(events, beat, bar_len):
     return ["".join(merge_rests(s)) for s in segs], new_len
 
 
-def to_compound(abc):
+def to_compound(abc, mode="lilt"):
     """A 2/4 or 4/4 score (the planner's dialect) -> the same score in 6/8. Returns the new text.
+    mode "lilt": each pulse's first half doubles, second half kept (sixteenth pushes stay).
+    mode "even": onsets snap to the pulse's three eighths (pushes land on the third eighth).
     Raises ValueError for other meters or anything outside the dialect."""
     h = parse_header(abc)
     lm = re.match(r"^1/(\d+)$", h.get("L", ""))
@@ -400,7 +439,7 @@ def to_compound(abc):
                 n = bar[1] * (2 if cur_len == 4 * beat else 1)
                 bars_out.append(f"Z{n if n != 1 else ''}")
                 continue
-            segs, _ = _convert_bar(bar, beat, cur_len)
+            segs, _ = _convert_bar(bar, beat, cur_len, mode)
             bars_out += segs
         out.append("|".join(bars_out) + "|")
     return "\n".join(out) + ("\n" if abc.endswith("\n") else "")

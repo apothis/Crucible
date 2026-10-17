@@ -79,6 +79,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [planFeel, setPlanFeel] = d.use("planFeel", "");
   const [planTries, setPlanTries] = d.use("planTries", "16");
   const [planBusy, setPlanBusy] = useState(false);
+  const [convMode, setConvMode] = d.use("convMode", "lilt");   // 6/8 conversion: lilt | even
 
   // ---- cover ----
   const [coverSrc, setCoverSrc] = d.use("coverSrc", "");
@@ -358,9 +359,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // score: each pulse lilts (two eighths -> quarter + eighth), 4/4 bars split in two, tempo kept
   async function toCompound() {
     try {
-      const r = await api.yue2ToCompound(abc);
+      const r = await api.yue2ToCompound(abc, convMode);
       setAbc(r.abc);
-      setAbcSource(`${abcSource || "score"} -> 6/8`);
+      setAbcSource(`${abcSource || "score"} -> 6/8 (${convMode})`);
       setNote("score converted to 6/8: same melody, chords and sections, each pulse now lilts in three; put \"in 6/8\" in the style line to match");
     } catch (e) { setNote(`6/8 conversion failed: ${e}`); }
   }
@@ -668,6 +669,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <GhostButton onClick={toCompound} title="rewrite the loaded score in 6/8: each pulse becomes a dotted quarter (two eighths -> quarter + eighth), 4/4 bars split in two, melody/chords/sections unchanged">
                 convert score to 6/8
               </GhostButton>
+              <select className={inp + " w-auto"} value={convMode} onChange={(e) => setConvMode(e.target.value)}
+                title="lilt: each pulse's first half doubles, sixteenth pushes kept; even: notes snap to the pulse's three eighths (pushes land on the third)">
+                <option value="lilt">lilt</option>
+                <option value="even">even threes</option>
+              </select>
               <span className="text-[10px] text-[var(--color-muted)]">this score is {meterOf(abcInfo ?? undefined, abc)}</span>
             </div>
           )}
