@@ -343,3 +343,10 @@ planner is the only obstacle. Built: Score step "Wanted meter" (rounds of 4 plan
 try cap) + "Planning-only feel words" (inserted after the genre for plans only) + meter on plan
 cards. The inserted form ("<genre>, lilting jig-like sway") is not the exact tested wording
 ("Celtic-tinged <genre> with a lilting jig-like sway"); its hit rate is unmeasured.
+
+Live check from the tab (Only This Is Mine, wanted 6/8, feel words "lilting jig-like sway"
+inserted after the genre): **0 in 6/8 after 16 tries** (10x 2/4, 6x 4/4). With the earlier 2/8
+for the "Celtic-tinged ... with a lilting jig-like sway" wording, the planner's 6/8 rate on this
+song is ~2 in 24 at best: wording is a weak lever, the seed dominates. The filter works; the
+planner rarely offers 6/8 for a metal ballad. 2/4 plans are common (10/16), which makes a
+score-side 2/4 -> 6/8 conversion the stronger lever.
