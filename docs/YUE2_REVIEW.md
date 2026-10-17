@@ -365,3 +365,10 @@ Hypothesis (unverified): the band's groove follows the written tempo; at Q:1/4=1
 sit in a straight feel under a triplet melody (the "compound over straight" effect), while at
 Q:1/4=78 the six is countable. Test = even mode at a tempo that still fits (60 per pulse,
 Q:1/4=90, ~330 s).
+
+**Converter removed (2026-10-18, user):** the aim was choosing a time signature, not a one-way
+switch to 6/8, so the "convert score to 6/8" button (lilt / even threes) and its endpoint are gone.
+Meter is chosen with the plan filter ("Wanted meter", keeps planning until plans come out in it).
+The score editor gained a "to key" picker (the whole score, both voices, chord symbols and K:,
+via abcjs strTranspose: checked on the 1023-note Skyborn plan, every note moved by exactly the
+chosen step and back again).

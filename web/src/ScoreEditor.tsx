@@ -85,6 +85,24 @@ function movePitch(abc: string, target: { startChar: number; endChar: number; pi
   }
   return { abc: out, fixed };
 }
+// ---- key picker ----
+// The whole-score move is still abcjs strTranspose (notes, chord symbols and K: together); the picker
+// only turns a target key into the semitone count, so a key change reads as a key, not as arithmetic.
+const PITCH: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const MAJOR_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+const MINOR_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"];
+function parseKey(k: string | undefined): { pc: number; minor: boolean; suffix: string } | null {
+  const m = /^\s*([A-G])([#b]?)\s*(\S*)/.exec(k || "");
+  if (!m) return null;
+  const pc = (PITCH[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0) + 12) % 12;
+  const minor = /^m(in(or)?)?$/i.test(m[3]) || /^aeo/i.test(m[3]);
+  return { pc, minor, suffix: minor ? "m" : m[3] && !/^maj/i.test(m[3]) ? m[3] : "" };
+}
+function keyName(key: { pc: number; minor: boolean; suffix: string }, steps: number): string {
+  const pc = (((key.pc + steps) % 12) + 12) % 12;
+  return (key.minor ? MINOR_NAMES : MAJOR_NAMES)[pc] + key.suffix;
+}
+
 type View = "notation" | "roll" | "text";
 type RollNote = { pitch: number; start: number; duration: number; voice: number; startChar: number; endChar: number };
 
@@ -202,6 +220,7 @@ export function ScoreEditor({ abc, setAbc, info, onClear }: Props) {
   }, [roll, info, abc]);
 
   const empty = !abc.trim();
+  const curKey = parseKey(info?.K);
   return (
     <div className="mt-3 rounded border border-[var(--color-line)] bg-[#0e1015] p-2">
       <div className="flex flex-wrap items-center gap-1">
@@ -227,6 +246,16 @@ export function ScoreEditor({ abc, setAbc, info, onClear }: Props) {
         <GhostButton onClick={() => transpose(-1)} disabled={empty} title="down a semitone (notes and chord symbols)">-1</GhostButton>
         <GhostButton onClick={() => transpose(1)} disabled={empty} title="up a semitone (notes and chord symbols)">+1</GhostButton>
         <GhostButton onClick={() => transpose(12)} disabled={empty} title="up an octave">+12</GhostButton>
+        {curKey && (
+          <select className={inp + " w-auto"} value="" disabled={empty}
+            onChange={(e) => { const n = parseInt(e.target.value); if (n) transpose(n); }}
+            title="move the whole score (both voices, chord symbols, K:) to another key; + is up, - is down, so pick the direction that suits the voice">
+            <option value="">to key... (now {keyName(curKey, 0)})</option>
+            {[6, 5, 4, 3, 2, 1, -1, -2, -3, -4, -5, -6].map((n) => (
+              <option key={n} value={n}>{keyName(curKey, n)} ({n > 0 ? "+" : ""}{n})</option>
+            ))}
+          </select>
+        )}
         <span className="ml-2 text-[10px] text-[var(--color-muted)]">tempo</span>
         <input className={inp} style={{ width: 72 }} value={bpm} onChange={(e) => setBpm(e.target.value)} placeholder="bpm" disabled={empty} />
         <GhostButton onClick={applyTempo} disabled={empty || !bpm.trim()} title="rewrite Q: in the header - the tempo lever the render honours">set</GhostButton>
