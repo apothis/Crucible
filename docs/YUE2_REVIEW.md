@@ -283,3 +283,24 @@ against 224-260 s planned. User's ears: **off bad; melody not as good as full.**
 default for new songs; melody's job is covers (upstream: melody score -> accompaniment free, best
 style/quality on covers; full transcription keeps the harmony for identity). Because full plans
 drop sections, the plan batch + pick step matters: pick a plan whose sections match the lyrics.
+
+## 10. Meter / 6/8 control (research 2026-10-17)
+
+Why "in 6/8" was ignored `[verified]` + `[O]`: meter is written by the planner as the score's
+`M:` line, learned from SheetSage2 transcriptions of the training audio (meter set 2/4, 3/4, 4/4,
+3/8, 6/8). Style text never carried meter, so the planner picks the meter it associates with the
+GENRE and FEEL. Our library: rock/metal plans 4/4 or 2/4; the Irish folk song 3/4; Give Me Back
+the Wonder ("bouncing jig shuffle") got M:6/8 on 2 of 4 plan seeds, written correctly (24/32
+units per bar, chords on downbeats). Official demo scores: 4/4 x80, 2/4 x11, 3/4 x1, 6/8 x0.
+Literal "in 6/8" on a metal ballad: 0 of 4 (4/4, 2/4). No public report of a real 6/8 song.
+
+Format facts `[O]`: 6/8 at L:1/32 = 24 units per bar; tempo is written per quarter, so a
+dotted-quarter pulse of 60 is `Q:1/4=90`. In 6/8 every eighth is a beat, so a triplet feel is
+straight eighths (fits the grid); tuplets in 4/4 are flattened (#183). Renderer adherence to a
+supplied 6/8 score is unmeasured upstream; our Wonder 6/8 renders are the local evidence.
+
+Levers, ranked: (1) supply a native 6/8 score as `abc` (convert a plan, or transcribe a 6/8
+recording with SheetSage2 and check its M: line); (2) plan batch with in-distribution feel words
+(jig, lilting, rolling triplet feel, waltz-like sway) + pick plans whose M: is 6/8 (cheap, plans
+are seconds); (3) prefill the planner with a 6/8 opening (YuE2-Studio engine fork does this; no
+core node); (4) an AR LoRA on 6/8 scores (speculative).
