@@ -350,3 +350,18 @@ for the "Celtic-tinged ... with a lilting jig-like sway" wording, the planner's 
 song is ~2 in 24 at best: wording is a weak lever, the seed dominates. The filter works; the
 planner rarely offers 6/8 for a metal ballad. 2/4 plans are common (10/16), which makes a
 score-side 2/4 -> 6/8 conversion the stronger lever.
+
+### 6/8 conversion results (2026-10-17) - user's ears
+
+Same two 2/4 plans (6003, 6004), seeds +0/+100, house style "in 6/8", cfg 2.0:
+- **lilt @ 70 per pulse** (first converter): "something going on, hard to count a 6/8; speed ok".
+- **even threes @ 70** (97-98% of vocal onsets on the eighth grid): "sounds good, more like a
+  compound time signature than a straight 6/8 - quite cool".
+- **lilt @ 52 per pulse** (Q:1/4=78): "sound ok", but every take hit the 360 s cap (the song
+  stretches ~1.35x to ~380 s), so the ending is cut. Slow 6/8 of a 4.5-min song needs a shorter
+  arrangement; the cap is upstream's context limit, not a setting to raise.
+- Planner's own 6/8 plans (@52): "feels like 6/8" - still the most faithful straight 6/8.
+Hypothesis (unverified): the band's groove follows the written tempo; at Q:1/4=105 the drums may
+sit in a straight feel under a triplet melody (the "compound over straight" effect), while at
+Q:1/4=78 the six is countable. Test = even mode at a tempo that still fits (60 per pulse,
+Q:1/4=90, ~330 s).
