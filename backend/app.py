@@ -7386,6 +7386,17 @@ def yue2_abc_header(p: dict):
                                        title=p.get("title"))}
 
 
+@app.post("/api/yue2/abc/to_compound")
+def yue2_abc_to_compound(p: dict):
+    """A 2/4 or 4/4 score -> 6/8 (pulses lilted: two eighths become quarter + eighth; 4/4 bars
+    split in two; tempo per pulse kept). The planner almost never offers 6/8 for rock/metal."""
+    try:
+        abc = yue2_mod.to_compound(p.get("abc") or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"abc": abc, "info": {**yue2_mod.parse_header(abc), "problems": yue2_mod.validate_abc(abc)}}
+
+
 def _yue2_undeclared(graph):
     """Inputs in the graph that the box's node does not declare -> ["Node.input", ...]. ComfyUI
     drops those without an error: until 2026-10-16 the box's YuE2GenerateMusic had no cfg_scale,

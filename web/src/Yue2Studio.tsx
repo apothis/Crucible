@@ -354,6 +354,16 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       if (hits === 0) setNote((nt) => `${nt}. None in ${wantMeter}: try feel words that imply it (6/8: "lilting jig-like sway"), or raise the try cap`);
     } finally { setPlanBusy(false); }
   }
+  // the planner rarely offers 6/8 for rock/metal (0-2 in 24 on a metal ballad), so convert on the
+  // score: each pulse lilts (two eighths -> quarter + eighth), 4/4 bars split in two, tempo kept
+  async function toCompound() {
+    try {
+      const r = await api.yue2ToCompound(abc);
+      setAbc(r.abc);
+      setAbcSource(`${abcSource || "score"} -> 6/8`);
+      setNote("score converted to 6/8: same melody, chords and sections, each pulse now lilts in three; put \"in 6/8\" in the style line to match");
+    } catch (e) { setNote(`6/8 conversion failed: ${e}`); }
+  }
   function usePlan(p: Plan) {
     const m = meterOf(p.info, p.abc);
     setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
@@ -653,6 +663,14 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             </div>
           )}
 
+          {abc.trim() && ["2/4", "4/4"].includes(meterOf(abcInfo ?? undefined, abc)) && (
+            <div className="mt-2 flex items-center gap-2">
+              <GhostButton onClick={toCompound} title="rewrite the loaded score in 6/8: each pulse becomes a dotted quarter (two eighths -> quarter + eighth), 4/4 bars split in two, melody/chords/sections unchanged">
+                convert score to 6/8
+              </GhostButton>
+              <span className="text-[10px] text-[var(--color-muted)]">this score is {meterOf(abcInfo ?? undefined, abc)}</span>
+            </div>
+          )}
           <ScoreEditor abc={abc} setAbc={(t) => { setAbc(t); if (t.trim() && abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)"); }}
             info={abcInfo} onClear={() => { setAbc(""); setAbcSource(""); }} />
 

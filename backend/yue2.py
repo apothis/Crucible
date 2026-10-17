@@ -233,6 +233,179 @@ def validate_abc(abc):
     return problems
 
 
+# ---------------- 2/4 or 4/4 score -> 6/8 ----------------
+# The planner picks the meter from genre/feel, not from "in 6/8" in the style (0 of 24 plans on a
+# metal ballad), but it writes 2/4 often, and a 2/4 bar is two pulses just like a 6/8 bar. So the
+# conversion is done on the score: every quarter-note pulse becomes a dotted-quarter pulse, its
+# first half stretched to a quarter and its second half kept as an eighth (the straight-to-lilt
+# move: two eighths become quarter + eighth). Melody, chords, sections and the number of sung
+# notes are unchanged; a 4/4 bar becomes two 6/8 bars. The pulse speed is kept, so Q:1/4 goes up
+# by 1.5 (upstream writes tempo per quarter: dotted quarter 60 = Q:1/4=90).
+
+_NOTE_RE = re.compile(r'"[^"]*"|(\^{1,2}|_{1,2}|=)?([A-Ga-g])([,\']*)(\d*)(-?)|z(\d*)|Z(\d*)|\|')
+_DURS = (48, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1)   # the planner's own note lengths, in L units
+
+
+def _split_dur(n):
+    out = []
+    for d in _DURS:
+        while n >= d:
+            out.append(d)
+            n -= d
+    return out
+
+
+def _bar_events(line):
+    """One voice line -> [bar, ...]; a bar is [event] or ("Z", count). Events carry the onset and
+    length in L units. Raises on anything outside the planner's dialect (tuplets, slashes, ...)."""
+    bars, cur, t, pos = [], [], 0, 0
+    while pos < len(line):
+        if line[pos].isspace():
+            pos += 1
+            continue
+        m = _NOTE_RE.match(line, pos)
+        if not m:
+            raise ValueError(f"cannot convert this score: unexpected {line[pos:pos + 12]!r}")
+        tok = m.group(0)
+        pos = m.end()
+        if tok == "|":
+            if cur:
+                bars.append(cur)
+            cur, t = [], 0
+        elif tok.startswith('"'):
+            cur.append({"k": "chord", "on": t, "text": tok})
+        elif m.group(2):
+            d = int(m.group(4) or 1)
+            cur.append({"k": "note", "on": t, "dur": d, "acc": m.group(1) or "", "letter": m.group(2),
+                        "oct": m.group(3), "tie": bool(m.group(5))})
+            t += d
+        elif tok.startswith("z"):
+            d = int(m.group(6) or 1)
+            cur.append({"k": "rest", "on": t, "dur": d})
+            t += d
+        else:   # Z<n>: n whole bars of rest
+            if cur:
+                raise ValueError("cannot convert this score: a multi-bar rest inside a bar")
+            bars.append(("Z", int(m.group(7) or 1)))
+    if cur:
+        bars.append(cur)
+    return bars
+
+
+def _lilt(x, beat):
+    """Onset/offset on the simple grid -> the compound grid: each pulse of `beat` units becomes
+    1.5 * beat; its first half doubles (eighth -> quarter), its second half keeps its length."""
+    half = beat // 2
+    k, r = divmod(x, beat)
+    return k * (beat + half) + (2 * r if r < half else r + half)
+
+
+def _convert_bar(events, beat, bar_len):
+    """Map one bar's events onto the compound grid -> list of output bars (strings)."""
+    def f(x):
+        return _lilt(x, beat)
+
+    new_len = f(bar_len)
+    cuts = [new_len // 2, new_len] if new_len == 6 * beat else [new_len]   # 4/4 -> two 6/8 bars
+    segs = [[] for _ in cuts]
+    active, written = {}, [dict() for _ in cuts]   # source-bar accidentals / written per output bar
+
+    def seg_of(x):
+        return next(i for i, c in enumerate(cuts) if x < c)
+
+    for ev in events:
+        if ev["k"] == "chord":
+            segs[seg_of(min(f(ev["on"]), new_len - 1))].append(ev["text"])
+            continue
+        a, b = f(ev["on"]), f(ev["on"] + ev["dur"])
+        key = ev.get("letter", "") + ev.get("oct", "")
+        if ev["k"] == "note" and ev["acc"]:
+            active[key] = ev["acc"]
+        pieces, x = [], a
+        while x < b:
+            end = min(b, next(c for c in cuts if c > x))
+            pieces += [(x, d) for d in _split_dur(end - x)]
+            x = end
+        for i, (x, d) in enumerate(pieces):
+            si = seg_of(x)
+            if ev["k"] == "rest":
+                segs[si].append(f"z{d if d != 1 else ''}")
+                continue
+            acc = ev["acc"] or active.get(key, "")
+            out_acc = acc if acc and written[si].get(key) != acc else ""   # ABC accidentals last to the bar end
+            if acc:
+                written[si][key] = acc
+            last = i == len(pieces) - 1
+            segs[si].append(f"{out_acc}{ev['letter']}{ev['oct']}{d if d != 1 else ''}{'-' if (not last or ev['tie']) else ''}")
+    def merge_rests(tokens):          # z16 z6 z2 -> z24: adjacent rest pieces back into one
+        out, run = [], 0
+        for t in tokens + ["|"]:
+            if re.fullmatch(r"z\d*", t):
+                run += int(t[1:] or 1)
+                continue
+            if run:
+                out += [f"z{d if d != 1 else ''}" for d in _split_dur(run)]
+                run = 0
+            if t != "|":
+                out.append(t)
+        return out
+    return ["".join(merge_rests(s)) for s in segs], new_len
+
+
+def to_compound(abc):
+    """A 2/4 or 4/4 score (the planner's dialect) -> the same score in 6/8. Returns the new text.
+    Raises ValueError for other meters or anything outside the dialect."""
+    h = parse_header(abc)
+    lm = re.match(r"^1/(\d+)$", h.get("L", ""))
+    meter = h.get("M", "")
+    if not lm or meter not in ("2/4", "4/4"):
+        raise ValueError(f"only 2/4 or 4/4 scores convert to 6/8 (this one is M:{meter or '?'})")
+    unit = int(lm.group(1))
+    beat = unit // 4                     # L units per quarter-note pulse
+    if beat < 2 or beat % 2:
+        raise ValueError(f"L:1/{unit} is too coarse to split a pulse")
+
+    def bar_units(m):
+        n, dnm = (int(x) for x in m.split("/"))
+        return n * unit // dnm
+
+    def eighths(units):
+        return units * 2 // beat
+
+    out, cur_len, header_done = [], bar_units(meter), False
+    for line in abc.splitlines():
+        s = line.strip()
+        if not header_done and re.match(r"^M:", s):
+            out.append("M:6/8")
+            continue
+        if not header_done and re.match(r"^Q:\s*1/4\s*=\s*\d+", s):
+            bpm = int(re.search(r"=\s*(\d+)", s).group(1))
+            out.append(f"Q:1/4={round(bpm * 1.5)}")
+            continue
+        if re.match(r"^K:", s):
+            header_done = True
+            out.append(line)
+            continue
+        if not header_done or not s or s.startswith("%") or s.startswith("V:") or re.match(r"^[A-Za-z]:", s) and not s.startswith("M:"):
+            out.append(line)
+            continue
+        if s.startswith("M:"):           # inline meter change (irregular bars): convert its length
+            cur_len = bar_units(s[2:].strip())
+            regular = cur_len in (2 * beat, 4 * beat)
+            out.append("M:6/8" if regular else f"M:{eighths(_lilt(cur_len, beat))}/8")
+            continue
+        bars_out = []
+        for bar in _bar_events(s):
+            if isinstance(bar, tuple):
+                n = bar[1] * (2 if cur_len == 4 * beat else 1)
+                bars_out.append(f"Z{n if n != 1 else ''}")
+                continue
+            segs, _ = _convert_bar(bar, beat, cur_len)
+            bars_out += segs
+        out.append("|".join(bars_out) + "|")
+    return "\n".join(out) + ("\n" if abc.endswith("\n") else "")
+
+
 # ---------------- graphs ----------------
 
 def _f(p, k):
