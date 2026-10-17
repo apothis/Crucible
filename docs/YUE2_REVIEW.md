@@ -304,3 +304,12 @@ recording with SheetSage2 and check its M: line); (2) plan batch with in-distrib
 (jig, lilting, rolling triplet feel, waltz-like sway) + pick plans whose M: is 6/8 (cheap, plans
 are seconds); (3) prefill the planner with a 6/8 opening (YuE2-Studio engine fork does this; no
 core node); (4) an AR LoRA on 6/8 scores (speculative).
+
+### Section-contrast style clause: confirmed (2026-10-17)
+
+Only This Is Mine, 4 fresh full plans (written from the base line), each rendered with base vs
+base + "almost whispered intimate verses, big raspy belted choruses, hushed final verse", same
+seed, cfg 2.0. User's ears: **contrast works, worth keeping** (second song after BKoB). Now house
+format: the style writer and the Music 3 -> YuE2 conversion add a 2-3 phrase contrast clause
+right after the vocal; order = language, genre, vocal, contrasts, instruments, mood, <=2
+negatives, BPM last; no key or meter in the text.

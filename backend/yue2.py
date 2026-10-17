@@ -64,6 +64,7 @@ STYLE_GUIDE = [
     ("vocal", "gender + register + timbre + delivery: 'female vocal, operatic soprano, bel canto vibrato, soaring in the choruses'"),
     ("tempo", "'140 BPM': a soft prior, honoured about half the time on the demo set (half/double time drift); Q: in the score header is the hard lever"),
     ("key", "not controllable from text (no demo case honours one); K: in the score is. Soft prompts without one tend to plan D# minor at 85"),
+    ("sections", "a short contrast clause right after the vocal: 'almost whispered intimate verses, big belted choruses, hushed final verse' (one style line covers the whole song; this phrasing audibly shaped sections in our tests, lyric-tag descriptors did not)"),
     ("mood", "two or three words: 'romantic and haunting'"),
     ("negatives", "short and absolute, upstream uses them itself: 'no guitar', 'no growls'"),
     ("instrumental", "omit language and singer from the style, add 'instrumental', and leave every section tag's body empty (works about half the time upstream)"),
@@ -375,15 +376,20 @@ _STYLE_SYSTEM = (
     "{\"style\": \"...\", \"lyrics\": \"...\"}. No prose, no markdown.")
 
 _STYLE_RULES = """Rules for "style" (upstream's guidance: "more adjectives do not automatically create more control"):
-- ONE compact comma-separated line, 8-14 descriptors, under 60 words, strongest identity first:
-  language, ONE genre, the defining instruments and where they sit in the mix, the vocal (gender,
-  register, timbre, delivery), tempo as "NNN BPM" when the brief implies one, a two-word mood, and
-  short absolute negatives ("no growls", "no synthesizers") - upstream uses "no guitar" itself.
+- ONE compact comma-separated line of short descriptors, under 60 words, in this order: language,
+  ONE genre, the vocal (gender, register, timbre, delivery), a SECTION-CONTRAST clause when the song
+  has one (2-3 short phrases on how the vocal/energy changes by section, e.g. "almost whispered
+  intimate verses, big raspy belted choruses, hushed final verse"), the defining instruments, a
+  two-word mood, at most two short absolute negatives ("no growls"), tempo as "NNN BPM" LAST when
+  the brief implies one. Short tags beat prose (our ladder 2026-10-16: a 167-char line slightly
+  beat a 994-char one; adding the contrast clause audibly shaped verses vs choruses on two songs).
 - Upstream's own examples, for register: "English, warm piano pop, expressive female voice,
   acoustic piano, rounded bass and light drums, lyrical memorable melody, unhurried phrasing, 88 BPM"
   and "Heavy metal rock, palm-muted riffs, distorted guitars, driving bass, double-kick drums,
   powerful English vocal, 160 BPM".
-- Describe audible qualities; never name a living artist. Nothing about song sections or timing.
+- Describe audible qualities; never name a living artist. No key, no time signature (the score
+  sets both), no section-by-section arrangement narration ("intro on X, verses stripped to Y"):
+  the contrast clause is the only per-section wording.
 - For an instrumental: omit language and singer, add "instrumental".
 - If existing style text is given, IMPROVE it in place (keep its genre, instruments and voice
   unless the brief says otherwise) rather than starting over.

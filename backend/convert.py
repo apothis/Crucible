@@ -243,10 +243,12 @@ _M2Y_RULES = """Rules for "style" (upstream guidance: more adjectives do not cre
 - One comma-separated line, at most 60 words, strongest identity first: language, ONE genre (the
   caption's Basic Attributes genre, verbatim), the defining instruments and where they sit (from
   Primary/Secondary), the vocal in one clause (gender, register, timbre, delivery: from Vocal
-  Gender & Timbre and Vocal Style), tempo as "NNN BPM" if the caption gives one, a two-word mood,
-  and the caption's explicit negatives as short "no X" clauses.
-- No sentences, no section-by-section narration, no living artist names, nothing about
-  timing."""
+  Gender & Timbre and Vocal Style), then, if the caption describes the vocal or energy changing by
+  section, a 2-3 phrase contrast clause ("intimate breathy verses, belted choruses, hushed final
+  verse"), a two-word mood, at most two explicit negatives as short "no X" clauses, and tempo as
+  "NNN BPM" LAST if the caption gives one.
+- No sentences, no section-by-section arrangement narration (the contrast clause is the only
+  per-section wording), no key or time signature, no living artist names."""
 
 
 def music3_to_yue2(fields, lyrics, provider, model, claude_model):
