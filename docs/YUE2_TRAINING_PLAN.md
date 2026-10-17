@@ -133,3 +133,23 @@ needs nar_lora_joint_v9_comfyui (loras/yue2/companions/) under the band LoRA - t
 Not yet tried (AI Toolkit has them): LoKr, DoRA, dropout/rank/module dropout, rank 64, Prodigy,
 EMA, warmup, regularisation songs (is_reg / anchor trick), output preservation, do_separation
 (author: "doesn't work as expected"). One change per run on the Skyborn score + seed.
+
+### Early end at 300 s + the score-length guard (2026-10-17)
+
+Several LoRA takes (v4 600, v9 600/800, the F#m score tests) stopped at exactly 300.0 s (7500 music
+tokens) mid-chorus on a 328.5 s score: the model itself emitted end-of-music (diagnostic: the music
+stage's own seconds output = 300.0; no budget warning; no downstream cap). Base model and v9 450
+played the full score. Writing (planner) strength 0 or 0.5 removed the cut, but 0.5 "loses a lot of
+the Battle Beast and Noora sound" (user) - the character lives in the planner half (writing 0 vs base
+differs only at -20 dB = timbre). Hypothesis (unverified): the planner LoRA was trained on the first
+4000 music tokens only (ar_max_tokens), so past 160 s it drifts more as training goes on and falls
+back to a "songs end at 5 min" habit. Fix in place: custom node YuE2GenerateMusicGuarded
+(tools/comfy_nodes/ComfyUI-MusicGen-YuE2; raises core's own end-token floor) + tab option
+"score-length guard" (min = score length - 8 s; score_seconds() within ~5 s of real renders).
+Verified: v9-600 writing 1.0 + guard = 328.0 s with a natural fade; ~20% slower (160 s vs 133 s).
+Root-cause fix to try in a retrain: planner on whole songs (ar_max_tokens up from 4000; VRAM?).
+
+User notes: v9 450 full length and "pretty good"; voice not raspy enough for most of it - her rasp
+comes from vocal EFFORT, not pitch (so the register-raising score tests aim at the wrong thing);
+verse 1 should stay soft, pressure builds after. Effort tests (style wording / guidance 2.4 /
+sound 1.2, all full length) rendered, awaiting ears.
