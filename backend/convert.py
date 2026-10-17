@@ -58,7 +58,11 @@ def suno_lyrics_to_bare(lyrics):
             continue
         kept = None
         for ptxt in parts:
-            core = suno_export._nearest_core(ptxt).lower()   # "" when no section word in it
+            # the number is split off first: the Suno core list only knows "verse 1"/"verse 2",
+            # so "[Verse 3]" used to lose its tag and its words were glued onto the section before
+            m = re.match(r"^(.*?)\s*(\d+)$", ptxt.strip())
+            base, num = (m.group(1), m.group(2)) if m and m.group(1) else (ptxt, None)
+            core = suno_export._nearest_core(base).lower()   # "" when no section word in it
             if not core:
                 continue
             if core in _SUNO_TO_BARE:
@@ -67,11 +71,20 @@ def suno_lyrics_to_bare(lyrics):
                     continue
                 kept = mapped
             else:
-                kept = core.title().replace("-c", "-C")      # Intro, Verse 2, Pre-Chorus, Outro
+                kept = core.title().replace("-c", "-C")      # Intro, Verse, Pre-Chorus, Outro
+            if num:
+                kept = f"{kept} {num}"
             break
         if kept:
             out.append(f"[{kept}]")
-    return yue2_mod.normalize_lyrics("\n".join(out))
+    # an empty section repeating the one before it ("[Outro] words / [Instrumental Outro]" both
+    # reduce to Outro) is one section, not two
+    secs = []
+    for sec in yue2_mod.lyrics_to_sections("\n".join(out)):
+        if secs and not sec["lyrics"] and sec["tag"] == secs[-1]["tag"]:
+            continue
+        secs.append(sec)
+    return "\n\n".join(f"[{x['tag']}]" + (f"\n{x['lyrics']}" if x["lyrics"] else "") for x in secs)
 
 
 def bare_lyrics_to_music3(lyrics):
