@@ -6,7 +6,7 @@ REM passes "nopause" and logs to CrucibleLorA\aitk_install.log); double-clicking
 REM Pinned to commit dcebc74 (2026-10-16), fetched as a zip so no system git is needed.
 REM The toolkit's own manager then builds everything INSIDE that folder: uv-managed Python 3.12,
 REM a .venv with torch 2.13 cu130 for this GPU, portable git, Node.js and FFmpeg.
-REM Nothing is installed system-wide (uv's download cache too stays in .uv\cache) and the web UI
+REM Nothing is installed system-wide (uv's and npm's download caches stay inside too) and the web UI
 REM is NOT started: jobs run through the helper (POST /aitk/run).
 REM uv is fetched here with curl so the toolkit's PowerShell fallback is never used.
 REM Resumable: re-run this file if a download drops.
@@ -57,6 +57,8 @@ if not exist ".uv\uv.exe" (
 set "PATH=%AITK%\.uv;%PATH%"
 set "UV_PYTHON_INSTALL_DIR=%AITK%\.uv\python"
 set "UV_CACHE_DIR=%AITK%\.uv\cache"
+REM npm (the toolkit installs its web-UI packages even though we never start the UI) caches here, not on C:
+set "npm_config_cache=%AITK%\.npm-cache"
 
 echo.
 echo === 3 of 4: Python 3.12 (uv-managed, inside ai-toolkit\.uv\python) ===
