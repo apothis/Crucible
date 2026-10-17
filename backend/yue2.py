@@ -445,11 +445,53 @@ def to_compound(abc, mode="lilt"):
     return "\n".join(out) + ("\n" if abc.endswith("\n") else "")
 
 
+def score_seconds(abc):
+    """Length of a score in seconds (the Vocal voice's bars - notes, rests, multi-bar Z rests,
+    inline meter changes - at the Q: tempo). None if it cannot be read. Used for the score-length
+    guard (a supplied score should be sung to its end)."""
+    try:
+        h = parse_header(abc)
+        unit = int(h["L"].split("/")[1])
+        q = re.match(r"^(\d+)/(\d+)\s*=\s*(\d+)", h.get("Q", ""))
+        beat_units = int(q.group(1)) * unit // int(q.group(2)) if q else unit // 4
+        bpm = int(q.group(3)) if q else 120
+
+        def bar_units(m):
+            n, d = (int(x) for x in m.split("/"))
+            return n * unit // d
+
+        cur, total, voice, started = bar_units(h["M"]), 0, None, False
+        for line in abc.splitlines():
+            s = line.strip()
+            if s.startswith("K:"):
+                started = True
+                continue
+            if not started or not s or s.startswith("%"):
+                continue
+            if s.startswith("V:"):
+                voice = s.split()[1] if len(s.split()) > 1 else voice
+                continue
+            if s.startswith("M:"):
+                if voice in (None, "Vocal"):
+                    cur = bar_units(s[2:].strip())
+                continue
+            if re.match(r"^[A-Za-z]:", s) or voice != "Vocal":
+                continue
+            for bar in _bar_events(s):
+                total += bar[1] * cur if isinstance(bar, tuple) else sum(e["dur"] for e in bar if e["k"] != "chord")
+        return total / beat_units * 60.0 / bpm
+    except Exception:
+        return None
+
+
 # ---------------- graphs ----------------
 
 def _f(p, k):
     v = p.get(k)
     return DEFAULTS[k] if v in (None, "") else v
+
+
+GUARD_MARGIN_S = 8.0   # takes can end a few seconds before the score naturally (seen: 5 s); a cut is ~28 s
 
 
 def _music_node(p, abc_input, mode):
@@ -464,6 +506,12 @@ def _music_node(p, abc_input, mode):
     # when the user sets it, so the node keeps its own per-mode default otherwise.
     if p.get("cfg_scale") is not None:
         node["inputs"]["cfg_scale"] = float(p["cfg_scale"])
+    # score-length guard (custom node ComfyUI-MusicGen-YuE2): only for a supplied score text
+    if p.get("end_guard") and isinstance(abc_input, str) and abc_input.strip():
+        secs = score_seconds(abc_input)
+        if secs:
+            node["class_type"] = "YuE2GenerateMusicGuarded"
+            node["inputs"]["min_seconds"] = round(max(0.0, min(secs - GUARD_MARGIN_S, float(p["max_seconds"]) - 1)), 2)
     return node
 
 
@@ -512,6 +560,8 @@ def _resolve(p):
         # a tokenizer's decoder adapter (e.g. nar_lora_joint_v9_comfyui): loaded FIRST, sound half only,
         # because a band LoRA trained on v9 tokens was trained on top of it
         "lora_base": (p.get("lora_base") or "").strip(),
+        # opt-in score-length guard: with a supplied score, no end-of-music before (score - 8 s)
+        "end_guard": bool(p.get("end_guard")),
     }
     for k in ("temperature", "top_p", "top_k", "repetition_penalty", "abc_temperature",
               "abc_top_p", "abc_top_k", "abc_repetition_penalty", "abc_penalty_window",

@@ -86,6 +86,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [loraClip, setLoraClip] = d.use("loraClip", "1.0");
   // a v9-token LoRA needs the tokenizer's decoder adapter loaded under it (loras/yue2/companions/)
   const [loraBase, setLoraBase] = d.use("loraBase", "");
+  // opt-in: with a loaded score, the model may not end the song before (score length - 8 s); band LoRAs
+  // were seen ending at exactly 300 s mid-chorus on a 328 s score
+  const [endGuard, setEndGuard] = d.use("endGuard", false);
   const [loras, setLoras] = useState<string[]>([]);
   const [loraNote, setLoraNote] = useState("");
   const isCompanion = (l: string) => /[\\/]companions[\\/]/i.test(l);
@@ -470,6 +473,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           ...(guidance.trim() ? { cfg_scale: parseFloat(guidance) } : {}),
           keep_tag_text: keepTagText,
           ...loraBody,
+          ...(endGuard && withScore ? { end_guard: true } : {}),
           tiled_decode: tiled,
         });
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
@@ -838,6 +842,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             </div>
           </div>
           {loraNote && <div className="mt-1 text-[10px] text-[var(--color-muted)]">{loraNote}</div>}
+          <label className="mt-1 flex items-center gap-2 text-[11px]"
+            title="needs a loaded score; uses the ComfyUI-MusicGen-YuE2 node on the box. Slower while the guard holds.">
+            <input type="checkbox" checked={endGuard} onChange={(e) => setEndGuard(e.target.checked)} />
+            score-length guard: don't let the song end before the loaded score does (recommended with band LoRAs)
+          </label>
           <div className="mt-2">
             <GhostButton onClick={() => setShowAdv(!showAdv)}>{showAdv ? "hide" : "show"} sampler settings</GhostButton>
           </div>
