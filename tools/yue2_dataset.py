@@ -21,7 +21,7 @@ Steps (run from the repo root with the backend up on :8000):
                                                 captioner's tempo feel; -> .mvwork/.../parts_final/
   python3 tools/yue2_dataset.py merge   <name>   style line + reviewed lyrics -> <stem>.txt on the box
                                                 (copies kept in .mvwork/yue2_train/<name>/txt/)
-  python3 tools/yue2_dataset.py train   <name> [v4|v9] [4000|whole]   write the training job (one LoRA over planner +
+  python3 tools/yue2_dataset.py train   <name> [v4|v9] [4000|whole] [steps] [planner LR x]   write the training job (one LoRA over planner +
                                                 decoder); v9 = newer tokenizer + its merged decoder adapter
 Lyrics are never transcribed from audio (house rule): they come from the online fetch the ACE
 pipeline already did (<stem>.lyrics.txt beside the source audio).
@@ -129,7 +129,7 @@ HEADS = {   # community audio -> semantic tokenizers (Mothersuperior); v9 = the 
 }
 
 
-def train(name, head="v4", planner="4000", steps=800):
+def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5"):
     """Recipe from docs/YUE2_TRAINING_PLAN.md s4 (GRVL/CNZN/vdruts, AI Toolkit's yue2 defaults): rank 32,
     adamw8bit, LR 5e-5, planner LR x0.5 + KL 0.2 (the planner memorises small sets fast), cot full with
     50% score dropout, 60 s decoder windows, <= 20 passes (40 songs -> 800 steps), a checkpoint every 50
@@ -137,16 +137,24 @@ def train(name, head="v4", planner="4000", steps=800):
     off (AR CUDA-graph crash on sampling) - audition in the YuE2 tab instead.
     planner: music tokens the planner trains on from each song's start - "4000" (the recipe's memory cap,
     160 s) or "whole" (trainer default 0 = whole song: the planner also learns later choruses and endings;
-    LoRAs from the 4000 cap ended songs at 300 s, docs/YUE2_TRAINING_PLAN.md s6)."""
+    LoRAs from the 4000 cap ended songs at 300 s, docs/YUE2_TRAINING_PLAN.md s6).
+    steps / ar_mult: a longer run with a slower planner (e.g. 2000 at x0.2 = the planner's 800 at x0.5 in
+    total LR) gives the decoder - one 60 s window per step - more of the voice without overcooking the
+    planner. ~20 checkpoints per run are kept, so save_every grows with the step count."""
     _src, dst, _local = _paths(name)
+    steps, ar_mult = int(steps), float(ar_mult)
     ar_max_tokens = 0 if planner == "whole" else int(planner)
-    job = f"yue2_{name}_lora" if head == "v4" else f"yue2_{name}_{head}_lora"
+    job = f"yue2_{name}" + ("" if head == "v4" else f"_{head}")
     if planner != "4000":
-        job = job[:-len("_lora")] + f"_{planner}song_lora" if planner == "whole" else job[:-len("_lora")] + f"_ar{planner}_lora"
+        job += "_wholesong" if planner == "whole" else f"_ar{planner}"
+    if ar_mult != 0.5 or steps != 800:
+        job += f"_plr{ar_mult:g}_{steps}"
+    job += "_lora"
+    save_every = max(50, round(steps / 20 / 50) * 50)
     cfg = {"job": "extension", "config": {"name": job, "process": [{
         "type": "diffusion_trainer", "training_folder": "output", "device": "cuda", "trigger_word": None,
         "network": {"type": "lora", "linear": 32, "linear_alpha": 32},
-        "save": {"dtype": "bf16", "save_every": 50, "max_step_saves_to_keep": 20},
+        "save": {"dtype": "bf16", "save_every": save_every, "max_step_saves_to_keep": 20},
         "datasets": [{"folder_path": dst, "caption_ext": "txt", "caption_dropout_rate": 0,
                       "cache_latents_to_disk": True, "resolution": [512], "num_repeats": 1}],
         "train": {"batch_size": 1, "steps": steps, "gradient_accumulation": 1, "train_unet": True,
@@ -157,13 +165,13 @@ def train(name, head="v4", planner="4000", steps=800):
         "logging": {"log_every": 1, "use_ui_logger": False},
         "model": {"arch": "yue2", "name_or_path": COMFY_MODELS + r"\checkpoints\yue2_3b_bf16.safetensors",
                   "quantize": False, "low_vram": False,
-                  "model_kwargs": {"cot": "full", "abc_dropout": 0.5, "ar_kl_weight": 0.2, "ar_lr_multiplier": 0.5,
+                  "model_kwargs": {"cot": "full", "abc_dropout": 0.5, "ar_kl_weight": 0.2, "ar_lr_multiplier": ar_mult,
                                    "ar_max_tokens": ar_max_tokens, "train_window_frames": 1500, "ar_cuda_graphs": False,
                                    "sheetsage_path": COMFY_MODELS + r"\audio_encoders\sheetsage2_bf16.safetensors",
                                    **(HEADS[head] or {})}},
     }]}}
     r = _post(HELPER, "/fs/write", {"path": AITK + r"\config" + "\\" + job + ".yaml", "content": json.dumps(cfg, indent=1)})
-    print(f"wrote {r['path']} ({steps} steps, checkpoint every 50); run with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
+    print(f"wrote {r['path']} ({steps} steps, checkpoint every {save_every}); run with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
 
 
 ENRICH_SYSTEM = (
@@ -226,6 +234,6 @@ def merge(name):
 
 if __name__ == "__main__":
     cmds = {"stage": stage, "caption": caption, "enrich": enrich, "merge": merge, "train": train}
-    if len(sys.argv) not in (3, 4, 5) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
+    if len(sys.argv) not in range(3, 8) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
-    cmds[sys.argv[1]](*sys.argv[2:])      # train takes an optional tokenizer (v4 | v9) and planner span (4000 | whole)
+    cmds[sys.argv[1]](*sys.argv[2:])      # train: [v4|v9] [4000|whole] [steps] [planner LR multiplier]
