@@ -1,14 +1,19 @@
 @echo off
 REM Ostris AI Toolkit for YuE2 LoRA training (docs/YUE2_TRAINING_PLAN.md).
-REM Lives next to ComfyUI: E:\AI\MusicGen\Comfyui\ai-toolkit (inside the box file API's root).
+REM Sits in CrucibleLorA beside the box helper and installs to <MusicGen>\ai-toolkit, next to
+REM AceStep / Comfyui / CrucibleLorA. Started remotely by the helper (POST /aitk/install, which
+REM passes "nopause" and logs to CrucibleLorA\aitk_install.log); double-clicking it also works.
 REM Pinned to commit dcebc74 (2026-10-16), fetched as a zip so no system git is needed.
 REM The toolkit's own manager then builds everything INSIDE that folder: uv-managed Python 3.12,
 REM a .venv with torch 2.13 cu130 for this GPU, portable git, Node.js and FFmpeg.
-REM Nothing is installed system-wide and the web UI is NOT started.
+REM Nothing is installed system-wide (uv's download cache too stays in .uv\cache) and the web UI
+REM is NOT started: jobs run through the helper (POST /aitk/run).
 REM uv is fetched here with curl so the toolkit's PowerShell fallback is never used.
 REM Resumable: re-run this file if a download drops.
 
 setlocal
+set "PAUSE=pause"
+if /i "%~1"=="nopause" set "PAUSE=rem"
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 set "AITK=%ROOT%\ai-toolkit"
@@ -28,10 +33,11 @@ if exist "%AITK%\run.py" (
     curl -L -C - -o "%ROOT%\ai-toolkit-%COMMIT%.zip" "https://github.com/ostris/ai-toolkit/archive/%COMMIT%.zip"
     tar -xf "%ROOT%\ai-toolkit-%COMMIT%.zip" -C "%ROOT%"
     ren "%ROOT%\ai-toolkit-%COMMIT%" ai-toolkit
+    if exist "%AITK%\run.py" del "%ROOT%\ai-toolkit-%COMMIT%.zip"
 )
 if not exist "%AITK%\run.py" (
     echo ERROR: source not unpacked into %AITK%
-    pause
+    %PAUSE%
     exit /b 1
 )
 
@@ -45,11 +51,12 @@ if not exist ".uv\uv.exe" (
 )
 if not exist ".uv\uv.exe" (
     echo ERROR: uv.exe not found in %AITK%\.uv
-    pause
+    %PAUSE%
     exit /b 1
 )
 set "PATH=%AITK%\.uv;%PATH%"
 set "UV_PYTHON_INSTALL_DIR=%AITK%\.uv\python"
+set "UV_CACHE_DIR=%AITK%\.uv\cache"
 
 echo.
 echo === 3 of 4: Python 3.12 (uv-managed, inside ai-toolkit\.uv\python) ===
@@ -58,7 +65,7 @@ set "PY="
 for /f "delims=" %%P in ('uv python find 3.12') do set "PY=%%P"
 if not defined PY (
     echo ERROR: could not find the uv-managed Python 3.12
-    pause
+    %PAUSE%
     exit /b 1
 )
 
@@ -68,11 +75,11 @@ echo === 4 of 4: the toolkit's environment (torch for this GPU, requirements, gi
 if errorlevel 1 (
     echo.
     echo Install failed - see the output above.
-    pause
+    %PAUSE%
     exit /b 1
 )
 
 echo.
 echo Done. AI Toolkit is in %AITK% with its own .venv.
-echo Nothing else to start: training and captioning run from job files via run_aitk_job.bat.
-pause
+echo Nothing else to start: caption and training jobs run through the helper (POST /aitk/run).
+%PAUSE%

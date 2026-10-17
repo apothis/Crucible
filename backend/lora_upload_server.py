@@ -45,6 +45,16 @@ MG_FS_EXTRA_ROOTS adds to it. Paths outside -> 403.
 If MG_FS_TOKEN is set, mutating ops (write/mkdir/move/copy/delete) require a matching
 `token` in the body. /fs/delete additionally requires `confirm:true`.
 Deliberately NO arbitrary command/exec endpoint in this cut - ask if you want one (opt-in).
+
+AI Toolkit (YuE2 LoRA training, docs/YUE2_TRAINING_PLAN.md) - fixed actions only, no free exec:
+  GET  /aitk/status                    -> {dir, installed, kind, job, pid, alive, log, log_tail}
+  POST /aitk/install {token?}          -> runs install_ai_toolkit.bat (beside this script) detached
+  POST /aitk/run  {job, token?, free_gpu?=true} -> ai-toolkit/config/<job>.yaml via its own venv
+  POST /aitk/stop {token?}             -> kills ONLY the process tree this helper started
+  GET  /aitk/log?lines=                -> tail of the current/last job's log
+  POST /helper/restart {token?}        -> relaunch this helper from run_lora_upload.bat (picks up
+                                          fs/write-deployed updates with nobody at the box)
+The AI Toolkit folder (MG_AITK_DIR, default <MusicGen>/ai-toolkit) is always an fs root.
 """
 import os
 import re
@@ -69,6 +79,10 @@ os.makedirs(BASE, exist_ok=True)
 # Optional shared token gating the MUTATING fs ops (write/mkdir/move/copy/delete).
 # Unset -> no auth (matches the existing dataset endpoints' trusted-LAN model).
 FS_TOKEN = os.environ.get("MG_FS_TOKEN", "").strip()
+
+# AI Toolkit lives next to AceStep / Comfyui / CrucibleLorA under the MusicGen folder
+HELPER_DIR = os.path.dirname(os.path.abspath(__file__))
+AITK_DIR = os.environ.get("MG_AITK_DIR", "").strip() or os.path.join(os.path.dirname(HELPER_DIR), "ai-toolkit")
 
 app = FastAPI()
 
@@ -130,6 +144,7 @@ def _fs_roots():
     extra = os.environ.get("MG_FS_EXTRA_ROOTS", "").strip()
     if extra:                                            # additive, honored even under a full override
         cands += [p for p in extra.split(os.pathsep) if p.strip()]
+    cands.append(AITK_DIR)                               # AI Toolkit: job files, datasets, patches, logs
     roots = []
     for p in cands:
         try:
@@ -622,6 +637,166 @@ def comfy_restart(body: dict = Body(default={})):
             time.sleep(2)
     return {"killed": killed, "skipped_non_python": skipped, "launcher": bat,
             "relaunched": True, "up": _comfy_up(COMFY_PORT), "waited_seconds": waited}
+
+
+# ----------------------------- AI Toolkit job control -----------------------------
+# Fixed actions only (install / run a job file / stop / status) so training is driven from the
+# Mac with nothing done by hand on the box. Processes start DETACHED in their own process group,
+# so they survive a helper restart; their PID is kept in aitk_state.json and /aitk/stop kills
+# only that tree (never by image name).
+AITK_INSTALLER = os.path.join(HELPER_DIR, "install_ai_toolkit.bat")
+AITK_STATE = os.path.join(HELPER_DIR, "aitk_state.json")
+AITK_INSTALL_LOG = os.path.join(HELPER_DIR, "aitk_install.log")
+ENGINE_PORT = int(os.environ.get("MG_ENGINE_PORT", "8001"))
+_DETACH = 0x00000008 | 0x00000200          # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+_AITK_PROCS = {}                           # pid -> Popen, for exit codes while this helper lives
+
+
+def _aitk_python():
+    return os.path.join(AITK_DIR, ".venv", "Scripts", "python.exe")
+
+
+def _aitk_state():
+    try:
+        with open(AITK_STATE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _aitk_alive(st):
+    pid = st.get("pid")
+    if not pid:
+        return False
+    proc = _AITK_PROCS.get(pid)
+    if proc is not None:
+        return proc.poll() is None
+    img = (_pid_image(str(pid)) or "").lower()       # helper restarted: fall back to the PID's image
+    return img in ("python.exe", "cmd.exe")
+
+
+def _aitk_tail(path, lines=40):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 200_000))
+            text = f.read().decode("utf-8", "replace")
+        return "\n".join(text.replace("\r", "\n").splitlines()[-lines:])
+    except Exception:
+        return ""
+
+
+def _aitk_spawn(args, cwd, log_path, env=None, **state):
+    if _aitk_alive(_aitk_state()):
+        raise HTTPException(409, "an AI Toolkit process is already running (POST /aitk/stop first)")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    logf = open(log_path, "w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(args, cwd=cwd, env=env, stdout=logf, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, creationflags=_DETACH)
+    _AITK_PROCS[proc.pid] = proc
+    st = {"pid": proc.pid, "started": _iso(time.time()), "log": log_path, **state}
+    with open(AITK_STATE, "w") as f:
+        json.dump(st, f)
+    return st
+
+
+def _free_gpu():
+    """Ask ComfyUI and the ACE engine to drop their models so training gets the 3090. A
+    running ComfyUI render is never interrupted: the caller refuses to start instead."""
+    out = {}
+    for name, url, body in (("comfy", f"http://127.0.0.1:{COMFY_PORT}/free", {"unload_models": True, "free_memory": True}),
+                            ("engine", f"http://127.0.0.1:{ENGINE_PORT}/v1/free", {})):
+        try:
+            req = urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=30)
+            out[name] = "freed"
+        except Exception as e:
+            out[name] = f"skipped ({type(e).__name__})"
+    return out
+
+
+def _comfy_busy():
+    try:
+        q = json.load(urllib.request.urlopen(f"http://127.0.0.1:{COMFY_PORT}/queue", timeout=5))
+        return bool(q.get("queue_running") or q.get("queue_pending"))
+    except Exception:
+        return False
+
+
+@app.get("/aitk/status")
+def aitk_status(lines: int = 30):
+    st = _aitk_state()
+    alive = _aitk_alive(st)
+    proc = _AITK_PROCS.get(st.get("pid"))
+    return {"dir": AITK_DIR, "installed": os.path.isfile(_aitk_python()),
+            "installer_present": os.path.isfile(AITK_INSTALLER), **st, "alive": alive,
+            "exit_code": (proc.poll() if proc is not None else None),
+            "log_tail": _aitk_tail(st["log"], lines) if st.get("log") else ""}
+
+
+@app.get("/aitk/log")
+def aitk_log(lines: int = 200):
+    st = _aitk_state()
+    return {"log": st.get("log"), "content": _aitk_tail(st["log"], lines) if st.get("log") else ""}
+
+
+@app.post("/aitk/install")
+def aitk_install(body: dict = Body(default={})):
+    _auth(body or {})
+    if not os.path.isfile(AITK_INSTALLER):
+        raise HTTPException(404, f"installer not deployed at {AITK_INSTALLER} (fs/write it there)")
+    return _aitk_spawn(["cmd", "/c", AITK_INSTALLER, "nopause"], HELPER_DIR, AITK_INSTALL_LOG, kind="install")
+
+
+@app.post("/aitk/run")
+def aitk_run(body: dict = Body(...)):
+    """Run ai-toolkit\\config\\<job>.yaml (a caption or training job written by the Mac) with the
+    toolkit's own venv. Body: {job, token?, free_gpu?=true}. Model downloads go to ai-toolkit\\.hf."""
+    _auth(body or {})
+    job = _safe(str(body.get("job") or ""))
+    cfg = os.path.join(AITK_DIR, "config", job + ".yaml")
+    if not os.path.isfile(_aitk_python()):
+        raise HTTPException(409, "AI Toolkit is not installed (POST /aitk/install)")
+    if not os.path.isfile(cfg):
+        raise HTTPException(404, f"no job file {cfg}")
+    if _comfy_busy():
+        raise HTTPException(409, "ComfyUI has a render queued or running; try again when it is idle")
+    freed = _free_gpu() if body.get("free_gpu", True) else {}
+    env = dict(os.environ, HF_HOME=os.path.join(AITK_DIR, ".hf"), PYTHONUNBUFFERED="1")
+    for k in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX"):
+        env.pop(k, None)
+    log = os.path.join(AITK_DIR, "output", job + ".log")
+    st = _aitk_spawn([_aitk_python(), "run.py", cfg, "--log", log + ".run"], AITK_DIR, log,
+                     env=env, kind="job", job=job)
+    return {**st, "freed": freed}
+
+
+@app.post("/aitk/stop")
+def aitk_stop(body: dict = Body(default={})):
+    _auth(body or {})
+    st = _aitk_state()
+    if not _aitk_alive(st):
+        return {"stopped": False, "reason": "nothing running", **st}
+    r = subprocess.run(["taskkill", "/F", "/T", "/PID", str(st["pid"])], capture_output=True, text=True, timeout=30)
+    return {"stopped": r.returncode == 0, "pid": st["pid"], "output": (r.stdout or r.stderr).strip()[-300:]}
+
+
+@app.post("/helper/restart")
+def helper_restart(body: dict = Body(default={})):
+    """Relaunch this helper so an fs/write-deployed update takes effect remotely: a detached cmd
+    waits for this process to exit (freeing the port), then starts run_lora_upload.bat in a new
+    titled console; this process exits right after answering. Running AI Toolkit jobs are
+    detached and keep going."""
+    _auth(body or {})
+    launcher = os.path.join(HELPER_DIR, "run_lora_upload.bat")
+    if not os.path.isfile(launcher):
+        raise HTTPException(404, f"launcher not found: {launcher}")
+    subprocess.Popen(f'cmd /c "timeout /t 4 /nobreak >nul & start "lora_upload" /D "{HELPER_DIR}" run_lora_upload.bat"',
+                     cwd=HELPER_DIR, shell=False, creationflags=_DETACH,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    import threading
+    threading.Timer(1.0, lambda: os._exit(0)).start()
+    return {"restarting": True, "launcher": launcher}
 
 
 DAV_ENCODER_FILE = "minimax_music3_dav_encoder.safetensors"
