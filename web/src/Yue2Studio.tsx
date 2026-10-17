@@ -71,6 +71,14 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [plans, setPlans] = d.use<Plan[]>("plans", []);
   const [planCount, setPlanCount] = d.use("planCount", "4");
   const [planSeed, setPlanSeed] = d.use("planSeed", "");
+  // meter is the planner's choice, not the style text's: "in 6/8" gave 0/8 plans in 6/8 on a metal
+  // ballad, "...lilting jig-like sway" 2/8 (2026-10-17), and a 6/8 plan rendered with the normal
+  // style line was heard as 6/8. So: optional feel words used for PLANNING only, and keep planning
+  // in rounds until enough plans come out in the wanted meter.
+  const [wantMeter, setWantMeter] = d.use("wantMeter", "any");
+  const [planFeel, setPlanFeel] = d.use("planFeel", "");
+  const [planTries, setPlanTries] = d.use("planTries", "16");
+  const [planBusy, setPlanBusy] = useState(false);
 
   // ---- cover ----
   const [coverSrc, setCoverSrc] = d.use("coverSrc", "");
@@ -268,16 +276,33 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       else if (j.status === "error") { clearInterval(t); onErr(j.error || "error"); }
     }, 1500);
   }
+  function waitPlan(jobId: string): Promise<{ abc: string; seed: number }> {
+    return new Promise((resolve, reject) => pollText(jobId, (abc, seedOut) => resolve({ abc, seed: seedOut }), reject));
+  }
+  // the planning-only style: feel words go right after language + genre (the house order puts the
+  // genre second), so "English, slow metal power ballad, ..." -> "English, slow metal power ballad,
+  // lilting jig-like sway, ..."
+  const planStyle = (() => {
+    const feel = planFeel.trim();
+    if (!feel) return style;
+    const parts = style.split(",").map((x) => x.trim()).filter(Boolean);
+    parts.splice(Math.min(2, parts.length), 0, feel);
+    return parts.join(", ");
+  })();
+  const meterOf = (info?: AbcInfo, abcText?: string) =>
+    (info?.M || (abcText || "").match(/^M:\s*(\S+)/m)?.[1] || "").trim();
+
   async function writePlans() {
     if (planMode === "off") { setNote("plan mode is off: pick melody or full to write a score"); return; }
     if (!style.trim() || !lyrics.trim()) { setNote("a style line and lyrics come first"); return; }
     const n = Math.max(1, Math.min(8, parseInt(planCount) || 1));
     const base = planSeed.trim() ? parseInt(planSeed) : Math.floor(Math.random() * 2 ** 31);
+    if (wantMeter !== "any") return writePlansForMeter(n, base);
     const fresh: Plan[] = [];
     for (let i = 0; i < n; i++) {
       const s = base + i;
       try {
-        const r = await api.yue2Plan({ style, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360 });
+        const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360 });
         const plan: Plan = { id: r.job_id, seed: r.seed, status: "running", abc: "" };
         fresh.push(plan);
         setPlans((ps) => [plan, ...ps].slice(0, 16));
@@ -291,8 +316,47 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     }
     setNote(`${fresh.length} plan(s) queued (seeds ${base}..${base + fresh.length - 1}); each is seconds of GPU, not minutes`);
   }
+  // rounds of 4 seeds until `want` plans come out in the wanted meter or the try cap is reached;
+  // only the matching plans join the list, the note keeps the tally of what else came out
+  async function writePlansForMeter(want: number, base: number) {
+    const cap = Math.max(want, Math.min(64, parseInt(planTries) || 16));
+    const tally: Record<string, number> = {};
+    let tried = 0, hits = 0;
+    setPlanBusy(true);
+    try {
+      while (hits < want && tried < cap) {
+        const round = Math.min(4, cap - tried);
+        const jobs: { id: string; seed: number }[] = [];
+        for (let i = 0; i < round; i++) {
+          const s = base + tried + i;
+          try {
+            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360 });
+            jobs.push({ id: r.job_id, seed: r.seed });
+          } catch (e) { setNote(`plan seed ${s} failed to queue: ${e}`); }
+        }
+        tried += round;
+        for (const j of jobs) {
+          let out;
+          try { out = await waitPlan(j.id); } catch (e) { tally["error"] = (tally["error"] || 0) + 1; continue; }
+          const info = await api.yue2AbcInfo(out.abc).catch(() => undefined);
+          const m = meterOf(info, out.abc) || "?";
+          tally[m] = (tally[m] || 0) + 1;
+          if (m === wantMeter && hits < want) {
+            hits += 1;
+            const plan: Plan = { id: j.id, seed: out.seed ?? j.seed, status: "done", abc: out.abc, info };
+            setPlans((ps) => [plan, ...ps].slice(0, 16));
+          }
+        }
+        const seen = Object.entries(tally).map(([k, v]) => `${v}x ${k}`).join(", ");
+        setNote(`${hits}/${want} plan(s) in ${wantMeter} after ${tried} tries (${seen})` +
+          (hits < want && tried < cap ? "; planning more…" : ""));
+      }
+      if (hits === 0) setNote((nt) => `${nt}. None in ${wantMeter}: try feel words that imply it (6/8: "lilting jig-like sway"), or raise the try cap`);
+    } finally { setPlanBusy(false); }
+  }
   function usePlan(p: Plan) {
-    setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode})`);
+    const m = meterOf(p.info, p.abc);
+    setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
     if (!seed.trim()) setSeed(String(p.seed));
     setNote(`score from plan seed ${p.seed} loaded; edit it below or render it as is`);
   }
@@ -545,12 +609,30 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <input className={inp} value={planSeed} onChange={(e) => setPlanSeed(e.target.value)} placeholder="random" />
             </Field>
             <div className="flex items-end">
-              <GhostButton onClick={writePlans} disabled={busy || planMode === "off" || !!(avail && !avail.available)} className="w-full"
+              <GhostButton onClick={writePlans} disabled={busy || planBusy || planMode === "off" || !!(avail && !avail.available)} className="w-full"
                 title="run only the planner: write N scores from N seeds, then pick one below">
-                Write plans
+                {planBusy ? "planning…" : "Write plans"}
               </GhostButton>
             </div>
+            <Field label="Wanted meter" hint="any = list every plan; otherwise keep planning until enough come out in this meter">
+              <select className={inp} value={wantMeter} onChange={(e) => setWantMeter(e.target.value)}>
+                {["any", "4/4", "2/4", "3/4", "6/8"].map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </Field>
+            {wantMeter !== "any" && (
+              <Field label="Try cap" hint="most plans to try">
+                <input className={inp} value={planTries} onChange={(e) => setPlanTries(e.target.value)} placeholder="16" />
+              </Field>
+            )}
+            <div className="col-span-2">
+              <Field label="Planning-only feel words" hint={'added after the genre for the PLANS only; the render keeps your style line. 6/8: "lilting jig-like sway" (with "Celtic-tinged" it gave 2/8 plans in 6/8; "in 6/8" alone gave 0/8)'}>
+                <input className={inp} value={planFeel} onChange={(e) => setPlanFeel(e.target.value)} placeholder="optional, e.g. lilting jig-like sway" />
+              </Field>
+            </div>
           </div>
+          {planFeel.trim() && (
+            <div className="mt-1 text-[10px] text-[var(--color-muted)]">planning with: {planStyle}</div>
+          )}
           {plans.length > 0 && (
             <div className="mt-2 max-h-48 overflow-auto rounded border border-[var(--color-line)]">
               {plans.map((p) => (
@@ -560,7 +642,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                   {p.status === "error" && <span className="text-red-400">{p.err}</span>}
                   {p.status === "done" && (
                     <span className="flex-1 text-[var(--color-muted)]">
-                      {p.info ? `${p.info.K || "?"} · ${p.info.bpm ?? "?"} bpm · ${p.info.bars} bars · ${p.info.sections.map((s) => s.name).join(" ")}` : `${p.abc.length} chars`}
+                      {p.info ? `${meterOf(p.info, p.abc) || "?"} · ${p.info.K || "?"} · ${p.info.bpm ?? "?"} bpm · ${p.info.bars} bars · ${p.info.sections.map((s) => s.name).join(" ")}` : `${p.abc.length} chars`}
                     </span>
                   )}
                   <span className="flex-1" />
