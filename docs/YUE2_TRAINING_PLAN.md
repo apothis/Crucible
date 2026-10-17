@@ -153,3 +153,15 @@ User notes: v9 450 full length and "pretty good"; voice not raspy enough for mos
 comes from vocal EFFORT, not pitch (so the register-raising score tests aim at the wrong thing);
 verse 1 should stay soft, pressure builds after. Effort tests (style wording / guidance 2.4 /
 sound 1.2, all full length) rendered, awaiting ears.
+
+Run 3 (2026-10-18, v9, planner on WHOLE songs: ar_max_tokens 0 = the trainer's own default; we had
+copied 4000 from the community recipe, which calls it a memory cap): fits on the 3090, ~7.4 s/step vs
+4-5 s (no spill to system RAM), 800 steps ~1 h 40. Tests the 300 s ending and whether the planner,
+now seeing later choruses, learns her pushed voice. Awaiting the ladder.
+
+Why YuE2 runs are ~1 h and ACE LoKr ~10-12 h: same ~5 s/step, but ACE ran ~150 epochs (~7500
+steps on 50 songs) vs 20 passes (800 steps) here. Consequence (hypothesis): the decoder sees one 60 s
+window per step, so each part of a song reaches it only ~4-5 times per run, while the planner (an LM)
+is what burns past ~20 passes. Queued next (written, not started): run 4 = run 3 with the planner
+slowed to x0.2 over 2000 steps (same total planner LR as 800 at x0.5) -> 2.5x the decoder exposure;
+checkpoint every 100 (yue2_battlebeast_v9_wholesong_plr0.2_2000_lora, ~4 h at 7.4 s/step).
