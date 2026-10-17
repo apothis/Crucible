@@ -16,6 +16,7 @@ Steps (run from the repo root with the backend up on :8000):
                                                 writes <stem>.style: the style line only, house order)
   python3 tools/yue2_dataset.py merge   <name>   style line + reviewed lyrics -> <stem>.txt on the box
                                                 (copies kept in .mvwork/yue2_train/<name>/txt/)
+  python3 tools/yue2_dataset.py train   <name>   write the training job (one LoRA over planner + decoder)
 Lyrics are never transcribed from audio (house rule): they come from the online fetch the ACE
 pipeline already did (<stem>.lyrics.txt beside the source audio).
 """
@@ -103,6 +104,39 @@ def caption(name):
     print(f"wrote {r['path']}; run it with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
 
 
+COMFY_MODELS = r"E:\AI\MusicGen\Comfyui\ComfyUI_windows_portable\ComfyUI\models"
+
+
+def train(name, steps=800):
+    """Recipe from docs/YUE2_TRAINING_PLAN.md s4 (GRVL/CNZN/vdruts, AI Toolkit's yue2 defaults): rank 32,
+    adamw8bit, LR 5e-5, planner LR x0.5 + KL 0.2 (the planner memorises small sets fast), cot full with
+    50% score dropout, 60 s decoder windows, <= 20 passes (40 songs -> 800 steps), a checkpoint every 50
+    steps for a by-ear ladder. bf16 base from ComfyUI's models folder (no download); in-training samples
+    off (AR CUDA-graph crash on sampling) - audition in the YuE2 tab instead."""
+    _src, dst, _local = _paths(name)
+    job = f"yue2_{name}_lora"
+    cfg = {"job": "extension", "config": {"name": job, "process": [{
+        "type": "diffusion_trainer", "training_folder": "output", "device": "cuda", "trigger_word": None,
+        "network": {"type": "lora", "linear": 32, "linear_alpha": 32},
+        "save": {"dtype": "bf16", "save_every": 50, "max_step_saves_to_keep": 20},
+        "datasets": [{"folder_path": dst, "caption_ext": "txt", "caption_dropout_rate": 0,
+                      "cache_latents_to_disk": True, "resolution": [512], "num_repeats": 1}],
+        "train": {"batch_size": 1, "steps": steps, "gradient_accumulation": 1, "train_unet": True,
+                  "train_text_encoder": False, "gradient_checkpointing": True, "noise_scheduler": "flowmatch",
+                  "timestep_type": "sigmoid", "optimizer": "adamw8bit", "optimizer_params": {"weight_decay": 1e-4},
+                  "lr": 5e-5, "dtype": "bf16", "disable_sampling": True, "unload_text_encoder": False,
+                  "cache_text_embeddings": False},
+        "logging": {"log_every": 1, "use_ui_logger": False},
+        "model": {"arch": "yue2", "name_or_path": COMFY_MODELS + r"\checkpoints\yue2_3b_bf16.safetensors",
+                  "quantize": False, "low_vram": False,
+                  "model_kwargs": {"cot": "full", "abc_dropout": 0.5, "ar_kl_weight": 0.2, "ar_lr_multiplier": 0.5,
+                                   "ar_max_tokens": 4000, "train_window_frames": 1500, "ar_cuda_graphs": False,
+                                   "sheetsage_path": COMFY_MODELS + r"\audio_encoders\sheetsage2_bf16.safetensors"}},
+    }]}}
+    r = _post(HELPER, "/fs/write", {"path": AITK + r"\config" + "\\" + job + ".yaml", "content": json.dumps(cfg, indent=1)})
+    print(f"wrote {r['path']} ({steps} steps, checkpoint every 50); run with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
+
+
 def merge(name):
     _src, dst, local = _paths(name)
     os.makedirs(os.path.join(local, "txt"), exist_ok=True)
@@ -122,6 +156,6 @@ def merge(name):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3 or sys.argv[1] not in ("stage", "caption", "merge") or sys.argv[2] not in SOURCES:
+    if len(sys.argv) != 3 or sys.argv[1] not in ("stage", "caption", "merge", "train") or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
-    {"stage": stage, "caption": caption, "merge": merge}[sys.argv[1]](sys.argv[2])
+    {"stage": stage, "caption": caption, "merge": merge, "train": train}[sys.argv[1]](sys.argv[2])
