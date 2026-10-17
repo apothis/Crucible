@@ -426,6 +426,9 @@ def _nar_lora_from_safetensors(path: str) -> dict:
     return {"lora": lora, "io": {m: sd for m, sd in io.items() if sd}}
 
 
+# MusicGen box patch (as upstream PR #1068): the merge edits weights in place, which autograd
+# refuses on parameters that require grad ("a view of a leaf Variable ... in-place operation")
+@torch.no_grad()
 def merge_nar_lora(model: YuE2Model, ckpt_path: str, scale: float = 1.0):
     """Fold the community NAR adapter (unmerged q/k/v + gate/up LoRA pairs,
     plus full vae2llm/llm2vae weights) into the merged-projection base."""
