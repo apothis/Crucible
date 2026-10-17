@@ -13,7 +13,8 @@ Steps (run from the repo root with the backend up on :8000):
                                                 LLM with heuristic fallback) into .mvwork/yue2_train/<name>/
                                                 lyrics/ for review
   python3 tools/yue2_dataset.py caption <name>   write the caption job (Qwen2.5-Omni hears each song and
-                                                writes <stem>.style: the style line only, house order)
+                                                writes <stem>.parts: section contrast, instruments, mood,
+                                                tempo feel; language/genre/voice are FIXED per band)
   python3 tools/yue2_dataset.py merge   <name>   style line + reviewed lyrics -> <stem>.txt on the box
                                                 (copies kept in .mvwork/yue2_train/<name>/txt/)
   python3 tools/yue2_dataset.py train   <name>   write the training job (one LoRA over planner + decoder)
@@ -35,17 +36,22 @@ SOURCES = {   # dataset name -> the ACE dataset folder that already holds audio 
 }
 LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".mvwork", "yue2_train")
 
-# The captioner's prompt: the house style line (docs/YUE2_REVIEW.md) minus BPM and key, which it
-# cannot hear reliably. No lyrics: those come from the online fetch, not from the audio.
-STYLE_PROMPT = (
-    "Listen to this song and describe how it sounds as ONE line of comma-separated descriptors, "
-    "in exactly this order: the language of the lyrics (for example English); the genre with its era "
-    "(for example modern power metal with 80s synth influence); the lead vocal: gender, register, timbre "
-    "and delivery (for example powerful raspy female belt); how the vocal and energy change between "
-    "sections, as two or three short phrases (for example restrained verses, soaring belted choruses, "
-    "stripped-down bridge); the defining instruments and production; a two-word mood; the tempo feel "
-    "(slow, mid-tempo or fast). Lowercase except the language. No sentences, no artist, band or song "
-    "names, no lyrics, no key, no numbers. Output only the line.")
+# Fixed per band (user-approved): the parts that carry the band's identity are the same words in
+# every caption, so the LoRA ties them to this sound. Battle Beast 2026-10-17.
+FIXED = {
+    "battlebeast": {"language": "English",
+                    "genre": "modern power metal with 80s heavy metal and synth influences",
+                    "voice": "powerful raspy female rock belt with a soaring high range"},
+}
+
+# The captioner hears each song and writes ONLY the per-song parts. No example phrases: the first run
+# (with examples) copied them word for word into ~15 captions and got language/genre/voice wrong.
+PARTS_PROMPT = (
+    "Listen to this song. Write ONE line of short comma-separated descriptors covering, in this order: "
+    "how the vocal delivery and the energy change between the song's sections (two or three short "
+    "phrases naming the sections); the defining instruments and production; a two-word mood; the tempo "
+    "feel (slow, mid-tempo or fast). Do not mention the language, the genre, or the singer's voice type "
+    "or gender. Lowercase. No sentences, no names, no lyrics, no key, no numbers. Output only the line.")
 
 
 def _get(endpoint, **q):
@@ -97,8 +103,8 @@ def caption(name):
         "caption": {
             "model_name_or_path": "ai-toolkit/Qwen2.5-Omni-7B/qwen2_5_omni_7b_convrot8.safetensors",
             "dtype": "bf16", "extensions": ["mp3"], "path_to_caption": dst,
-            "caption_extension": "style", "recaption": False, "compile": False,
-            "caption_prompt": STYLE_PROMPT, "max_new_tokens": 160, "batch_size": 1}}]}}
+            "caption_extension": "parts", "recaption": False, "compile": False,
+            "caption_prompt": PARTS_PROMPT, "max_new_tokens": 160, "batch_size": 1}}]}}
     # JSON is valid YAML, so the job file is written as JSON text with a .yaml name
     r = _post(HELPER, "/fs/write", {"path": AITK + r"\config" + "\\" + job + ".yaml", "content": json.dumps(cfg, indent=1)})
     print(f"wrote {r['path']}; run it with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
@@ -142,11 +148,13 @@ def merge(name):
     os.makedirs(os.path.join(local, "txt"), exist_ok=True)
     done, missing = 0, []
     for stem in _stems(dst):
-        st = _get("/fs/stat", path=dst + "\\" + stem + ".style")
+        st = _get("/fs/stat", path=dst + "\\" + stem + ".parts")
         if not st.get("exists"):
             missing.append(stem)
             continue
-        style = " ".join(_get("/fs/read", path=dst + "\\" + stem + ".style")["content"].split())
+        parts = " ".join(_get("/fs/read", path=dst + "\\" + stem + ".parts")["content"].split()).strip(" ,.")
+        f = FIXED[name]
+        style = f"{f['language']}, {f['genre']}, {f['voice']}, {parts}"
         lyrics = open(os.path.join(local, "lyrics", stem + ".txt")).read().strip()
         text = f"{style}\n[Lyrics]\n{lyrics}\n"
         open(os.path.join(local, "txt", stem + ".txt"), "w").write(text)
