@@ -80,6 +80,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [planTries, setPlanTries] = d.use("planTries", "16");
   const [planBusy, setPlanBusy] = useState(false);
   const [convMode, setConvMode] = d.use("convMode", "lilt");   // 6/8 conversion: lilt | even
+  // opt-in band LoRA (AI Toolkit, docs/YUE2_TRAINING_PLAN.md): decoder = sound/voice, planner = writing
+  const [lora, setLora] = d.use("lora", "");
+  const [loraModel, setLoraModel] = d.use("loraModel", "1.0");
+  const [loraClip, setLoraClip] = d.use("loraClip", "1.0");
+  const [loras, setLoras] = useState<string[]>([]);
+  const [loraNote, setLoraNote] = useState("");
+  const loraBody = lora ? { lora, lora_model: parseFloat(loraModel) || 1.0, lora_clip: parseFloat(loraClip) || 0 } : {};
 
   // ---- cover ----
   const [coverSrc, setCoverSrc] = d.use("coverSrc", "");
@@ -114,6 +121,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     api.yue2Schema().then(setSchema).catch(() => setSchema(null));
     api.yue2Available().then(setAvail).catch(() => setAvail({ available: false, reason: "backend unreachable" }));
     api.projects().then(setProjects).catch(() => setProjects([]));
+    api.yue2Loras().then((r) => setLoras(r.loras || [])).catch(() => setLoras([]));
   }, []);
 
   // lint as you type (cheap, no GPU)
@@ -303,7 +311,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     for (let i = 0; i < n; i++) {
       const s = base + i;
       try {
-        const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360 });
+        const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...loraBody });
         const plan: Plan = { id: r.job_id, seed: r.seed, status: "running", abc: "" };
         fresh.push(plan);
         setPlans((ps) => [plan, ...ps].slice(0, 16));
@@ -331,7 +339,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         for (let i = 0; i < round; i++) {
           const s = base + tried + i;
           try {
-            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360 });
+            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...loraBody });
             jobs.push({ id: r.job_id, seed: r.seed });
           } catch (e) { setNote(`plan seed ${s} failed to queue: ${e}`); }
         }
@@ -455,6 +463,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           ...(rep.trim() ? { repetition_penalty: parseFloat(rep) } : {}),
           ...(guidance.trim() ? { cfg_scale: parseFloat(guidance) } : {}),
           keep_tag_text: keepTagText,
+          ...loraBody,
           tiled_decode: tiled,
         });
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
@@ -792,6 +801,31 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <input className={inp} value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="1.0" />
             </Field>
           </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-5">
+            <div className="col-span-2">
+              <Field label="Band LoRA" hint="optional; trained with AI Toolkit, copied into ComfyUI by sync">
+                <select className={inp} value={lora} onChange={(e) => setLora(e.target.value)}>
+                  <option value="">(none)</option>
+                  {loras.map((l) => <option key={l} value={l}>{l.replace(/^yue2[\\/]/, "")}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Sound strength" hint="decoder: voice, timbre, production; 1.0 (0.8 if the top end thins)">
+              <input className={inp} value={loraModel} onChange={(e) => setLoraModel(e.target.value)} placeholder="1.0" />
+            </Field>
+            <Field label="Writing strength" hint="planner: melody, phrasing; 1.0 slow songs, 0.5 fast ones">
+              <input className={inp} value={loraClip} onChange={(e) => setLoraClip(e.target.value)} placeholder="1.0" />
+            </Field>
+            <div className="flex items-end">
+              <GhostButton className="w-full" title="copy new checkpoints from AI Toolkit's output into ComfyUI's loras/yue2 folder"
+                onClick={async () => {
+                  setLoraNote("syncing…");
+                  try { const r = await api.yue2LorasSync(); setLoras(r.loras || []); setLoraNote(`${r.copied.length} new, ${r.already_present} already there`); }
+                  catch (e) { setLoraNote(`sync failed: ${e}`); }
+                }}>sync LoRAs</GhostButton>
+            </div>
+          </div>
+          {loraNote && <div className="mt-1 text-[10px] text-[var(--color-muted)]">{loraNote}</div>}
           <div className="mt-2">
             <GhostButton onClick={() => setShowAdv(!showAdv)}>{showAdv ? "hide" : "show"} sampler settings</GhostButton>
           </div>

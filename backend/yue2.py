@@ -504,6 +504,11 @@ def _resolve(p):
         # with several performances, or several scores be tried on one render seed
         "abc_seed": int(p.get("abc_seed") or 0) or int(p.get("seed") or 0),
         "cfg_scale": (float(p["cfg_scale"]) if p.get("cfg_scale") not in (None, "") else None),
+        # opt-in LoRA (an AI Toolkit YuE2 LoRA copied into ComfyUI's loras/yue2/): the core LoraLoader
+        # applies the decoder part via strength_model and the planner part via strength_clip
+        "lora": (p.get("lora") or "").strip(),
+        "lora_model": float(p.get("lora_model") if p.get("lora_model") not in (None, "") else 1.0),
+        "lora_clip": float(p.get("lora_clip") if p.get("lora_clip") not in (None, "") else 1.0),
     }
     for k in ("temperature", "top_p", "top_k", "repetition_penalty", "abc_temperature",
               "abc_top_p", "abc_top_k", "abc_repetition_penalty", "abc_penalty_window",
@@ -542,7 +547,23 @@ def build_graph(p):
               if r["tiled_decode"] else
               {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}})
     g["7"] = {"class_type": "SaveAudio", "inputs": {"audio": ["6", 0], "filename_prefix": "audio/yue2"}}
-    return g, r
+    return _with_lora(g, r), r
+
+
+def _with_lora(g, r):
+    """Insert a core LoraLoader after the checkpoint and point every MODEL/CLIP consumer at it."""
+    if not r.get("lora"):
+        return g
+    for nid, node in g.items():
+        for k, v in node["inputs"].items():
+            if v == ["1", 0]:
+                node["inputs"][k] = ["11", 0]
+            elif v == ["1", 1]:
+                node["inputs"][k] = ["11", 1]
+    g["11"] = {"class_type": "LoraLoader", "inputs": {
+        "model": ["1", 0], "clip": ["1", 1], "lora_name": r["lora"],
+        "strength_model": r["lora_model"], "strength_clip": r["lora_clip"]}}
+    return g
 
 
 def build_plan_graph(p):
@@ -554,7 +575,7 @@ def build_plan_graph(p):
     g = {"1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": MODELS["ckpt"]}},
          "2": _abc_node(r, r["mode"], r["abc_seed"]),
          "10": {"class_type": "PreviewAny", "inputs": {"source": ["2", 0]}}}
-    return g, r
+    return _with_lora(g, r), r
 
 
 def build_transcribe_graph(audio_name, mode="melody"):

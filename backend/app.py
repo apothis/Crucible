@@ -7386,6 +7386,41 @@ def yue2_abc_header(p: dict):
                                        title=p.get("title"))}
 
 
+@app.get("/api/yue2/loras")
+def yue2_loras():
+    """YuE2 LoRAs ComfyUI can load (anything under models/loras/yue2/)."""
+    return {"loras": sorted(n for n in C.models("loras") if n.replace("\\", "/").lower().startswith("yue2/"))}
+
+
+@app.post("/api/yue2/loras/sync")
+def yue2_loras_sync():
+    """Copy new AI Toolkit checkpoints (ai-toolkit/output/<run>/*.safetensors) into ComfyUI's
+    models/loras/yue2/<run>/ through the box helper, so the tab's LoRA picker can load them."""
+    if not LORA_UPLOAD_HOST:
+        raise HTTPException(400, "lora_upload_host not set - the box helper (:5080) does the copy")
+    base = f"http://{LORA_UPLOAD_HOST}"
+    out_root = r"E:\AI\MusicGen\ai-toolkit\output"
+    dst_root = r"E:\AI\MusicGen\Comfyui\ComfyUI_windows_portable\ComfyUI\models\loras\yue2"
+    try:
+        runs = [e for e in requests.get(base + "/fs/list", params={"path": out_root}, timeout=30).json()["entries"] if e["is_dir"]]
+        copied, present = [], 0
+        for run in runs:
+            files = requests.get(base + "/fs/list", params={"path": run["path"], "glob": "*.safetensors"}, timeout=30).json()["entries"]
+            for f in files:
+                if time.time() - float(f.get("mtime") or 0) < 120:
+                    continue      # still being written by a running training job
+                dst = dst_root + "\\" + run["name"] + "\\" + f["name"]
+                if requests.get(base + "/fs/stat", params={"path": dst}, timeout=30).json().get("exists"):
+                    present += 1
+                    continue
+                r = requests.post(base + "/fs/copy", json={"src": f["path"], "dst": dst}, timeout=300)
+                r.raise_for_status()
+                copied.append(run["name"] + "/" + f["name"])
+    except requests.RequestException as e:
+        raise HTTPException(502, f"box helper: {e}")
+    return {"copied": copied, "already_present": present, **yue2_loras()}
+
+
 @app.post("/api/yue2/abc/to_compound")
 def yue2_abc_to_compound(p: dict):
     """A 2/4 or 4/4 score -> 6/8 (pulses lilted: two eighths become quarter + eighth; 4/4 bars
