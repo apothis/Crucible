@@ -21,7 +21,7 @@ Steps (run from the repo root with the backend up on :8000):
                                                 captioner's tempo feel; -> .mvwork/.../parts_final/
   python3 tools/yue2_dataset.py merge   <name>   style line + reviewed lyrics -> <stem>.txt on the box
                                                 (copies kept in .mvwork/yue2_train/<name>/txt/)
-  python3 tools/yue2_dataset.py train   <name> [v4|v9]   write the training job (one LoRA over planner +
+  python3 tools/yue2_dataset.py train   <name> [v4|v9] [4000|whole]   write the training job (one LoRA over planner +
                                                 decoder); v9 = newer tokenizer + its merged decoder adapter
 Lyrics are never transcribed from audio (house rule): they come from the online fetch the ACE
 pipeline already did (<stem>.lyrics.txt beside the source audio).
@@ -129,14 +129,20 @@ HEADS = {   # community audio -> semantic tokenizers (Mothersuperior); v9 = the 
 }
 
 
-def train(name, head="v4", steps=800):
+def train(name, head="v4", planner="4000", steps=800):
     """Recipe from docs/YUE2_TRAINING_PLAN.md s4 (GRVL/CNZN/vdruts, AI Toolkit's yue2 defaults): rank 32,
     adamw8bit, LR 5e-5, planner LR x0.5 + KL 0.2 (the planner memorises small sets fast), cot full with
     50% score dropout, 60 s decoder windows, <= 20 passes (40 songs -> 800 steps), a checkpoint every 50
     steps for a by-ear ladder. bf16 base from ComfyUI's models folder (no download); in-training samples
-    off (AR CUDA-graph crash on sampling) - audition in the YuE2 tab instead."""
+    off (AR CUDA-graph crash on sampling) - audition in the YuE2 tab instead.
+    planner: music tokens the planner trains on from each song's start - "4000" (the recipe's memory cap,
+    160 s) or "whole" (trainer default 0 = whole song: the planner also learns later choruses and endings;
+    LoRAs from the 4000 cap ended songs at 300 s, docs/YUE2_TRAINING_PLAN.md s6)."""
     _src, dst, _local = _paths(name)
+    ar_max_tokens = 0 if planner == "whole" else int(planner)
     job = f"yue2_{name}_lora" if head == "v4" else f"yue2_{name}_{head}_lora"
+    if planner != "4000":
+        job = job[:-len("_lora")] + f"_{planner}song_lora" if planner == "whole" else job[:-len("_lora")] + f"_ar{planner}_lora"
     cfg = {"job": "extension", "config": {"name": job, "process": [{
         "type": "diffusion_trainer", "training_folder": "output", "device": "cuda", "trigger_word": None,
         "network": {"type": "lora", "linear": 32, "linear_alpha": 32},
@@ -152,7 +158,7 @@ def train(name, head="v4", steps=800):
         "model": {"arch": "yue2", "name_or_path": COMFY_MODELS + r"\checkpoints\yue2_3b_bf16.safetensors",
                   "quantize": False, "low_vram": False,
                   "model_kwargs": {"cot": "full", "abc_dropout": 0.5, "ar_kl_weight": 0.2, "ar_lr_multiplier": 0.5,
-                                   "ar_max_tokens": 4000, "train_window_frames": 1500, "ar_cuda_graphs": False,
+                                   "ar_max_tokens": ar_max_tokens, "train_window_frames": 1500, "ar_cuda_graphs": False,
                                    "sheetsage_path": COMFY_MODELS + r"\audio_encoders\sheetsage2_bf16.safetensors",
                                    **(HEADS[head] or {})}},
     }]}}
@@ -220,6 +226,6 @@ def merge(name):
 
 if __name__ == "__main__":
     cmds = {"stage": stage, "caption": caption, "enrich": enrich, "merge": merge, "train": train}
-    if len(sys.argv) not in (3, 4) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
+    if len(sys.argv) not in (3, 4, 5) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
-    cmds[sys.argv[1]](*sys.argv[2:])      # train takes an optional tokenizer: v4 (default) | v9
+    cmds[sys.argv[1]](*sys.argv[2:])      # train takes an optional tokenizer (v4 | v9) and planner span (4000 | whole)
