@@ -509,6 +509,9 @@ def _resolve(p):
         "lora": (p.get("lora") or "").strip(),
         "lora_model": float(p.get("lora_model") if p.get("lora_model") not in (None, "") else 1.0),
         "lora_clip": float(p.get("lora_clip") if p.get("lora_clip") not in (None, "") else 1.0),
+        # a tokenizer's decoder adapter (e.g. nar_lora_joint_v9_comfyui): loaded FIRST, sound half only,
+        # because a band LoRA trained on v9 tokens was trained on top of it
+        "lora_base": (p.get("lora_base") or "").strip(),
     }
     for k in ("temperature", "top_p", "top_k", "repetition_penalty", "abc_temperature",
               "abc_top_p", "abc_top_k", "abc_repetition_penalty", "abc_penalty_window",
@@ -551,18 +554,27 @@ def build_graph(p):
 
 
 def _with_lora(g, r):
-    """Insert a core LoraLoader after the checkpoint and point every MODEL/CLIP consumer at it."""
-    if not r.get("lora"):
+    """Chain core LoraLoaders after the checkpoint (base adapter 12, then band LoRA 11) and point
+    every MODEL/CLIP consumer at the last one."""
+    chain = []
+    if r.get("lora_base"):
+        chain.append(("12", r["lora_base"], 1.0, 0.0))
+    if r.get("lora"):
+        chain.append(("11", r["lora"], r["lora_model"], r["lora_clip"]))
+    if not chain:
         return g
-    for nid, node in g.items():
+    last = chain[-1][0]
+    for node in g.values():
         for k, v in node["inputs"].items():
             if v == ["1", 0]:
-                node["inputs"][k] = ["11", 0]
+                node["inputs"][k] = [last, 0]
             elif v == ["1", 1]:
-                node["inputs"][k] = ["11", 1]
-    g["11"] = {"class_type": "LoraLoader", "inputs": {
-        "model": ["1", 0], "clip": ["1", 1], "lora_name": r["lora"],
-        "strength_model": r["lora_model"], "strength_clip": r["lora_clip"]}}
+                node["inputs"][k] = [last, 1]
+    prev = "1"
+    for nid, name, sm, sc in chain:
+        g[nid] = {"class_type": "LoraLoader", "inputs": {
+            "model": [prev, 0], "clip": [prev, 1], "lora_name": name, "strength_model": sm, "strength_clip": sc}}
+        prev = nid
     return g
 
 

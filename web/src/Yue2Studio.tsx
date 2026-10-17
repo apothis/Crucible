@@ -84,9 +84,15 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [lora, setLora] = d.use("lora", "");
   const [loraModel, setLoraModel] = d.use("loraModel", "1.0");
   const [loraClip, setLoraClip] = d.use("loraClip", "1.0");
+  // a v9-token LoRA needs the tokenizer's decoder adapter loaded under it (loras/yue2/companions/)
+  const [loraBase, setLoraBase] = d.use("loraBase", "");
   const [loras, setLoras] = useState<string[]>([]);
   const [loraNote, setLoraNote] = useState("");
-  const loraBody = lora ? { lora, lora_model: parseFloat(loraModel) || 1.0, lora_clip: parseFloat(loraClip) || 0 } : {};
+  const isCompanion = (l: string) => /[\\/]companions[\\/]/i.test(l);
+  const loraBody = {
+    ...(lora ? { lora, lora_model: parseFloat(loraModel) || 1.0, lora_clip: parseFloat(loraClip) || 0 } : {}),
+    ...(loraBase ? { lora_base: loraBase } : {}),
+  };
 
   // ---- cover ----
   const [coverSrc, setCoverSrc] = d.use("coverSrc", "");
@@ -801,15 +807,21 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <input className={inp} value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="1.0" />
             </Field>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-5">
+          <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
             <div className="col-span-2">
               <Field label="Band LoRA" hint="optional; trained with AI Toolkit, copied into ComfyUI by sync">
                 <select className={inp} value={lora} onChange={(e) => setLora(e.target.value)}>
                   <option value="">(none)</option>
-                  {loras.map((l) => <option key={l} value={l}>{l.replace(/^yue2[\\/]/, "")}</option>)}
+                  {loras.filter((l) => !isCompanion(l)).map((l) => <option key={l} value={l}>{l.replace(/^yue2[\\/]/, "")}</option>)}
                 </select>
               </Field>
             </div>
+            <Field label="Tokenizer adapter" hint="LoRAs trained on v9 tokens need nar_lora_joint_v9 under them; v4 LoRAs need none">
+              <select className={inp} value={loraBase} onChange={(e) => setLoraBase(e.target.value)}>
+                <option value="">(none)</option>
+                {loras.filter(isCompanion).map((l) => <option key={l} value={l}>{l.replace(/^.*[\\/]/, "").replace(/\.safetensors$/, "")}</option>)}
+              </select>
+            </Field>
             <Field label="Sound strength" hint="decoder: voice, timbre, production; 1.0 (0.8 if the top end thins)">
               <input className={inp} value={loraModel} onChange={(e) => setLoraModel(e.target.value)} placeholder="1.0" />
             </Field>
