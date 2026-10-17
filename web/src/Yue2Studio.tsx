@@ -614,7 +614,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                 {planBusy ? "planning…" : "Write plans"}
               </GhostButton>
             </div>
-            <Field label="Wanted meter" hint="any = list every plan; otherwise keep planning until enough come out in this meter">
+            <Field label="Wanted meter" hint="keep planning until enough match">
               <select className={inp} value={wantMeter} onChange={(e) => setWantMeter(e.target.value)}>
                 {["any", "4/4", "2/4", "3/4", "6/8"].map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
@@ -625,7 +625,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               </Field>
             )}
             <div className="col-span-2">
-              <Field label="Planning-only feel words" hint={'added after the genre for the PLANS only; the render keeps your style line. 6/8: "lilting jig-like sway" (with "Celtic-tinged" it gave 2/8 plans in 6/8; "in 6/8" alone gave 0/8)'}>
+              <Field label="Planning-only feel words" hint={'plans only; the render keeps your style line. 6/8: "lilting jig-like sway"'}>
                 <input className={inp} value={planFeel} onChange={(e) => setPlanFeel(e.target.value)} placeholder="optional, e.g. lilting jig-like sway" />
               </Field>
             </div>
