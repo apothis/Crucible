@@ -797,6 +797,75 @@ def aitk_script(body: dict = Body(...)):
     return {**st, "freed": freed}
 
 
+# The toolkit's own web UI (python -m manager launch: prisma db push + next build + serve on :8675, all
+# interfaces). Tracked apart from jobs so a running UI does not block /aitk/run. The UI's worker runs jobs
+# queued IN THE UI on the same GPU - starting one there while a helper job trains would share the 3090.
+AITK_UI_STATE = os.path.join(HELPER_DIR, "aitk_ui_state.json")
+AITK_UI_PORT = 8675
+_AITK_UI_PROC = {}
+
+
+def _aitk_ui_state():
+    try:
+        with open(AITK_UI_STATE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _aitk_ui_up():
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{AITK_UI_PORT}/", timeout=3).close()
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/aitk/ui/status")
+def aitk_ui_status(lines: int = 20):
+    st = _aitk_ui_state()
+    proc = _AITK_UI_PROC.get(st.get("pid"))
+    alive = (proc.poll() is None) if proc is not None else ((_pid_image(str(st.get("pid"))) or "").lower() in ("python.exe", "cmd.exe", "node.exe") if st.get("pid") else False)
+    return {**st, "alive": alive, "serving": _aitk_ui_up(), "port": AITK_UI_PORT,
+            "log_tail": _aitk_tail(st["log"], lines) if st.get("log") else ""}
+
+
+@app.post("/aitk/ui/start")
+def aitk_ui_start(body: dict = Body(default={})):
+    """Start the AI Toolkit web UI detached (first start builds it: a few minutes). Body: {token?, auth?}:
+    auth = an access token the UI will require (AI_TOOLKIT_AUTH); omit for an open UI on the LAN."""
+    _auth(body or {})
+    if not os.path.isfile(_aitk_python()):
+        raise HTTPException(409, "AI Toolkit is not installed (POST /aitk/install)")
+    st = _aitk_ui_state()
+    if st.get("pid") and aitk_ui_status()["alive"]:
+        return {**st, "already_running": True}
+    env = dict(os.environ, HF_HOME=os.path.join(AITK_DIR, ".hf"), PYTHONUNBUFFERED="1")
+    for k in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX"):
+        env.pop(k, None)
+    if body.get("auth"):
+        env["AI_TOOLKIT_AUTH"] = str(body["auth"])
+    log = os.path.join(AITK_DIR, "output", "aitk_ui.log")
+    logf = open(log, "w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen([_aitk_python(), "-m", "manager", "launch", "--no-browser"], cwd=AITK_DIR, env=env,
+                            stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=_DETACH)
+    _AITK_UI_PROC[proc.pid] = proc
+    st = {"pid": proc.pid, "started": _iso(time.time()), "log": log, "auth": bool(body.get("auth"))}
+    with open(AITK_UI_STATE, "w") as f:
+        json.dump(st, f)
+    return st
+
+
+@app.post("/aitk/ui/stop")
+def aitk_ui_stop(body: dict = Body(default={})):
+    _auth(body or {})
+    st = _aitk_ui_state()
+    if not st.get("pid") or not aitk_ui_status()["alive"]:
+        return {"stopped": False, "reason": "not running", **st}
+    r = subprocess.run(["taskkill", "/F", "/T", "/PID", str(st["pid"])], capture_output=True, text=True, timeout=30)
+    return {"stopped": r.returncode == 0, "pid": st["pid"], "output": (r.stdout or r.stderr).strip()[-300:]}
+
+
 @app.post("/aitk/stop")
 def aitk_stop(body: dict = Body(default={})):
     _auth(body or {})
