@@ -219,3 +219,11 @@ Beast in Black (user, 2026-10-18, set 12): "not great"; a strong hint of Yannis 
 the vocal sits too low in the mix to judge. PARKED (user: only when we go down that road, not queued):
 test mix-balance words in the style line ("upfront lead vocal, vocals loud in the mix") on Midnight Machine
 600/800, same seed. Stem-separation remixing rejected (separation quality not good enough, user).
+
+Option 3 run (2026-10-18): battlebeast_effort dataset (per-section vocal-effort captions: ACE prose + ACE-Step
+captioner condensed by the app LLM; leaks symphonic/operatic/gender fixed by hand) + do_separation (vocal
+stem term), whole-song v9, 800 steps. Caching 30 min (stems), 17-21 s/step (3 whole-song planner passes;
+no spill), 4 h 45 total. User: 800 overtrained; 600 the one, only marginally better than whole-song 600.
+Set 23 (2x2 at 600): effort LoRA + effort style line ("verse held back with gritty edge, chorus full-power
+belted, final chorus screamed climax") maybe a little better, and the whole sound a little cleaner.
+Both LoRAs stay selectable per song. Voice identity still the open problem.
