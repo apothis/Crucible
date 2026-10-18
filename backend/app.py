@@ -181,6 +181,10 @@ def init_db():
         # role, ref_still_ids, lora_name, method (anchor/qwen/vace/lora), notes.
         conn.execute("""CREATE TABLE IF NOT EXISTS characters(
             id TEXT PRIMARY KEY, name TEXT, created REAL, updated REAL, data TEXT)""")
+        # A saved Compare set: library track ids + short per-track labels + measured loudness
+        # (integrated LUFS, for level-matched A/B), loaded into the Compare page with one click.
+        conn.execute("""CREATE TABLE IF NOT EXISTS compare_sets(
+            id TEXT PRIMARY KEY, name TEXT, created REAL, data TEXT)""")
 
 
 def _next_take(mode, title, conn):
@@ -6854,6 +6858,72 @@ def audio(pid: str):
             os.path.splitext(row["audio"])[1].lower(), "audio/mpeg")
         return FileResponse(row["audio"], media_type=mt)
     raise HTTPException(404, "no audio")
+
+
+def _audio_file(pid):
+    """Library audio path for a track id (same lookup as /api/audio), or None."""
+    for ext in (".mp3", ".wav", ".flac"):
+        path = os.path.join(LIBRARY, f"{pid}{ext}")
+        if os.path.exists(path):
+            return path
+    with db() as conn:
+        row = conn.execute("SELECT audio FROM jobs WHERE id=?", (pid,)).fetchone()
+    return row["audio"] if row and row["audio"] and os.path.exists(row["audio"]) else None
+
+
+def _integrated_lufs(path):
+    import pyloudnorm as _pyln
+    import soundfile as _sf
+    try:
+        x, sr = _sf.read(path, always_2d=True)
+    except Exception:
+        import librosa
+        y, sr = librosa.load(path, sr=None, mono=False)
+        x = y.T if y.ndim == 2 else y[:, None]
+    v = float(_pyln.Meter(sr).integrated_loudness(x))
+    return round(v, 2) if math.isfinite(v) else None
+
+
+def _compare_set_out(row):
+    d = json.loads(row["data"] or "{}")
+    return {"id": row["id"], "name": row["name"], "created": row["created"], **d}
+
+
+@app.get("/api/compare_sets")
+def compare_sets_list():
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM compare_sets ORDER BY created").fetchall()
+    return {"sets": [_compare_set_out(r) for r in rows]}
+
+
+@app.post("/api/compare_sets")
+def compare_sets_create(p: dict):
+    """{name, ids:[track id], labels?:{id: short label}, note?} -> saved set; each track's
+    integrated loudness is measured once here so the Compare page can level-match."""
+    name = str(p.get("name") or "").strip()
+    ids = [str(i) for i in (p.get("ids") or []) if str(i).strip()]
+    if not name or len(ids) < 2:
+        raise HTTPException(400, "a set needs a name and at least two tracks")
+    lufs = {}
+    for i in ids:
+        path = _audio_file(i)
+        if not path:
+            raise HTTPException(404, f"no audio for track {i}")
+        lufs[i] = _integrated_lufs(path)
+    sid = uuid.uuid4().hex
+    data = {"ids": ids, "labels": {k: str(v) for k, v in (p.get("labels") or {}).items()}, "lufs": lufs,
+            "note": str(p.get("note") or "")}
+    with db() as conn:
+        conn.execute("INSERT INTO compare_sets(id,name,created,data) VALUES(?,?,?,?)", (sid, name, time.time(), json.dumps(data)))
+        row = conn.execute("SELECT * FROM compare_sets WHERE id=?", (sid,)).fetchone()
+    return _compare_set_out(row)
+
+
+@app.delete("/api/compare_sets/{sid}")
+def compare_sets_delete(sid: str):
+    with db() as conn:
+        conn.execute("DELETE FROM compare_sets WHERE id=?", (sid,))
+    return {"deleted": sid}
 
 
 def _detect_beats(path):

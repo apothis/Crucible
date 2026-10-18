@@ -95,6 +95,10 @@ export const api = {
   yue2Plan: (p: unknown) => jpost("/api/yue2/plan", p),           // score only (fast)
   yue2Loras: () => jget("/api/yue2/loras"),                        // YuE2 LoRAs ComfyUI can load (loras/yue2/...)
   yue2LorasSync: () => jpost("/api/yue2/loras/sync", {}),          // copy new AI Toolkit checkpoints into ComfyUI
+  compareSets: () => jget("/api/compare_sets") as Promise<{ sets: CompareSet[] }>,                 // saved Compare sets
+  compareSetCreate: (b: { name: string; ids: string[]; labels?: Record<string, string>; note?: string }) =>
+    jpost("/api/compare_sets", b) as Promise<CompareSet>,                                           // measures each track's LUFS
+  compareSetDelete: (id: string) => jmethod("DELETE", `/api/compare_sets/${id}`, {}),
   yue2Transcribe: (src: string, mode: string) => jpost("/api/yue2/transcribe", { src, mode }),
   yue2TranscribeFile: (fd: FormData) => jform("/api/yue2/transcribe", fd),
   yue2Job: (id: string) => jget(`/api/yue2/job/${id}`),          // status + abc for any YuE2 job kind
@@ -282,6 +286,8 @@ export type LoraTrack = { name: string; bpm: number; keyscale: string; has_lyric
 export type Variant = { id: string; label: string; steps: number; cfg: number; available: boolean };
 export type Genre = { id: string; label: string; tags: string; bpm: number; key: string; scale: string; lead: boolean; parent?: string | null };
 export type Config = { comfy_host: string; variants: Variant[]; keys: string[]; rvc_driver: string; roformer?: boolean; acestep?: boolean; acestep_repaint?: boolean; acestep_lego?: boolean; analyze?: boolean; lora_train?: boolean; lora_upload?: boolean; video?: boolean; video_qwen?: boolean; video_vace?: boolean; video_ltx?: boolean; video_ltx_quants?: string[]; video_msr?: boolean; genres: Genre[] };
+// A saved Compare set: track ids, short labels, integrated LUFS per track (for level-matched A/B).
+export type CompareSet = { id: string; name: string; created: number; ids: string[]; labels: Record<string, string>; lufs: Record<string, number | null>; note?: string };
 export type LibItem = { id: string; created: number; mode: string; params: Record<string, any>; audio_url: string; media_url?: string | null; bucket?: string };
 // Arrangement shared from the Song Constructor to the Vocal Builder.
 export type SongDraft = { blocks: { type: string; seconds: number; lyrics: string; style?: string }[]; key: string; bpm: number; tags: string };

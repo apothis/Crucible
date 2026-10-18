@@ -11,7 +11,8 @@ const fmt = (t: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-export type ABTrack = { id: string; label: string; url: string };
+// gain: linear volume for this track when audible (level matching); 1 when absent
+export type ABTrack = { id: string; label: string; url: string; gain?: number };
 
 export function ABPlayer({ tracks }: { tracks: ABTrack[] }) {
   const els = useRef<Map<string, HTMLAudioElement>>(new Map());
@@ -55,7 +56,7 @@ export function ABPlayer({ tracks }: { tracks: ABTrack[] }) {
   const audible = tracks[order[active]];
   // Only the active element is audible; others ride along silently.
   useEffect(() => {
-    for (const t of tracks) { const a = els.current.get(t.id); if (a) a.volume = audible && t.id === audible.id ? 1 : 0; }
+    for (const t of tracks) { const a = els.current.get(t.id); if (a) a.volume = audible && t.id === audible.id ? Math.min(1, Math.max(0, t.gain ?? 1)) : 0; }
   }, [audible, tracks]);
 
   // Clock + drift guard: keep every element within 40 ms of the audible one.

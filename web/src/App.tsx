@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, versionInfo, type Config, type LibItem, type Project, type SongDraft } from "./api";
+import { api, versionInfo, type CompareSet, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, NaturalizeForm, VideoForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { SoloBuilderForm } from "./SoloBuilder";
@@ -679,6 +679,38 @@ function compareRows(it: LibItem): { k: string; v: string }[] {
 // see each take's waveform + the exact params/LoRA settings it was made with.
 function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string[]; setCompare: (f: (ids: string[]) => string[]) => void }) {
   const picked = ids.map((id) => items.find((x) => x.id === id)).filter(Boolean) as LibItem[];
+  // saved sets: one click loads a prepared comparison (short labels + measured loudness)
+  const [sets, setSets] = useState<CompareSet[]>([]);
+  const [setId, setSetId] = useState("");
+  const [levelMatch, setLevelMatch] = useState(true);
+  const [saveName, setSaveName] = useState("");
+  const [setNote, setSetNote] = useState("");
+  useEffect(() => { api.compareSets().then((r) => setSets(r.sets)).catch(() => {}); }, []);
+  const cur = sets.find((x) => x.id === setId);
+  const loadSet = (sid: string) => {
+    setSetId(sid);
+    const st = sets.find((x) => x.id === sid);
+    if (st) setCompare(() => st.ids.filter((i) => items.some((x) => x.id === i)));
+  };
+  const saveSet = async () => {
+    if (!saveName.trim() || picked.length < 2) return;
+    setSetNote("measuring loudness…");
+    try {
+      const st = await api.compareSetCreate({ name: saveName.trim(), ids: picked.map((p) => p.id),
+        labels: Object.fromEntries(picked.map((p) => [p.id, cur?.labels[p.id] || libTitle(p)])) });
+      setSets((s) => [...s, st]); setSetId(st.id); setSaveName(""); setSetNote("");
+    } catch (e) { setSetNote(`save failed: ${e}`); }
+  };
+  const deleteSet = async () => {
+    if (!cur || !window.confirm(`Delete the compare set "${cur.name}"? (the tracks stay in the library)`)) return;
+    await api.compareSetDelete(cur.id); setSets((s) => s.filter((x) => x.id !== cur.id)); setSetId("");
+  };
+  // level matching: every track with a measured LUFS is turned down to the quietest one
+  const lufsOf = (id: string) => cur?.lufs[id] ?? null;
+  const measured = picked.map((p) => lufsOf(p.id)).filter((v): v is number => v != null);
+  const target = measured.length ? Math.min(...measured) : null;
+  const gainOf = (id: string) => { const l = lufsOf(id); return levelMatch && target != null && l != null ? Math.pow(10, (target - l) / 20) : 1; };
+  const labelOf = (p: LibItem) => cur?.labels[p.id] || libTitle(p);
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/lib-id");
@@ -690,15 +722,34 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
       <div className="mb-3 flex items-center gap-2">
         <h2 className="text-sm font-semibold text-[var(--color-ink)]">Compare {picked.length > 0 && <span className="text-[var(--color-muted)]">· {picked.length}</span>}</h2>
         <span className="text-[11px] text-[var(--color-muted)]">drag tracks from the Library, or use ⊕ on a card</span>
-        {picked.length > 0 && <button onClick={() => setCompare(() => [])} className="ml-auto rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">Clear all</button>}
+        {picked.length > 0 && <button onClick={() => { setCompare(() => []); setSetId(""); }} className="ml-auto rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">Clear all</button>}
       </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] px-2 py-1.5">
+        <span className="text-[11px] text-[var(--color-muted)]">Saved sets</span>
+        <select value={setId} onChange={(e) => e.target.value ? loadSet(e.target.value) : setSetId("")}
+          className="min-w-0 max-w-[420px] flex-1 basis-48 rounded border border-[var(--color-line)] bg-[#0e1015] px-2 py-1 text-[12px] text-[var(--color-ink)]">
+          <option value="">{sets.length ? `choose one of ${sets.length}…` : "none saved yet"}</option>
+          {sets.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.ids.length})</option>)}
+        </select>
+        {cur && <button onClick={deleteSet} className="rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-red-400" title="delete this set (tracks stay in the library)">delete set</button>}
+        <label className="flex items-center gap-1 text-[11px] text-[var(--color-muted)]" title="turn every track down to the quietest one's loudness (integrated LUFS, measured when the set was saved), so louder never wins by default">
+          <input type="checkbox" checked={levelMatch} onChange={(e) => setLevelMatch(e.target.checked)} /> level-matched{cur ? "" : " (saved sets only)"}
+        </label>
+        <span className="flex-1" />
+        <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="name for these tracks"
+          className="w-48 min-w-0 max-w-full rounded border border-[var(--color-line)] bg-[#0e1015] px-2 py-1 text-[12px] text-[var(--color-ink)]" />
+        <button onClick={saveSet} disabled={!saveName.trim() || picked.length < 2}
+          className="rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)] disabled:opacity-40">save as set</button>
+        {setNote && <span className="text-[11px] text-[var(--color-muted)]">{setNote}</span>}
+      </div>
+      {cur?.note && <div className="mb-3 text-[11px] leading-relaxed text-[var(--color-muted)]">{cur.note}</div>}
       {picked.length === 0 ? (
         <div className="flex h-56 items-center justify-center text-center text-[12px] leading-relaxed text-[var(--color-muted)]">
           Drop tracks here to compare them.<br />Each shows its waveform and the exact params + LoRA/settings it was generated with,<br />so you can A/B versions side by side.
         </div>
       ) : (
         <>
-        <ABPlayer tracks={picked.filter((it) => !!it.audio_url).map((it) => ({ id: it.id, label: libTitle(it), url: it.audio_url as string }))} />
+        <ABPlayer tracks={picked.filter((it) => !!it.audio_url).map((it) => ({ id: it.id, label: labelOf(it), url: it.audio_url as string, gain: gainOf(it.id) }))} />
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
           {picked.map((it) => {
             const vi = versionInfo(it, items);
