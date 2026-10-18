@@ -210,4 +210,6 @@ voice better; (4) with Skyborn's intro kept, the intro still enters over the pri
 sounds like a jump from mid-song (user). VERDICT: priming dropped as a production method. Kept as
 evidence: the voice is reachable in token space and sustained once present; the planner fails to START
 it on new material. Sampling (rep 1.05/1.0, temp 0.9), decoder strength (0/0.5/1.0), tokenizer head
-(v5/v8/v9) and KL 0.05 all marginal. Best LoRA so far: whole-song v9-800 (KL 0.2).
+(v5/v8/v9) and KL 0.05 all marginal. No best checkpoint chosen by the user yet: old v9 450 = full length,
+"pretty good"; v9 800 = good in places, slight voice breakup; whole-song ladder 450/600/800 (set 8) unjudged.
+The tests used whole-song 800 for convenience (full length, end of run), not as a pick.
