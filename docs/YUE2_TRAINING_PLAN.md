@@ -200,3 +200,14 @@ as good or better than the band LoRAs' decoder (sets 2, 3); writing 1.0 with sou
 practically identical (set 15). Conclusion: the voice is lost in the PLANNER (which tokens it writes),
 not the tokenizer or decoder. Training effort goes to the planner (KL, vocal-stem term, effort captions);
 decoder-heavy run 4 expected no better (set 9 to confirm).
+
+Priming experiments (2026-10-18, tools/aitk/musicgen/yue2_prime.py): (1) 90 s of a real song's tokens,
+then the model continues that song -> her voice HOLDS after the switch (user). (2) Voice primer for a new
+song (Wings of Light verse+chorus, then Skyborn lyrics, no score): voice held (LoRA better than base),
+but the WoL melody/timing carried on and parts of Skyborn went missing. (3) Same with a joined score
+(SheetSage2 primer bars + K:D#m + Skyborn score): Skyborn's structure followed exactly, LoRA held the
+voice better; (4) with Skyborn's intro kept, the intro still enters over the primer's running drums -
+sounds like a jump from mid-song (user). VERDICT: priming dropped as a production method. Kept as
+evidence: the voice is reachable in token space and sustained once present; the planner fails to START
+it on new material. Sampling (rep 1.05/1.0, temp 0.9), decoder strength (0/0.5/1.0), tokenizer head
+(v5/v8/v9) and KL 0.05 all marginal. Best LoRA so far: whole-song v9-800 (KL 0.2).
