@@ -139,7 +139,7 @@ HEADS = {   # community audio -> semantic tokenizers (Mothersuperior); v9 = the 
 }
 
 
-def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2", sep="0"):
+def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2", sep="0", rank="32", tag=""):
     """Recipe from docs/YUE2_TRAINING_PLAN.md s4 (GRVL/CNZN/vdruts, AI Toolkit's yue2 defaults): rank 32,
     adamw8bit, LR 5e-5, planner LR x0.5 + KL 0.2 (the planner memorises small sets fast), cot full with
     50% score dropout, 60 s decoder windows, <= 20 passes (40 songs -> 800 steps), a checkpoint every 50
@@ -155,7 +155,9 @@ def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2",
     planner move further toward the band's own token choices - where the singer's voice was found to be lost.
     sep=1: do_separation - MelBandRoformer vocal/instrumental stems at cache time; the planner's loss adds
     (lyrics only -> vocal stem, x0.5) and (tags only -> instrumental) to the mix term: the only option
-    aimed at the voice itself. Rebuilds the latent cache; three whole-song planner passes per step."""
+    aimed at the voice itself. Rebuilds the latent cache; three whole-song planner passes per step.
+    rank: LoRA rank (alpha = rank); the tokenizer author's artist recipe uses 64 on the planner at LR 1e-4
+    (= lr 5e-5 x ar_mult 2). tag: a suffix for the job name (e.g. "trig" for a trigger-word dataset)."""
     _src, dst, _local = _paths(name)
     steps, ar_mult, kl = int(steps), float(ar_mult), float(kl)
     ar_max_tokens = 0 if planner == "whole" else int(planner)
@@ -169,11 +171,16 @@ def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2",
     sep = sep in ("1", "sep", "true", True)
     if sep:
         job += "_sep"
+    rank = int(rank)
+    if rank != 32:
+        job += f"_r{rank}"
+    if tag:
+        job += f"_{tag}"
     job += "_lora"
     save_every = max(50, round(steps / 20 / 50) * 50)
     cfg = {"job": "extension", "config": {"name": job, "process": [{
         "type": "diffusion_trainer", "training_folder": "output", "device": "cuda", "trigger_word": None,
-        "network": {"type": "lora", "linear": 32, "linear_alpha": 32},
+        "network": {"type": "lora", "linear": rank, "linear_alpha": rank},
         "save": {"dtype": "bf16", "save_every": save_every, "max_step_saves_to_keep": 20},
         "datasets": [{"folder_path": dst, "caption_ext": "txt", "caption_dropout_rate": 0,
                       "cache_latents_to_disk": True, "resolution": [512], "num_repeats": 1}],
@@ -280,7 +287,10 @@ def enrich(name):
         print(f"{stem:38s} {parts}", flush=True)
 
 
-def merge(name):
+def merge(name, trigger=""):
+    """trigger: a rare made-up word put first in every style line (the artist-LoRA trainers' practice: the
+    common words of the fixed lines already mean something to the base model; an unknown word can only
+    mean this band)."""
     _src, dst, local = _paths(name)
     os.makedirs(os.path.join(local, "txt"), exist_ok=True)
     done, missing = 0, []
@@ -291,7 +301,7 @@ def merge(name):
             continue
         parts = " ".join(open(final).read().split()).strip(" ,.")
         f = FIXED[name]
-        style = f"{f['language']}, {f['genre']}, {f['voice']}, {parts}"
+        style = (f"{trigger}, " if trigger else "") + f"{f['language']}, {f['genre']}, {f['voice']}, {parts}"
         lyrics = open(os.path.join(local, "lyrics", stem + ".txt")).read().strip()
         text = f"{style}\n[Lyrics]\n{lyrics}\n"
         open(os.path.join(local, "txt", stem + ".txt"), "w").write(text)
@@ -302,6 +312,6 @@ def merge(name):
 
 if __name__ == "__main__":
     cmds = {"stage": stage, "caption": caption, "describe": describe, "enrich": enrich, "merge": merge, "train": train}
-    if len(sys.argv) not in range(3, 10) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
+    if len(sys.argv) not in range(3, 12) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
-    cmds[sys.argv[1]](*sys.argv[2:])      # train: [v4|v9] [4000|whole] [steps] [planner LR x] [KL weight] [sep 0|1]
+    cmds[sys.argv[1]](*sys.argv[2:])      # train: [v4|v9] [4000|whole] [steps] [planner LR x] [KL] [sep 0|1] [rank] [tag]; merge: [trigger]
