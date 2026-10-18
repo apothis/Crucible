@@ -158,6 +158,17 @@ Run 3 (2026-10-18, v9, planner on WHOLE songs: ar_max_tokens 0 = the trainer's o
 copied 4000 from the community recipe, which calls it a memory cap): fits on the 3090, ~7.4 s/step vs
 4-5 s (no spill to system RAM), 800 steps ~1 h 40. Tests the 300 s ending and whether the planner,
 now seeing later choruses, learns her pushed voice. Awaiting the ladder.
+Result (2026-10-18 02:17, measured): run 3's step 800 with NO guard plays the whole 328 s Skyborn
+score and nulls to -91 dB against the same take with the guard on: the guard never had to act. The
+old 4000-token LoRAs ended at exactly 300.0 s on the same score/seed. So the 300 s ending came from
+the capped planner window (hypothesis now supported by the A/B), and whole-song planner training is
+the fix. Ladder 450/600/800 (+guard) all full length; voice verdict = user's ears.
+
+Round trip (tools/aitk/musicgen/yue2_roundtrip.py, helper /aitk/script): real song -> tokenizer head
+-> YuE2 decoder, no planning; first 3 min of 3 BB + 2 BiB songs, v9 tokens through the base decoder,
+the v9-600 LoRA and the run-3 LoRA, plus v4/v5/v8 heads on one song per band. Library titles "RT ...",
+originals "RT original recording - ...". Sanity: Wings of Light round trip vs original chroma
+correlation 0.84 (same song, not noise).
 
 Why YuE2 runs are ~1 h and ACE LoKr ~10-12 h: same ~5 s/step, but ACE ran ~150 epochs (~7500
 steps on 50 songs) vs 20 passes (800 steps) here. Consequence (hypothesis): the decoder sees one 60 s
