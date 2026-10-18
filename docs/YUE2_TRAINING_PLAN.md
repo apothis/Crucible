@@ -193,3 +193,10 @@ Overnight 2026-10-18 (user asleep, full go-ahead):
   the guard, all full length.
 - Captioner note: AI Toolkit's AceStepCaptioner job always runs the lyric transcriber too; both 7B on
   the 3090 hit OOM retries (6-9 min/song). Use tools/aitk/musicgen/acestep_describe.py.
+
+User's ears (2026-10-18, Compare sets): round trips keep the voice far closer than our generations
+(rougher than the original); tokenizer heads v5/v8/v9 near-identical (v8 a hair ahead); base decoder
+as good or better than the band LoRAs' decoder (sets 2, 3); writing 1.0 with sound 1.0 / 0.5 / 0
+practically identical (set 15). Conclusion: the voice is lost in the PLANNER (which tokens it writes),
+not the tokenizer or decoder. Training effort goes to the planner (KL, vocal-stem term, effort captions);
+decoder-heavy run 4 expected no better (set 9 to confirm).
