@@ -40,15 +40,20 @@ AITK = r"E:\AI\MusicGen\ai-toolkit"
 SOURCES = {   # dataset name -> the ACE dataset folder that already holds audio + fetched lyrics
     "battlebeast": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_battlebeast\data",
     "beastinblack": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_beastinblack\data",
+    # same 40 songs + reviewed lyrics, captions with per-section vocal EFFORT (2026-10-18, option 3)
+    "battlebeast_effort": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_battlebeast\data",
 }
 LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".mvwork", "yue2_train")
 
-# Fixed per band (user-approved): the parts that carry the band's identity are the same words in
+# Fixed per band (user-approved); battlebeast_effort uses battlebeast's lines: the parts that carry the band's identity are the same words in
 # every caption, so the LoRA ties them to this sound. Battle Beast 2026-10-17.
 FIXED = {
     "battlebeast": {"language": "English",
                     "genre": "modern power metal with 80s heavy metal and synth influences",
                     "voice": "powerful raspy female rock belt with a soaring high range"},
+    "battlebeast_effort": {"language": "English",
+                           "genre": "modern power metal with 80s heavy metal and synth influences",
+                           "voice": "powerful raspy female rock belt with a soaring high range"},
     # 2026-10-18, drafted overnight under the user's go-ahead (their call to change): Yannis Papadopoulos
     "beastinblack": {"language": "English",
                      "genre": "80s-inspired power metal with synthwave and disco-pop influences",
@@ -134,7 +139,7 @@ HEADS = {   # community audio -> semantic tokenizers (Mothersuperior); v9 = the 
 }
 
 
-def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2"):
+def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2", sep="0"):
     """Recipe from docs/YUE2_TRAINING_PLAN.md s4 (GRVL/CNZN/vdruts, AI Toolkit's yue2 defaults): rank 32,
     adamw8bit, LR 5e-5, planner LR x0.5 + KL 0.2 (the planner memorises small sets fast), cot full with
     50% score dropout, 60 s decoder windows, <= 20 passes (40 songs -> 800 steps), a checkpoint every 50
@@ -147,7 +152,10 @@ def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2")
     total LR) gives the decoder - one 60 s window per step - more of the voice without overcooking the
     planner. ~20 checkpoints per run are kept, so save_every grows with the step count.
     kl: the planner's pull back toward the base model (KL(base || LoRA) weight; recipe 0.2). Lower lets the
-    planner move further toward the band's own token choices - where the singer's voice was found to be lost."""
+    planner move further toward the band's own token choices - where the singer's voice was found to be lost.
+    sep=1: do_separation - MelBandRoformer vocal/instrumental stems at cache time; the planner's loss adds
+    (lyrics only -> vocal stem, x0.5) and (tags only -> instrumental) to the mix term: the only option
+    aimed at the voice itself. Rebuilds the latent cache; three whole-song planner passes per step."""
     _src, dst, _local = _paths(name)
     steps, ar_mult, kl = int(steps), float(ar_mult), float(kl)
     ar_max_tokens = 0 if planner == "whole" else int(planner)
@@ -158,6 +166,9 @@ def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2")
         job += f"_plr{ar_mult:g}_{steps}"
     if kl != 0.2:
         job += f"_kl{kl:g}"
+    sep = sep in ("1", "sep", "true", True)
+    if sep:
+        job += "_sep"
     job += "_lora"
     save_every = max(50, round(steps / 20 / 50) * 50)
     cfg = {"job": "extension", "config": {"name": job, "process": [{
@@ -175,7 +186,7 @@ def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5", kl="0.2")
         "model": {"arch": "yue2", "name_or_path": COMFY_MODELS + r"\checkpoints\yue2_3b_bf16.safetensors",
                   "quantize": False, "low_vram": False,
                   "model_kwargs": {"cot": "full", "abc_dropout": 0.5, "ar_kl_weight": kl, "ar_lr_multiplier": ar_mult,
-                                   "ar_max_tokens": ar_max_tokens, "train_window_frames": 1500, "ar_cuda_graphs": False,
+                                   "ar_max_tokens": ar_max_tokens, "do_separation": sep, "train_window_frames": 1500, "ar_cuda_graphs": False,
                                    "sheetsage_path": COMFY_MODELS + r"\audio_encoders\sheetsage2_bf16.safetensors",
                                    **(HEADS[head] or {})}},
     }]}}
@@ -216,13 +227,35 @@ Use ONLY what the description states. Never mention genre or style names, the si
 register or vocal technique, the language, lyrics, artist/song names, keys or numbers."""
 
 
+# battlebeast_effort: the same condensing, but the section phrases must say how hard the voice is pushed,
+# so the band's one fixed "raspy" voice line gets per-song, per-section effort words the model can tie to
+# the rasp (the user: her rasp comes from vocal effort, not pitch). Phrased without example wording - the
+# Qwen captioner copied example phrases verbatim in run 1.
+ENRICH_RULES_EFFORT = """Write ONE lowercase line of short comma-separated descriptors, at most 50 words, in this order:
+1. how the song moves through its sections, 3-5 short phrases naming sections; in every phrase about a sung
+   section, say how hard the singer pushes her voice there (from held back and clean, through gritty and
+   strained, to full-power, raspy or screamed), using only what the descriptions state or clearly imply;
+2. the defining instruments and production (2-4 phrases);
+3. a two-word mood;
+4. the tempo feel: use the CAPTIONER TEMPO given below (slow, mid-tempo or fast) unless the descriptions
+   plainly contradict it.
+Never mention genre or style names, the singer's gender, voice type or register, the language, lyrics,
+artist/song names, keys or numbers."""
+
+
 def enrich(name):
     src, _dst, local = _paths(name)
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from backend import llm
-    if name == "battlebeast":
+    rules = ENRICH_RULES_EFFORT if name.endswith("_effort") else ENRICH_RULES
+    if name in ("battlebeast", "battlebeast_effort"):
         ds = json.loads(_get("/fs/read", path=ntpath.dirname(src) + "\\dataset.json")["content"])
         prose = {s["filename"].rsplit(".", 1)[0]: s.get("caption") or "" for s in ds["samples"]}
+        if name == "battlebeast_effort":   # + ACE-Step captioner, which describes the vocal delivery more
+            for stem in list(prose):
+                cap = _get("/fs/read", path=_paths(name)[1] + "\\" + stem + ".acecap")["content"].split("[Lyrics]")[0].strip()
+                desc = prose[stem].split(". ", 1)[1] if ". " in prose[stem] else prose[stem]
+                prose[stem] = "x. FIRST DESCRIPTION:\n" + desc + "\n\nSECOND DESCRIPTION:\n" + cap
     else:   # no LM prose in the ACE dataset: ACE-Step captioner descriptions (describe())
         prose = {}
         for stem in _stems(src):
@@ -239,7 +272,7 @@ def enrich(name):
         qpath = os.path.join(local, "parts", stem + ".txt")
         qwen = open(qpath).read().strip() if os.path.exists(qpath) else desc
         tempo = next((t for t in ("mid-tempo", "slow", "fast") if t in qwen.lower()), "mid-tempo")
-        prompt = f"{ENRICH_RULES}\n\nCAPTIONER TEMPO: {tempo}\n\nDESCRIPTION:\n{desc}\n\nReturn the JSON now."
+        prompt = f"{rules}\n\nCAPTIONER TEMPO: {tempo}\n\nDESCRIPTION:\n{desc}\n\nReturn the JSON now."
         text = llm.complete("claude_sub", "claude-sonnet-5", ENRICH_SYSTEM, prompt, "", timeout=180)
         m = re.search(r"\{.*\}", text or "", re.S)
         parts = " ".join(json.loads(m.group(0) if m else text)["parts"].split()).strip(" ,.").lower()
@@ -269,6 +302,6 @@ def merge(name):
 
 if __name__ == "__main__":
     cmds = {"stage": stage, "caption": caption, "describe": describe, "enrich": enrich, "merge": merge, "train": train}
-    if len(sys.argv) not in range(3, 9) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
+    if len(sys.argv) not in range(3, 10) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
-    cmds[sys.argv[1]](*sys.argv[2:])      # train: [v4|v9] [4000|whole] [steps] [planner LR x] [KL weight]
+    cmds[sys.argv[1]](*sys.argv[2:])      # train: [v4|v9] [4000|whole] [steps] [planner LR x] [KL weight] [sep 0|1]
