@@ -213,3 +213,4 @@ it on new material. Sampling (rep 1.05/1.0, temp 0.9), decoder strength (0/0.5/1
 (v5/v8/v9) and KL 0.05 all marginal. No best checkpoint chosen by the user yet: old v9 450 = full length,
 "pretty good"; v9 800 = good in places, slight voice breakup; whole-song ladder 450/600/800 (set 8) unjudged.
 The tests used whole-song 800 for convenience (full length, end of run), not as a pick.
+User's favourite after set 8: whole-song v9-600 (chosen per song in the YuE2 tab).
