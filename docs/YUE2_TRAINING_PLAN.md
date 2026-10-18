@@ -214,3 +214,8 @@ it on new material. Sampling (rep 1.05/1.0, temp 0.9), decoder strength (0/0.5/1
 "pretty good"; v9 800 = good in places, slight voice breakup; whole-song ladder 450/600/800 (set 8) unjudged.
 The tests used whole-song 800 for convenience (full length, end of run), not as a pick.
 User's favourite after set 8: whole-song v9-600 (chosen per song in the YuE2 tab).
+
+Beast in Black (user, 2026-10-18, set 12): "not great"; a strong hint of Yannis in the raspy belt parts, but
+the vocal sits too low in the mix to judge. PARKED (user: only when we go down that road, not queued):
+test mix-balance words in the style line ("upfront lead vocal, vocals loud in the mix") on Midnight Machine
+600/800, same seed. Stem-separation remixing rejected (separation quality not good enough, user).
