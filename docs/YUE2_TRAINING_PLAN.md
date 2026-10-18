@@ -227,3 +227,7 @@ no spill), 4 h 45 total. User: 800 overtrained; 600 the one, only marginally bet
 Set 23 (2x2 at 600): effort LoRA + effort style line ("verse held back with gritty edge, chorus full-power
 belted, final chorus screamed climax") maybe a little better, and the whole sound a little cleaner.
 Both LoRAs stay selectable per song. Voice identity still the open problem.
+
+Base-planned test (2026-10-18, set 24, Let the Stars Burn): base-model scores (plan seeds 8101, 8102, no LoRA)
+rendered with the effort+stem 600 LoRA vs the user's LoRA-planned takes 2 and 3. User: her voice came through
+better with base writing on both, but too few renders to decide. No call until runs A/B are heard.
