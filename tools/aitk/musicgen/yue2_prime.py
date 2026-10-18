@@ -9,7 +9,9 @@ top_p, top_k, repetition_penalty). Output: <out_dir>/<variant label> - <item lab
 Voice-primer use (a NEW song): per item, "prime_seconds" (0 = unprimed reference), "lyrics" = the primer's
 own sung sections followed by the new song's (the model tracks its place in the lyrics, so the primer's
 lines must be there or it skips the new song's opening), "gen_seconds" = the ceiling (the model ends the
-song itself after "min_gen_seconds"), "trim": true = the saved audio starts where the primer ends."""
+song itself after "min_gen_seconds"), "trim": true = the saved audio starts where the primer ends, "abc":
+the score (primer bars first, then the new song's) - renders in full score mode; the decoder pass gets the
+same prompt + score, as in training (prefix + abc + tokens)."""
 import json
 import os
 import sys
@@ -72,7 +74,11 @@ def main(cfg_path):
             t0 = time.time()
             n_gen = int(per(it, "gen_seconds", 60) * FPS)
             min_gen = int(per(it, "min_gen_seconds", n_gen / FPS) * FPS)
-            head = tokenizer.prefix_head_ids(it["style"], it["lyrics"], cot="off") + tokenizer.abc_tail_ids([])
+            # with a score ("abc", cot full) the planner follows it after the primer; without one it
+            # continues the primer's own melody and timing (seen in the first voice-primer test)
+            cot = "full" if it.get("abc") else "off"
+            head = tokenizer.prefix_head_ids(it["style"], it["lyrics"], cot=cot) + tokenizer.abc_tail_ids(
+                tokenizer.encode_abc(it["abc"]) if it.get("abc") else [])
             with torch.no_grad():
                 prompt = model.ar.embed(torch.tensor([head], device=device))
                 primed = prompt if not prime else torch.cat(
@@ -81,7 +87,7 @@ def main(cfg_path):
                     primed, max_tokens=n_gen, seed=int(cfg.get("seed", 7101)),
                     temperature=float(cfg.get("temperature", 1.0)), top_p=float(cfg.get("top_p", 0.95)),
                     top_k=int(cfg.get("top_k", 100)), repetition_penalty=float(cfg.get("repetition_penalty", 1.2)),
-                    min_tokens=max(1, min(min_gen, n_gen - 1)), legacy_off=True)
+                    min_tokens=max(1, min(min_gen, n_gen - 1)), legacy_off=cot == "off")
                 codec = prime + gen
                 latents = pipe.synthesize(prompt, codec, seed=int(cfg.get("seed", 7101)), steps=int(cfg.get("steps", 32)))
                 audio = pipe.decode(latents)
