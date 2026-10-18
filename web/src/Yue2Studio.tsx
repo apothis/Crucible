@@ -91,6 +91,17 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [loras, setLoras] = useState<string[]>([]);
   const [loraNote, setLoraNote] = useState("");
   const isCompanion = (l: string) => /[\\/]companions[\\/]/i.test(l);
+  // a band LoRA brings its tokenizer adapter: the run name carries the tokenizer version (yue2_<band>_v9_...);
+  // v9 LoRAs were trained over nar_lora_joint_v9 and need it loaded under them, v4 (no version in the name) need none
+  const pickLora = (l: string) => {
+    setLora(l);
+    if (!l) return;
+    const v = l.replace(/\\/g, "/").split("/").slice(-2, -1)[0]?.match(/_v(\d+)_/)?.[1];
+    if (!v || v === "4") { setLoraBase(""); setLoraNote("tokenizer adapter cleared: this LoRA was trained on v4 tokens"); return; }
+    const c = loras.find((x) => isCompanion(x) && new RegExp(`nar_lora_joint_v${v}`, "i").test(x));
+    if (c) { setLoraBase(c); setLoraNote(`tokenizer adapter set to ${c.replace(/^.*[\\/]/, "").replace(/\.safetensors$/, "")} (this LoRA was trained on v${v} tokens)`); }
+    else setLoraNote(`this LoRA was trained on v${v} tokens but no nar_lora_joint_v${v} adapter is in loras/yue2/companions`);
+  };
   const loraBody = {
     ...(lora ? { lora, lora_model: parseFloat(loraModel) || 1.0, lora_clip: parseFloat(loraClip) || 0 } : {}),
     ...(loraBase ? { lora_base: loraBase } : {}),
@@ -790,13 +801,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
             <div className="col-span-2">
               <Field label="Band LoRA" hint="optional; trained with AI Toolkit, copied into ComfyUI by sync">
-                <select className={inp} value={lora} onChange={(e) => setLora(e.target.value)}>
+                <select className={inp} value={lora} onChange={(e) => pickLora(e.target.value)}>
                   <option value="">(none)</option>
                   {loras.filter((l) => !isCompanion(l)).map((l) => <option key={l} value={l}>{l.replace(/^yue2[\\/]/, "")}</option>)}
                 </select>
               </Field>
             </div>
-            <Field label="Tokenizer adapter" hint="LoRAs trained on v9 tokens need nar_lora_joint_v9 under them; v4 LoRAs need none">
+            <Field label="Tokenizer adapter" hint="set automatically when you pick a band LoRA (v9 LoRAs need nar_lora_joint_v9, v4 none); change it here if needed">
               <select className={inp} value={loraBase} onChange={(e) => setLoraBase(e.target.value)}>
                 <option value="">(none)</option>
                 {loras.filter(isCompanion).map((l) => <option key={l} value={l}>{l.replace(/^.*[\\/]/, "").replace(/\.safetensors$/, "")}</option>)}
