@@ -26,7 +26,7 @@ import { ScoreEditor } from "./ScoreEditor";
 type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string; library: LibItem[]; goTo?: (m: string) => void } & RunCtx;
 type Schema = { tags: string[]; defaults: Record<string, number | boolean | string>; max_seconds: number; style_guide: { key: string; help: string }[] };
 type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo };
-export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[] };
+export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[]; seconds?: number | null };
 type Take = { id: string; seed: number; title: string; abc: string; mode: string };
 
 const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "restyle", "cover", "mix", "voiceswap", "master", "naturalize"];
@@ -121,6 +121,10 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [seconds, setSeconds] = d.use("seconds", "360");
   const [seed, setSeed] = d.use("seed", "");
   const [count, setCount] = d.use("count", "1");
+  // opt-in: with no score loaded, Generate plans each take on its own first and re-rolls any plan whose score
+  // cannot fit Max seconds (a 705 s plan against a 360 s cap gave a crammed, cut take, 2026-10-18)
+  const [planCheck, setPlanCheck] = d.use("planCheck", false);
+  const [planCheckTries, setPlanCheckTries] = d.use("planCheckTries", "6");
   const [showAdv, setShowAdv] = useState(false);
   const [steps, setSteps] = d.use("steps", "");
   const [cfgv, setCfgv] = d.use("cfg", "");
@@ -449,20 +453,56 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (!lyrics.trim()) { setNote("write lyrics with [section] tags first; they decide the length"); return; }
     const n = Math.max(1, Math.min(8, parseInt(count) || 1));
     const withScore = !!abc.trim();
+    const checked = planCheck && !withScore && planMode !== "off";
+    const maxSec = parseFloat(seconds) || 360;
     const label = title || songPageTitle || projectName || "YuE2";
     const cards = Array.from({ length: n }, (_v, i) => ({
       id: rid(), status: "pending" as const, pct: 0,
-      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${withScore ? " · scored" : planMode === "off" ? " · direct" : ` · ${planMode} plan`}`,
+      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${withScore ? " · scored" : planMode === "off" ? " · direct" : checked ? ` · checked ${planMode} plan` : ` · ${planMode} plan`}`,
     }));
     ctx.setResults(cards);
     const base = seed.trim() ? parseInt(seed) : undefined;
+    // plan check: every take's score is written on its own first (seconds of GPU), measured, and re-rolled with
+    // a new seed if it is broken, unreadable, longer than Max seconds or implausibly short; renders start after
+    const planned: ({ abc: string; seed: number; source: string } | null)[] = [];
+    if (checked) {
+      const tries = Math.max(1, Math.min(20, parseInt(planCheckTries) || 6));
+      const notes: string[] = [];
+      for (let i = 0; i < n; i++) {
+        let got: { abc: string; seed: number; source: string } | null = null;
+        const why: string[] = [];
+        for (let t = 0; t < tries && !got; t++) {
+          const sd = base === undefined ? Math.floor(Math.random() * 2 ** 31) : base + i + t * 1009;
+          ctx.patch(cards[i].id, { status: "running", pct: 2, title: `${cards[i].title} · checking plan ${t + 1}/${tries}` });
+          try {
+            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: sd, abc_seed: sd, max_seconds: maxSec, ...loraBody });
+            const out = await waitPlan(r.job_id);
+            const info: AbcInfo = await api.yue2AbcInfo(out.abc);
+            const used = out.seed ?? sd;
+            const secs = info.seconds;
+            if (info.problems?.length) why.push(`seed ${used}: ${info.problems[0]}`);
+            else if (secs == null) why.push(`seed ${used}: unreadable score`);
+            else if (secs > maxSec - 5) why.push(`seed ${used}: ${Math.round(secs)} s score`);
+            else if (secs < 60) why.push(`seed ${used}: ${Math.round(secs)} s score, too short`);
+            else got = { abc: out.abc, seed: used, source: `plan seed ${used} (${planMode}, checked: ${Math.round(secs)} s${t ? `, ${t} rejected` : ""})` };
+          } catch (e) { why.push(`seed ${sd}: ${e}`); }
+        }
+        planned.push(got);
+        if (why.length) notes.push(`take ${i + 1}: rejected ${why.join("; ")}`);
+        if (got) ctx.patch(cards[i].id, { title: cards[i].title, pct: 4 });
+        else ctx.patch(cards[i].id, { status: "error", pct: 0, err: `no plan fitted ${maxSec} s in ${tries} tries (${why.join("; ")})` });
+      }
+      setNote(notes.length ? `plan check: ${notes.join(" | ")}` : `plan check: all ${n} plan(s) fitted ${maxSec} s first time`);
+    }
     for (let i = 0; i < n; i++) {
+      const sc = checked ? planned[i] : null;
+      if (checked && !sc) continue;
       try {
         const r = await api.yue2Generate({
           style, lyrics, title: label,
-          mode: planMode, abc: withScore ? abc : "",
-          source: withScore ? abcSource : "",
-          seed: base === undefined ? undefined : base + i,
+          mode: planMode, abc: sc ? sc.abc : withScore ? abc : "",
+          source: sc ? sc.source : withScore ? abcSource : "",
+          seed: sc ? sc.seed : base === undefined ? undefined : base + i,
           max_seconds: parseFloat(seconds) || 360,
           ...(steps.trim() ? { steps: parseInt(steps) } : {}),
           ...(cfgv.trim() ? { cfg: parseFloat(cfgv) } : {}),
@@ -473,7 +513,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           ...(guidance.trim() ? { cfg_scale: parseFloat(guidance) } : {}),
           keep_tag_text: keepTagText,
           ...loraBody,
-          ...(endGuard && withScore ? { end_guard: true } : {}),
+          ...(endGuard && (withScore || sc) ? { end_guard: true } : {}),
           tiled_decode: tiled,
         });
         ctx.patch(cards[i].id, { status: "running", pct: 5 });
@@ -486,7 +526,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           catch (e) { if (pollGone(e, fails)) clearInterval(t); return; }
           if (j.status === "done" || j.status === "error") {
             clearInterval(t);
-            if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || abc, mode: withScore ? "scored" : planMode }, ...ts].slice(0, 12));
+            if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || sc?.abc || abc, mode: withScore ? "scored" : sc ? `checked ${planMode}` : planMode }, ...ts].slice(0, 12));
           }
         }, 3000);
       } catch (e) {
@@ -850,7 +890,15 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               </Field>
             </div>
           )}
-          <div className="mt-3 flex items-center gap-2">
+          <label className="mt-3 flex flex-wrap items-center gap-2 text-[11px]"
+            title="only when no score is loaded: each take's score is written first (seconds of GPU), its length measured, and a broken or too-long plan is re-rolled with a new seed before any audio is rendered; the render then uses that score (and the score-length guard if ticked)">
+            <input type="checkbox" checked={planCheck} onChange={(e) => setPlanCheck(e.target.checked)} />
+            check the plan first: re-roll scores that won't fit Max seconds
+            {planCheck && <><span className="text-[var(--color-muted)]">tries per take</span>
+              <input className={inp + " w-14"} value={planCheckTries} onChange={(e) => setPlanCheckTries(e.target.value)} /></>}
+            {planCheck && abc.trim() && <span className="text-[var(--color-muted)]">(a score is loaded, so this is skipped)</span>}
+          </label>
+          <div className="mt-2 flex items-center gap-2">
             <PrimaryButton onClick={run} disabled={busy || !!(avail && !avail.available)}>
               Generate
             </PrimaryButton>

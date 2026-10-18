@@ -7499,9 +7499,11 @@ def yue2_lint(p: dict):
 
 @app.post("/api/yue2/abc/info")
 def yue2_abc_info(p: dict):
-    """Header, voices, section markers, bar count and structural problems of a score."""
+    """Header, voices, section markers, bar count, length in seconds and structural problems of a score."""
     abc = p.get("abc") or ""
-    return {**yue2_mod.parse_header(abc), "problems": yue2_mod.validate_abc(abc)}
+    # seconds: the score's own length at its tempo (None if unreadable) - the YuE2 tab's plan check
+    # throws away plans that cannot fit the render's max seconds (one was 705 s against a 360 s cap)
+    return {**yue2_mod.parse_header(abc), "problems": yue2_mod.validate_abc(abc), "seconds": yue2_mod.score_seconds(abc)}
 
 
 @app.post("/api/yue2/abc/header")
