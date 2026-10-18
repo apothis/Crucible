@@ -7020,14 +7020,58 @@ def _export_name(pid):
     return pid
 
 
+def _audio_probe(path):
+    """{codec, ext, sample_rate, bits, channels} of a file's first audio stream (ffprobe)."""
+    import subprocess
+    info = {"ext": os.path.splitext(path)[1].lower().lstrip("."), "codec": "", "sample_rate": None, "bits": None, "channels": None}
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                              "stream=codec_name,sample_rate,channels,bits_per_raw_sample,bits_per_sample,sample_fmt",
+                              "-of", "json", path], capture_output=True, text=True, timeout=30)
+        st = (json.loads(out.stdout or "{}").get("streams") or [{}])[0]
+        bits = int(st.get("bits_per_raw_sample") or 0) or int(st.get("bits_per_sample") or 0) or None
+        info.update(codec=st.get("codec_name", ""), sample_rate=int(st.get("sample_rate") or 0) or None,
+                    bits=bits, channels=st.get("channels"))
+    except Exception:
+        pass
+    return info
+
+
+_LOSSLESS = ("wav", "flac", "aiff", "aif")
+_EXPORT_CT = {"mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac", "m4a": "audio/mp4", "opus": "audio/ogg"}
+
+
+@app.get("/api/export/{pid}/formats")
+def export_formats(pid: str):
+    """What the download menu offers for an audio item: the stored master (as is) plus conversions.
+    A lossy master (mp3) converted to WAV/FLAC is only a decoded copy - flagged so the menu says so."""
+    src = _lib_source_path(os.path.basename(pid))
+    if not src:
+        raise HTTPException(404, "nothing to export for that id")
+    info = _audio_probe(src)
+    lossless = info["ext"] in _LOSSLESS
+    return {"source": info, "lossless_source": lossless,
+            "formats": [{"fmt": "original", "label": f"Original ({info['ext'].upper()}, as stored)"},
+                        {"fmt": "wav", "label": "WAV" + ("" if lossless else " (decoded from MP3)")},
+                        {"fmt": "flac", "label": "FLAC" + ("" if lossless else " (decoded from MP3)")},
+                        {"fmt": "mp3", "label": "MP3 320k"},
+                        {"fmt": "m4a", "label": "AAC 256k (.m4a)"},
+                        {"fmt": "opus", "label": "Opus 192k"}]}
+
+
 @app.get("/api/export/{pid}")
 def export_audio(pid: str, fmt: str = "mp3"):
-    """Download a library item. Video/image items come back as themselves; audio as MP3 (320k),
-    already-MP3 passing through and WAVs transcoded. Filename uses the item's note/label.
+    """Download a library item. Video/image items come back as themselves. Audio: fmt=original = the
+    stored master untouched; wav / flac / mp3 / m4a / opus = that format (the master passes through
+    when it already is one; otherwise ffmpeg converts it, keeping sample rate and, for lossless,
+    the bit depth). Filename uses the item's note/label.
 
     Video used to fall through to the audio path: the DB row's stored output IS the .mp4, so
     ffmpeg was asked to make an MP3 out of a silent clip and the download button 500'd on every
-    video card [2026-08-16]."""
+    video card [2026-08-16]. Until 2026-10-18 fmt=wav/flac also returned the master as stored, so
+    an MP3 master came back as an .mp3 whatever was asked for."""
+    from starlette.background import BackgroundTask
+    import subprocess
     pid = os.path.basename(pid)
     # a rendered clip, still or assembled video - hand back the actual file
     for ext, ct in _MEDIA_CT.items():
@@ -7039,25 +7083,36 @@ def export_audio(pid: str, fmt: str = "mp3"):
         raise HTTPException(404, "nothing to export for that id")
     if not _has_audio_stream(src):
         raise HTTPException(400, "that item has no audio track to export")
-    # fmt=original hands back the master untouched. Music 3 masters are lossless FLAC, and
-    # transcoding one to MP3 just to download it would throw away the reason for keeping it.
-    if fmt in ("original", "source", "flac", "wav"):
-        ext = os.path.splitext(src)[1].lower()
-        ct = {".flac": "audio/flac", ".wav": "audio/wav", ".mp3": "audio/mpeg"}.get(ext, "application/octet-stream")
-        return FileResponse(src, media_type=ct, filename=f"{_export_name(pid)}{ext}")
-    fname = f"{_export_name(pid)}.mp3"
-    headers = {"Content-Disposition": f'attachment; filename="{fname}"'}
-    if src.lower().endswith(".mp3"):
-        return FileResponse(src, media_type="audio/mpeg", filename=fname)
-    import subprocess
+    fmt = (fmt or "mp3").lower()
+    if fmt == "source":
+        fmt = "original"
+    if fmt not in ("original", *_EXPORT_CT):
+        raise HTTPException(400, f"unknown format {fmt!r}")
+    src_ext = os.path.splitext(src)[1].lower().lstrip(".")
+    if fmt == "original" or fmt == src_ext:
+        return FileResponse(src, media_type=_EXPORT_CT.get(src_ext, "application/octet-stream"),
+                            filename=f"{_export_name(pid)}.{src_ext}")
+    codec = {"mp3": ["-c:a", "libmp3lame", "-b:a", "320k"], "m4a": ["-c:a", "aac", "-b:a", "256k"],
+             "opus": ["-c:a", "libopus", "-b:a", "192k"], "flac": ["-c:a", "flac"]}.get(fmt)
+    if fmt == "flac" and src_ext not in _LOSSLESS:
+        codec = codec + ["-sample_fmt", "s16"]      # a decoded MP3 has no more than 16 bits to keep
+    if fmt == "wav":     # keep a lossless master's depth; a lossy one decodes to 16-bit
+        bits = _audio_probe(src)["bits"] if src_ext in _LOSSLESS else 16
+        codec = ["-c:a", {24: "pcm_s24le", 32: "pcm_s32le"}.get(bits or 16, "pcm_s16le")]
+    tmpd = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "export")
+    os.makedirs(tmpd, exist_ok=True)
+    out = os.path.join(tmpd, f"{pid}_{uuid.uuid4().hex[:8]}.{fmt}")
     try:
-        out = subprocess.run(["ffmpeg", "-y", "-i", src, "-f", "mp3", "-b:a", "320k", "pipe:1"],
-                             capture_output=True, timeout=120)
-        if out.returncode != 0 or not out.stdout:
-            raise RuntimeError((out.stderr or b"")[-300:].decode("utf-8", "ignore"))
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vn", "-map_metadata", "-1", *codec, out],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+            raise RuntimeError((r.stderr or "")[-300:])
     except Exception as e:
-        raise HTTPException(500, f"mp3 export failed: {e}")
-    return Response(content=out.stdout, media_type="audio/mpeg", headers=headers)
+        if os.path.exists(out):
+            os.remove(out)
+        raise HTTPException(500, f"{fmt} export failed: {e}")
+    return FileResponse(out, media_type=_EXPORT_CT[fmt], filename=f"{_export_name(pid)}.{fmt}",
+                        background=BackgroundTask(os.remove, out))
 
 
 # ==================== MiniMax Music 3 (second generation engine) ====================

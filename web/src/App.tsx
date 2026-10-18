@@ -614,9 +614,10 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
             const isStill = it.mode === "videostill" || (!!it.media_url && !it.audio_url && it.mode === "videostill");
             const isVideo = !!it.media_url && !isStill;
             return (
-              <a href={`/api/export/${it.id}${isVideo || isStill ? "" : "?fmt=mp3"}`} download
-                className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]"
-                title={isStill ? "Download the still" : isVideo ? "Download the video (MP4)" : "Export as MP3 (320k)"}>⬇</a>
+              isVideo || isStill
+                ? <a href={`/api/export/${it.id}`} download className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]"
+                    title={isStill ? "Download the still" : "Download the video (MP4)"}>⬇</a>
+                : <ExportMenu id={it.id} />
             );
           })()}
           <button onClick={() => onBucket(it.id, inTests ? "" : "tests")} className="text-[var(--color-muted)] hover:text-[var(--color-ink)]" title={inTests ? "Restore from Tests" : "Move to Tests"}>{inTests ? "↩" : "🧪"}</button>
@@ -677,6 +678,49 @@ function compareRows(it: LibItem): { k: string; v: string }[] {
 
 // Side-by-side A/B evaluation: drop tracks from the Library (or use the ⊕ button) to
 // see each take's waveform + the exact params/LoRA settings it was made with.
+// Audio download menu: the stored master as is, or a conversion (fetched from /api/export/{id}/formats
+// when opened, so the menu can say what the master is and flag lossless copies of a lossy one).
+function ExportMenu({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  const [fmts, setFmts] = useState<{ fmt: string; label: string }[] | null>(null);
+  const [src, setSrc] = useState("");
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const shut = () => setOpen(false);      // a fixed menu would float away from its card on scroll
+    document.addEventListener("mousedown", close);
+    window.addEventListener("scroll", shut, true);
+    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("scroll", shut, true); };
+  }, [open]);
+  const toggle = () => {
+    // fixed to the window: the library card clips anything that overflows it
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(window.innerWidth - 232, r.right - 224)) });
+    setOpen((o) => !o);
+    if (!fmts) fetch(`/api/export/${id}/formats`).then((r) => r.json()).then((d) => {
+      setFmts(d.formats || []);
+      const s0 = d.source || {};
+      setSrc([String(s0.ext || "").toUpperCase(), s0.sample_rate ? `${s0.sample_rate / 1000} kHz` : "", s0.bits ? `${s0.bits}-bit` : ""].filter(Boolean).join(" · "));
+    }).catch(() => setFmts([{ fmt: "mp3", label: "MP3 320k" }]));
+  };
+  return (
+    <span ref={ref} className="relative">
+      <button onClick={toggle} className={`${open ? "text-[var(--color-accent2)]" : "text-[var(--color-muted)]"} hover:text-[var(--color-accent2)]`} title="Download (choose a format)">⬇</button>
+      {open && (
+        <div style={{ position: "fixed", top: pos.top, left: pos.left }} className="z-50 w-56 rounded-lg border border-[var(--color-line)] bg-[#0e1015] p-1 shadow-xl">
+          {src && <div className="px-2 pb-1 pt-0.5 text-[10px] text-[var(--color-muted)]">stored as {src}</div>}
+          {!fmts ? <div className="px-2 py-1 text-[11px] text-[var(--color-muted)]">loading…</div> : fmts.map((f) => (
+            <a key={f.fmt} href={`/api/export/${id}?fmt=${f.fmt}`} download onClick={() => setOpen(false)}
+              className="block rounded px-2 py-1 text-[11px] text-[var(--color-ink)] hover:bg-[var(--color-panel2)]">{f.label}</a>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string[]; setCompare: (f: (ids: string[]) => string[]) => void }) {
   const picked = ids.map((id) => items.find((x) => x.id === id)).filter(Boolean) as LibItem[];
   // saved sets: one click loads a prepared comparison (short labels + measured loudness)
