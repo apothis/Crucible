@@ -771,6 +771,32 @@ def aitk_run(body: dict = Body(...)):
     return {**st, "freed": freed}
 
 
+@app.post("/aitk/script")
+def aitk_script(body: dict = Body(...)):
+    """Run one of the app's own scripts (ai-toolkit\\musicgen\\<script>.py, written by the Mac) in the
+    toolkit's venv with its config (ai-toolkit\\config\\<config>.json) - for model tests that are not
+    training jobs, e.g. the YuE2 round trip. Same GPU rules as /aitk/run (one process at a time,
+    never over a ComfyUI render). Body: {script, config, token?, free_gpu?=true}."""
+    _auth(body or {})
+    script = os.path.join(AITK_DIR, "musicgen", _safe(str(body.get("script") or "")) + ".py")
+    cfg_name = _safe(str(body.get("config") or ""))
+    cfg = os.path.join(AITK_DIR, "config", cfg_name + ".json")
+    if not os.path.isfile(_aitk_python()):
+        raise HTTPException(409, "AI Toolkit is not installed (POST /aitk/install)")
+    for p in (script, cfg):
+        if not os.path.isfile(p):
+            raise HTTPException(404, f"no file {p}")
+    if _comfy_busy():
+        raise HTTPException(409, "ComfyUI has a render queued or running; try again when it is idle")
+    freed = _free_gpu() if body.get("free_gpu", True) else {}
+    env = dict(os.environ, HF_HOME=os.path.join(AITK_DIR, ".hf"), PYTHONUNBUFFERED="1", PYTHONPATH=AITK_DIR)
+    for k in ("PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX"):
+        env.pop(k, None)
+    log = os.path.join(AITK_DIR, "output", cfg_name + ".log")
+    st = _aitk_spawn([_aitk_python(), script, cfg], AITK_DIR, log, env=env, kind="script", job=cfg_name)
+    return {**st, "freed": freed}
+
+
 @app.post("/aitk/stop")
 def aitk_stop(body: dict = Body(default={})):
     _auth(body or {})

@@ -39,6 +39,7 @@ BACKEND = "http://127.0.0.1:8000"
 AITK = r"E:\AI\MusicGen\ai-toolkit"
 SOURCES = {   # dataset name -> the ACE dataset folder that already holds audio + fetched lyrics
     "battlebeast": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_battlebeast\data",
+    "beastinblack": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_beastinblack\data",
 }
 LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".mvwork", "yue2_train")
 
@@ -48,6 +49,10 @@ FIXED = {
     "battlebeast": {"language": "English",
                     "genre": "modern power metal with 80s heavy metal and synth influences",
                     "voice": "powerful raspy female rock belt with a soaring high range"},
+    # 2026-10-18, drafted overnight under the user's go-ahead (their call to change): Yannis Papadopoulos
+    "beastinblack": {"language": "English",
+                     "genre": "80s-inspired power metal with synthwave and disco-pop influences",
+                     "voice": "soaring high male tenor belt with piercing falsetto screams and a gritty edge"},
 }
 
 # The captioner hears each song and writes ONLY the per-song parts. No example phrases: the first run
@@ -174,6 +179,25 @@ def train(name, head="v4", planner="4000", steps="800", ar_mult="0.5"):
     print(f"wrote {r['path']} ({steps} steps, checkpoint every {save_every}); run with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
 
 
+def describe(name):
+    """Audio descriptions from ACE-Step's own music captioner (AI Toolkit AceStepCaptioner: acestep-captioner
+    for the description, acestep-transcriber alongside it, both Qwen2.5-Omni-7B, fp8 to fit the 3090), for
+    bands whose ACE dataset has no LM prose (Beast in Black: tag lists only). Written beside each song as
+    <stem>.acecap; enrich() condenses the description paragraph. The transcribed lyrics in that file are
+    never used (lyrics come from the online fetch)."""
+    _src, dst, _local = _paths(name)
+    job = f"yue2_{name}_describe"
+    cfg = {"job": "extension", "config": {"name": job, "process": [{
+        "type": "AceStepCaptioner", "device": "cuda",
+        "caption": {
+            "model_name_or_path": "ACE-Step/acestep-transcriber", "model_name_or_path2": "ACE-Step/acestep-captioner",
+            "caption_format": "yue2", "dtype": "bf16", "quantize": True, "qtype": "float8", "low_vram": False,
+            "extensions": ["mp3"], "path_to_caption": dst, "caption_extension": "acecap",
+            "recaption": False, "compile": False, "batch_size": 1}}]}}
+    r = _post(HELPER, "/fs/write", {"path": AITK + r"\config" + "\\" + job + ".yaml", "content": json.dumps(cfg, indent=1)})
+    print(f"wrote {r['path']}; run it with POST {HELPER}/aitk/run {{\"job\": \"{job}\"}}")
+
+
 ENRICH_SYSTEM = (
     "You condense a detailed description of one song into a short training caption fragment for a "
     "music model. Output STRICT JSON ONLY: {\"parts\": \"...\"}. No prose, no markdown.")
@@ -192,8 +216,14 @@ def enrich(name):
     src, _dst, local = _paths(name)
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from backend import llm
-    ds = json.loads(_get("/fs/read", path=ntpath.dirname(src) + "\\dataset.json")["content"])
-    prose = {s["filename"].rsplit(".", 1)[0]: s.get("caption") or "" for s in ds["samples"]}
+    if name == "battlebeast":
+        ds = json.loads(_get("/fs/read", path=ntpath.dirname(src) + "\\dataset.json")["content"])
+        prose = {s["filename"].rsplit(".", 1)[0]: s.get("caption") or "" for s in ds["samples"]}
+    else:   # no LM prose in the ACE dataset: ACE-Step captioner descriptions (describe())
+        prose = {}
+        for stem in _stems(src):
+            text = _get("/fs/read", path=_paths(name)[1] + "\\" + stem + ".acecap")["content"]
+            prose[stem] = "x. " + text.split("[Lyrics]")[0].strip()      # "x. ": the prefix drop below keeps it whole
     os.makedirs(os.path.join(local, "parts_final"), exist_ok=True)
     for stem in _stems(src):
         out = os.path.join(local, "parts_final", stem + ".txt")
@@ -202,7 +232,8 @@ def enrich(name):
             continue
         desc = prose.get(stem, "")
         desc = desc.split(". ", 1)[1] if ". " in desc else desc      # drop the curated tag prefix
-        qwen = open(os.path.join(local, "parts", stem + ".txt")).read().strip()
+        qpath = os.path.join(local, "parts", stem + ".txt")
+        qwen = open(qpath).read().strip() if os.path.exists(qpath) else desc
         tempo = next((t for t in ("mid-tempo", "slow", "fast") if t in qwen.lower()), "mid-tempo")
         prompt = f"{ENRICH_RULES}\n\nCAPTIONER TEMPO: {tempo}\n\nDESCRIPTION:\n{desc}\n\nReturn the JSON now."
         text = llm.complete("claude_sub", "claude-sonnet-5", ENRICH_SYSTEM, prompt, "", timeout=180)
@@ -233,7 +264,7 @@ def merge(name):
 
 
 if __name__ == "__main__":
-    cmds = {"stage": stage, "caption": caption, "enrich": enrich, "merge": merge, "train": train}
+    cmds = {"stage": stage, "caption": caption, "describe": describe, "enrich": enrich, "merge": merge, "train": train}
     if len(sys.argv) not in range(3, 8) or sys.argv[1] not in cmds or sys.argv[2] not in SOURCES:
         sys.exit(__doc__)
     cmds[sys.argv[1]](*sys.argv[2:])      # train: [v4|v9] [4000|whole] [steps] [planner LR multiplier]
