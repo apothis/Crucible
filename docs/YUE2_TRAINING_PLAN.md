@@ -176,3 +176,20 @@ window per step, so each part of a song reaches it only ~4-5 times per run, whil
 is what burns past ~20 passes. Queued next (written, not started): run 4 = run 3 with the planner
 slowed to x0.2 over 2000 steps (same total planner LR as 800 at x0.5) -> 2.5x the decoder exposure;
 checkpoint every 100 (yue2_battlebeast_v9_wholesong_plr0.2_2000_lora, ~4 h at 7.4 s/step).
+
+Overnight 2026-10-18 (user asleep, full go-ahead):
+- Beast in Black dataset: all 40 songs, LRCLIB lyrics sectioned by the app LLM, fixed lines DRAFTED BY
+  CLAUDE (user to confirm): "English, 80s-inspired power metal with synthwave and disco-pop influences,
+  soaring high male tenor belt with piercing falsetto screams and a gritty edge". Per-song parts: the ACE
+  dataset had tag lists only, so ACE-Step's own captioner (acestep-captioner, describe-only script, fp8,
+  18 s/song) -> app LLM condense; 4 genre-word leaks fixed by hand. Several parts carry vocal-effort
+  words ("screamed choruses", "gritty strained vocals") per song.
+- BiB run: v9, whole-song planner, 800 steps, ~7.5 s/step, 1 h 50. Test song "Midnight Machine"
+  (original, project of that name); the LoRA writes its own score. 600 / 800 (two seeds) full length;
+  450 ended at 300.0 s on a 307.5 s own score, and still did with the guard (floor = score - 8 s =
+  299.5 s; the model ended 0.5 s after it). Own-score takes otherwise end 2-4 s before the score
+  length, so a 5 s margin would be safe - not changed.
+- Run 4 (BB, planner x0.2 over 2000 steps, whole song): 3 h 48; ladder 1200/1600/2000 on Skyborn with
+  the guard, all full length.
+- Captioner note: AI Toolkit's AceStepCaptioner job always runs the lyric transcriber too; both 7B on
+  the 3090 hit OOM retries (6-9 min/song). Use tools/aitk/musicgen/acestep_describe.py.
