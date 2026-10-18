@@ -283,7 +283,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "suno": return <SunoStudioForm {...p} goTo={goTo} />;
     case "characters": return <CharactersForm {...p} library={library} />;
     case "youtube": return <YouTubeForm {...p} library={library} />;
-    case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} />;
+    case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} refresh={ctx.onDone} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
     default: return null;
   }
@@ -721,8 +721,10 @@ function ExportMenu({ id }: { id: string }) {
   );
 }
 
-function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string[]; setCompare: (f: (ids: string[]) => string[]) => void }) {
+function CompareView({ items, ids, setCompare, refresh }: { items: LibItem[]; ids: string[]; setCompare: (f: (ids: string[]) => string[]) => void; refresh?: () => void }) {
   const picked = ids.map((id) => items.find((x) => x.id === id)).filter(Boolean) as LibItem[];
+  // tracks in the compare list that the page's (possibly older) library copy does not hold yet
+  const missing = ids.filter((id) => !items.some((x) => x.id === id));
   // saved sets: one click loads a prepared comparison (short labels + measured loudness)
   const [sets, setSets] = useState<CompareSet[]>([]);
   const [setId, setSetId] = useState("");
@@ -734,7 +736,11 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
   const loadSet = (sid: string) => {
     setSetId(sid);
     const st = sets.find((x) => x.id === sid);
-    if (st) setCompare(() => st.ids.filter((i) => items.some((x) => x.id === i)));
+    if (!st) return;
+    // keep every id: a set made after this page loaded its library (new renders) used to show only the
+    // older tracks; fetch the library again and the rest appear
+    setCompare(() => st.ids);
+    if (st.ids.some((i) => !items.some((x) => x.id === i))) refresh?.();
   };
   const saveSet = async () => {
     if (!saveName.trim() || picked.length < 2) return;
@@ -787,6 +793,13 @@ function CompareView({ items, ids, setCompare }: { items: LibItem[]; ids: string
         {setNote && <span className="text-[11px] text-[var(--color-muted)]">{setNote}</span>}
       </div>
       {cur?.note && <div className="mb-3 text-[11px] leading-relaxed text-[var(--color-muted)]">{cur.note}</div>}
+      {missing.length > 0 && (
+        <div className="mb-3 flex items-center gap-2 text-[11px] text-amber-400">
+          {missing.length} track(s) of this set are not in the loaded library yet
+          <button onClick={() => refresh?.()} className="rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">refresh library</button>
+          <span className="text-[var(--color-muted)]">(a deleted track stays missing)</span>
+        </div>
+      )}
       {picked.length === 0 ? (
         <div className="flex h-56 items-center justify-center text-center text-[12px] leading-relaxed text-[var(--color-muted)]">
           Drop tracks here to compare them.<br />Each shows its waveform and the exact params + LoRA/settings it was generated with,<br />so you can A/B versions side by side.
