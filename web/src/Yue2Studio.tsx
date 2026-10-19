@@ -161,6 +161,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // with a score loaded from the plan list and more than one take, each take sings a different plan from the list
   // (take 1 = the loaded one, then the list order), each on its own plan seed; off = every take re-sings the loaded score
   const [perPlan, setPerPlan] = d.use("perPlan", true);
+  // (with no score loaded and finished plans in the list, Generate sings those plans instead of writing new scores)
   const [showAdv, setShowAdv] = useState(false);
   const [steps, setSteps] = d.use("steps", "");
   const [cfgv, setCfgv] = d.use("cfg", "");
@@ -455,17 +456,20 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (abcPlanId && moved[abcPlanId]) setAbc(moved[abcPlanId].abc);
     setNote(`${Object.keys(moved).length} plan(s) moved to ${TONICS[targetPc]}` + (skipped.length ? `; skipped ${skipped.join(", ")}` : ""));
   }
-  // which plan each take sings when a plan-list score is loaded and "one plan per take" is on: the loaded plan
-  // first, then the other finished plans in list order, cycling (with the next seed) if there are more takes
+  // which plan each take sings when "use the plan list" is on: with a plan loaded (and more than one take) the
+  // loaded plan first, then the other finished plans in list order; with no score loaded, the finished plans in list
+  // order. More takes than plans cycle round on the next seed. A score loaded from anywhere else is sung by every take.
+  const usablePlan = (p: Plan) => p.status === "done" && !p.info?.problems?.length;
   function planPool(n: number): { plan: Plan; abc: string; seed: number; round: number }[] {
+    if (!perPlan || planMode === "off") return [];
     const active = abc.trim() && abcPlanId ? plans.find((p) => p.id === abcPlanId) : undefined;
-    if (!perPlan || !active || n < 2) return [];
-    const pool = [active, ...plans.filter((p) => p.status === "done" && p.id !== active.id && !p.info?.problems?.length)];
-    if (pool.length < 2) return [];
-    const first = seed.trim() ? parseInt(seed) : active.seed;
+    if (abc.trim() && (!active || n < 2)) return [];
+    const pool = active ? [active, ...plans.filter((p) => usablePlan(p) && p.id !== active.id)] : plans.filter(usablePlan);
+    if (pool.length < (active ? 2 : 1)) return [];
+    const first = active ? (seed.trim() ? parseInt(seed) : active.seed) : pool[0].seed;
     return Array.from({ length: n }, (_v, i) => {
       const k = i % pool.length, round = Math.floor(i / pool.length);
-      return { plan: pool[k], abc: k === 0 ? abc : pool[k].abc, seed: (k === 0 ? first : pool[k].seed) + round, round };
+      return { plan: pool[k], abc: k === 0 && active ? abc : pool[k].abc, seed: (k === 0 ? first : pool[k].seed) + round, round };
     });
   }
   function usePlan(p: Plan) {
@@ -536,9 +540,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     const n = Math.max(1, Math.min(8, parseInt(count) || 1));
     const withScore = !!abc.trim();
     // base writing needs each score written before the render (the render would otherwise plan through the LoRA)
-    const checked = (planCheck || baseWriting) && !withScore && planMode !== "off";
     const pool = planPool(n);
     const fromPlans = pool.length > 0;
+    const checked = (planCheck || baseWriting) && !withScore && !fromPlans && planMode !== "off";
     const maxSec = parseFloat(seconds) || 360;
     const label = title || songPageTitle || projectName || "YuE2";
     const cards = Array.from({ length: n }, (_v, i) => ({
@@ -752,7 +756,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           <div className="flex items-center justify-between">
             <SectionTitle>3 {"·"} Score</SectionTitle>
             <span className="text-[10px] text-[var(--color-muted)]">
-              {abc.trim() ? `loaded: ${abcSource || "edited"}` : planMode === "off" ? "none (direct render)" : `the render will plan its own (${planMode})`}
+              {abc.trim() ? `loaded: ${abcSource || "edited"}` : planMode === "off" ? "none (direct render)" : perPlan && plans.some(usablePlan) ? `takes sing the ${plans.filter(usablePlan).length} plan(s) in the list` : `the render will plan its own (${planMode})`}
             </span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -1020,12 +1024,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             {planCheck && <><span className="text-[var(--color-muted)]">tries per take</span>
               <input className={inp + " w-14"} value={planCheckTries} onChange={(e) => setPlanCheckTries(e.target.value)} /></>}
             {planCheck && abc.trim() && <span className="text-[var(--color-muted)]">(a score is loaded, so this is skipped)</span>}
+            {planCheck && !abc.trim() && perPlan && plans.some(usablePlan) && planMode !== "off" && <span className="text-[var(--color-muted)]">(takes sing the plan list, so this is skipped)</span>}
           </label>
-          {abc.trim() && abcPlanId && parseInt(count) > 1 && (
+          {planMode !== "off" && ((abc.trim() && abcPlanId && parseInt(count) > 1) || (!abc.trim() && plans.some(usablePlan))) && (
             <label className="mt-1 flex flex-wrap items-center gap-2 text-[11px]"
-              title="each take sings a different plan from the list: take 1 the loaded one, then the list order (each on its own plan seed); off = every take re-sings the loaded score">
+              title="each take sings a different plan from the list, each on its own plan seed: with a plan loaded, take 1 is that plan and the rest follow the list order; with no score loaded, the list order. Off = a loaded score is sung by every take, and with none loaded each take writes a new score">
               <input type="checkbox" checked={perPlan} onChange={(e) => setPerPlan(e.target.checked)} />
-              one plan per take
+              use the plan list: one plan per take
               {(() => {
                 const pp = planPool(Math.max(1, Math.min(8, parseInt(count) || 1)));
                 return pp.length
