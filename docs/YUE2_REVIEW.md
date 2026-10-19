@@ -372,3 +372,25 @@ Meter is chosen with the plan filter ("Wanted meter", keeps planning until plans
 The score editor gained a "to key" picker (the whole score, both voices, chord symbols and K:,
 via abcjs strTranspose: checked on the 1023-note Skyborn plan, every note moved by exactly the
 chosen step and back again).
+
+## Why plans ignore the lyric section structure (researched 2026-10-20)
+
+Measured (our library): the planner sings every lyric word in order but folds sections - base-written plans
+kept a separate pre-chorus 17/30, bridge 24/31, outro 31/46; the whole tag sequence matched 8/46. Thunder in My
+Veins: plans without a pre-chorus have ~60-note "verses" (verse 41 + pre-chorus 18 syllables).
+
+- [code] ABC sampling matches upstream: src/yue2/protocol.py:46 Sampling(.7, .9, 30, 1.005, 100, 32, 4096) =
+  temperature, top_p, top_k, repetition penalty, window, min tokens, max tokens; same in HF
+  yue2_generation_config.json and the 0.1.3 wheel. ABC has no CFG. ComfyUI's node uses the same values and the
+  same sampling order, except max_abc_tokens 8192 (upstream caps a plan at 4096 tokens).
+- [doc] Tech report (arXiv 2609.33757) Appendix C: "For lyric conditioning, SongFormer supplies section boundaries
+  and functional labels, while Qwen3-ASR transcribes the sung lyrics." Section 3.2: SheetSage2 supplies the
+  symbolic targets "including ... section structure". So in training the lyric tags and the score's sections came
+  from two different automatic audio models, never from human tags. SongFormer labels: intro, verse, pre-chorus,
+  chorus, bridge, inst, outro, silence (no "solo").
+- [doc] Upstream editing docs: to change structure, edit the score and the lyric sections together; tags like
+  "[saxophone solo]" communicate intent but are "not a sample-accurate scheduling API".
+- [hypothesis] The planner learned the score's form as SheetSage2 hears it, with the lyric tags as a loose cue;
+  a short 2-line pre-chorus reads as the end of the verse. Untested: tags in SongFormer's own vocabulary ([Inst]),
+  4-line pre-choruses.
+Sources fetched to .mvwork/yue2_research_live/.
