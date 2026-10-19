@@ -273,3 +273,9 @@ steadily 450 0.37% / 500 0.40% / 550 0.56% / 600 0.93% / 800 0.82% (matches the 
 follow the step count: 450 1.06% / 600 0.61% / 800 1.11%. One take per checkpoint, so D's spread may be take
 variance. Sets 30 (D ladder), 31 (Let the Stars Burn: earlier vs C 600 vs D 600), 32 (C vs D paired at
 450/600/800); set 28 now holds C 450/500/550/600/800.
+
+Hand-written score (2026-10-19, Thunder in My Veins): E minor, 160 bpm, 140 bars (210 s), planner dialect, one
+vocal note per syllable (.mvwork/yue2_train/songs/thunder_score.py). Run C 500, guard on, seeds 9201-9203: all
+full length (208.6-209.3 s), no gaps; every section Whisper placed sits within ~1 s of the score (choruses 0:53,
+1:53, 2:53 vs 0:54/1:54/2:54; bridge 2:41.5 vs 2:42). Words found 86% / 48% / 54% (the repeated choruses can be
+matched to the wrong repeat when lines are missed, so the low two may be clarity or matcher). Set 33.
