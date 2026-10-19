@@ -31,6 +31,29 @@ type Take = { id: string; seed: number; title: string; abc: string; mode: string
 
 const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "restyle", "cover", "mix", "voiceswap", "master", "naturalize"];
 
+// readable names for the band LoRA runs (folder under loras/yue2/ -> [name, final step]), oldest first; the picker lists
+// them newest first. See docs/YUE2_TRAINING_PLAN.md.
+// "bttlbst" runs were trained with that trigger word first in every caption, so their style line should start with it.
+const LORA_RUNS: Record<string, [string, number]> = {
+  yue2_beastinblack_v9_wholesong_lora: ["Beast in Black v9 whole-song", 800],
+  yue2_battlebeast_lora: ["Battle Beast v4, first 160 s (oldest)", 800],
+  yue2_battlebeast_v9_lora: ["Battle Beast v9, first 160 s", 800],
+  yue2_battlebeast_v9_wholesong_lora: ["Battle Beast v9 whole-song", 800],
+  "yue2_battlebeast_v9_wholesong_kl0.05_lora": ["Battle Beast whole-song, KL 0.05", 800],
+  "yue2_battlebeast_v9_wholesong_plr0.2_2000_lora": ["Battle Beast run 4: slow planner, 2000 steps", 2000],
+  yue2_battlebeast_effort_v9_wholesong_sep_lora: ["Battle Beast effort captions + vocal stem", 800],
+  yue2_battlebeast_effort_v9_wholesong_plr2_800_sep_r64_trig_lora: ["Battle Beast run A: fast planner + stem, bttlbst (drifts off the score)", 800],
+  yue2_battlebeast_effort_v9_wholesong_plr2_800_r64_trig_lora: ["Battle Beast run B: fast planner, bttlbst (loses its place)", 800],
+  yue2_battlebeast_effort_v9_wholesong_sep_trig_lora: ["Battle Beast run C: effort + vocal stem, bttlbst", 800],
+  yue2_battlebeast_effort_v9_wholesong_trig_lora: ["Battle Beast run D: effort, no stem, bttlbst", 800],
+};
+const loraRun = (l: string) => l.replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "";
+const loraStep = (l: string) => {
+  const m = l.match(/_0*(\d+)\.safetensors$/);
+  return m ? parseInt(m[1]) : (LORA_RUNS[loraRun(l)]?.[1] ?? 0);
+};
+const loraStepLabel = (l: string) => /_0*\d+\.safetensors$/.test(l) ? `step ${loraStep(l)}` : `step ${loraStep(l) || "?"} (final)`;
+
 export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, goTo, ...ctx }: Props) {
   const d = useDrafts("yue2");
   const draftCtx = useDraftCtx();   // imperative writes into the other tabs' drafts (send-to-tab)
@@ -843,7 +866,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <Field label="Band LoRA" hint="optional; trained with AI Toolkit, copied into ComfyUI by sync">
                 <select className={inp} value={lora} onChange={(e) => pickLora(e.target.value)}>
                   <option value="">(none)</option>
-                  {loras.filter((l) => !isCompanion(l)).map((l) => <option key={l} value={l}>{l.replace(/^yue2[\\/]/, "")}</option>)}
+                  {[...new Set(loras.filter((l) => !isCompanion(l)).map(loraRun))]
+                    .sort((a, b) => (Object.keys(LORA_RUNS).indexOf(b) + 1 || -1) - (Object.keys(LORA_RUNS).indexOf(a) + 1 || -1)).map((run) => (
+                    <optgroup key={run} label={LORA_RUNS[run]?.[0] || run || "loras/yue2"}>
+                      {loras.filter((l) => !isCompanion(l) && loraRun(l) === run).sort((a, b) => loraStep(a) - loraStep(b))
+                        .map((l) => <option key={l} value={l}>{LORA_RUNS[run] ? `${LORA_RUNS[run][0]} - ${loraStepLabel(l)}` : l.replace(/^yue2[\\/]/, "")}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
               </Field>
             </div>
