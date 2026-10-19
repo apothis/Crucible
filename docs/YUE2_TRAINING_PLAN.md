@@ -238,3 +238,11 @@ A = with vocal stem (16 s/step, 3 h 53), B = without (1 h 44). Renders put "bttl
 Sets 25 (A, Skyborn 450/600/800 + 600 at writing 0.77), 26 (B, same), 27 (Let the Stars Burn, base plan 8102,
 earlier effort+stem 600 vs A 600 vs B 600). All Skyborn takes ran the full score (321-329 s, none at 300);
 Let the Stars Burn A/B ended at 297/296 s of a 302 s score with quiet endings. Awaiting the user's ears.
+User ears: none of sets 25-27 sound very good. Measured (.mvwork/yue2_train/diag): loss over steps 700-800 =
+run B 3.70, run A 4.31 vs 4.73-4.87 for the earlier whole-song runs (the 4x planner rate fits the 40 songs far
+harder). Every earlier LoRA ran the full Skyborn score (327-332 s); runs A/B at full writing stop at 320.7-324.6 s,
+against the guard's 320.5 s floor, and fill the tail with near-silence (run A 800: 31 s quiet from 4:53; run B
+800: four 6-11 s gaps from 4:03; Let the Stars Burn run B: 14 s and 10 s gaps from 4:12). At writing 0.77 both
+run the full score. The LoRAs loaded fully (112/116 patches, no key warnings); loudness, peaks and noise are in
+the earlier range. Reading [hypothesis]: the stronger planner finishes the material early (rushes or drops
+parts of the score) and the guard pads the end; not yet checked against the lyrics.
