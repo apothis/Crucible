@@ -279,3 +279,7 @@ vocal note per syllable (.mvwork/yue2_train/songs/thunder_score.py). Run C 500, 
 full length (208.6-209.3 s), no gaps; every section Whisper placed sits within ~1 s of the score (choruses 0:53,
 1:53, 2:53 vs 0:54/1:54/2:54; bridge 2:41.5 vs 2:42). Words found 86% / 48% / 54% (the repeated choruses can be
 matched to the wrong repeat when lines are missed, so the low two may be clarity or matcher). Set 33.
+User ears (hand score): verses sound too quick and strange for Battle Beast; the "Thunder in my veins" emphasis
+is worse than the planner's own. Liked: a shorter score leaves room for extra instrumental sections. [hypothesis:
+one eighth note per syllable at 160 bpm crams the verse lines; the planner gives held notes and rests more room.]
+Asks: manage instrumental sections without hand-editing ABC; roll new render seeds on the same score(s) easily.
