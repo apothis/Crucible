@@ -246,3 +246,10 @@ against the guard's 320.5 s floor, and fill the tail with near-silence (run A 80
 run the full score. The LoRAs loaded fully (112/116 patches, no key warnings); loudness, peaks and noise are in
 the earlier range. Reading [hypothesis]: the stronger planner finishes the material early (rushes or drops
 parts of the score) and the guard pads the end; not yet checked against the lyrics.
+Lyric timing (Whisper small + lyricalign, Skyborn 600s; score plans verse 0:45, chorus 1:21, verse 2 2:09,
+chorus 2:51, solo 3:27, final chorus 4:21, outro 4:57): the earlier effort+stem 600 follows it within ~2 s
+(93% of lyric words found). Run A 600 cuts the 45 s intro to 32 s, then keeps the score's section lengths ~12 s
+early throughout and reaches the outro 7 s early (89% found). Run B 600 is on time to chorus 1, loses verse 2's
+first line and compresses verse 2 (21 s vs 40 s), sings half of chorus 2 at 2:30, then nothing Whisper can place
+until 4:21, and the final chorus is mostly not found (64% found overall). Run B lost its place in the song;
+run A skipped part of the intro. Earlier LoRAs did neither.
