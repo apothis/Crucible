@@ -265,3 +265,11 @@ User ears (set 28): run C best somewhere between 450 and 600; from 600 on an add
 450. Measured: run C 600 has ~5 dB more energy above 12 kHz than 450 through the whole song (+7 dB in the intro,
 +9 dB in the solo), 2.5x the 8-12 kHz share and higher spectral flatness (noise-like); 800 is close to 600. The
 earlier effort+stem 600 sits between 450 and 600. Checkpoints 500 and 550 exist (saved every 50).
+
+Run D (2026-10-19) = run C without the vocal stem (config diff: do_separation only). 1 h 34. Follows the score
+(81-92% of lyric words; sections within ~3 s of the earlier take; D 800 loses the verse's first two lines to
+Whisper), full lengths (327.7-331.1 s), no gaps. High-frequency noise (8-12 kHz share, Skyborn): run C rises
+steadily 450 0.37% / 500 0.40% / 550 0.56% / 600 0.93% / 800 0.82% (matches the user's ears); run D does not
+follow the step count: 450 1.06% / 600 0.61% / 800 1.11%. One take per checkpoint, so D's spread may be take
+variance. Sets 30 (D ladder), 31 (Let the Stars Burn: earlier vs C 600 vs D 600), 32 (C vs D paired at
+450/600/800); set 28 now holds C 450/500/550/600/800.
