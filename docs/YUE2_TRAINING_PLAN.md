@@ -253,3 +253,11 @@ early throughout and reaches the outro 7 s early (89% found). Run B 600 is on ti
 first line and compresses verse 2 (21 s vs 40 s), sings half of chorus 2 at 2:30, then nothing Whisper can place
 until 4:21, and the final chorus is mostly not found (64% found overall). Run B lost its place in the song;
 run A skipped part of the intro. Earlier LoRAs did neither.
+
+Run C (2026-10-19): the earlier effort+stem training (planner x0.5, rank 32, whole songs, vocal stem) with ONE
+change, the trigger "bttlbst" first in every caption; config diffed key-for-key against the earlier run. 3 h 53.
+Loss 4.87 over steps 700-800 (earlier 4.87). Follows the score like the earlier LoRA: every section within ~2 s
+of the earlier take, 88-94% of lyric words found, full lengths (327.5-329.1 s Skyborn, 301.4 s of the 302 s Let
+the Stars Burn score), no gaps beyond a ~2 s quiet start or tail. So the faster planner rate, not the trigger
+word, broke runs A/B. Sets 28 (Skyborn: earlier 600 vs C 450/600/800) and 29 (Let the Stars Burn: earlier 600 vs
+A 600 vs C 600). Awaiting the user's ears.
