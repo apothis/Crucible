@@ -90,6 +90,9 @@ export const api = {
   yue2FromSong: (song: unknown) => jpost("/api/yue2/from_song", { song }),
   yue2Lint: (p: unknown) => jpost("/api/yue2/lint", p),
   yue2AbcInfo: (abc: string) => jpost("/api/yue2/abc/info", { abc }),
+  yue2AbcSections: (abc: string) => jpost("/api/yue2/abc/sections", { abc }),
+  yue2SectionOp: (p: { abc: string; op: string; target: { name: string; occ: number }; n?: number; src?: { name: string; occ: number } | null }) =>
+    jpost("/api/yue2/abc/section_op", p),
   yue2AbcHeader: (p: { abc: string; key?: string; bpm?: number; title?: string }) => jpost("/api/yue2/abc/header", p),
   yue2Generate: (p: unknown) => jpost("/api/yue2/generate", p),   // full render (audio + score)
   yue2Plan: (p: unknown) => jpost("/api/yue2/plan", p),           // score only (fast)

@@ -28,7 +28,7 @@ type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?:
 type Schema = { tags: string[]; defaults: Record<string, number | boolean | string>; max_seconds: number; style_guide: { key: string; help: string }[] };
 type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo; base?: boolean; edited?: boolean };
 export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[]; seconds?: number | null };
-type Take = { id: string; seed: number; title: string; abc: string; mode: string };
+type Take = { id: string; seed: number; title: string; abc: string; mode: string; tag?: string; source?: string };
 
 const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "restyle", "cover", "mix", "voiceswap", "master", "naturalize"];
 
@@ -158,10 +158,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // cannot fit Max seconds (a 705 s plan against a 360 s cap gave a crammed, cut take, 2026-10-18)
   const [planCheck, setPlanCheck] = d.use("planCheck", false);
   const [planCheckTries, setPlanCheckTries] = d.use("planCheckTries", "6");
-  // with a score loaded from the plan list and more than one take, each take sings a different plan from the list
-  // (take 1 = the loaded one, then the list order), each on its own plan seed; off = every take re-sings the loaded score
-  const [perPlan, setPerPlan] = d.use("perPlan", true);
-  // (with no score loaded and finished plans in the list, Generate sings those plans instead of writing new scores)
+  // which scores Generate renders (see scoreJobs): the plan list by default when it has finished plans
+  const [scoreSet, setScoreSet] = d.use<"plans" | "loaded" | "new">("scoreSet", "plans");
   const [showAdv, setShowAdv] = useState(false);
   const [steps, setSteps] = d.use("steps", "");
   const [cfgv, setCfgv] = d.use("cfg", "");
@@ -209,6 +207,65 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     setAbc(t);
     if (abcPlanId) setPlans((ps) => ps.map((p) => p.id === abcPlanId ? { ...p, abc: t, edited: true } : p));
   };
+
+  // ---- section strip: shape the loaded score by whole bars (backend yue2.section_op; sung bars never change) ----
+  type SecRow = { name: string; occ: number; bars: number; seconds: number; instrumental: boolean; free: number; free_from: number | null; free_to: number | null };
+  const [secInfo, setSecInfo] = useState<{ sections?: SecRow[]; bars?: number; seconds?: number; error?: string } | null>(null);
+  const [selSec, setSelSec] = useState<number | null>(null);
+  const [breakBars, setBreakBars] = d.use("breakBars", "4");
+  const [breakSrc, setBreakSrc] = d.use("breakSrc", "");
+  const [secAll, setSecAll] = useState(false);
+  const [secUndo, setSecUndo] = useState<{ abc: string; plans: Plan[]; source: string }[]>([]);
+  const [secBusy, setSecBusy] = useState(false);
+  useEffect(() => {
+    if (!abc.trim()) { setSecInfo(null); return; }
+    const t = window.setTimeout(() => {
+      api.yue2AbcSections(abc).then(setSecInfo).catch((e) => setSecInfo({ error: String(e) }));
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [abc]);
+  const refOf = (r: SecRow) => ({ name: r.name, occ: r.occ });
+  const secLabel = (r: SecRow) => `${r.name}${(secInfo?.sections || []).filter((x) => x.name === r.name).length > 1 ? ` ${r.occ}` : ""}`;
+  async function secOp(op: "add_bars" | "duplicate" | "delete" | "add_break", n?: number) {
+    const r = selSec != null ? secInfo?.sections?.[selSec] : undefined;
+    if (!r) return;
+    const [sn, so] = breakSrc ? breakSrc.split("#") : ["", ""];
+    const src = op === "add_break" && sn ? { name: sn, occ: parseInt(so) || 1 } : null;
+    const body = { op, target: refOf(r), n, src };
+    setSecBusy(true);
+    try {
+      const out = await api.yue2SectionOp({ abc, ...body });
+      setSecUndo((u) => [{ abc, plans, source: abcSource }, ...u].slice(0, 20));
+      editScore(out.abc);
+      if (abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)");
+      let others = 0;
+      const skipped: string[] = [];
+      if (secAll && abcPlanId) {
+        const moved: Record<string, { abc: string; info?: AbcInfo }> = {};
+        for (const p of plans) {
+          if (p.id === abcPlanId || !usablePlan(p)) continue;
+          try {
+            const o = await api.yue2SectionOp({ abc: p.abc, ...body });
+            moved[p.id] = { abc: o.abc, info: await api.yue2AbcInfo(o.abc).catch(() => undefined) };
+          } catch (e) { skipped.push(`plan ${p.seed}`); }
+        }
+        others = Object.keys(moved).length;
+        setPlans((ps) => ps.map((p) => moved[p.id] ? { ...p, abc: moved[p.id].abc, info: moved[p.id].info ?? p.info, edited: true } : p));
+      }
+      if (op === "add_break") setSelSec(selSec! + 1);
+      if (op === "delete") setSelSec(null);
+      setNote(`${op.replace("_", " ")} on ${secLabel(r)}: now ${out.bars} bars, ${fmtSecs(out.seconds)}` +
+        (secAll && abcPlanId ? `; also ${others} other plan(s)${skipped.length ? `, skipped ${skipped.join(", ")} (no such section)` : ""}` : ""));
+    } catch (e) { setNote(`section ${op}: ${e}`); }
+    setSecBusy(false);
+  }
+  function secUndoLast() {
+    const [last, ...rest] = secUndo;
+    if (!last) return;
+    setAbc(last.abc); setPlans(last.plans); setAbcSource(last.source); setSecUndo(rest);
+    setNote("section change undone");
+  }
+  const fmtSecs = (x?: number) => x == null ? "?" : `${Math.floor(x / 60)}:${String(Math.round(x % 60)).padStart(2, "0")}`;
 
   const sections = useMemo(() => (lyrics.match(/\[[^\]]+\]/g) || []).length, [lyrics]);
 
@@ -456,26 +513,40 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (abcPlanId && moved[abcPlanId]) setAbc(moved[abcPlanId].abc);
     setNote(`${Object.keys(moved).length} plan(s) moved to ${TONICS[targetPc]}` + (skipped.length ? `; skipped ${skipped.join(", ")}` : ""));
   }
-  // which plan each take sings when "use the plan list" is on: with a plan loaded (and more than one take) the
-  // loaded plan first, then the other finished plans in list order; with no score loaded, the finished plans in list
-  // order. More takes than plans cycle round on the next seed. A score loaded from anywhere else is sung by every take.
+  // ---- what Generate renders: which scores, how many takes of each, on which seeds ----
+  // scores: "plans" = every finished plan in the list (edits included), "loaded" = the score in the editor,
+  // "new" = each take writes its own score. Takes = per score. Seeds: blank Seed box = fresh random seeds on every
+  // Generate (a render is repeatable: same score + seed + settings gives the same audio, so re-pressing Generate
+  // on fixed seeds only repeats it); a number = seed, seed+1, ... across the batch, reproducible.
   const usablePlan = (p: Plan) => p.status === "done" && !p.info?.problems?.length;
-  function planPool(n: number): { plan: Plan; abc: string; seed: number; round: number }[] {
-    if (!perPlan || planMode === "off") return [];
-    const active = abc.trim() && abcPlanId ? plans.find((p) => p.id === abcPlanId) : undefined;
-    if (abc.trim() && (!active || n < 2)) return [];
-    const pool = active ? [active, ...plans.filter((p) => usablePlan(p) && p.id !== active.id)] : plans.filter(usablePlan);
-    if (pool.length < (active ? 2 : 1)) return [];
-    const first = active ? (seed.trim() ? parseInt(seed) : active.seed) : pool[0].seed;
-    return Array.from({ length: n }, (_v, i) => {
-      const k = i % pool.length, round = Math.floor(i / pool.length);
-      return { plan: pool[k], abc: k === 0 && active ? abc : pool[k].abc, seed: (k === 0 ? first : pool[k].seed) + round, round };
-    });
+  const usable = plans.filter(usablePlan);
+  const scoreSets = [
+    ...(usable.length ? ["plans" as const] : []),
+    ...(abc.trim() ? ["loaded" as const] : []),
+    ...(planMode !== "off" ? ["new" as const] : []),
+  ];
+  const scoreSetNow = scoreSets.includes(scoreSet as "plans") ? scoreSet : (scoreSets[0] || "new");
+  const takesPer = Math.max(1, Math.min(8, parseInt(count) || 1));
+  const randSeed = () => Math.floor(Math.random() * 1_000_000);
+  const planTag = (p: Plan) => `plan ${p.seed}`;
+  type RenderJob = { abc: string; source: string; seed: number; tag: string };
+  // seeds come in as an argument so the preview and the batch agree only when the Seed box is fixed
+  function scoreJobs(seedFor: (i: number) => number): RenderJob[] | null {
+    if (scoreSetNow === "plans") {
+      return usable.slice(0, 32).flatMap((p, k) => Array.from({ length: takesPer }, (_v, j) => ({
+        abc: p.abc, seed: seedFor(k * takesPer + j), tag: planTag(p),
+        source: `plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${p.info?.K ? `, ${p.info.K}` : ""}${p.edited ? ", edited" : ""})`,
+      }))).slice(0, 32);
+    }
+    if (scoreSetNow === "loaded") {
+      const p = abcPlanId ? plans.find((x) => x.id === abcPlanId) : undefined;
+      return Array.from({ length: takesPer }, (_v, j) => ({ abc, source: abcSource, seed: seedFor(j), tag: p ? planTag(p) : "loaded score" }));
+    }
+    return null;
   }
   function usePlan(p: Plan) {
     const m = meterOf(p.info, p.abc);
     setAbc(p.abc); setAbcPlanId(p.id); setAbcSource(`plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
-    if (!seed.trim()) setSeed(String(p.seed));
     setNote(`score from plan seed ${p.seed} loaded; edit it below or render it as is`);
   }
 
@@ -534,32 +605,73 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   }
 
   // ---------------- 5 · render ----------------
+  // one render request (shared by Generate and the per-take "new seed" button)
+  async function submitRender(cardId: string, label: string, j: { abc: string; source: string; seed?: number; tag: string }, mode: string) {
+    try {
+      const r = await api.yue2Generate({
+        style, lyrics,
+        title: `${label}${j.tag ? ` · ${j.tag}` : ""}${j.seed !== undefined && j.abc ? ` · seed ${j.seed}` : ""}`,
+        mode: planMode, abc: j.abc, source: j.source, seed: j.seed,
+        max_seconds: parseFloat(seconds) || 360,
+        ...(steps.trim() ? { steps: parseInt(steps) } : {}),
+        ...(cfgv.trim() ? { cfg: parseFloat(cfgv) } : {}),
+        ...(temp.trim() ? { temperature: parseFloat(temp) } : {}),
+        ...(topP.trim() ? { top_p: parseFloat(topP) } : {}),
+        ...(topK.trim() ? { top_k: parseInt(topK) } : {}),
+        ...(rep.trim() ? { repetition_penalty: parseFloat(rep) } : {}),
+        ...(guidance.trim() ? { cfg_scale: parseFloat(guidance) } : {}),
+        keep_tag_text: keepTagText,
+        ...loraBody,
+        ...(endGuard && j.abc ? { end_guard: true } : {}),
+        tiled_decode: tiled,
+      });
+      ctx.patch(cardId, { status: "running", pct: 5 });
+      pollJob(r.job_id, cardId, ctx);
+      // remember the take so its score can be pulled back in, or re-sung on a new seed
+      const fails = { n: 0 };
+      const t = window.setInterval(async () => {
+        let jb;
+        try { jb = await api.yue2Job(r.job_id); fails.n = 0; }
+        catch (e) { if (pollGone(e, fails)) clearInterval(t); return; }
+        if (jb.status === "done" || jb.status === "error") {
+          clearInterval(t);
+          if (jb.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: jb.abc || j.abc, mode, tag: j.tag, source: j.source }, ...ts].slice(0, 12));
+        }
+      }, 3000);
+    } catch (e) {
+      ctx.patch(cardId, { status: "error", pct: 0, err: String(e) });
+    }
+  }
+  const songLabel = () => title || songPageTitle || projectName || "YuE2";
+
   async function run() {
     if (!style.trim()) { setNote("write a style line first"); return; }
     if (!lyrics.trim()) { setNote("write lyrics with [section] tags first; they decide the length"); return; }
-    const n = Math.max(1, Math.min(8, parseInt(count) || 1));
-    const withScore = !!abc.trim();
-    // base writing needs each score written before the render (the render would otherwise plan through the LoRA)
-    const pool = planPool(n);
-    const fromPlans = pool.length > 0;
-    const checked = (planCheck || baseWriting) && !withScore && !fromPlans && planMode !== "off";
+    const label = songLabel();
+    const fixed = seed.trim() ? parseInt(seed) : undefined;
+    const jobs = scoreJobs((i) => fixed === undefined ? randSeed() : fixed + i);
+    if (jobs) {
+      const cards = jobs.map((j, i) => ({ id: rid(), status: "pending" as const, pct: 0,
+        title: `${label} (${i + 1}/${jobs.length}) · ${j.tag} · seed ${j.seed}` }));
+      ctx.setResults(cards);
+      setNote(`${jobs.length} render(s): ${scoreSetNow === "plans" ? `${usable.length} plan(s) x ${takesPer}` : `the loaded score x ${takesPer}`}, ` +
+        (fixed === undefined ? "new random seeds" : `seeds ${fixed}..${fixed + jobs.length - 1}`));
+      for (let i = 0; i < jobs.length; i++) await submitRender(cards[i].id, label, jobs[i], scoreSetNow === "plans" ? "plan list" : "scored");
+      return;
+    }
+    // a new score per take: written inside the render, or first on its own (plan check / base writing)
+    const n = takesPer;
+    const checked = (planCheck || baseWriting) && planMode !== "off";
     const maxSec = parseFloat(seconds) || 360;
-    const label = title || songPageTitle || projectName || "YuE2";
     const cards = Array.from({ length: n }, (_v, i) => ({
       id: rid(), status: "pending" as const, pct: 0,
-      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${fromPlans ? ` · plan seed ${pool[i].plan.seed}` : withScore ? " · scored" : planMode === "off" ? " · direct" : checked ? ` · ${baseWriting ? "base-written" : "checked"} ${planMode} plan` : ` · ${planMode} plan`}`,
+      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${planMode === "off" ? " · direct" : checked ? ` · ${baseWriting ? "base-written" : "checked"} ${planMode} plan` : ` · ${planMode} plan`}`,
     }));
     ctx.setResults(cards);
-    const base = seed.trim() ? parseInt(seed) : undefined;
+    const base = fixed;
     // plan check: every take's score is written on its own first (seconds of GPU), measured, and re-rolled with
     // a new seed if it is broken, unreadable, longer than Max seconds or implausibly short; renders start after
-    const planned: ({ abc: string; seed: number; source: string } | null)[] = fromPlans
-      ? pool.map(({ plan: p, abc: a, seed: sd, round }) => ({
-          abc: a, seed: sd,
-          source: `plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${p.info?.K ? `, ${p.info.K}` : ""}` +
-            `${p.edited ? ", edited" : ""}${round ? `, take ${round + 1} of this plan` : ""})`,
-        }))
-      : [];
+    const planned: ({ abc: string; seed: number; source: string } | null)[] = [];
     if (checked) {
       const tries = Math.max(1, Math.min(20, parseInt(planCheckTries) || 6));
       const notes: string[] = [];
@@ -590,44 +702,21 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       setNote(notes.length ? `plan check: ${notes.join(" | ")}` : `plan check: all ${n} plan(s) fitted ${maxSec} s first time`);
     }
     for (let i = 0; i < n; i++) {
-      const sc = checked || fromPlans ? planned[i] : null;
+      const sc = checked ? planned[i] : null;
       if (checked && !sc) continue;
-      try {
-        const r = await api.yue2Generate({
-          style, lyrics, title: label,
-          mode: planMode, abc: sc ? sc.abc : withScore ? abc : "",
-          source: sc ? sc.source : withScore ? abcSource : "",
-          seed: sc ? sc.seed : base === undefined ? undefined : base + i,
-          max_seconds: parseFloat(seconds) || 360,
-          ...(steps.trim() ? { steps: parseInt(steps) } : {}),
-          ...(cfgv.trim() ? { cfg: parseFloat(cfgv) } : {}),
-          ...(temp.trim() ? { temperature: parseFloat(temp) } : {}),
-          ...(topP.trim() ? { top_p: parseFloat(topP) } : {}),
-          ...(topK.trim() ? { top_k: parseInt(topK) } : {}),
-          ...(rep.trim() ? { repetition_penalty: parseFloat(rep) } : {}),
-          ...(guidance.trim() ? { cfg_scale: parseFloat(guidance) } : {}),
-          keep_tag_text: keepTagText,
-          ...loraBody,
-          ...(endGuard && (withScore || sc) ? { end_guard: true } : {}),
-          tiled_decode: tiled,
-        });
-        ctx.patch(cards[i].id, { status: "running", pct: 5 });
-        pollJob(r.job_id, cards[i].id, ctx);
-        // remember the take so its generated score can be pulled back in afterwards
-        const fails = { n: 0 };
-        const t = window.setInterval(async () => {
-          let j;
-          try { j = await api.yue2Job(r.job_id); fails.n = 0; }
-          catch (e) { if (pollGone(e, fails)) clearInterval(t); return; }
-          if (j.status === "done" || j.status === "error") {
-            clearInterval(t);
-            if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || sc?.abc || abc, mode: fromPlans ? "plan list" : withScore ? "scored" : sc ? `checked ${planMode}` : planMode }, ...ts].slice(0, 12));
-          }
-        }, 3000);
-      } catch (e) {
-        ctx.patch(cards[i].id, { status: "error", pct: 0, err: String(e) });
-      }
+      await submitRender(cards[i].id, label,
+        sc ? { abc: sc.abc, source: sc.source, seed: sc.seed, tag: `plan ${sc.seed}` } : { abc: "", source: "", seed: base === undefined ? undefined : base + i, tag: "" },
+        sc ? `checked ${planMode}` : planMode);
     }
+  }
+  // the per-take button: the same score again on a fresh seed, with the tab's current settings
+  async function reseed(t: Take) {
+    const label = t.title || songLabel();
+    const sd = randSeed();
+    const card = { id: rid(), status: "pending" as const, pct: 0, title: `${label} · ${t.tag || `take seed ${t.seed}`} · seed ${sd}` };
+    ctx.setResults([card]);
+    await submitRender(card.id, label, { abc: t.abc, source: t.source || `score of take seed ${t.seed}`, seed: sd, tag: t.tag || `score of take seed ${t.seed}` }, t.mode);
+    setNote(`re-singing that score on seed ${sd} with the current settings`);
   }
 
   if (!schema) return <div className="text-sm text-[var(--color-muted)]">loading YuE2 schema…</div>;
@@ -756,7 +845,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           <div className="flex items-center justify-between">
             <SectionTitle>3 {"·"} Score</SectionTitle>
             <span className="text-[10px] text-[var(--color-muted)]">
-              {abc.trim() ? `loaded: ${abcSource || "edited"}` : planMode === "off" ? "none (direct render)" : perPlan && plans.some(usablePlan) ? `takes sing the ${plans.filter(usablePlan).length} plan(s) in the list` : `the render will plan its own (${planMode})`}
+              {abc.trim() ? `loaded: ${abcSource || "edited"}` : planMode === "off" ? "none (direct render)" : `the render will plan its own (${planMode})`}
             </span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -840,6 +929,59 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
 
           <ScoreEditor abc={abc} setAbc={(t) => { editScore(t); if (t.trim() && abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)"); }}
             info={abcInfo} onClear={() => { setAbc(""); setAbcSource(""); setAbcPlanId(""); }} />
+          {abc.trim() && secInfo?.error && (
+            <div className="mt-1 text-[10px] text-[var(--color-muted)]">section tools unavailable for this score: {secInfo.error}</div>
+          )}
+          {abc.trim() && secInfo?.sections && (
+            <div className="mt-2 rounded border border-[var(--color-line)] p-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="mr-1 text-[var(--color-muted)]">sections</span>
+                {secInfo.sections.map((r, i) => (
+                  <button key={i} onClick={() => setSelSec(selSec === i ? null : i)}
+                    className={`rounded border px-2 py-0.5 ${selSec === i ? "border-[var(--color-accent)] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-muted)] hover:text-[var(--color-ink)]"} ${r.instrumental ? "italic" : ""}`}
+                    title={`${r.bars} bars, ${r.seconds} s${r.instrumental ? ", instrumental" : ""}${r.free ? `; +/- bars works on bars ${r.free_from}-${r.free_to} (no vocal)` : "; every bar is sung"}`}>
+                    {secLabel(r)} {"·"} {r.bars}
+                  </button>
+                ))}
+                <span className="ml-2 text-[var(--color-muted)]">{secInfo.bars} bars {"·"} {fmtSecs(secInfo.seconds)}</span>
+                <span className="flex-1" />
+                <GhostButton onClick={secUndoLast} disabled={!secUndo.length || secBusy}>undo</GhostButton>
+              </div>
+              {selSec != null && secInfo.sections[selSec] && (() => {
+                const r = secInfo.sections[selSec];
+                const sources = secInfo.sections.filter((x) => x.free >= 2);
+                return (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-[var(--color-ink)]">{secLabel(r)}: {r.bars} bars, {r.seconds} s</span>
+                    <GhostButton onClick={() => secOp("add_bars", -4)} disabled={secBusy || !r.free}
+                      title={r.free ? `drop up to 4 bars from the end of bars ${r.free_from}-${r.free_to} (no vocal there)` : "every bar is sung: nothing to drop"}>-4 bars</GhostButton>
+                    <GhostButton onClick={() => secOp("add_bars", 4)} disabled={secBusy || !r.free}
+                      title={r.free ? `repeat the last bars of ${r.free_from}-${r.free_to} (no vocal there), placed right after them` : "every bar is sung: add a break after it instead"}>+4 bars</GhostButton>
+                    {r.free > 0 && <span className="text-[10px] text-[var(--color-muted)]">(+/- uses bars {r.free_from}-{r.free_to})</span>}
+                    <GhostButton onClick={() => secOp("duplicate")} disabled={secBusy} title="insert a copy of this section right after it">duplicate</GhostButton>
+                    <GhostButton onClick={() => secOp("delete")} disabled={secBusy || secInfo.sections!.length < 2}>delete</GhostButton>
+                    <span className="ml-2 text-[var(--color-muted)]">break after it:</span>
+                    <select className={inp + " w-auto"} value={breakBars} onChange={(e) => setBreakBars(e.target.value)}>
+                      {["2", "4", "8", "16"].map((b) => <option key={b} value={b}>{b} bars</option>)}
+                    </select>
+                    <select className={inp + " w-auto"} value={breakSrc} onChange={(e) => setBreakSrc(e.target.value)}
+                      title="open bars = chords only, no notes written: the model plays what it likes; a copy repeats that section's last bars (its riff)">
+                      <option value="">open bars</option>
+                      {sources.map((x) => <option key={`${x.name}#${x.occ}`} value={`${x.name}#${x.occ}`}>copy {secLabel(x)}</option>)}
+                    </select>
+                    <GhostButton onClick={() => secOp("add_break", parseInt(breakBars) || 4)} disabled={secBusy}>add break</GhostButton>
+                  </div>
+                );
+              })()}
+              {abcPlanId && usable.length > 1 && (
+                <label className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-muted)]"
+                  title="the same change on every finished plan in the list, matched by section name and number (the 2nd chorus is the 2nd chorus in each); plans without that section are skipped">
+                  <input type="checkbox" checked={secAll} onChange={(e) => setSecAll(e.target.checked)} />
+                  apply section changes to all {usable.length} plans
+                </label>
+              )}
+            </div>
+          )}
 
           <div className="mt-3 border-t border-[var(--color-line)] pt-2">
             <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">ask the editor</div>
@@ -872,10 +1014,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">scores from recent takes</div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {takes.map((t) => (
-                  <GhostButton key={t.id} onClick={() => { setAbc(t.abc); setAbcPlanId(""); setAbcSource(`take ${t.title} seed ${t.seed}`); if (!seed.trim()) setSeed(String(t.seed)); }}
-                    title="load the score this take was rendered from, to edit and render again">
-                    {t.title} {"·"} seed {t.seed} {"·"} {t.mode}
-                  </GhostButton>
+                  <span key={t.id} className="inline-flex items-center gap-1 rounded border border-[var(--color-line)] px-1">
+                    <span className="text-[10px]">{t.title} {"·"} {t.tag ? `${t.tag} · ` : ""}seed {t.seed}</span>
+                    <GhostButton onClick={() => { setAbc(t.abc); setAbcPlanId(""); setAbcSource(t.source || `take ${t.title} seed ${t.seed}`); }}
+                      title="load the score this take was rendered from, to edit and render again">load</GhostButton>
+                    <GhostButton onClick={() => reseed(t)} disabled={busy || !t.abc}
+                      title="sing this take's exact score again on a new random seed, with the tab's current settings (LoRA, guidance, guard...)">new seed</GhostButton>
+                  </span>
                 ))}
               </div>
             </div>
@@ -945,10 +1090,10 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             <Field label="Max seconds" hint={`ceiling, up to ${schema.max_seconds}; a hard cut if the words run past it`}>
               <input className={inp} value={seconds} onChange={(e) => setSeconds(e.target.value)} />
             </Field>
-            <Field label="Seed" hint="blank = random per take; with a score loaded, takes re-perform the same tune">
+            <Field label="Render seed" hint="blank = new random seeds every Generate; a number = that seed, +1 per take (repeatable)">
               <input className={inp} value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="random" />
             </Field>
-            <Field label="Takes"><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+            <Field label={scoreSetNow === "new" ? "Takes" : "Takes per score"}><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
             <Field label="Text guidance" hint="1.0 = off; 2.0 our pick; 2.4 the stable max">
               <input className={inp} value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="1.0" />
             </Field>
@@ -1023,22 +1168,32 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             check the plan first: re-roll scores that won't fit Max seconds
             {planCheck && <><span className="text-[var(--color-muted)]">tries per take</span>
               <input className={inp + " w-14"} value={planCheckTries} onChange={(e) => setPlanCheckTries(e.target.value)} /></>}
-            {planCheck && abc.trim() && <span className="text-[var(--color-muted)]">(a score is loaded, so this is skipped)</span>}
-            {planCheck && !abc.trim() && perPlan && plans.some(usablePlan) && planMode !== "off" && <span className="text-[var(--color-muted)]">(takes sing the plan list, so this is skipped)</span>}
+            {planCheck && scoreSetNow !== "new" && <span className="text-[var(--color-muted)]">(only for "a new score per take")</span>}
           </label>
-          {planMode !== "off" && ((abc.trim() && abcPlanId && parseInt(count) > 1) || (!abc.trim() && plans.some(usablePlan))) && (
-            <label className="mt-1 flex flex-wrap items-center gap-2 text-[11px]"
-              title="each take sings a different plan from the list, each on its own plan seed: with a plan loaded, take 1 is that plan and the rest follow the list order; with no score loaded, the list order. Off = a loaded score is sung by every take, and with none loaded each take writes a new score">
-              <input type="checkbox" checked={perPlan} onChange={(e) => setPerPlan(e.target.checked)} />
-              use the plan list: one plan per take
+          <div className="mt-2 rounded border border-[var(--color-line)] p-2 text-[11px]">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[var(--color-muted)]">scores to render</span>
+              {scoreSets.map((k) => (
+                <label key={k} className="flex items-center gap-1">
+                  <input type="radio" checked={scoreSetNow === k} onChange={() => setScoreSet(k)} />
+                  {k === "plans" ? `all ${usable.length} plan(s) in the list` : k === "loaded" ? "the loaded score" : "a new score per take"}
+                </label>
+              ))}
+            </div>
+            <div className="mt-1 text-[var(--color-muted)]">
               {(() => {
-                const pp = planPool(Math.max(1, Math.min(8, parseInt(count) || 1)));
-                return pp.length
-                  ? <span className="text-[var(--color-muted)]">{pp.map((x, i) => `take ${i + 1}: seed ${x.plan.seed}${x.plan.info?.K ? ` ${x.plan.info.K}` : ""}${x.round ? ` (again, seed ${x.seed})` : ""}`).join(" · ")}</span>
-                  : perPlan ? <span className="text-[var(--color-muted)]">(only one usable plan in the list, so every take sings it)</span> : null;
+                const fixed = seed.trim() ? parseInt(seed) : undefined;
+                const jobs = scoreJobs((i) => fixed === undefined ? -1 : fixed + i);
+                if (!jobs) return `${takesPer} take(s), each writing its own score${(planCheck || baseWriting) && planMode !== "off" ? " first (checked)" : ""}; ` +
+                  (fixed === undefined ? "random seeds" : `seeds ${fixed}..${fixed + takesPer - 1}`);
+                const per = new Map<string, number[]>();
+                jobs.forEach((j) => per.set(j.tag, [...(per.get(j.tag) || []), j.seed]));
+                return `${jobs.length} render(s): ` + [...per.entries()].map(([tag, sds]) =>
+                  `${tag}${fixed === undefined ? ` x${sds.length}` : ` (seed ${sds.join(", ")})`}`).join(" · ") +
+                  (fixed === undefined ? " · new random seeds every Generate" : "");
               })()}
-            </label>
-          )}
+            </div>
+          </div>
           <div className="mt-2 flex items-center gap-2">
             <PrimaryButton onClick={run} disabled={busy || !!(avail && !avail.available)}>
               Generate

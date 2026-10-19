@@ -7506,6 +7506,28 @@ def yue2_abc_info(p: dict):
     return {**yue2_mod.parse_header(abc), "problems": yue2_mod.validate_abc(abc), "seconds": yue2_mod.score_seconds(abc)}
 
 
+@app.post("/api/yue2/abc/sections")
+def yue2_abc_sections(p: dict):
+    """The section strip: each % section's bars, seconds, whether it is instrumental and how many trailing bars
+    have no vocal (the bars +/- may repeat or drop). {error} when the score is not in the planner's layout."""
+    try:
+        return yue2_mod.section_summary(p.get("abc") or "")
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/yue2/abc/section_op")
+def yue2_abc_section_op(p: dict):
+    """Reshape a score by whole bars (add_bars / duplicate / delete / add_break); targets are {name, occ}."""
+    try:
+        abc = yue2_mod.section_op(p.get("abc") or "", p.get("op") or "", p.get("target"), p.get("n", 4), p.get("src"))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"abc": abc, **yue2_mod.section_summary(abc)}
+
+
 @app.post("/api/yue2/abc/header")
 def yue2_abc_header(p: dict):
     """Rewrite K:/Q:/T: in a score. Q: is the tempo lever the planner actually honours."""

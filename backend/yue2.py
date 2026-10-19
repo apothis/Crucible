@@ -192,9 +192,31 @@ def parse_header(abc):
             h["sections"].append({"name": s.lstrip("% ").strip(), "line": i})
     qm = re.match(r"^(\d+)/(\d+)\s*=\s*(\d+)", h.get("Q", ""))
     h["bpm"] = int(qm.group(3)) if qm else None
-    h["bars"] = sum(line.count("|") for line in (abc or "").splitlines()
-                    if line.strip() and not re.match(r"^[A-Za-z]:", line.strip()) and not line.strip().startswith("%"))
+    h["bars"] = _vocal_bars(abc)
     return h
+
+
+def _vocal_bars(abc):
+    """Bars in the Vocal voice (multi-bar Z rests counted in full); falls back to counting bar lines."""
+    try:
+        n, voice, started = 0, None, False
+        for line in (abc or "").splitlines():
+            s = line.strip()
+            if s.startswith("K:"):
+                started = True
+                continue
+            if not started or not s or s.startswith("%"):
+                continue
+            if s.startswith("V:"):
+                voice = (s[2:].split() or [None])[0]
+                continue
+            if re.match(r"^[A-Za-z]:", s) or voice not in (None, "Vocal"):
+                continue
+            n += sum(b[1] if isinstance(b, tuple) else 1 for b in _bar_events(s))
+        return n
+    except Exception:
+        return sum(line.count("|") for line in (abc or "").splitlines()
+                   if line.strip() and not re.match(r"^[A-Za-z]:", line.strip()) and not line.strip().startswith("%"))
 
 
 def set_header(abc, key=None, bpm=None, title=None):
@@ -312,6 +334,223 @@ def score_seconds(abc):
         return total / beat_units * 60.0 / bpm
     except Exception:
         return None
+
+
+
+# ---------------- sections (shape a score without hand-editing the ABC) ----------------
+# A planner score is "% <section>" markers, each followed by chunks of V: Vocal / V: Ins lines; one chord per
+# Vocal bar. The section tools only add, drop, repeat or copy whole bars, so every note the planner wrote
+# stays as written. Anything outside that layout is refused rather than guessed at.
+
+def _bar_units(abc):
+    h = parse_header(abc)
+    unit = int(h["L"].split("/")[1])
+    n, d = (int(x) for x in h["M"].split("/"))
+    return n * unit // d
+
+
+def _split_bars(line):
+    out = []
+    for tok in line.split("|"):
+        tok = tok.strip()
+        if not tok:
+            continue
+        m = re.fullmatch(r'("[^"]*")?Z(\d*)', tok)
+        if m:
+            out += [(m.group(1) or "") + "Z"] * int(m.group(2) or 1)
+        else:
+            _bar_events(tok + "|")          # raises on anything outside the dialect
+            out.append(tok)
+    return out
+
+
+def parse_sections(abc):
+    """-> (header lines, [{name, Vocal: [bar], Ins: [bar]}]). A bar is its ABC text (chord + notes); a
+    whole-bar rest is "Z". Raises ValueError when the score is not in the planner's layout."""
+    lines = (abc or "").splitlines()
+    k = next((i for i, l in enumerate(lines) if l.strip().startswith("K:")), None)
+    if k is None:
+        raise ValueError("no K: line")
+    _bar_units(abc)
+    secs, cur, voice = [], None, None
+    for l in lines[k + 1:]:
+        s = l.strip()
+        if not s:
+            continue
+        if s.startswith("%"):
+            cur = {"name": s.lstrip("%").strip() or "section", "Vocal": [], "Ins": []}
+            secs.append(cur)
+            continue
+        if s.startswith("V:"):
+            parts = s[2:].split()
+            voice = parts[0] if parts else None
+            continue
+        if re.match(r"^[A-Za-z]:", s):
+            raise ValueError(f"inline {s[:2]} lines are not supported by the section tools")
+        if voice not in ("Vocal", "Ins"):
+            raise ValueError(f"unexpected voice {voice!r} (expected Vocal / Ins)")
+        if cur is None:
+            cur = {"name": "section", "Vocal": [], "Ins": []}
+            secs.append(cur)
+        cur[voice] += _split_bars(s)
+    if not secs:
+        raise ValueError("no % section markers in this score")
+    for sec in secs:
+        if not sec["Ins"]:
+            sec["Ins"] = ["Z"] * len(sec["Vocal"])
+        if len(sec["Vocal"]) != len(sec["Ins"]):
+            raise ValueError(f"section {sec['name']}: Vocal has {len(sec['Vocal'])} bars, Ins {len(sec['Ins'])}")
+    return lines[:k + 1], secs
+
+
+def _sounding(bar):
+    return bool(re.search(r"[A-Ga-g]", re.sub(r'"[^"]*"', "", bar)))
+
+
+def _chord(bar):
+    m = re.match(r'\s*("[^"]*")', bar)
+    return m.group(1) if m else ""
+
+
+def _untie(bar):
+    return bar.rstrip().rstrip("-")
+
+
+def serialize_sections(header, secs, units):
+    out = list(header)
+    for sec in secs:
+        out.append(f"% {sec['name']}")
+        for i in range(0, len(sec["Vocal"]), 4):
+            voc = sec["Vocal"][i:i + 4]
+            ins = sec["Ins"][i:i + 4]
+            out += ["V: Vocal", "|".join(f"{_chord(b)}z{units}" if b.endswith("Z") and not _sounding(b) else b
+                                         for b in voc) + "|"]
+            out += ["V: Ins", f"Z{len(ins)}|" if all(b == "Z" for b in ins)
+                    else "|".join(f"z{units}" if b == "Z" else b for b in ins) + "|"]
+    return "\n".join(out) + "\n"
+
+
+def section_summary(abc):
+    """[{name, occ, bars, seconds, instrumental}] + totals, for the section strip."""
+    header, secs = parse_sections(abc)
+    units = _bar_units(abc)
+    total = score_seconds(abc) or 0.0
+    nbars = sum(len(s["Vocal"]) for s in secs) or 1
+    seen, rows = {}, []
+    for s in secs:
+        seen[s["name"]] = seen.get(s["name"], 0) + 1
+        rows.append({"name": s["name"], "occ": seen[s["name"]], "bars": len(s["Vocal"]),
+                     "seconds": round(total * len(s["Vocal"]) / nbars, 1),
+                     "instrumental": not any(_sounding(b) for b in s["Vocal"]),
+                     **_free_info(s)})
+    return {"sections": rows, "bars": nbars, "seconds": round(total, 1), "bar_units": units}
+
+
+def _free_run(sec):
+    """(start, end) of the bars add_bars may repeat or drop: the last run of 2+ bars with no vocal note (an intro
+    usually ends on the singer's pickup bar, so its riff sits just before it), else a trailing silent bar. None if
+    there is none. Sung bars are never repeated or dropped."""
+    v = sec["Vocal"]
+    runs, i = [], 0
+    while i < len(v):
+        if _sounding(v[i]):
+            i += 1
+            continue
+        j = i
+        while j < len(v) and not _sounding(v[j]):
+            j += 1
+        runs.append((i, j))
+        i = j
+    long_runs = [r for r in runs if r[1] - r[0] >= 2]
+    if long_runs:
+        return long_runs[-1]
+    if runs and runs[-1][1] == len(v):
+        return runs[-1]
+    return None
+
+
+def _free_info(sec):
+    r = _free_run(sec)
+    return {"free": (r[1] - r[0]) if r else 0, "free_from": (r[0] + 1) if r else None, "free_to": r[1] if r else None}
+
+
+def _find(secs, ref):
+    """ref = {name, occ} (the nth section of that name) -> index, or None."""
+    if ref is None:
+        return None
+    n = 0
+    for i, s in enumerate(secs):
+        if s["name"] == ref.get("name"):
+            n += 1
+            if n == int(ref.get("occ") or 1):
+                return i
+    return None
+
+
+def section_op(abc, op, target, n=4, src=None):
+    """Reshape a score by whole bars. op: add_bars (n > 0 repeats the section's last bars that have no vocal,
+    up to 4, n < 0 drops such bars from its end; sung bars are never repeated or dropped), duplicate, delete, add_break (n bars of new
+    'interlude' after the target: copied from the src section's last bars, or open bars - no notes, the
+    next section's first chord - when src is None). Targets are {name, occ}. Returns the new ABC."""
+    header, secs = parse_sections(abc)
+    units = _bar_units(abc)
+    i = _find(secs, target)
+    if i is None:
+        raise LookupError(f"no section {target}")
+    sec = secs[i]
+    n = int(n)
+    if op == "add_bars":
+        run = _free_run(sec)
+        if not run:
+            raise ValueError("this section has no bars without vocal: add a break after it instead")
+        a, b = run
+        if n > 0:
+            k = min(4, b - a)
+            for v in ("Vocal", "Ins"):
+                src = sec[v][b - k:b]
+                sec[v][b - 1] = _untie(sec[v][b - 1])
+                sec[v][b:b] = [src[j % k] for j in range(n)]
+            for v in ("Vocal", "Ins"):          # a copied bar never ties into the bar that follows the copies
+                sec[v][b + n - 1] = _untie(sec[v][b + n - 1])
+        elif n < 0:
+            k = min(-n, b - a, len(sec["Vocal"]) - 1)
+            for v in ("Vocal", "Ins"):
+                del sec[v][b - k:b]
+                if b - k - 1 >= 0:
+                    sec[v][b - k - 1] = _untie(sec[v][b - k - 1])
+    elif op == "duplicate":
+        for v in ("Vocal", "Ins"):
+            sec[v][-1] = _untie(sec[v][-1])
+        secs.insert(i + 1, {"name": sec["name"], "Vocal": list(sec["Vocal"]), "Ins": list(sec["Ins"])})
+    elif op == "delete":
+        if len(secs) == 1:
+            raise ValueError("cannot delete the only section")
+        secs.pop(i)
+        if i > 0:
+            for v in ("Vocal", "Ins"):
+                secs[i - 1][v][-1] = _untie(secs[i - 1][v][-1])
+    elif op == "add_break":
+        if n < 1:
+            raise ValueError("a break needs at least one bar")
+        for v in ("Vocal", "Ins"):
+            sec[v][-1] = _untie(sec[v][-1])
+        j = _find(secs, src)
+        if src is not None and j is None:
+            raise LookupError(f"no section {src}")
+        if j is not None:
+            s = secs[j]
+            k = min(n, len(s["Vocal"]))
+            sv, si = s["Vocal"][-k:], s["Ins"][-k:]
+            vocal = [sv[x % k] if not _sounding(sv[x % k]) else f"{_chord(sv[x % k])}z{units}" for x in range(n)]
+            ins = [si[x % k] for x in range(n)]
+            ins[-1] = _untie(ins[-1])
+        else:
+            nxt = secs[i + 1]["Vocal"][0] if i + 1 < len(secs) else sec["Vocal"][-1]
+            vocal, ins = [f"{_chord(nxt)}z{units}"] * n, ["Z"] * n
+        secs.insert(i + 1, {"name": "interlude", "Vocal": vocal, "Ins": ins})
+    else:
+        raise ValueError(f"unknown op {op!r}")
+    return serialize_sections(header, secs, units)
 
 
 # ---------------- graphs ----------------
