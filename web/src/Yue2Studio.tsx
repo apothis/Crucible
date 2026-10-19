@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, trackLabel, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, pollJob, rid, type RunCtx } from "./ui";
 import { useDraftCtx, useDrafts } from "./drafts";
+import { transposeAbc, parseKey, TONICS } from "./ScoreEditor";
 import { ScoreEditor } from "./ScoreEditor";
 
 // ---------------------------------------------------------------------------------------------
@@ -25,7 +26,7 @@ import { ScoreEditor } from "./ScoreEditor";
 
 type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string; library: LibItem[]; goTo?: (m: string) => void } & RunCtx;
 type Schema = { tags: string[]; defaults: Record<string, number | boolean | string>; max_seconds: number; style_guide: { key: string; help: string }[] };
-type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo; base?: boolean };
+type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo; base?: boolean; edited?: boolean };
 export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[]; seconds?: number | null };
 type Take = { id: string; seed: number; title: string; abc: string; mode: string };
 
@@ -91,6 +92,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [abc, setAbc] = d.use("abc", "");
   const [abcSource, setAbcSource] = d.use("abcSource", "");
   const [abcInfo, setAbcInfo] = useState<AbcInfo | null>(null);
+  // the plan the loaded score came from: edits to the loaded score (transpose, tempo, text) are written back into
+  // that plan, so switching plans with "use" keeps every plan's edits
+  const [abcPlanId, setAbcPlanId] = d.use("abcPlanId", "");
   const [plans, setPlans] = d.use<Plan[]>("plans", []);
   const [planCount, setPlanCount] = d.use("planCount", "4");
   const [planSeed, setPlanSeed] = d.use("planSeed", "");
@@ -154,6 +158,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // cannot fit Max seconds (a 705 s plan against a 360 s cap gave a crammed, cut take, 2026-10-18)
   const [planCheck, setPlanCheck] = d.use("planCheck", false);
   const [planCheckTries, setPlanCheckTries] = d.use("planCheckTries", "6");
+  // with a score loaded from the plan list and more than one take, each take sings a different plan from the list
+  // (take 1 = the loaded one, then the list order), each on its own plan seed; off = every take re-sings the loaded score
+  const [perPlan, setPerPlan] = d.use("perPlan", true);
   const [showAdv, setShowAdv] = useState(false);
   const [steps, setSteps] = d.use("steps", "");
   const [cfgv, setCfgv] = d.use("cfg", "");
@@ -189,10 +196,18 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   useEffect(() => {
     if (!abc.trim()) { setAbcInfo(null); return; }
     const t = window.setTimeout(() => {
-      api.yue2AbcInfo(abc).then(setAbcInfo).catch(() => setAbcInfo(null));
+      api.yue2AbcInfo(abc).then((info) => {
+        setAbcInfo(info);
+        if (abcPlanId) setPlans((ps) => ps.map((p) => p.id === abcPlanId && p.abc === abc ? { ...p, info } : p));
+      }).catch(() => setAbcInfo(null));
     }, 300);
     return () => window.clearTimeout(t);
   }, [abc]);
+  // edits to a score that came from the plan list go back into that plan
+  const editScore = (t: string) => {
+    setAbc(t);
+    if (abcPlanId) setPlans((ps) => ps.map((p) => p.id === abcPlanId ? { ...p, abc: t, edited: true } : p));
+  };
 
   const sections = useMemo(() => (lyrics.match(/\[[^\]]+\]/g) || []).length, [lyrics]);
 
@@ -417,9 +432,45 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       if (hits === 0) setNote((nt) => `${nt}. None in ${wantMeter}: try feel words that imply it (6/8: "lilting jig-like sway"), or raise the try cap`);
     } finally { setPlanBusy(false); }
   }
+  // every written plan to one key: each plan moves by its own interval from its own key (minor plans land on the
+  // minor key, major on the major); nearest = at most 6 semitones either way
+  const [allKeyDir, setAllKeyDir] = d.use<"nearest" | "up" | "down">("allKeyDir", "nearest");
+  async function transposeAllPlans(targetPc: number) {
+    const moved: Record<string, { abc: string; info?: AbcInfo }> = {};
+    const skipped: string[] = [];
+    for (const p of plans) {
+      if (p.status !== "done") continue;
+      const key = parseKey(p.info?.K || p.abc.match(/^K:\s*(.+)$/m)?.[1]);
+      if (!key) { skipped.push(`seed ${p.seed}: no key`); continue; }
+      let st = (((targetPc - key.pc) % 12) + 12) % 12;
+      if (allKeyDir === "down") st = st ? st - 12 : 0;
+      else if (allKeyDir === "nearest" && st > 6) st -= 12;
+      if (!st) continue;
+      try {
+        const out = transposeAbc(p.abc, st);
+        moved[p.id] = { abc: out, info: await api.yue2AbcInfo(out).catch(() => undefined) };
+      } catch (e) { skipped.push(`seed ${p.seed}: ${e}`); }
+    }
+    setPlans((ps) => ps.map((p) => moved[p.id] ? { ...p, abc: moved[p.id].abc, info: moved[p.id].info ?? p.info, edited: true } : p));
+    if (abcPlanId && moved[abcPlanId]) setAbc(moved[abcPlanId].abc);
+    setNote(`${Object.keys(moved).length} plan(s) moved to ${TONICS[targetPc]}` + (skipped.length ? `; skipped ${skipped.join(", ")}` : ""));
+  }
+  // which plan each take sings when a plan-list score is loaded and "one plan per take" is on: the loaded plan
+  // first, then the other finished plans in list order, cycling (with the next seed) if there are more takes
+  function planPool(n: number): { plan: Plan; abc: string; seed: number; round: number }[] {
+    const active = abc.trim() && abcPlanId ? plans.find((p) => p.id === abcPlanId) : undefined;
+    if (!perPlan || !active || n < 2) return [];
+    const pool = [active, ...plans.filter((p) => p.status === "done" && p.id !== active.id && !p.info?.problems?.length)];
+    if (pool.length < 2) return [];
+    const first = seed.trim() ? parseInt(seed) : active.seed;
+    return Array.from({ length: n }, (_v, i) => {
+      const k = i % pool.length, round = Math.floor(i / pool.length);
+      return { plan: pool[k], abc: k === 0 ? abc : pool[k].abc, seed: (k === 0 ? first : pool[k].seed) + round, round };
+    });
+  }
   function usePlan(p: Plan) {
     const m = meterOf(p.info, p.abc);
-    setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
+    setAbc(p.abc); setAbcPlanId(p.id); setAbcSource(`plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
     if (!seed.trim()) setSeed(String(p.seed));
     setNote(`score from plan seed ${p.seed} loaded; edit it below or render it as is`);
   }
@@ -441,7 +492,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       pollText(r.job_id,
         (text) => {
           setCoverBusy("");
-          setAbc(text); setAbcSource(`cover of ${label} (${r.mode})`);
+          setAbc(text); setAbcPlanId(""); setAbcSource(`cover of ${label} (${r.mode})`);
           setNote(`transcribed ${label} (${r.mode}). Check the score: transcription errors carry into the cover. `
             + "Then give it the target style and the lyrics to sing (the original words, or new ones aligned to the same sections).");
         },
@@ -486,17 +537,25 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     const withScore = !!abc.trim();
     // base writing needs each score written before the render (the render would otherwise plan through the LoRA)
     const checked = (planCheck || baseWriting) && !withScore && planMode !== "off";
+    const pool = planPool(n);
+    const fromPlans = pool.length > 0;
     const maxSec = parseFloat(seconds) || 360;
     const label = title || songPageTitle || projectName || "YuE2";
     const cards = Array.from({ length: n }, (_v, i) => ({
       id: rid(), status: "pending" as const, pct: 0,
-      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${withScore ? " · scored" : planMode === "off" ? " · direct" : checked ? ` · ${baseWriting ? "base-written" : "checked"} ${planMode} plan` : ` · ${planMode} plan`}`,
+      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${fromPlans ? ` · plan seed ${pool[i].plan.seed}` : withScore ? " · scored" : planMode === "off" ? " · direct" : checked ? ` · ${baseWriting ? "base-written" : "checked"} ${planMode} plan` : ` · ${planMode} plan`}`,
     }));
     ctx.setResults(cards);
     const base = seed.trim() ? parseInt(seed) : undefined;
     // plan check: every take's score is written on its own first (seconds of GPU), measured, and re-rolled with
     // a new seed if it is broken, unreadable, longer than Max seconds or implausibly short; renders start after
-    const planned: ({ abc: string; seed: number; source: string } | null)[] = [];
+    const planned: ({ abc: string; seed: number; source: string } | null)[] = fromPlans
+      ? pool.map(({ plan: p, abc: a, seed: sd, round }) => ({
+          abc: a, seed: sd,
+          source: `plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${p.info?.K ? `, ${p.info.K}` : ""}` +
+            `${p.edited ? ", edited" : ""}${round ? `, take ${round + 1} of this plan` : ""})`,
+        }))
+      : [];
     if (checked) {
       const tries = Math.max(1, Math.min(20, parseInt(planCheckTries) || 6));
       const notes: string[] = [];
@@ -527,7 +586,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       setNote(notes.length ? `plan check: ${notes.join(" | ")}` : `plan check: all ${n} plan(s) fitted ${maxSec} s first time`);
     }
     for (let i = 0; i < n; i++) {
-      const sc = checked ? planned[i] : null;
+      const sc = checked || fromPlans ? planned[i] : null;
       if (checked && !sc) continue;
       try {
         const r = await api.yue2Generate({
@@ -558,7 +617,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           catch (e) { if (pollGone(e, fails)) clearInterval(t); return; }
           if (j.status === "done" || j.status === "error") {
             clearInterval(t);
-            if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || sc?.abc || abc, mode: withScore ? "scored" : sc ? `checked ${planMode}` : planMode }, ...ts].slice(0, 12));
+            if (j.status === "done") setTakes((ts) => [{ id: r.job_id, seed: r.seed, title: label, abc: j.abc || sc?.abc || abc, mode: fromPlans ? "plan list" : withScore ? "scored" : sc ? `checked ${planMode}` : planMode }, ...ts].slice(0, 12));
           }
         }, 3000);
       } catch (e) {
@@ -735,10 +794,28 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           {planFeel.trim() && (
             <div className="mt-1 text-[10px] text-[var(--color-muted)]">planning with: {planStyle}</div>
           )}
+          {plans.filter((p) => p.status === "done").length > 1 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="text-[var(--color-muted)]">all plans</span>
+              <select className={inp + " w-auto"} value="" disabled={busy}
+                onChange={(e) => { if (e.target.value !== "") transposeAllPlans(parseInt(e.target.value)); }}
+                title="moves every written plan (notes, chord symbols, K:) to this key, each from its own key; minor plans go to the minor key. The loaded score follows if it is one of them.">
+                <option value="">to key...</option>
+                {TONICS.map((t, i) => <option key={t} value={i}>{t}</option>)}
+              </select>
+              <select className={inp + " w-auto"} value={allKeyDir} onChange={(e) => setAllKeyDir(e.target.value as "nearest" | "up" | "down")}
+                title="nearest = at most 6 semitones either way">
+                <option value="nearest">nearest</option>
+                <option value="up">up</option>
+                <option value="down">down</option>
+              </select>
+              <span className="text-[10px] text-[var(--color-muted)]">edits to a loaded plan (transpose, tempo, text) stay with that plan when you switch</span>
+            </div>
+          )}
           {plans.length > 0 && (
             <div className="mt-2 max-h-48 overflow-auto rounded border border-[var(--color-line)]">
               {plans.map((p) => (
-                <div key={p.id} className="flex items-center gap-2 border-b border-[var(--color-line)] px-2 py-1 text-[11px] last:border-0">
+                <div key={p.id} className={"flex items-center gap-2 border-b border-[var(--color-line)] px-2 py-1 text-[11px] last:border-0" + (p.id === abcPlanId && abc.trim() ? " bg-[var(--color-accent)]/10" : "")}>
                   <span className="w-24 text-[var(--color-ink)]">seed {p.seed}</span>
                   {p.status === "running" && <span className="text-[var(--color-muted)]">planning…</span>}
                   {p.status === "error" && <span className="text-red-400">{p.err}</span>}
@@ -748,6 +825,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                     </span>
                   )}
                   <span className="flex-1" />
+                  {p.edited && <span className="text-[10px] text-[var(--color-muted)]">edited</span>}
+                  {p.id === abcPlanId && abc.trim() && <span className="text-[10px] text-[var(--color-accent)]">loaded</span>}
                   {p.status === "done" && <GhostButton onClick={() => usePlan(p)}>use</GhostButton>}
                   <GhostButton onClick={() => setPlans((ps) => ps.filter((x) => x.id !== p.id))}>×</GhostButton>
                 </div>
@@ -755,8 +834,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             </div>
           )}
 
-          <ScoreEditor abc={abc} setAbc={(t) => { setAbc(t); if (t.trim() && abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)"); }}
-            info={abcInfo} onClear={() => { setAbc(""); setAbcSource(""); }} />
+          <ScoreEditor abc={abc} setAbc={(t) => { editScore(t); if (t.trim() && abcSource && !abcSource.endsWith("(edited)")) setAbcSource(abcSource + " (edited)"); }}
+            info={abcInfo} onClear={() => { setAbc(""); setAbcSource(""); setAbcPlanId(""); }} />
 
           <div className="mt-3 border-t border-[var(--color-line)] pt-2">
             <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">ask the editor</div>
@@ -770,7 +849,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[var(--color-accent2)]">proposed edit</span>
                   <span className="flex-1" />
-                  <GhostButton onClick={() => { setAbc(editProp.abc); setAbcSource((abcSource || "score") + " (edited by the editor)"); setEditProp(null); }}>use this</GhostButton>
+                  <GhostButton onClick={() => { editScore(editProp.abc); setAbcSource((abcSource || "score") + " (edited by the editor)"); setEditProp(null); }}>use this</GhostButton>
                   <GhostButton onClick={() => setEditProp(null)}>discard</GhostButton>
                 </div>
                 <div className="mt-1 text-[10px] leading-relaxed text-emerald-200/80">{editProp.summary || "(no summary)"}</div>
@@ -789,7 +868,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <div className="text-[10px] uppercase tracking-wide text-[var(--color-muted)]">scores from recent takes</div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {takes.map((t) => (
-                  <GhostButton key={t.id} onClick={() => { setAbc(t.abc); setAbcSource(`take ${t.title} seed ${t.seed}`); if (!seed.trim()) setSeed(String(t.seed)); }}
+                  <GhostButton key={t.id} onClick={() => { setAbc(t.abc); setAbcPlanId(""); setAbcSource(`take ${t.title} seed ${t.seed}`); if (!seed.trim()) setSeed(String(t.seed)); }}
                     title="load the score this take was rendered from, to edit and render again">
                     {t.title} {"·"} seed {t.seed} {"·"} {t.mode}
                   </GhostButton>
@@ -942,6 +1021,19 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               <input className={inp + " w-14"} value={planCheckTries} onChange={(e) => setPlanCheckTries(e.target.value)} /></>}
             {planCheck && abc.trim() && <span className="text-[var(--color-muted)]">(a score is loaded, so this is skipped)</span>}
           </label>
+          {abc.trim() && abcPlanId && parseInt(count) > 1 && (
+            <label className="mt-1 flex flex-wrap items-center gap-2 text-[11px]"
+              title="each take sings a different plan from the list: take 1 the loaded one, then the list order (each on its own plan seed); off = every take re-sings the loaded score">
+              <input type="checkbox" checked={perPlan} onChange={(e) => setPerPlan(e.target.checked)} />
+              one plan per take
+              {(() => {
+                const pp = planPool(Math.max(1, Math.min(8, parseInt(count) || 1)));
+                return pp.length
+                  ? <span className="text-[var(--color-muted)]">{pp.map((x, i) => `take ${i + 1}: seed ${x.plan.seed}${x.plan.info?.K ? ` ${x.plan.info.K}` : ""}${x.round ? ` (again, seed ${x.seed})` : ""}`).join(" · ")}</span>
+                  : perPlan ? <span className="text-[var(--color-muted)]">(only one usable plan in the list, so every take sings it)</span> : null;
+              })()}
+            </label>
+          )}
           <div className="mt-2 flex items-center gap-2">
             <PrimaryButton onClick={run} disabled={busy || !!(avail && !avail.available)}>
               Generate

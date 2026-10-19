@@ -91,14 +91,21 @@ function movePitch(abc: string, target: { startChar: number; endChar: number; pi
 const PITCH: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const MAJOR_NAMES = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 const MINOR_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"];
-function parseKey(k: string | undefined): { pc: number; minor: boolean; suffix: string } | null {
+// transpose a score that is not on screen (the plan list): abcjs needs a parsed tune for strTranspose, so the
+// score is laid out once in a detached element
+export function transposeAbc(abc: string, steps: number): string {
+  const tunes = abcjs.renderAbc(document.createElement("div"), abc, { staffwidth: 900 });
+  return abcjs.strTranspose(abc, tunes, steps);
+}
+export const TONICS = ["C", "C#/Db", "D", "Eb", "E", "F", "F#", "G", "G#/Ab", "A", "Bb", "B"];
+export function parseKey(k: string | undefined): { pc: number; minor: boolean; suffix: string } | null {
   const m = /^\s*([A-G])([#b]?)\s*(\S*)/.exec(k || "");
   if (!m) return null;
   const pc = (PITCH[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0) + 12) % 12;
   const minor = /^m(in(or)?)?$/i.test(m[3]) || /^aeo/i.test(m[3]);
   return { pc, minor, suffix: minor ? "m" : m[3] && !/^maj/i.test(m[3]) ? m[3] : "" };
 }
-function keyName(key: { pc: number; minor: boolean; suffix: string }, steps: number): string {
+export function keyName(key: { pc: number; minor: boolean; suffix: string }, steps: number): string {
   const pc = (((key.pc + steps) % 12) + 12) % 12;
   return (key.minor ? MINOR_NAMES : MAJOR_NAMES)[pc] + key.suffix;
 }
