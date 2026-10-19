@@ -261,3 +261,7 @@ of the earlier take, 88-94% of lyric words found, full lengths (327.5-329.1 s Sk
 the Stars Burn score), no gaps beyond a ~2 s quiet start or tail. So the faster planner rate, not the trigger
 word, broke runs A/B. Sets 28 (Skyborn: earlier 600 vs C 450/600/800) and 29 (Let the Stars Burn: earlier 600 vs
 A 600 vs C 600). Awaiting the user's ears.
+User ears (set 28): run C best somewhere between 450 and 600; from 600 on an added noise that sounds wrong, not in
+450. Measured: run C 600 has ~5 dB more energy above 12 kHz than 450 through the whole song (+7 dB in the intro,
++9 dB in the solo), 2.5x the 8-12 kHz share and higher spectral flatness (noise-like); 800 is close to 600. The
+earlier effort+stem 600 sits between 450 and 600. Checkpoints 500 and 550 exist (saved every 50).
