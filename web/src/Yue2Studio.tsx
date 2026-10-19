@@ -25,7 +25,7 @@ import { ScoreEditor } from "./ScoreEditor";
 
 type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string; library: LibItem[]; goTo?: (m: string) => void } & RunCtx;
 type Schema = { tags: string[]; defaults: Record<string, number | boolean | string>; max_seconds: number; style_guide: { key: string; help: string }[] };
-type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo };
+type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo; base?: boolean };
 export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[]; seconds?: number | null };
 type Take = { id: string; seed: number; title: string; abc: string; mode: string };
 
@@ -129,6 +129,12 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     ...(lora ? { lora, lora_model: parseFloat(loraModel) || 1.0, lora_clip: parseFloat(loraClip) || 0 } : {}),
     ...(loraBase ? { lora_base: loraBase } : {}),
   };
+  // opt-in: the base model writes the score (Plan and the plan check run with no LoRA), the render still
+  // sings it through the LoRA; base-written scores carried her voice better on two songs (2026-10-18)
+  const [baseWrites, setBaseWrites] = d.use("baseWrites", false);
+  const baseWriting = baseWrites && !!lora;
+  const planLora = baseWriting ? {} : loraBody;
+  const byBase = baseWriting ? ", base model writing" : "";
 
   // ---- cover ----
   const [coverSrc, setCoverSrc] = d.use("coverSrc", "");
@@ -338,9 +344,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // genre second), so "English, slow metal power ballad, ..." -> "English, slow metal power ballad,
   // lilting jig-like sway, ..."
   const planStyle = (() => {
+    // a LoRA trigger word means nothing to the base model, so base writing plans without it
+    const st = baseWriting ? style.replace(/^\s*bttlbst\s*,\s*/i, "") : style;
     const feel = planFeel.trim();
-    if (!feel) return style;
-    const parts = style.split(",").map((x) => x.trim()).filter(Boolean);
+    if (!feel) return st;
+    const parts = st.split(",").map((x) => x.trim()).filter(Boolean);
     parts.splice(Math.min(2, parts.length), 0, feel);
     return parts.join(", ");
   })();
@@ -357,8 +365,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     for (let i = 0; i < n; i++) {
       const s = base + i;
       try {
-        const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...loraBody });
-        const plan: Plan = { id: r.job_id, seed: r.seed, status: "running", abc: "" };
+        const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...planLora });
+        const plan: Plan = { id: r.job_id, seed: r.seed, status: "running", abc: "", base: baseWriting };
         fresh.push(plan);
         setPlans((ps) => [plan, ...ps].slice(0, 16));
         pollText(r.job_id,
@@ -385,7 +393,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         for (let i = 0; i < round; i++) {
           const s = base + tried + i;
           try {
-            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...loraBody });
+            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...planLora });
             jobs.push({ id: r.job_id, seed: r.seed });
           } catch (e) { setNote(`plan seed ${s} failed to queue: ${e}`); }
         }
@@ -398,7 +406,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           tally[m] = (tally[m] || 0) + 1;
           if (m === wantMeter && hits < want) {
             hits += 1;
-            const plan: Plan = { id: j.id, seed: out.seed ?? j.seed, status: "done", abc: out.abc, info };
+            const plan: Plan = { id: j.id, seed: out.seed ?? j.seed, status: "done", abc: out.abc, info, base: baseWriting };
             setPlans((ps) => [plan, ...ps].slice(0, 16));
           }
         }
@@ -411,7 +419,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   }
   function usePlan(p: Plan) {
     const m = meterOf(p.info, p.abc);
-    setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
+    setAbc(p.abc); setAbcSource(`plan seed ${p.seed} (${planMode}${p.base ? ", base model writing" : ""}${m ? `, ${m}` : ""}${planFeel.trim() ? `, planned with "${planFeel.trim()}"` : ""})`);
     if (!seed.trim()) setSeed(String(p.seed));
     setNote(`score from plan seed ${p.seed} loaded; edit it below or render it as is`);
   }
@@ -476,12 +484,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (!lyrics.trim()) { setNote("write lyrics with [section] tags first; they decide the length"); return; }
     const n = Math.max(1, Math.min(8, parseInt(count) || 1));
     const withScore = !!abc.trim();
-    const checked = planCheck && !withScore && planMode !== "off";
+    // base writing needs each score written before the render (the render would otherwise plan through the LoRA)
+    const checked = (planCheck || baseWriting) && !withScore && planMode !== "off";
     const maxSec = parseFloat(seconds) || 360;
     const label = title || songPageTitle || projectName || "YuE2";
     const cards = Array.from({ length: n }, (_v, i) => ({
       id: rid(), status: "pending" as const, pct: 0,
-      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${withScore ? " · scored" : planMode === "off" ? " · direct" : checked ? ` · checked ${planMode} plan` : ` · ${planMode} plan`}`,
+      title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${withScore ? " · scored" : planMode === "off" ? " · direct" : checked ? ` · ${baseWriting ? "base-written" : "checked"} ${planMode} plan` : ` · ${planMode} plan`}`,
     }));
     ctx.setResults(cards);
     const base = seed.trim() ? parseInt(seed) : undefined;
@@ -498,7 +507,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           const sd = base === undefined ? Math.floor(Math.random() * 2 ** 31) : base + i + t * 1009;
           ctx.patch(cards[i].id, { status: "running", pct: 2, title: `${cards[i].title} · checking plan ${t + 1}/${tries}` });
           try {
-            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: sd, abc_seed: sd, max_seconds: maxSec, ...loraBody });
+            const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: sd, abc_seed: sd, max_seconds: maxSec, ...planLora });
             const out = await waitPlan(r.job_id);
             const info: AbcInfo = await api.yue2AbcInfo(out.abc);
             const used = out.seed ?? sd;
@@ -507,7 +516,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             else if (secs == null) why.push(`seed ${used}: unreadable score`);
             else if (secs > maxSec - 5) why.push(`seed ${used}: ${Math.round(secs)} s score`);
             else if (secs < 60) why.push(`seed ${used}: ${Math.round(secs)} s score, too short`);
-            else got = { abc: out.abc, seed: used, source: `plan seed ${used} (${planMode}, checked: ${Math.round(secs)} s${t ? `, ${t} rejected` : ""})` };
+            else got = { abc: out.abc, seed: used, source: `plan seed ${used} (${planMode}${byBase}, checked: ${Math.round(secs)} s${t ? `, ${t} rejected` : ""})` };
           } catch (e) { why.push(`seed ${sd}: ${e}`); }
         }
         planned.push(got);
@@ -902,6 +911,12 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             title="needs a loaded score; uses the ComfyUI-MusicGen-YuE2 node on the box. Slower while the guard holds.">
             <input type="checkbox" checked={endGuard} onChange={(e) => setEndGuard(e.target.checked)} />
             score-length guard: don't let the song end before the loaded score does (recommended with band LoRAs)
+          </label>
+          <label className="mt-1 flex items-center gap-2 text-[11px]"
+            title="Plan and the plan check run on the base model with no LoRA; the render then sings that score through the band LoRA. With no score loaded, Generate writes each take's score first (as the plan check does).">
+            <input type="checkbox" checked={baseWrites} onChange={(e) => setBaseWrites(e.target.checked)} />
+            base model writes the score, the LoRA sings it
+            {baseWrites && !lora && <span className="text-[var(--color-muted)]">(no band LoRA picked, so this does nothing)</span>}
           </label>
           <div className="mt-2">
             <GhostButton onClick={() => setShowAdv(!showAdv)}>{showAdv ? "hide" : "show"} sampler settings</GhostButton>
