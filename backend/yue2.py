@@ -553,6 +553,42 @@ def section_op(abc, op, target, n=4, src=None):
     return serialize_sections(header, secs, units)
 
 
+
+# ---------------- structure check: does a plan keep the lyric sections? ----------------
+# The planner sings every word in order but treats the lyric tags as a loose cue (its training tags and score
+# sections came from two different audio models, docs/YUE2_REVIEW.md): a short pre-chorus is often folded into
+# the verse, a bridge into an interlude, the outro into the last chorus. This compares section kinds in order.
+
+_KIND = {"guitar solo": "interlude", "solo": "interlude", "inst": "interlude", "instrumental": "interlude",
+         "interlude": "interlude", "break": "interlude", "breakdown": "interlude", "prechorus": "pre-chorus",
+         "post-chorus": "chorus", "postchorus": "chorus", "hook": "chorus"}
+
+
+def _kind(tag):
+    base = re.sub(r"\s*\d+$", "", (tag or "").strip()).lower()
+    return _KIND.get(base, base)
+
+
+def _collapse(seq):
+    out = []
+    for x in seq:
+        if not (out and out[-1] == x == "interlude"):
+            out.append(x)
+    return out
+
+
+def structure_check(abc, lyrics):
+    """-> {exact, complete, missing: {kind: n}, extra: {kind: n}, lyrics: [kind], score: [kind]}. exact = the
+    score's sections are the lyric sections in order (runs of instrumental sections count once); complete = every
+    lyric section kind appears at least as often in the score, whatever the order or extras."""
+    want = _collapse([_kind(x["tag"]) for x in lyrics_to_sections(lyrics)])
+    got = _collapse([_kind(x["name"]) for x in parse_header(abc)["sections"]])
+    missing = {k: want.count(k) - got.count(k) for k in dict.fromkeys(want) if want.count(k) > got.count(k)}
+    extra = {k: got.count(k) - want.count(k) for k in dict.fromkeys(got) if got.count(k) > want.count(k)}
+    return {"exact": want == got, "complete": not missing, "missing": missing, "extra": extra,
+            "lyrics": want, "score": got}
+
+
 # ---------------- graphs ----------------
 
 def _f(p, k):

@@ -7506,6 +7506,18 @@ def yue2_abc_info(p: dict):
     return {**yue2_mod.parse_header(abc), "problems": yue2_mod.validate_abc(abc), "seconds": yue2_mod.score_seconds(abc)}
 
 
+@app.post("/api/yue2/abc/structure")
+def yue2_abc_structure(p: dict):
+    """Structure check for several scores against one set of lyrics: {lyrics, abcs: [abc]} -> {results: [...]}."""
+    out = []
+    for abc in p.get("abcs") or []:
+        try:
+            out.append(yue2_mod.structure_check(abc or "", p.get("lyrics") or ""))
+        except Exception as e:
+            out.append({"error": str(e)})
+    return {"results": out}
+
+
 @app.post("/api/yue2/abc/sections")
 def yue2_abc_sections(p: dict):
     """The section strip: each % section's bars, seconds, whether it is instrumental and how many trailing bars

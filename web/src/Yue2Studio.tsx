@@ -96,6 +96,12 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // that plan, so switching plans with "use" keeps every plan's edits
   const [abcPlanId, setAbcPlanId] = d.use("abcPlanId", "");
   const [plans, setPlans] = d.use<Plan[]>("plans", []);
+  // structure check: does each plan (and the loaded score) keep the lyric sections? Recomputed when the lyrics
+  // or a score change, so it always compares against the lyrics as they are now.
+  type Struct = { exact: boolean; complete: boolean; missing: Record<string, number>; extra: Record<string, number>; error?: string };
+  const [structs, setStructs] = useState<Record<string, Struct>>({});
+  // "any" | "complete" (every lyric section kind is there) | "exact" (the lyric sections in order)
+  const [wantStruct, setWantStruct] = d.use<"any" | "complete" | "exact">("wantStruct", "any");
   const [planCount, setPlanCount] = d.use("planCount", "4");
   const [planSeed, setPlanSeed] = d.use("planSeed", "");
   // meter is the planner's choice, not the style text's: "in 6/8" gave 0/8 plans in 6/8 on a metal
@@ -207,6 +213,24 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     setAbc(t);
     if (abcPlanId) setPlans((ps) => ps.map((p) => p.id === abcPlanId ? { ...p, abc: t, edited: true } : p));
   };
+
+  useEffect(() => {
+    const items = [...plans.filter((p) => p.status === "done" && p.abc).map((p) => [p.id, p.abc] as const),
+      ...(abc.trim() ? [["__loaded", abc] as const] : [])];
+    if (!items.length || !lyrics.trim()) { setStructs({}); return; }
+    const t = window.setTimeout(() => {
+      api.yue2Structure(lyrics, items.map((x) => x[1])).then((r) => {
+        const m: Record<string, Struct> = {};
+        items.forEach(([k], i) => { m[k] = r.results[i]; });
+        setStructs(m);
+      }).catch(() => setStructs({}));
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [lyrics, abc, plans.map((p) => `${p.id}:${p.status}:${p.abc.length}`).join(",")]);
+  const structText = (x?: Struct) => !x || x.error ? "" : x.exact ? "matches the lyric sections"
+    : x.complete ? `all lyric sections, different order or extras${Object.keys(x.extra).length ? ` (+${Object.entries(x.extra).map(([k, n]) => n > 1 ? `${k} x${n}` : k).join(", ")})` : ""}`
+    : `missing: ${Object.entries(x.missing).map(([k, n]) => n > 1 ? `${k} x${n}` : k).join(", ")}`;
+  const structOk = (x: Struct | undefined, want: string) => want === "any" || (!!x && !x.error && (want === "exact" ? x.exact : x.complete));
 
   // ---- section strip: shape the loaded score by whole bars (backend yue2.section_op; sung bars never change) ----
   type SecRow = { name: string; occ: number; bars: number; seconds: number; instrumental: boolean; free: number; free_from: number | null; free_to: number | null };
@@ -433,7 +457,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (!style.trim() || !lyrics.trim()) { setNote("a style line and lyrics come first"); return; }
     const n = Math.max(1, Math.min(8, parseInt(planCount) || 1));
     const base = planSeed.trim() ? parseInt(planSeed) : Math.floor(Math.random() * 2 ** 31);
-    if (wantMeter !== "any") return writePlansForMeter(n, base);
+    if (wantMeter !== "any" || wantStruct !== "any") return writePlansFiltered(n, base);
     const fresh: Plan[] = [];
     for (let i = 0; i < n; i++) {
       const s = base + i;
@@ -452,9 +476,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     }
     setNote(`${fresh.length} plan(s) queued (seeds ${base}..${base + fresh.length - 1}); each is seconds of GPU, not minutes`);
   }
-  // rounds of 4 seeds until `want` plans come out in the wanted meter or the try cap is reached;
-  // only the matching plans join the list, the note keeps the tally of what else came out
-  async function writePlansForMeter(want: number, base: number) {
+  // rounds of 4 seeds until `want` plans come out in the wanted meter and with the wanted structure, or the try
+  // cap is reached; only the matching plans join the list, the note keeps the tally of what else came out
+  async function writePlansFiltered(want: number, base: number) {
     const cap = Math.max(want, Math.min(64, parseInt(planTries) || 16));
     const tally: Record<string, number> = {};
     let tried = 0, hits = 0;
@@ -476,18 +500,23 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           try { out = await waitPlan(j.id); } catch (e) { tally["error"] = (tally["error"] || 0) + 1; continue; }
           const info = await api.yue2AbcInfo(out.abc).catch(() => undefined);
           const m = meterOf(info, out.abc) || "?";
-          tally[m] = (tally[m] || 0) + 1;
-          if (m === wantMeter && hits < want) {
+          const st: Struct | undefined = wantStruct === "any" ? undefined
+            : (await api.yue2Structure(lyrics, [out.abc]).catch(() => ({ results: [undefined] }))).results[0];
+          const meterOk = wantMeter === "any" || m === wantMeter;
+          const why = !meterOk ? m : !structOk(st, wantStruct) ? (st && !st.error ? (st.complete ? "other order" : `no ${Object.keys(st.missing).join("/")}`) : "unreadable") : "kept";
+          tally[why] = (tally[why] || 0) + 1;
+          if (meterOk && structOk(st, wantStruct) && hits < want) {
             hits += 1;
             const plan: Plan = { id: j.id, seed: out.seed ?? j.seed, status: "done", abc: out.abc, info, base: baseWriting };
             setPlans((ps) => [plan, ...ps].slice(0, 16));
           }
         }
         const seen = Object.entries(tally).map(([k, v]) => `${v}x ${k}`).join(", ");
-        setNote(`${hits}/${want} plan(s) in ${wantMeter} after ${tried} tries (${seen})` +
+        const wanted = [wantMeter !== "any" ? wantMeter : "", wantStruct === "exact" ? "the lyric sections in order" : wantStruct === "complete" ? "every lyric section" : ""].filter(Boolean).join(" with ");
+        setNote(`${hits}/${want} plan(s) with ${wanted} after ${tried} tries (${seen})` +
           (hits < want && tried < cap ? "; planning more…" : ""));
       }
-      if (hits === 0) setNote((nt) => `${nt}. None in ${wantMeter}: try feel words that imply it (6/8: "lilting jig-like sway"), or raise the try cap`);
+      if (hits === 0) setNote((nt) => `${nt}. None matched` + (wantMeter !== "any" ? `; for a meter try feel words that imply it (6/8: "lilting jig-like sway")` : "") + ", or raise the try cap");
     } finally { setPlanBusy(false); }
   }
   // every written plan to one key: each plan moves by its own interval from its own key (minor plans land on the
@@ -691,6 +720,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             else if (secs == null) why.push(`seed ${used}: unreadable score`);
             else if (secs > maxSec - 5) why.push(`seed ${used}: ${Math.round(secs)} s score`);
             else if (secs < 60) why.push(`seed ${used}: ${Math.round(secs)} s score, too short`);
+            else if (wantStruct !== "any" && !structOk((await api.yue2Structure(lyrics, [out.abc]).catch(() => ({ results: [undefined] }))).results[0], wantStruct))
+              why.push(`seed ${used}: sections don't follow the lyrics`);
             else got = { abc: out.abc, seed: used, source: `plan seed ${used} (${planMode}${byBase}, checked: ${Math.round(secs)} s${t ? `, ${t} rejected` : ""})` };
           } catch (e) { why.push(`seed ${sd}: ${e}`); }
         }
@@ -873,7 +904,15 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                 {["any", "4/4", "2/4", "3/4", "6/8"].map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </Field>
-            {wantMeter !== "any" && (
+            <Field label="Wanted structure" hint="keep only plans that follow the lyric sections">
+              <select className={inp} value={wantStruct} onChange={(e) => setWantStruct(e.target.value as "any" | "complete" | "exact")}
+                title="the planner treats lyric tags as a loose cue (it often folds a short pre-chorus into the verse or the outro into the last chorus). every section = each lyric section kind is in the score; in order = the score's sections are the lyric sections in order. Also used by 'check the plan first'.">
+                <option value="any">any</option>
+                <option value="complete">every lyric section</option>
+                <option value="exact">lyric sections in order</option>
+              </select>
+            </Field>
+            {(wantMeter !== "any" || wantStruct !== "any") && (
               <Field label="Try cap" hint="most plans to try">
                 <input className={inp} value={planTries} onChange={(e) => setPlanTries(e.target.value)} placeholder="16" />
               </Field>
@@ -918,6 +957,12 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                     </span>
                   )}
                   <span className="flex-1" />
+                  {p.status === "done" && structs[p.id] && !structs[p.id].error && (
+                    <span className={`text-[10px] ${structs[p.id].exact ? "text-emerald-400" : structs[p.id].complete ? "text-amber-300" : "text-red-400"}`}
+                      title="does this score keep the lyric sections (instrumental runs count once; Guitar Solo / Inst = interlude)?">
+                      {structs[p.id].exact ? "sections ✓" : structText(structs[p.id])}
+                    </span>
+                  )}
                   {p.edited && <span className="text-[10px] text-[var(--color-muted)]">edited</span>}
                   {p.id === abcPlanId && abc.trim() && <span className="text-[10px] text-[var(--color-accent)]">loaded</span>}
                   {p.status === "done" && <GhostButton onClick={() => usePlan(p)}>use</GhostButton>}
@@ -944,6 +989,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                   </button>
                 ))}
                 <span className="ml-2 text-[var(--color-muted)]">{secInfo.bars} bars {"·"} {fmtSecs(secInfo.seconds)}</span>
+                {structs.__loaded && !structs.__loaded.error && (
+                  <span className={`ml-2 ${structs.__loaded.exact ? "text-emerald-400" : structs.__loaded.complete ? "text-amber-300" : "text-red-400"}`}>
+                    {structText(structs.__loaded)}
+                  </span>
+                )}
                 <span className="flex-1" />
                 <GhostButton onClick={secUndoLast} disabled={!secUndo.length || secBusy}>undo</GhostButton>
               </div>
@@ -1165,7 +1215,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           <label className="mt-3 flex flex-wrap items-center gap-2 text-[11px]"
             title="only when no score is loaded: each take's score is written first (seconds of GPU), its length measured, and a broken or too-long plan is re-rolled with a new seed before any audio is rendered; the render then uses that score (and the score-length guard if ticked)">
             <input type="checkbox" checked={planCheck} onChange={(e) => setPlanCheck(e.target.checked)} />
-            check the plan first: re-roll scores that won't fit Max seconds
+            check the plan first: re-roll scores that won't fit Max seconds{wantStruct !== "any" ? (wantStruct === "exact" ? " or don't keep the lyric sections in order" : " or drop a lyric section") : ""}
             {planCheck && <><span className="text-[var(--color-muted)]">tries per take</span>
               <input className={inp + " w-14"} value={planCheckTries} onChange={(e) => setPlanCheckTries(e.target.value)} /></>}
             {planCheck && scoreSetNow !== "new" && <span className="text-[var(--color-muted)]">(only for "a new score per take")</span>}
