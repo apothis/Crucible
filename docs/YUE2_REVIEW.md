@@ -394,3 +394,17 @@ Veins: plans without a pre-chorus have ~60-note "verses" (verse 41 + pre-chorus 
   a short 2-line pre-chorus reads as the end of the verse. Untested: tags in SongFormer's own vocabulary ([Inst]),
   4-line pre-choruses.
 Sources fetched to .mvwork/yue2_research_live/.
+
+Plan test (2026-10-20, Thunder in My Veins, base model, seeds 7301-7308 per variant, lyrics verbatim, plans only;
+.mvwork/yue2_train/diag/structure_test.py + structure_score.py):
+
+| variant | exact | both pre-choruses | bridge | outro |
+|---|---|---|---|---|
+| A current ([Guitar Solo], Title case) | 4/8 | 8/8 | 7/8 | 4/8 |
+| B [Inst] for the solo | 2/8 | 5/8 | 6/8 | 6/8 |
+| C lowercase tags | 1/8 | 7/8 | 6/8 | 7/8 |
+| D 4-line pre-chorus | 0/8 | 7/8 | 4/8 | 6/8 |
+
+No variant beat the current format. The same lyrics and style through the tab (user's 9 plans, other seeds) kept
+both pre-choruses 3/9 vs 8/8 here: same inputs, so seed-to-seed variation is large (n=8-9; a plan-time style
+difference cannot be ruled out because plans do not store the style they were written with).
