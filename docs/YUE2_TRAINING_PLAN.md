@@ -231,3 +231,10 @@ Both LoRAs stay selectable per song. Voice identity still the open problem.
 Base-planned test (2026-10-18, set 24, Let the Stars Burn): base-model scores (plan seeds 8101, 8102, no LoRA)
 rendered with the effort+stem 600 LoRA vs the user's LoRA-planned takes 2 and 3. User: her voice came through
 better with base writing on both, but too few renders to decide. No call until runs A/B are heard.
+
+Runs A/B (2026-10-18/19): battlebeast_effort captions with trigger "bttlbst" first, rank 64, lr 5e-5 with
+ar_lr_multiplier 2.0 (planner 1e-4, the tokenizer author's artist recipe), KL 0.2, whole songs, 800 steps.
+A = with vocal stem (16 s/step, 3 h 53), B = without (1 h 44). Renders put "bttlbst" first in the style line.
+Sets 25 (A, Skyborn 450/600/800 + 600 at writing 0.77), 26 (B, same), 27 (Let the Stars Burn, base plan 8102,
+earlier effort+stem 600 vs A 600 vs B 600). All Skyborn takes ran the full score (321-329 s, none at 300);
+Let the Stars Burn A/B ended at 297/296 s of a 302 s score with quiet endings. Awaiting the user's ears.
