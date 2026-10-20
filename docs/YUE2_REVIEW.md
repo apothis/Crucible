@@ -416,3 +416,6 @@ Why the user's filtered runs failed (2026-10-20, from ComfyUI's stored job input
 - Neon Valkyrie, base model: 2/16 kept every section; 14/16 folded the 2-line pre-chorus ("Hold on, hold on /
   The storm is coming home") into the verse. Thunder's 3-line pre-chorus was kept 8/8. [hypothesis: a 2-line
   pre-chorus reads as the verse's tail]
+Neon Valkyrie pre-chorus fix (base model, seeds 7401-7408): 2-line pre-chorus kept both pre-choruses 2/8 and the
+whole structure 2/8; lengthened to 4 lines ("Feel the fire burning higher / Now we never stand alone" added) it kept
+both 7/8 and the whole structure 6/8. Rule for writing YuE2 songs: pre-choruses of 3-4 lines.
