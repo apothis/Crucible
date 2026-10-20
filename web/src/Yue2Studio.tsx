@@ -143,9 +143,10 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     ...(lora ? { lora, lora_model: parseFloat(loraModel) || 1.0, lora_clip: parseFloat(loraClip) || 0 } : {}),
     ...(loraBase ? { lora_base: loraBase } : {}),
   };
-  // opt-in: the base model writes the score (Plan and the plan check run with no LoRA), the render still
-  // sings it through the LoRA; base-written scores carried her voice better on two songs (2026-10-18)
-  const [baseWrites, setBaseWrites] = d.use("baseWrites", false);
+  // on by default (user, 2026-10-20): the base model writes the score (Plan and the plan check run with no LoRA),
+  // the render still sings it through the LoRA. Base-written scores carried her voice better on two songs
+  // (2026-10-18) and keep the lyric sections far more often (LoRA writing kept every section 0/11 on Thunder).
+  const [baseWrites, setBaseWrites] = d.use("baseWrites", true);
   const baseWriting = baseWrites && !!lora;
   const planLora = baseWriting ? {} : loraBody;
   const byBase = baseWriting ? ", base model writing" : "";
