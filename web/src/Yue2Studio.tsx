@@ -26,7 +26,7 @@ import { ScoreEditor } from "./ScoreEditor";
 
 type Props = { cfg: Config; busy: boolean; song: SongDraft | null; projectName?: string; library: LibItem[]; goTo?: (m: string) => void } & RunCtx;
 type Schema = { tags: string[]; defaults: Record<string, number | boolean | string>; max_seconds: number; style_guide: { key: string; help: string }[] };
-type Plan = { id: string; seed: number; status: "running" | "done" | "error"; abc: string; err?: string; info?: AbcInfo; base?: boolean; edited?: boolean };
+type Plan = { id: string; seed: number; status: "running" | "done" | "error" | "rejected"; abc: string; err?: string; info?: AbcInfo; base?: boolean; edited?: boolean };
 export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[]; seconds?: number | null };
 type Take = { id: string; seed: number; title: string; abc: string; mode: string; tag?: string; source?: string };
 
@@ -492,24 +492,36 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           try {
             const r = await api.yue2Plan({ style: planStyle, lyrics, mode: planMode, seed: s, abc_seed: s, max_seconds: parseFloat(seconds) || 360, ...planLora });
             jobs.push({ id: r.job_id, seed: r.seed });
+            // every try is visible while it runs; rejected ones stay greyed with the reason until the run ends
+            setPlans((ps) => [{ id: r.job_id, seed: r.seed, status: "running" as const, abc: "", base: baseWriting }, ...ps].slice(0, 24));
           } catch (e) { setNote(`plan seed ${s} failed to queue: ${e}`); }
         }
         tried += round;
         for (const j of jobs) {
           let out;
-          try { out = await waitPlan(j.id); } catch (e) { tally["error"] = (tally["error"] || 0) + 1; continue; }
+          try { out = await waitPlan(j.id); } catch (e) {
+            tally["error"] = (tally["error"] || 0) + 1;
+            setPlans((ps) => ps.map((p) => p.id === j.id ? { ...p, status: "error", err: String(e) } : p));
+            continue;
+          }
           const info = await api.yue2AbcInfo(out.abc).catch(() => undefined);
           const m = meterOf(info, out.abc) || "?";
           const st: Struct | undefined = wantStruct === "any" ? undefined
             : (await api.yue2Structure(lyrics, [out.abc]).catch(() => ({ results: [undefined] }))).results[0];
           const meterOk = wantMeter === "any" || m === wantMeter;
           const why = !meterOk ? m : !structOk(st, wantStruct) ? (st && !st.error ? (st.complete ? "other order" : `no ${Object.keys(st.missing).join("/")}`) : "unreadable") : "kept";
-          tally[why] = (tally[why] || 0) + 1;
-          if (meterOk && structOk(st, wantStruct) && hits < want) {
+          const take = why === "kept" && hits < want;
+          const label = why === "kept" && !take ? "matched, not needed" : why;
+          tally[label] = (tally[label] || 0) + 1;
+          if (take) {
             hits += 1;
-            const plan: Plan = { id: j.id, seed: out.seed ?? j.seed, status: "done", abc: out.abc, info, base: baseWriting };
-            setPlans((ps) => [plan, ...ps].slice(0, 16));
+            setPlans((ps) => ps.map((p) => p.id === j.id ? { ...p, status: "done", abc: out.abc, seed: out.seed ?? j.seed, info } : p));
+          } else {
+            const reason = why === "kept" ? "matched, not needed" : why;
+            setPlans((ps) => ps.map((p) => p.id === j.id ? { ...p, status: "rejected", err: reason, seed: out.seed ?? j.seed } : p));
           }
+          const seenNow = Object.entries(tally).map(([k, v]) => `${v}x ${k}`).join(", ");
+          setNote(`${hits}/${want} kept after ${tried} tries so far (${seenNow}); planning more…`);
         }
         const seen = Object.entries(tally).map(([k, v]) => `${v}x ${k}`).join(", ");
         const wanted = [wantMeter !== "any" ? wantMeter : "", wantStruct === "exact" ? "the lyric sections in order" : wantStruct === "complete" ? "every lyric section" : ""].filter(Boolean).join(" with ");
@@ -517,7 +529,11 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
           (hits < want && tried < cap ? "; planning more…" : ""));
       }
       if (hits === 0) setNote((nt) => `${nt}. None matched` + (wantMeter !== "any" ? `; for a meter try feel words that imply it (6/8: "lilting jig-like sway")` : "") + ", or raise the try cap");
-    } finally { setPlanBusy(false); }
+    } finally {
+      setPlanBusy(false);
+      // the run is over: rejected tries leave the list (the note keeps the tally)
+      setPlans((ps) => ps.filter((p) => p.status !== "rejected").slice(0, 16));
+    }
   }
   // every written plan to one key: each plan moves by its own interval from its own key (minor plans land on the
   // minor key, major on the major); nearest = at most 6 semitones either way
@@ -951,6 +967,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                   <span className="w-24 text-[var(--color-ink)]">seed {p.seed}</span>
                   {p.status === "running" && <span className="text-[var(--color-muted)]">planning…</span>}
                   {p.status === "error" && <span className="text-red-400">{p.err}</span>}
+                  {p.status === "rejected" && <span className="text-[var(--color-muted)] line-through opacity-60">rejected: {p.err}</span>}
                   {p.status === "done" && (
                     <span className="flex-1 text-[var(--color-muted)]">
                       {p.info ? `${meterOf(p.info, p.abc) || "?"} · ${p.info.K || "?"} · ${p.info.bpm ?? "?"} bpm · ${p.info.bars} bars · ${p.info.sections.map((s) => s.name).join(" ")}` : `${p.abc.length} chars`}
