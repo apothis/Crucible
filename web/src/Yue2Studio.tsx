@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, trackLabel, type Config, type LibItem, type Project, type SongDraft } from "./api";
 import { Field, inp, PrimaryButton, GhostButton, SectionTitle, pollJob, rid, type RunCtx } from "./ui";
 import { useDraftCtx, useDrafts } from "./drafts";
@@ -30,6 +30,8 @@ type Plan = { id: string; seed: number; status: "running" | "done" | "error" | "
 export type AbcInfo = { K?: string; Q?: string; M?: string; L?: string; bpm: number | null; bars: number; voices: { id: string; name: string }[]; sections: { name: string; line: number }[]; problems: string[]; seconds?: number | null };
 type Take = { id: string; seed: number; title: string; abc: string; mode: string; tag?: string; source?: string };
 
+// safety stop for "keep writing plans until N match": lyrics the planner can never follow would otherwise run forever
+const PLAN_TRY_LIMIT = 200;
 const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "restyle", "cover", "mix", "voiceswap", "master", "naturalize"];
 
 // readable names for the band LoRA runs (folder under loras/yue2/ -> [name, final step]), oldest first; the picker lists
@@ -110,7 +112,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // in rounds until enough plans come out in the wanted meter.
   const [wantMeter, setWantMeter] = d.use("wantMeter", "any");
   const [planFeel, setPlanFeel] = d.use("planFeel", "");
-  const [planTries, setPlanTries] = d.use("planTries", "16");
+  // blank = keep going until the requested number of plans match (Stop button, safety stop at PLAN_TRY_LIMIT)
+  const [planTries, setPlanTries] = d.use("planTries", "");
+  const stopPlans = useRef(false);
   const [planBusy, setPlanBusy] = useState(false);
   // opt-in band LoRA (AI Toolkit, docs/YUE2_TRAINING_PLAN.md): decoder = sound/voice, planner = writing
   const [lora, setLora] = d.use("lora", "");
@@ -479,12 +483,13 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // rounds of 4 seeds until `want` plans come out in the wanted meter and with the wanted structure, or the try
   // cap is reached; only the matching plans join the list, the note keeps the tally of what else came out
   async function writePlansFiltered(want: number, base: number) {
-    const cap = Math.max(want, Math.min(64, parseInt(planTries) || 16));
+    const cap = planTries.trim() ? Math.max(want, Math.min(PLAN_TRY_LIMIT, parseInt(planTries) || PLAN_TRY_LIMIT)) : PLAN_TRY_LIMIT;
+    stopPlans.current = false;
     const tally: Record<string, number> = {};
     let tried = 0, hits = 0;
     setPlanBusy(true);
     try {
-      while (hits < want && tried < cap) {
+      while (hits < want && tried < cap && !stopPlans.current) {
         const round = Math.min(4, cap - tried);
         const jobs: { id: string; seed: number }[] = [];
         for (let i = 0; i < round; i++) {
@@ -528,7 +533,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         setNote(`${hits}/${want} plan(s) with ${wanted} after ${tried} tries (${seen})` +
           (hits < want && tried < cap ? "; planning more…" : ""));
       }
-      if (hits === 0) setNote((nt) => `${nt}. None matched` + (wantMeter !== "any" ? `; for a meter try feel words that imply it (6/8: "lilting jig-like sway")` : "") + ", or raise the try cap");
+      if (stopPlans.current) setNote((nt) => `${nt.replace(/; planning more…$/, "")}. Stopped.`);
+      else if (hits < want) setNote((nt) => `${nt.replace(/; planning more…$/, "")}. Gave up at ${tried} tries` + (wantMeter !== "any" ? `; for a meter try feel words that imply it (6/8: "lilting jig-like sway")` : "") + (planTries.trim() ? ", or raise the try cap" : ""));
     } finally {
       setPlanBusy(false);
       // the run is over: rejected tries leave the list (the note keeps the tally)
@@ -914,6 +920,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
                 title="run only the planner: write N scores from N seeds, then pick one below">
                 {planBusy ? "planning…" : "Write plans"}
               </GhostButton>
+              {planBusy && <GhostButton onClick={() => { stopPlans.current = true; setNote((nt) => nt + " (stopping after this round)"); }}
+                title="stop after the plans already queued finish">Stop</GhostButton>}
             </div>
             <Field label="Wanted meter" hint="keep planning until enough match">
               <select className={inp} value={wantMeter} onChange={(e) => setWantMeter(e.target.value)}>
@@ -929,8 +937,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
               </select>
             </Field>
             {(wantMeter !== "any" || wantStruct !== "any") && (
-              <Field label="Try cap" hint="most plans to try">
-                <input className={inp} value={planTries} onChange={(e) => setPlanTries(e.target.value)} placeholder="16" />
+              <Field label="Try cap" hint={`blank = until enough match (stops at ${PLAN_TRY_LIMIT})`}>
+                <input className={inp} value={planTries} onChange={(e) => setPlanTries(e.target.value)} placeholder="no limit" />
               </Field>
             )}
             <div className="col-span-2">
