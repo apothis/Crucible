@@ -592,6 +592,7 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
   // button at the wrong take. An id that left the group falls back to the newest.
   const [selId, setSelId] = useState<string | null>(null);
   const [showParams, setShowParams] = useState(false);
+  const [reseed, setReseed] = useState("");   // "" | "queuing" | "queued, seed N" | "failed: ..."
   const [mediaRef, mediaSeen, loadMedia] = useSeen<HTMLDivElement>();
   const it = group.find((g) => g.id === selId) || group[group.length - 1] || group[0];
   const multi = group.length > 1;
@@ -607,6 +608,12 @@ function LibCard({ group, inTests, onOpen, onDelete, onBucket, onOpenInBuilder, 
           {canBuild && <button onClick={() => onOpenInBuilder!(it)} className="ml-auto text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Open in Song Builder (load arrangement, lyrics & tags)">↻</button>}
           <button onClick={() => onOpen(it)} className={`${canBuild ? "" : "ml-auto"} text-[var(--color-muted)] hover:text-[var(--color-accent2)]`} title="Open in workspace">↗</button>
           {onCompare && <button onClick={() => onCompare(it.id)} className="text-[var(--color-muted)] hover:text-[var(--color-accent2)]" title="Add to Compare (or drag the card)">⊕</button>}
+          {it.mode === "yue2" && it.params?.abc && (
+            <button disabled={reseed === "queuing"}
+              onClick={() => { setReseed("queuing"); api.yue2Reseed(it.id).then((r) => setReseed(`queued, seed ${r.seed}`)).catch((e) => setReseed(`failed: ${e}`)); }}
+              className={`${reseed ? "text-[var(--color-accent2)]" : "text-[var(--color-muted)]"} hover:text-[var(--color-accent2)]`}
+              title={reseed ? `New seed: ${reseed}. The take appears in the library when it finishes.` : "Sing this take's exact score again on a new seed, with all of its own settings (style, lyrics, LoRA, guidance, guard)"}>🎲</button>
+          )}
           <button onClick={() => setShowParams((s) => !s)} className={`${showParams ? "text-[var(--color-accent2)]" : "text-[var(--color-muted)]"} hover:text-[var(--color-accent2)]`} title="Show the exact generation params">ⓘ</button>
           {/* the label has to follow the item: this said "Export as MP3 (320k)" on every card,
               including video, where the download then 500'd trying to make an MP3 of a silent clip */}

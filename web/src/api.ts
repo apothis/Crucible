@@ -92,6 +92,7 @@ export const api = {
   yue2AbcInfo: (abc: string) => jpost("/api/yue2/abc/info", { abc }),
   yue2AbcSections: (abc: string) => jpost("/api/yue2/abc/sections", { abc }),
   yue2Structure: (lyrics: string, abcs: string[]) => jpost("/api/yue2/abc/structure", { lyrics, abcs }),
+  yue2Reseed: (id: string) => jpost(`/api/yue2/reseed/${id}`, {}),     // same score + settings, new seed
   yue2SectionOp: (p: { abc: string; op: string; target: { name: string; occ: number }; n?: number; src?: { name: string; occ: number } | null }) =>
     jpost("/api/yue2/abc/section_op", p),
   yue2AbcHeader: (p: { abc: string; key?: string; bpm?: number; title?: string }) => jpost("/api/yue2/abc/header", p),

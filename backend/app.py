@@ -7634,6 +7634,26 @@ def yue2_generate(p: dict):
     return {"job_id": pid, "seed": seed}
 
 
+@app.post("/api/yue2/reseed/{pid}")
+def yue2_reseed(pid: str):
+    """Sing a library take's exact score again on a new seed, with all of that take's own settings (style,
+    lyrics, LoRA, strengths, guidance, guard, sampler). Only the seed changes; the title gets the new seed."""
+    with db() as conn:
+        r = conn.execute("SELECT mode, params FROM jobs WHERE id=?", (os.path.basename(pid),)).fetchone()
+    if not r or r["mode"] != "yue2":
+        raise HTTPException(404, "not a YuE2 take")
+    p = json.loads(r["params"] or "{}")
+    if not (p.get("abc") or "").strip():
+        raise HTTPException(400, "this take has no saved score to re-sing")
+    seed = random.randint(1, 999_999)
+    base = re.sub(r"\s*·\s*seed \d+\s*$", "", (p.get("title") or "").strip())
+    q = {k: v for k, v in p.items() if k not in ("seed", "abc_seed", "take")}
+    q["seed"] = seed
+    q["title"] = f"{base} · seed {seed}" if base else f"seed {seed}"
+    q["note"] = f"same score and settings as the seed {p.get('seed')} take, new seed"
+    return yue2_generate(q)
+
+
 @app.post("/api/yue2/plan")
 def yue2_plan(p: dict):
     """Score only, for the score-first workflow and plan batches (several seeds, pick one)."""
