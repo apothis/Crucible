@@ -409,6 +409,10 @@ function ResultCard({ r, onDismiss }: { r: Result; onDismiss?: (id: string) => v
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-[var(--color-accent2)]">{r.title}</span>
         <span className="text-[10px] text-[var(--color-muted)]">{r.status}</span>
+        {r.regen && (r.status === "done" || r.status === "error") && (
+          <button onClick={r.regen} title={r.regenTip || "render this one again on a new seed, in place"}
+            className="text-[12px] leading-none text-[var(--color-muted)] hover:text-[var(--color-accent2)]">🎲</button>
+        )}
         {/* escape hatch: `busy` is "is any card still running", so a card that never resolves
             disables every render button app-wide until a reload. Dismissing it releases that. */}
         {onDismiss && (

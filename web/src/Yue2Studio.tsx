@@ -171,6 +171,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   const [planCheckTries, setPlanCheckTries] = d.use("planCheckTries", "6");
   // which scores Generate renders (see scoreJobs): the plan list by default when it has finished plans
   const [scoreSet, setScoreSet] = d.use<"plans" | "loaded" | "new">("scoreSet", "plans");
+  // takes of each score when rendering the plan list or the loaded score (4 plans x 1 = 4 renders); "count" stays
+  // the number of takes for "a new score per take"
+  const [perScore, setPerScore] = d.use("takesPerScore", "1");
   const [showAdv, setShowAdv] = useState(false);
   const [steps, setSteps] = d.use("steps", "");
   const [cfgv, setCfgv] = d.use("cfg", "");
@@ -578,7 +581,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     ...(planMode !== "off" ? ["new" as const] : []),
   ];
   const scoreSetNow = scoreSets.includes(scoreSet as "plans") ? scoreSet : (scoreSets[0] || "new");
-  const takesPer = Math.max(1, Math.min(8, parseInt(count) || 1));
+  const takesPer = Math.max(1, Math.min(8, parseInt(scoreSetNow === "new" ? count : perScore) || 1));
   const randSeed = () => Math.floor(Math.random() * 1_000_000);
   const planTag = (p: Plan) => `plan ${p.seed}`;
   type RenderJob = { abc: string; source: string; seed: number; tag: string };
@@ -661,8 +664,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   async function submitRender(cardId: string, label: string, j: { abc: string; source: string; seed?: number; tag: string }, mode: string) {
     try {
       const r = await api.yue2Generate({
-        style, lyrics,
-        title: `${label}${j.tag ? ` · ${j.tag}` : ""}${j.seed !== undefined && j.abc ? ` · seed ${j.seed}` : ""}`,
+        // the title stays the song name: the library groups versions of a song by it (mode + title)
+        style, lyrics, title: label,
+        note: [j.tag, j.seed !== undefined ? `seed ${j.seed}` : ""].filter(Boolean).join(" · "),
         mode: planMode, abc: j.abc, source: j.source, seed: j.seed,
         max_seconds: parseFloat(seconds) || 360,
         ...(steps.trim() ? { steps: parseInt(steps) } : {}),
@@ -677,7 +681,8 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         ...(endGuard && j.abc ? { end_guard: true } : {}),
         tiled_decode: tiled,
       });
-      ctx.patch(cardId, { status: "running", pct: 5 });
+      ctx.patch(cardId, { status: "running", pct: 5, regen: () => regenCard(cardId, r.job_id),
+        regenTip: "this take's exact score and settings again on a new seed, rendered into this card" });
       pollJob(r.job_id, cardId, ctx);
       // remember the take so its score can be pulled back in, or re-sung on a new seed
       const fails = { n: 0 };
@@ -705,6 +710,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
     if (jobs) {
       const cards = jobs.map((j, i) => ({ id: rid(), status: "pending" as const, pct: 0,
         title: `${label} (${i + 1}/${jobs.length}) · ${j.tag} · seed ${j.seed}` }));
+      cards.forEach((c) => { cardTitles.current[c.id] = c.title; });
       ctx.setResults(cards);
       setNote(`${jobs.length} render(s): ${scoreSetNow === "plans" ? `${usable.length} plan(s) x ${takesPer}` : `the loaded score x ${takesPer}`}, ` +
         (fixed === undefined ? "new random seeds" : `seeds ${fixed}..${fixed + jobs.length - 1}`));
@@ -719,6 +725,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
       id: rid(), status: "pending" as const, pct: 0,
       title: `${label}${n > 1 ? ` (take ${i + 1}/${n})` : ""}${planMode === "off" ? " · direct" : checked ? ` · ${baseWriting ? "base-written" : "checked"} ${planMode} plan` : ` · ${planMode} plan`}`,
     }));
+    cards.forEach((c) => { cardTitles.current[c.id] = c.title; });
     ctx.setResults(cards);
     const base = fixed;
     // plan check: every take's score is written on its own first (seconds of GPU), measured, and re-rolled with
@@ -763,11 +770,30 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
         sc ? `checked ${planMode}` : planMode);
     }
   }
+  // the workspace card's 🎲: that take's saved score + settings on a new seed (backend reseed), into the same card
+  async function regenCard(cardId: string, jobId: string) {
+    ctx.patch(cardId, { status: "pending", pct: 0, url: undefined, err: undefined, regen: undefined });
+    try {
+      const r = await api.yue2Reseed(jobId);
+      ctx.patch(cardId, { status: "running", pct: 5, regen: () => regenCard(cardId, r.job_id) });
+      setResultsTitle(cardId, r.seed);
+      pollJob(r.job_id, cardId, ctx);
+    } catch (e) {
+      ctx.patch(cardId, { status: "error", err: `new seed failed: ${e}`, regen: () => regenCard(cardId, jobId) });
+    }
+  }
+  // the card title carries the seed it is showing
+  const cardTitles = useRef<Record<string, string>>({});
+  function setResultsTitle(cardId: string, sd: number) {
+    const base = (cardTitles.current[cardId] || "").replace(/ · seed \d+$/, "");
+    if (base) ctx.patch(cardId, { title: `${base} · seed ${sd}` });
+  }
   // the per-take button: the same score again on a fresh seed, with the tab's current settings
   async function reseed(t: Take) {
     const label = t.title || songLabel();
     const sd = randSeed();
     const card = { id: rid(), status: "pending" as const, pct: 0, title: `${label} · ${t.tag || `take seed ${t.seed}`} · seed ${sd}` };
+    cardTitles.current[card.id] = card.title;
     ctx.setResults([card]);
     await submitRender(card.id, label, { abc: t.abc, source: t.source || `score of take seed ${t.seed}`, seed: sd, tag: t.tag || `score of take seed ${t.seed}` }, t.mode);
     setNote(`re-singing that score on seed ${sd} with the current settings`);
@@ -1169,7 +1195,9 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
             <Field label="Render seed" hint="blank = new random seeds every Generate; a number = that seed, +1 per take (repeatable)">
               <input className={inp} value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="random" />
             </Field>
-            <Field label={scoreSetNow === "new" ? "Takes" : "Takes per score"}><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+            {scoreSetNow === "new"
+              ? <Field label="Takes"><input className={inp} value={count} onChange={(e) => setCount(e.target.value)} /></Field>
+              : <Field label="Takes per score" hint="1 = each score once"><input className={inp} value={perScore} onChange={(e) => setPerScore(e.target.value)} /></Field>}
             <Field label="Text guidance" hint="1.0 = off; 2.0 our pick; 2.4 the stable max">
               <input className={inp} value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="1.0" />
             </Field>

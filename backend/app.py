@@ -7637,7 +7637,7 @@ def yue2_generate(p: dict):
 @app.post("/api/yue2/reseed/{pid}")
 def yue2_reseed(pid: str):
     """Sing a library take's exact score again on a new seed, with all of that take's own settings (style,
-    lyrics, LoRA, strengths, guidance, guard, sampler). Only the seed changes; the title gets the new seed."""
+    lyrics, LoRA, strengths, guidance, guard, sampler). Only the seed changes; the note records it."""
     with db() as conn:
         r = conn.execute("SELECT mode, params FROM jobs WHERE id=?", (os.path.basename(pid),)).fetchone()
     if not r or r["mode"] != "yue2":
@@ -7646,12 +7646,19 @@ def yue2_reseed(pid: str):
     if not (p.get("abc") or "").strip():
         raise HTTPException(400, "this take has no saved score to re-sing")
     seed = random.randint(1, 999_999)
-    base = re.sub(r"\s*·\s*seed \d+\s*$", "", (p.get("title") or "").strip())
     q = {k: v for k, v in p.items() if k not in ("seed", "abc_seed", "take")}
     q["seed"] = seed
-    q["title"] = f"{base} · seed {seed}" if base else f"seed {seed}"
-    q["note"] = f"same score and settings as the seed {p.get('seed')} take, new seed"
+    # the title stays the song name, so the new take joins the same library card as another version
+    q["title"] = song_title_base(p.get("title") or "")
+    q["note"] = f"seed {seed} · same score and settings as the seed {p.get('seed')} take"
     return yue2_generate(q)
+
+
+def song_title_base(title):
+    """A song name without the ' · plan N · seed N' / ' · loaded score · seed N' / ' · seed N' suffix the YuE2
+    tab briefly put on library titles (2026-10-19/20), which split each song's versions into separate cards."""
+    return re.sub(r"(\s*·\s*(plan \d+|loaded score|score of take seed \d+|take seed \d+))?\s*·\s*seed \d+\s*$", "",
+                  (title or "").strip())
 
 
 @app.post("/api/yue2/plan")

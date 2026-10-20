@@ -54,6 +54,9 @@ export type Result = {
   url?: string;
   media?: "image" | "video";   // when set, url is an image/video (not audio)
   err?: string;
+  // optional per-card action: render this one result again (e.g. same score, new seed) into the same card
+  regen?: () => void;
+  regenTip?: string;
 };
 
 export type RunCtx = {
