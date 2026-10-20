@@ -408,3 +408,11 @@ Plan test (2026-10-20, Thunder in My Veins, base model, seeds 7301-7308 per vari
 No variant beat the current format. The same lyrics and style through the tab (user's 9 plans, other seeds) kept
 both pre-choruses 3/9 vs 8/8 here: same inputs, so seed-to-seed variation is large (n=8-9; a plan-time style
 difference cannot be ruled out because plans do not store the style they were written with).
+
+Why the user's filtered runs failed (2026-10-20, from ComfyUI's stored job inputs/outputs):
+- Thunder in My Veins written by the band LoRA (run C 500, writing 1.0, bttlbst style): 0/11 kept every lyric
+  section - the bridge was lost in 9/11, the outro and even a chorus often. Base-model writing on the same song
+  (plan test): every pre-chorus 8/8, exact 4/8. LoRA writing breaks structure far more than base writing.
+- Neon Valkyrie, base model: 2/16 kept every section; 14/16 folded the 2-line pre-chorus ("Hold on, hold on /
+  The storm is coming home") into the verse. Thunder's 3-line pre-chorus was kept 8/8. [hypothesis: a 2-line
+  pre-chorus reads as the verse's tail]
