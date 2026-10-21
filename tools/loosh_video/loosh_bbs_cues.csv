@@ -1,0 +1,19 @@
+# Backroads & Backstraps (four-field house style take, Mixea master), 192.4 s. start,end in seconds.
+# source: W = whisper-measured line times (cover 0.86), M = measured from bass/loudness curves
+start,end,section,still,move,source
+0.0,14.4,intro,BBS-00_cover_card,pull,W
+14.4,21.8,verse1a,BBS-01_four_in_the_morning,push,W
+21.8,29.2,verse1b,BBS-02_the_gear,panR,W
+29.2,37.0,prechorus1,BBS-03_the_climb,push,W
+37.0,52.0,chorus1,BBS-04_tree_stand_thumbnail,pull,W
+52.0,64.6,drop1,BBS-05_the_snore,push,W
+64.6,78.4,verse2,BBS-06_buck_of_a_lifetime,push,W
+78.4,82.3,prechorus2a,BBS-07_best_friends,panL,W
+82.3,86.6,prechorus2b,BBS-08_dwaynes_freezer,push,W
+86.6,101.0,chorus2,BBS-04_tree_stand_thumbnail,push,W
+101.0,113.6,drop2,BBS-05_the_snore,panL,M
+113.6,131.2,bridge_build,BBS-09_aint_about_the_deer,push,W
+131.2,151.6,finalchorus,BBS-10_backstraps_on_the_fire,pull,W
+151.6,170.5,outro,BBS-11_pass_it_round,push,W
+170.5,192.4,rideout,BBS-12_ride_out,push,M
+# waveform strip on: 101-112.5, 145-160, 170.5-174, 185-191.5
