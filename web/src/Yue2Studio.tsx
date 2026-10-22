@@ -39,6 +39,7 @@ const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "r
 // "bttlbst" runs were trained with that trigger word first in every caption, so their style line should start with it.
 const LORA_RUNS: Record<string, [string, number]> = {
   yue2_beastinblack_v9_wholesong_lora: ["Beast in Black v9 whole-song", 800],
+  yue2_tarja_v9_wholesong_sep_trig_lora: ["Tarja: Nightwish + My Winter Storm, vocal stem, trjtrn", 800],
   yue2_battlebeast_lora: ["Battle Beast v4, first 160 s (oldest)", 800],
   yue2_battlebeast_v9_lora: ["Battle Beast v9, first 160 s", 800],
   yue2_battlebeast_v9_wholesong_lora: ["Battle Beast v9 whole-song", 800],
