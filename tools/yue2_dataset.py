@@ -42,6 +42,10 @@ SOURCES = {   # dataset name -> the ACE dataset folder that already holds audio 
     "beastinblack": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_beastinblack\data",
     # same 40 songs + reviewed lyrics, captions with per-section vocal EFFORT (2026-10-18, option 3)
     "battlebeast_effort": r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_battlebeast\data",
+    # Tarja Turunen: her 21 Nightwish songs (the ACE set) + My Winter Storm 15th anniversary edition (17 sung
+    # songs uploaded 2026-10-22 as "MWS nn - ...", lyrics fetched online; Planet Hell and The Day Of left out)
+    "tarja": [r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_nightwish_tarja\data",
+              r"E:\AI\MusicGen\AceStep\ACE-Step-1.5\lora_data\crucible_tarja_solo\data"],
 }
 LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".mvwork", "yue2_train")
 
@@ -54,6 +58,11 @@ FIXED = {
     "battlebeast_effort": {"language": "English",
                            "genre": "modern power metal with 80s heavy metal and synth influences",
                            "voice": "powerful raspy female rock belt with a soaring high range"},
+    # 2026-10-22 DRAFT, awaiting the user's approval: Tarja Turunen (Nightwish era + solo); one genre and voice line
+    # across both, so the LoRA ties her voice to one description
+    "tarja": {"language": "English",
+              "genre": "symphonic metal with operatic and orchestral elements",
+              "voice": "classically trained operatic soprano with bel canto vibrato and soaring coloratura"},
     # 2026-10-18, drafted overnight under the user's go-ahead (their call to change): Yannis Papadopoulos
     "beastinblack": {"language": "English",
                      "genre": "80s-inspired power metal with synthwave and disco-pop influences",
@@ -84,7 +93,21 @@ def _paths(name):
 
 
 def _stems(src):
+    """Songs in a source folder (or several: a dataset can draw on more than one ACE folder)."""
+    if isinstance(src, list):
+        return sorted(st for one in src for st in _stems(one))
     return sorted(e["name"][:-4] for e in _get("/fs/list", path=src)["entries"] if e["name"].lower().endswith(".mp3"))
+
+
+def _src_of(src, stem):
+    """The folder a song comes from, for datasets built from several source folders."""
+    if not isinstance(src, list):
+        return src
+    return next(one for one in src if stem in _stems(one))
+
+
+# per-song language where a band's fixed "English" is wrong (Oasis: wordless vocalise with a few Finnish lines)
+LANGUAGE = {"MWS 07 - Oasis": "Finnish"}
 
 
 def stage(name):
@@ -94,13 +117,14 @@ def stage(name):
     have = {e["name"] for e in _get("/fs/list", path=dst)["entries"]}
     manifest = []
     for stem in _stems(src):
+        one = _src_of(src, stem)
         if stem + ".mp3" not in have:
-            _post(HELPER, "/fs/copy", {"src": src + "\\" + stem + ".mp3", "dst": dst + "\\" + stem + ".mp3"})
+            _post(HELPER, "/fs/copy", {"src": one + "\\" + stem + ".mp3", "dst": dst + "\\" + stem + ".mp3"})
         out = os.path.join(local, "lyrics", stem + ".txt")
         if os.path.exists(out):
             tagged, how = open(out).read(), "kept (already reviewed)"
         else:
-            raw = _get("/fs/read", path=src + "\\" + stem + ".lyrics.txt")["content"]
+            raw = _get("/fs/read", path=one + "\\" + stem + ".lyrics.txt")["content"]
             r = _post(BACKEND, "/api/yue2/section_lyrics", {"lyrics": raw})
             tagged, how = r["lyrics"], r.get("tagged_by")
             open(out, "w").write(tagged)
@@ -250,11 +274,18 @@ Never mention genre or style names, the singer's gender, voice type or register,
 artist/song names, keys or numbers."""
 
 
+# Tarja: the fixed voice line is hers alone, so a song where a man also sings (Marco Hietala's lines and duets,
+# spoken male narration) says so in its caption - otherwise his voice is learned as part of hers
+ENRICH_RULES_COVOCAL = ENRICH_RULES + """
+Exception: if the description says a second, male voice also sings or speaks (a duet, male lead lines, growled or
+spoken male parts), add one short phrase saying so as part of item 1."""
+
+
 def enrich(name):
     src, _dst, local = _paths(name)
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from backend import llm
-    rules = ENRICH_RULES_EFFORT if name.endswith("_effort") else ENRICH_RULES
+    rules = ENRICH_RULES_EFFORT if name.endswith("_effort") else ENRICH_RULES_COVOCAL if name == "tarja" else ENRICH_RULES
     if name in ("battlebeast", "battlebeast_effort"):
         ds = json.loads(_get("/fs/read", path=ntpath.dirname(src) + "\\dataset.json")["content"])
         prose = {s["filename"].rsplit(".", 1)[0]: s.get("caption") or "" for s in ds["samples"]}
@@ -301,7 +332,7 @@ def merge(name, trigger=""):
             continue
         parts = " ".join(open(final).read().split()).strip(" ,.")
         f = FIXED[name]
-        style = (f"{trigger}, " if trigger else "") + f"{f['language']}, {f['genre']}, {f['voice']}, {parts}"
+        style = (f"{trigger}, " if trigger else "") + f"{LANGUAGE.get(stem, f['language'])}, {f['genre']}, {f['voice']}, {parts}"
         lyrics = open(os.path.join(local, "lyrics", stem + ".txt")).read().strip()
         text = f"{style}\n[Lyrics]\n{lyrics}\n"
         open(os.path.join(local, "txt", stem + ".txt"), "w").write(text)
