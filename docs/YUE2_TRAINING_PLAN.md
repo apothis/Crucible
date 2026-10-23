@@ -283,3 +283,11 @@ User ears (hand score): verses sound too quick and strange for Battle Beast; the
 is worse than the planner's own. Liked: a shorter score leaves room for extra instrumental sections. [hypothesis:
 one eighth note per syllable at 160 bpm crams the verse lines; the planner gives held notes and rests more room.]
 Asks: manage instrumental sections without hand-editing ABC; roll new render seeds on the same score(s) easily.
+
+Tarja run (2026-10-22/23): yue2_tarja_v9_wholesong_sep_trig_lora - 37 songs (21 Nightwish-era from the ACE set +
+16 My Winter Storm 15th anniversary; Planet Hell and The Day Of excluded by the user; The Seer track 12 held out
+as a probable live take, yue2_tarja_held_out), lyrics fetched online, ACE-Step captioner descriptions condensed by
+the app LLM (male co-vocalists named; voice words stripped; Sleeping Sun set to slow; Oasis captioned Finnish),
+fixed lines approved by the user, trigger trjtrn. Run C recipe with vocal stem: planner x0.5, KL 0.2, rank 32,
+whole songs, 800 steps. Stem caching 26 min; training 7 h 57 (28-47 s/step, about twice the Battle Beast stem run
+- [hypothesis] longer songs, e.g. Ghost Love Score). Loss 5.44 -> 5.03 over steps 700-800. 16 checkpoints synced.
