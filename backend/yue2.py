@@ -570,16 +570,18 @@ def _kind(tag):
 
 
 def _collapse(seq):
+    """Back-to-back sections of the same kind count once: the planner writes [Verse 1][Verse 2] (or two
+    choruses, or two instrumental parts) in a row as one longer section, so they cannot be told apart."""
     out = []
     for x in seq:
-        if not (out and out[-1] == x == "interlude"):
+        if not (out and out[-1] == x):
             out.append(x)
     return out
 
 
 def structure_check(abc, lyrics):
     """-> {exact, complete, missing: {kind: n}, extra: {kind: n}, lyrics: [kind], score: [kind]}. exact = the
-    score's sections are the lyric sections in order (runs of instrumental sections count once); complete = every
+    score's sections are the lyric sections in order (back-to-back sections of one kind count once); complete = every
     lyric section kind appears at least as often in the score, whatever the order or extras."""
     want = _collapse([_kind(x["tag"]) for x in lyrics_to_sections(lyrics)])
     got = _collapse([_kind(x["name"]) for x in parse_header(abc)["sections"]])
