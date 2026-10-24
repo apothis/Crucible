@@ -36,7 +36,9 @@ const SOURCE_MODES = ["source", "generate", "music3", "yue2", "suno", "song", "r
 
 // readable names for the band LoRA runs (folder under loras/yue2/ -> [name, final step]), oldest first; the picker lists
 // them newest first. See docs/YUE2_TRAINING_PLAN.md.
-// "bttlbst" runs were trained with that trigger word first in every caption, so their style line should start with it.
+// "bttlbst" (Battle Beast) and "trjtrn" (Tarja) runs were trained with that trigger word first in every caption, so their
+// style line should start with it.
+const LORA_TRIGGERS = ["bttlbst", "trjtrn"];
 const LORA_RUNS: Record<string, [string, number]> = {
   yue2_beastinblack_v9_wholesong_lora: ["Beast in Black v9 whole-song", 800],
   yue2_tarja_v9_wholesong_sep_trig_lora: ["Tarja: Nightwish + My Winter Storm, vocal stem, trjtrn", 800],
@@ -451,7 +453,7 @@ export function Yue2StudioForm({ cfg: _cfg, busy, song, projectName, library, go
   // lilting jig-like sway, ..."
   const planStyle = (() => {
     // a LoRA trigger word means nothing to the base model, so base writing plans without it
-    const st = baseWriting ? style.replace(/^\s*bttlbst\s*,\s*/i, "") : style;
+    const st = baseWriting ? style.replace(new RegExp(`^\\s*(${LORA_TRIGGERS.join("|")})\\s*,\\s*`, "i"), "") : style;
     const feel = planFeel.trim();
     if (!feel) return st;
     const parts = st.split(",").map((x) => x.trim()).filter(Boolean);
