@@ -110,14 +110,38 @@ Fixed facts about this production:
 - There is exactly ONE person in the whole video: the singer. No band, no extras, no crowd, no hands of others, no silhouettes of other people. Ever.
 - Her identity and wardrobe come from two reference photographs described to you. One wardrobe for the whole video; you may add weathering (rain, dust, wind in the hair) but not change garments.
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
-- Each scene is a contiguous run of the song's measured sections and is rendered as ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. Prefer scenes of 10-45 seconds; never shorter than 5 seconds.
-- Inside a scene, the camera does ONE thing: static, or one slow move you can name with a real-world duration (a push-in that covers an arm's length over the whole scene). No whip pans, no handheld chaos, no orbit-plus-zoom.
+- Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; a B-roll take may run up to 45 seconds; nothing shorter than 5 seconds. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
+- Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second before a sung line begins). Choose cuts where the words break.
+- Inside a scene, the camera does ONE thing: static, or one slow move with a real-world distance sized to the take's seconds (about 10-15 cm of push-in over a 15-second take; never an arm's length over 40 seconds). No whip pans, no handheld chaos, no orbit-plus-zoom.
 - Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
 - LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location.
-- Timing is NOT yours: you choose which sections form a scene; the system computes clip windows and which words fall where.
+- Timing is NOT yours beyond choosing cut points: the system computes clip windows and which words fall where.
 
 Write for the song's genre: its pace, weight and mood should be visible in the choice of places, light, weather, movement and the proportion of performance to B-roll."""
+
+
+LINE_LEAD = 0.5          # a line's cut point sits this far before the line begins
+
+
+def cut_points(sections):
+    """Every allowed scene boundary, in order: section edges and, inside sung sections, a point
+    LINE_LEAD before each line (never before the previous line ends). Returns sorted floats."""
+    pts = set()
+    for s in sections:
+        pts.add(round(s["start"], 3))
+        pts.add(round(s["end"], 3))
+        prev_end = s["start"]
+        for l in s["lines"]:
+            c = max(l["start"] - LINE_LEAD, prev_end)
+            if s["start"] < c < s["end"]:
+                pts.add(round(c, 3))
+            prev_end = l["end"]
+    return sorted(pts)
+
+
+def snap_cut(t, points):
+    return min(points, key=lambda x: abs(x - t))
 
 
 def _section_text(sections):
@@ -126,8 +150,12 @@ def _section_text(sections):
         head = f"[{s['index']}] {s['type']}  {s['start']:.2f}-{s['end']:.2f}s  ({s['end'] - s['start']:.1f}s)"
         if s["vocal"]:
             out.append(head)
+            prev_end = s["start"]
             for l in s["lines"]:
-                out.append(f"      {l['start']:7.2f}-{l['end']:6.2f}  {l['text']}")
+                c = max(l["start"] - LINE_LEAD, prev_end)
+                tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] else "            |"
+                out.append(f"      {tag} {l['start']:7.2f}-{l['end']:6.2f}  {l['text']}")
+                prev_end = l["end"]
         else:
             out.append(head + "  instrumental, no vocal")
     return "\n".join(out)
@@ -145,7 +173,8 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
             "still_prompt": "a prompt for a photoreal 16:9 still of this place with NO people, one paragraph: camera position and height, every fixed element and where it sits in frame, materials, the light and weather of its first scene, the video's look; the elements must match this location's scene settings word for word"
         }],
         "scenes": [{
-            "sections": [0, 1],
+            "from": "seconds where the scene starts: a section edge or a listed cut point (number)",
+            "to": "seconds where it ends: the next scene's from (number)",
             "title": "short label",
             "location": "id of one of the locations",
             "setting": "the place, concrete and filmable, no people, 2-3 sentences; name any visible sky",
@@ -165,9 +194,9 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
             + (f"USER CONCEPT (follow it): {concept}\n\n" if concept else "")
             + "MEASURED SECTIONS (real seconds on this recording; use these indices):\n"
             + _section_text(facts["sections"]) + "\n\nLYRICS:\n" + (lyrics_raw or "").strip()
-            + "\n\nCover EVERY section index exactly once, in order, across the scenes; `sections` is a JSON "
-            "array of two integers [first_index, last_index] (the same index twice for a one-section scene). "
-            "Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
+            + "\n\nThe scenes tile the whole song in order with no gaps: the first starts at 0, each `to` is the "
+            "next scene's `from`, the last ends at the song's end. Every from/to is a section edge or a listed "
+            "cut point. Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
     return SCENE_SYSTEM, user
 
 
@@ -193,46 +222,67 @@ def _extract_json(text):
     return json.loads(text[start:])
 
 
+def _finish_scene(sc, sections):
+    """start/end -> covered section range, types, lipsync flag."""
+    idx = [k for k, x in enumerate(sections) if x["end"] > sc["start"] and x["start"] < sc["end"]]
+    if not idx:
+        idx = [min(range(len(sections)), key=lambda k: abs(sections[k]["start"] - sc["start"]))]
+    sc["sections"] = [idx[0], idx[-1]]
+    sc["section_types"] = [sections[k]["type"] for k in idx]
+    sc["lipsync"] = str(sc.get("performance", "")).startswith("sing")
+    return sc
+
+
 def normalize_scenes(plan, sections):
-    """Make the scene list cover every section exactly once, in order. Claude's ranges are kept
-    where valid; gaps are attached to the previous scene, overlaps trimmed, and anything beyond
-    the table dropped. Returns the scenes with start/end seconds filled in."""
+    """Make the scene list tile the song in order. Scenes given as from/to seconds are snapped to
+    cut points (section edges and line cut points) and forced contiguous; scenes given as a
+    `sections` range (older answers) take those sections' edges. Empty scenes are dropped. Returns
+    the scenes with index/start/end/sections/section_types/lipsync filled in."""
     n = len(sections)
+    pts = cut_points(sections)
+    song_end = sections[-1]["end"]
     raw = plan.get("scenes") or []
-    scenes, cursor = [], 0
+    scenes, cursor = [], 0.0
     for sc in raw:
-        rng = sc.get("sections")
-        if isinstance(rng, str):                      # "[3, 4]", "3-4", "3" all seen from the model
-            rng = [int(x) for x in re.findall(r"\d+", rng)]
-        elif isinstance(rng, (int, float)):
-            rng = [int(rng)]
-        try:
-            a, b = int(rng[0]), int(rng[-1])
-        except Exception:
+        if not isinstance(sc, dict):
             continue
-        a = max(a, cursor)
-        b = min(max(b, a), n - 1)
-        if a > b or a >= n:
+        a = b = None
+        if sc.get("from") is not None and sc.get("to") is not None:
+            try:
+                a, b = float(sc["from"]), float(sc["to"])
+            except (TypeError, ValueError):
+                a = b = None
+        if a is None:
+            rng = sc.get("sections")
+            if isinstance(rng, str):                  # "[3, 4]", "3-4", "3" all seen from the model
+                rng = [int(x) for x in re.findall(r"\d+", rng)]
+            elif isinstance(rng, (int, float)):
+                rng = [int(rng)]
+            try:
+                i0, i1 = int(rng[0]), int(rng[-1])
+            except Exception:
+                continue
+            i0, i1 = max(0, min(i0, n - 1)), max(0, min(max(i1, i0), n - 1))
+            a, b = sections[i0]["start"], sections[i1]["end"]
+        a = cursor                                    # contiguity: every scene starts where the last ended
+        b = snap_cut(b, pts)
+        if b <= a:
             continue
-        if a > cursor and scenes:
-            scenes[-1]["sections"] = [scenes[-1]["sections"][0], a - 1]
-        elif a > cursor:
-            a = cursor
         sc = dict(sc)
-        sc["sections"] = [a, b]
+        sc.pop("from", None)
+        sc.pop("to", None)
+        sc["start"], sc["end"] = round(a, 3), round(b, 3)
         scenes.append(sc)
-        cursor = b + 1
+        cursor = b
+        if cursor >= song_end:
+            break
     if not scenes:
         raise ValueError("the writer returned no usable scenes")
-    if cursor < n:
-        scenes[-1]["sections"] = [scenes[-1]["sections"][0], n - 1]
+    if scenes[-1]["end"] < song_end:
+        scenes[-1]["end"] = song_end
     for i, sc in enumerate(scenes):
-        a, b = sc["sections"]
         sc["index"] = i
-        sc["start"] = sections[a]["start"]
-        sc["end"] = sections[b]["end"]
-        sc["section_types"] = [sections[k]["type"] for k in range(a, b + 1)]
-        sc["lipsync"] = str(sc.get("performance", "")).startswith("sing")
+        _finish_scene(sc, sections)
     return scenes
 
 
@@ -459,23 +509,54 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
               "wardrobe": plan.get("wardrobe", ""), "refs": refs, "facts": facts, "locations": locations,
               "writer": {"provider": provider, "model": model, "effort": effort}, "scenes": []}
     for sc in scenes:
-        cplan, clips = plan_scene_clips(sc, facts["sections"])
-        system2, user2 = clip_prompt(script, sc, clips)
-        raw2 = llm_mod.complete(provider, model, system2, user2, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
-        _keep_raw(cache_dir, f"{audio_id}_pass2_scene{sc['index']}.txt", raw2)
-        texts = {int(t.get("index", i)): t for i, t in enumerate((_extract_json(raw2) or {}).get("clips") or [])}
-        for c in clips:
-            t = texts.get(c["index"]) or {}
-            c["text"] = {k: t.get(k, "") for k in ("summary", "detailed_description", "overall_soundscape", "non_diegetic_music")}
-            c["prompt"] = compile_prompt(script, sc, c, c["text"], env=location_of(script, sc))
-            c["problems"] = check_prompt(c["prompt"], c, sc.get("performance"))
-        sc["plan"] = cplan
-        sc["clips"] = clips
+        write_scene_clips(script, sc, provider, model, effort, claude_model, cache_dir, log)
         script["scenes"].append(sc)
-        log(f"[mvw] pass 2: scene {sc['index']} '{sc.get('title')}' {sc['start']}-{sc['end']}s -> {len(clips)} clips, "
-            f"problems {sum(len(c['problems']) for c in clips)}")
     script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
     return script
+
+
+def write_scene_clips(script, sc, provider="claude_sub", model=WRITER_MODEL, effort=WRITER_EFFORT,
+                      claude_model="", cache_dir=None, log=print):
+    """Pass 2 for ONE scene: plan its clips, ask Claude for the four fields per clip, compile and
+    check. Mutates and returns the scene (plan, clips)."""
+    cplan, clips = plan_scene_clips(sc, script["facts"]["sections"])
+    system2, user2 = clip_prompt(script, sc, clips)
+    raw2 = llm_mod.complete(provider, model, system2, user2, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
+    _keep_raw(cache_dir, f"{script['audio_id']}_pass2_scene{sc['index']}_{_slug(sc.get('title'))[:24]}.txt", raw2)
+    texts = {int(t.get("index", i)): t for i, t in enumerate((_extract_json(raw2) or {}).get("clips") or [])}
+    for c in clips:
+        t = texts.get(c["index"]) or {}
+        c["text"] = {k: t.get(k, "") for k in ("summary", "detailed_description", "overall_soundscape", "non_diegetic_music")}
+        c["prompt"] = compile_prompt(script, sc, c, c["text"], env=location_of(script, sc))
+        c["problems"] = check_prompt(c["prompt"], c, sc.get("performance"))
+    sc["plan"] = cplan
+    sc["clips"] = clips
+    log(f"[mvw] pass 2: scene {sc['index']} '{sc.get('title')}' {sc['start']}-{sc['end']}s -> {len(clips)} clips, "
+        f"problems {sum(len(c['problems']) for c in clips)}")
+    return sc
+
+
+def split_scene(script, index, at, second):
+    """Cut scene `index` in two at `at` seconds (snapped to a cut point). The first half keeps the
+    scene's fields (override with second['first'] if given); the second half takes `second`'s
+    fields over a copy. Both halves lose their clips (run write_scene_clips on each). Scenes are
+    renumbered. Returns (first, second)."""
+    sections = script["facts"]["sections"]
+    at = snap_cut(float(at), cut_points(sections))
+    sc = script["scenes"][index]
+    if not sc["start"] < at < sc["end"]:
+        raise ValueError(f"cut {at}s is not inside scene {index} ({sc['start']}-{sc['end']}s)")
+    keep = {k: v for k, v in sc.items() if k not in ("plan", "clips", "index", "sections", "section_types", "lipsync")}
+    a = dict(keep, **(second.get("first") or {}))
+    b = dict(keep, **{k: v for k, v in second.items() if k != "first"})
+    a["start"], a["end"] = sc["start"], at
+    b["start"], b["end"] = at, sc["end"]
+    script["scenes"][index:index + 1] = [a, b]
+    for i, x in enumerate(script["scenes"]):
+        x["index"] = i
+    _finish_scene(a, sections)
+    _finish_scene(b, sections)
+    return a, b
 
 
 def script_markdown(script):

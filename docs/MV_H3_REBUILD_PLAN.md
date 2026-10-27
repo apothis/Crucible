@@ -460,3 +460,28 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   scene) and judge whether the room matches scene 2. [H] H3 honours an environment picture as a
   fully_preserved subject in the chain - supported by the reference guide and the August
   text-environment test, not yet measured in a chain.
+
+## 12. Scene 2 verdict and the shorter-take rules (2026-10-27 23:00)
+- User watched scene 2: (1) a thin white streak enters top-right at ~36 s (clip 3) and grows to
+  the end - a real defect, cause unknown (re-render); (2) a single 42 s take with one slow push-in
+  is too long for a verse. The background objects softening during the push-in is depth of field,
+  not drift (user; my earlier read withdrawn).
+- Writer rules changed (SCENE_SYSTEM): performance takes 8-15 s by default, never over 28 s;
+  B-roll up to 45 s; a verse/chorus = two or three SETUPS in the same location, cut between
+  (the location reference keeps the room); camera moves sized to the take (10-15 cm per 15 s).
+- Scene bounds are now `from`/`to` seconds snapped to CUT POINTS = section edges + 0.5 s before
+  each sung line (`cut_points`, listed in the section table the writer sees); `normalize_scenes`
+  forces contiguity and still accepts the old `sections` ranges.
+- New helpers: `write_scene_clips` (pass 2 for one scene, used by write_script) and
+  `split_scene(script, index, at, second)` (cut a scene at a cut point, new fields for the second
+  half, renumber).
+- Never Mine: scene 2 split at 28.22 s -> "Taught to Bow (chair)" 13.34-28.22 (12 cm push-in,
+  eyes down, one 362-f clip) + "Taught to Bow (profile)" 28.22-42.72 (static three-quarter from
+  the lamp side, head turns to the lens on "wear the mask", one 362-f clip). Clip pass re-run on
+  both (Opus medium, ~1 min), 0 problems. Script: `.mvwork/mv_scripts/never_mine_20261027_split.
+  {json,md}` (11 scenes / 21 clips). The G2 scenes other than these two keep their long takes;
+  a full re-run of the writer under the new rules is the clean fix for the rest.
+- G4 (not fired): render both halves with the parlour still as <Picture 3>; judge room match
+  across the cut and against scene 2's old render, seam-free single clips, and whether the streak
+  recurs. Requests: `.mvwork/g1_refs/g4_scene1_chair_request.json`, `g4_scene2_profile_request.json`
+  (location_ref_id to fill in once the parlour still is in the library).
