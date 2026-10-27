@@ -281,49 +281,65 @@ notes", close/relax in silence.
 - **G2 writer test:** one full script for one song, read by the user, no render.
 - **G3 one full scene chain** (3-5 clips) rendered and assembled; then the UI.
 
-## 8. G1 proposal (2026-10-27, awaiting the user's go - nothing fired)
+## 8. G1 proposal (rewritten 2026-10-27 for the user's pick; awaiting the go - nothing fired)
 
-**Song (proposed, user's call):** "Where the Tides Remember" (master "de-glitched"), the song
-the August H3 lip-sync work was measured on, so we have a drift baseline to beat. Window = the
-FIRST CHORUS, nominally 82-110 s ("Where the tides remember, where the evening never ends ...");
-the real onset comes from `lyricalign` before anything renders, never the nominal arrangement.
+**Song (user's choice):** "Never Mine" - the Suno take that went into the YouTube video (library:
+Suno import 2026-10-15, take 1; 258 s; style "70 bpm, A minor, slow heavy metal ballad", verses
+half-spoken and raspy, choruses soft clean confessional, final chorus a belt). Lyrics = the
+project's Suno draft.
 
-**Clip plan (upstream arithmetic):** raw clip 243 f = 10.125 s; context 39 f; advance 204 f =
-8.5 s. Two clips cover chorus_onset-1.0 s .. +17.6 s: clip 1 = the first two chorus lines sung to
-camera, clip 2 = continuation across the seam into lines three and four. Canvas 960x544 (the
-upstream example's), Ref2VA model, `res_multistep`/`simple`, shift 12/3, seed pinned.
+**Measured timing (lyricalign, Whisper small on the Mac, cover 0.97, 235/242 words placed):**
+intro to 13.8 s; verse 1 13.8-42.0; verse 2 43.2-70.8; **chorus 1 70.78-89.72** (every line cover
+1.00); verse 3 100.7-127.6; chorus 2 128.4-146.1; solo; final chorus 185.3-220.7; outro 223.6.
+Chorus 1 lines: 70.78 "What I was, what I'd be" | 74.56 "Every piece decided for me" | 78.22 "And
+they called it my life, called it fine" | 82.46-89.72 "But it never was mine, it never was mine".
+
+**Window = chorus 1** (assumption, say if you want the belted final chorus instead): the soft
+clean delivery is the HARDER lip-sync case (small mouth motion, long vowels), so a pass here means
+more than a pass on the belt. The upstream director notes "hold one vowel shape on sustained notes"
+applies directly to the "mine" sustains.
+
+**Clip plan (the upstream example's own globals: 15 s raw = 362 f, 39 f context, 960x544):**
+advance = 323 f = 13.458 s.
+- clip 1: 69.80 -> 84.88 s. Lines 1-3 sung to camera, line 4 begins ("But it never was ...").
+- clip 2: 83.26 -> 98.34 s. Continues through the seam INSIDE line 4 (a sustained phrase crossing
+  the seam = the continuity test), the repeat "it never was mine" to 89.72, then 8.6 s of
+  instrumental before verse 3: she stops singing, breath, holds the gaze, slow camera drift.
+Seam = 83.26-84.88 s. Ref2VA model, `res_multistep`/`simple`, shift 12/3, seed pinned, 8 steps.
 
 **Variables, one at a time, same seed (each pair = 2 chains):**
-- A. song lock: full master mix vs isolated lead-vocal stem (box UVR :5060 splits it; master
-  muxed back either way). Decides what the writer feeds the latent.
-- B. recipe: lightx2v Ref2VA 8-step v1.1 768p (shift 6/3) vs base 20 steps. Decides whether the
-  finish can be turbo now that H3's own audio is discarded.
-- C. text encoder: nvfp4_awq vs int8 (after `download_minimax_h3_v2.bat` has run). Decides the
-  RAM budget.
+- A. song lock: full master mix vs isolated lead-vocal stem (box UVR :5060; master muxed back
+  either way).
+- B. recipe: lightx2v Ref2VA 8-step v1.1 768p (shift 6/3) vs base 20 steps.
+- C. text encoder: nvfp4_awq vs int8 (after `download_minimax_h3_v2.bat` has run).
 Order A -> B -> C; each later pair runs on the winner of the earlier one.
 
-**References (two GPT images from the canonical portrait, no opening still - the upstream chain
-starts from ReferenceToVideo with refs only; scene opening stills come later via keyframes):**
-- `<Picture 1>` face/identity: "Close three-quarter portrait of the woman in the reference
-  photo, same face and long dark wavy hair, pale skin, dark smoky eye makeup, a thin silver chain
-  at her throat, high-collared black lace blouse, soft cool window light from the left against a
-  dark grey studio backdrop, calm direct gaze, mouth closed, photoreal, 85mm, shallow depth of
-  field, 3:4."
-- `<Picture 2>` full body / wardrobe: "Full-length studio photograph of the same woman from the
-  reference photo, standing relaxed, arms at her sides, facing camera, in a fitted black velvet
-  corset laced at the front over a white linen chemise slipped off one shoulder, long black
-  skirt, bare feet, plain mid-grey seamless backdrop, even soft light, photoreal, 50mm, 2:3."
+**Look for this song:** the lyric is a woman raised in a "house of rules" taking the hammer to it.
+Setting for the chain: a dim, formal old parlour at night, dust in a single shaft of cold window
+light, dark wood and faded wallpaper; she stands close to camera and sings the confession quietly.
+
+**References (two GPT images from the canonical portrait; the user generates and hands them back):**
+- `<Picture 1>` face/identity: "Close three-quarter portrait of the woman in the reference photo,
+  same face and long dark wavy hair, pale skin, dark smoky eye makeup, lips slightly parted, a
+  thin black velvet choker, cold window light from the left in a dim Victorian parlour, dark wood
+  and faded wallpaper softly out of focus behind her, calm direct gaze, photoreal, 85mm, 3:4."
+- `<Picture 2>` full body / wardrobe: "Full-length photograph of the same woman from the reference
+  photo standing in a dim Victorian parlour, facing camera, arms relaxed, in a fitted black velvet
+  corset laced low at the front over a thin white chemise slipped off one shoulder, long black
+  skirt, bare feet on dark floorboards, one shaft of cold window light, photoreal, 50mm, 2:3."
   (One reveal per image per the GPT filter notes; no brand names.)
 
-**What has to be built first (no GPU):** `backend/mv_h3.py` = per-scene chain graph builder
-(N x [ReferenceToVideo -> SongMaskedAVContext (+ AudioVAECompatibility) -> sampler] ->
-StreamLiveMusicVideoToVHS, master audio uploaded once by content hash) + a `POST
-/api/video/h3_chain` route using the existing `_submit_video`. GPT refs enter as library stills
-through the existing still import.
+**What gets built first (no GPU):** `backend/mv_h3.py` chain builder + `POST /api/video/h3_chain`,
+mirroring the Update 9 example's wiring exactly: UNETLoader(ref2va) -> ModelAttentionBackend ->
+LoraLoaderModelOnly -> SigmaShift -> per clip [ReferenceToVideo -> SongMaskedAVContext(master
+audio, clip_start, 39, source_latent = previous sampler) -> BasicGuider -> SamplerCustomAdvanced]
+-> StreamLiveMusicVideoToVHS(all samplers, master audio) -> FinalizeVHSOutput; audio VAE routed
+through AudioVAECompatibility; master song uploaded once by content hash. Variable C stays a
+constant swap (H3_CLIP). The refs enter as library stills through the existing still import.
 
-**Cost estimate [H], extrapolated from our 1280x736 measurements:** ~4 min per turbo clip and
-~10 min per base clip at 960x544x243 f, so variable A = ~16 min, B = ~28 min, C = ~16 min.
+**Cost estimate [H], extrapolated from our 1280x736 measurements:** ~6 min per turbo clip and
+~15 min per base clip at 960x544x362 f, so A = ~24 min, B = ~42 min, C = ~24 min.
 
-**Judge:** the user watches each chain (mouth on the words, the 10.1 s seam, identity against the
-two refs). Floor check: envelope correlation of the clip's own decoded audio vs the master slice
-should be ~1.0 by construction - if it is not, the lock did not take.
+**Judge:** the user watches each chain (mouth on the words, the seam inside line 4, identity
+against the two refs). Floor check: the chain's own decoded audio vs the master slice should be
+~1.0 by construction; if not, the lock did not take.
