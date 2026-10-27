@@ -1106,9 +1106,14 @@ def video_h3_chain(p: dict):
 def mv_render_scene(p: dict):
     """Render ONE scene of a saved script as a chain (the normal path from writer to picture).
     p: {script (path under .mvwork/mv_scripts, or the script object), scene (index),
-        ref_ids: [face still, body still] (ignored for environment-only scenes, which render with
-        no references), plus any /api/video/h3_chain knob: seed, turbo, mode, drafts, megapixels,
-        attention, steps ...}. The clips, prompts, frames and song_start come from the script."""
+        ref_ids: [face still, body still] (ignored for environment-only scenes),
+        location_refs: {location id: library still of that place, person-free} and/or
+        location_ref_id: the still for THIS scene's location (wins over the map),
+        plus any /api/video/h3_chain knob: seed, turbo, mode, drafts, megapixels, attention, steps ...}.
+    The clips, frames and song_start come from the script. Prompts are recompiled from each clip's
+    stored text so the picture numbering matches what is uploaded: face, body, then the location
+    still as <Picture 3> (singer scenes) or <Picture 1> alone (environment-only scenes). With no
+    location still the scene renders as before (her two pictures; or no pictures on FL2VA)."""
     sc_src = p.get("script")
     if isinstance(sc_src, str):
         base = os.path.realpath(os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_scripts"))
@@ -1127,15 +1132,23 @@ def mv_render_scene(p: dict):
     except Exception:
         raise HTTPException(400, "scene must index a scene of the script")
     env_only = scene.get("performance") == "no_singing_environment"
-    q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids")}
-    q.update({"audio_id": script["audio_id"], "ref_ids": [] if env_only else (p.get("ref_ids") or []),
-              "clips": [{"prompt": c["prompt"]} for c in scene["clips"]],
+    loc = mv_writer_mod.location_of(script, scene)
+    loc_ref = p.get("location_ref_id") or ((p.get("location_refs") or {}).get(loc["id"]) if loc else None)
+    if loc_ref and not loc:
+        raise HTTPException(400, "location_ref_id given but the scene has no location (script written before locations)")
+    singer_refs = [] if env_only else [r for r in (p.get("ref_ids") or []) if r]
+    if not env_only and not singer_refs:
+        raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
+    prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref))
+    q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id")}
+    q.update({"audio_id": script["audio_id"], "ref_ids": singer_refs + ([loc_ref] if loc_ref else []),
+              "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
-    if not env_only and not q["ref_ids"]:
-        raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
     return _h3_chain(q, meta={"script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
-                              "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance")})
+                              "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
+                              "location": loc["id"] if loc else None,
+                              "location_ref_id": os.path.basename(loc_ref) if loc_ref else None})
 
 
 @app.post("/api/mv/write")

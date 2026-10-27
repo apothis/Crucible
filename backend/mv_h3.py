@@ -129,6 +129,9 @@ def build_h3_chain(p, ref_names, master_name):
         attention" | "pytorch attention" | ...), ref_image_size? ("match" | "max"), crf? (19),
         prefix?}
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
+        For a scripted scene that is face, body, then the person-free LOCATION still (the place
+        as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
+        (<Picture 1>). Any list of pictures is fine here; the prompt decides what they mean.
     master_name: ComfyUI upload name of the song window (stereo WAV), starting at song_start.
     Returns (graph, resolved) like every builder in video.py."""
     clips = [c for c in (p.get("clips") or []) if (c.get("prompt") or "").strip()]

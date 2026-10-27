@@ -435,3 +435,28 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   parlour) passed as <Picture 3> "environment, fully_preserved" in the chain; first-frame
   keyframes (AddGuide) reserved for environment-only and composition-critical openings. The
   next render after this is a second parlour scene so the room match can be judged.
+
+## 11. Location references (built 2026-10-27 22:30, unrendered)
+- Why: identity is pinned by her two pictures; nothing pinned the PLACE, so each scene would
+  reinvent the parlour and the quarry. Per-scene stills are not needed; per-LOCATION stills are.
+- Writer: pass 1 now returns `locations` [{id, name, description, still_prompt}] and each scene a
+  `location` id (SCENE_SYSTEM: few locations, returned to; a detail of a room is its own
+  location). `normalize_locations` guarantees every scene points at a row (derived rows for
+  strays). The clip pass is told the place is a referenced subject and to call it by name.
+- Compiler: `compile_prompt(..., env=row)` writes `<Subject 2> is the location, <name>, shown in
+  <Picture 3>` + a fully_preserved retention line (layout/furniture/materials/light direction
+  kept; camera, weather, time of day, state changes free). Environment-only scenes put the
+  location alone as <Subject 1>/<Picture 1> on the Ref2VA weights; with no location still they
+  fall back to FL2VA with a no-subjects header (the old prompt wrongly cited pictures there).
+  `compile_scene(script, scene, with_location)` recompiles from each clip's stored text.
+- Route: `POST /api/mv/render_scene` takes `location_refs` {id: library still} or
+  `location_ref_id`; uploads face, body, location in that order and recompiles the prompts to
+  match; records location + still id in the job params. Chain builder unchanged (any picture list).
+- Never Mine: `.mvwork/mv_scripts/never_mine_20261027_210758_locref.{json,md}` = the G2 script +
+  five locations (parlour 1,2,4; corridor 3; mantelpiece 5; quarry 6,7,8,10; wrecked_parlour 9),
+  refs.shared trimmed to her alone (no parlour sentence in quarry scenes), all 22 prompts
+  recompiled, 0 rule problems. Still prompts: `.mvwork/g1_refs/g4_location_still_prompts.md`.
+- Test next (G4): scene 4 "Confession at the Window" with the parlour still (a second parlour
+  scene) and judge whether the room matches scene 2. [H] H3 honours an environment picture as a
+  fully_preserved subject in the chain - supported by the reference guide and the August
+  text-environment test, not yet measured in a chain.

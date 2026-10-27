@@ -114,6 +114,7 @@ Fixed facts about this production:
 - Inside a scene, the camera does ONE thing: static, or one slow move you can name with a real-world duration (a push-in that covers an arm's length over the whole scene). No whip pans, no handheld chaos, no orbit-plus-zoom.
 - Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
+- LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location.
 - Timing is NOT yours: you choose which sections form a scene; the system computes clip windows and which words fall where.
 
 Write for the song's genre: its pace, weight and mood should be visible in the choice of places, light, weather, movement and the proportion of performance to B-roll."""
@@ -137,9 +138,16 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
         "concept": "2-3 sentences: what the video is about and how it moves (string)",
         "look": "one sentence of visual style for every prompt: film stock feel, light, contrast, colour, camera weight (string)",
         "wardrobe": "the singer's one outfit, as it appears in the references, in one sentence (string)",
+        "locations": [{
+            "id": "snake_case id",
+            "name": "short name, e.g. the parlour",
+            "description": "one sentence of what a reference photograph of this place shows: layout, key furniture or landforms, materials, where the light comes from; no people",
+            "still_prompt": "a prompt for a photoreal 16:9 still of this place with NO people, one paragraph: camera position and height, every fixed element and where it sits in frame, materials, the light and weather of its first scene, the video's look; the elements must match this location's scene settings word for word"
+        }],
         "scenes": [{
             "sections": [0, 1],
             "title": "short label",
+            "location": "id of one of the locations",
             "setting": "the place, concrete and filmable, no people, 2-3 sentences; name any visible sky",
             "performance": "one of: sing_to_camera | sing_away | no_singing_her | no_singing_environment",
             "framing": "e.g. medium close-up, medium, wide, extreme wide, detail",
@@ -228,6 +236,46 @@ def normalize_scenes(plan, sections):
     return scenes
 
 
+def _slug(x):
+    return re.sub(r"[^a-z0-9]+", "_", str(x or "").lower()).strip("_")
+
+
+def normalize_locations(plan, scenes):
+    """The script's location table, and every scene pointing at one of its rows. A scene whose
+    `location` names nothing in the table gets a row of its own built from its setting (marked
+    derived, with the scene's opening still as a stand-in prompt - that one may show her)."""
+    locs, seen = [], {}
+    for L in plan.get("locations") or []:
+        if not isinstance(L, dict):
+            continue
+        lid = _slug(L.get("id") or L.get("name"))
+        if not lid or lid in seen:
+            continue
+        seen[lid] = len(locs)
+        locs.append({"id": lid, "name": (L.get("name") or lid.replace("_", " ")).strip(),
+                     "description": (L.get("description") or "").strip(),
+                     "still_prompt": (L.get("still_prompt") or "").strip()})
+    for sc in scenes:
+        lid = _slug(sc.get("location"))
+        if lid not in seen:
+            lid = _slug(sc.get("title")) or f"scene_{sc['index']}"
+            if lid not in seen:
+                seen[lid] = len(locs)
+                locs.append({"id": lid, "name": sc.get("title") or lid, "description": sc.get("setting", ""),
+                             "still_prompt": sc.get("opening_still", ""), "derived": True})
+        sc["location"] = lid
+    return locs
+
+
+def location_of(script, scene):
+    """The location row a scene points at, or None (scripts written before locations existed)."""
+    lid = scene.get("location")
+    for L in script.get("locations") or []:
+        if L.get("id") == lid:
+            return L
+    return None
+
+
 # ----------------------------------------------------------------------------- code: clip windows
 
 def plan_scene_clips(scene, sections, fps=H3_FPS, frames=CHAIN_FRAMES, context=CHAIN_CONTEXT):
@@ -273,16 +321,19 @@ Hard rules (they come from measured failures; do not bend them):
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
 - Never describe other people. Never change the wardrobe.
+- The scene's location is also a referenced subject (a person-free photograph of the place is handed to the model). Call the place by its name (the parlour, the quarry); the system numbers subjects and pictures. Do not redesign the place: its fixed elements are those in the scene setting; you may add weather, time of day and the state changes the scene calls for.
 - Lip-sync clips: mouth readable (face toward camera, medium close-up or closer, nothing covering the mouth).
 - 150-320 words of detailed_description per clip; concrete, visual, in order of time."""
 
 
 def clip_prompt(script, scene, clips):
+    loc = location_of(script, scene)
     user = {
         "song": script["title"], "look": script["look"], "wardrobe": script["wardrobe"],
         "concept": script["concept"],
         "scene": {k: scene.get(k) for k in ("title", "setting", "performance", "framing", "camera",
                                             "lighting", "mood", "action", "section_types", "start", "end")},
+        "location": ({k: loc.get(k) for k in ("name", "description")} if loc else None),
         "clips": [{"index": c["index"], "seconds": c["seconds"], "song_start": c["song_start"],
                    "song_end": c["song_end"], "continues_previous": c["index"] > 0,
                    "protected_prefix_seconds": round(CHAIN_CONTEXT / H3_FPS, 3) if c["index"] > 0 else 0,
@@ -293,19 +344,46 @@ def clip_prompt(script, scene, clips):
     return CLIP_SYSTEM, json.dumps(user, indent=1)
 
 
-def compile_prompt(script, scene, clip, text):
+def compile_prompt(script, scene, clip, text, env=None):
     """The six-section Ref2VA prompt for one clip: fixed boilerplate from the script's references
-    and wardrobe + Claude's four fields. The style opening is the script's look sentence."""
+    and wardrobe + Claude's four fields. The style opening is the script's look sentence.
+
+    env: the scene's location row when a person-free still of the place goes into the chain as
+    the last reference picture (<Picture 3> behind her two, or <Picture 1> alone in an
+    environment-only scene); None = no location picture (her two pictures only, or none at all
+    for an environment-only scene on the FL2VA weights). Picture numbering here must match the
+    order the route uploads them in: face, body, location."""
     refs = script["refs"]
-    subject = ("subject_definitions:\n<Subject 1> is the singer: her facial identity comes from <Picture 1>; "
-               "her full-body appearance, body proportions and wardrobe come from <Picture 2>. "
-               f"{refs['shared']} Wardrobe: {script['wardrobe']}\n")
-    retention = ("retention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the "
-                 "referenced face, eyes, hair, skin, body proportions and the wardrobe exactly, while pose, "
-                 "expression, framing, lighting and movement follow the performance described below.\n")
-    if scene.get("performance") == "no_singing_environment":
-        retention = ("retention_analysis:\n<Subject 1> (not on screen in [Shot 1]): weak_reference - the singer "
-                     "does not appear in this clip; only the video's style and palette carry over.\n")
+    env_only = scene.get("performance") == "no_singing_environment"
+    singer_def = ("<Subject 1> is the singer: her facial identity comes from <Picture 1>; "
+                  "her full-body appearance, body proportions and wardrobe come from <Picture 2>. "
+                  f"{refs['shared']} Wardrobe: {script['wardrobe']}\n")
+    singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the "
+                  "referenced face, eyes, hair, skin, body proportions and the wardrobe exactly, while pose, "
+                  "expression, framing, lighting and movement follow the performance described below.\n")
+
+    def env_def(n, pic):
+        return (f"<Subject {n}> is the location, {env['name']}, shown in <Picture {pic}>: "
+                f"{env.get('description', '').strip()}\n")
+
+    def env_ret(n, pic):
+        return (f"<Subject {n}> (the setting of [Shot 1]): fully_preserved - retain the layout, architecture, "
+                f"furniture, objects, materials and light direction of <Picture {pic}>, so this is recognisably the "
+                "same place; camera position, framing, weather, time of day and the state changes described "
+                "below are free to differ from the photograph.\n")
+
+    if env_only and env:
+        subject = "subject_definitions:\n" + env_def(1, 1)
+        retention = "retention_analysis:\n" + env_ret(1, 1)
+    elif env_only:
+        subject = "subject_definitions:\nNo referenced subjects: this clip is environment only, with no people on screen.\n"
+        retention = "retention_analysis:\nNothing to retain from references; the setting, style and palette follow the description below.\n"
+    elif env:
+        subject = "subject_definitions:\n" + singer_def + env_def(2, 3)
+        retention = "retention_analysis:\n" + singer_ret + env_ret(2, 3)
+    else:
+        subject = "subject_definitions:\n" + singer_def
+        retention = "retention_analysis:\n" + singer_ret
     desc = (text.get("detailed_description") or "").strip()
     if not desc.startswith("[Shot 1]"):
         desc = "[Shot 1] " + desc
@@ -318,6 +396,20 @@ def compile_prompt(script, scene, clip, text):
               + script["look"].strip() + "\n" + desc + "\n\noverall_soundscape:\n" + soundscape
               + "\n\nnon_diegetic_music:\n" + music + "\n")
     return prompt
+
+
+def compile_scene(script, scene, with_location=True):
+    """Recompile every clip prompt of a scene from its stored text (the writer keeps the four
+    fields per clip), with or without the location picture. Clips with no stored text keep the
+    prompt they have. Returns the list of prompts in clip order."""
+    env = location_of(script, scene) if with_location else None
+    out = []
+    for c in scene["clips"]:
+        if c.get("text"):
+            out.append(compile_prompt(script, scene, c, c["text"], env=env))
+        else:
+            out.append(c["prompt"])
+    return out
 
 
 def check_prompt(prompt, clip, performance="sing_to_camera"):
@@ -360,10 +452,11 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
     _keep_raw(cache_dir, f"{audio_id}_pass1.txt", raw)
     plan = _extract_json(raw)
     scenes = normalize_scenes(plan, facts["sections"])
-    log(f"[mvw] pass 1: {len(scenes)} scenes")
+    locations = normalize_locations(plan, scenes)
+    log(f"[mvw] pass 1: {len(scenes)} scenes, {len(locations)} locations")
     script = {"title": title, "audio_id": audio_id, "style": style, "duration": duration,
               "concept": plan.get("concept", ""), "look": plan.get("look", ""),
-              "wardrobe": plan.get("wardrobe", ""), "refs": refs, "facts": facts,
+              "wardrobe": plan.get("wardrobe", ""), "refs": refs, "facts": facts, "locations": locations,
               "writer": {"provider": provider, "model": model, "effort": effort}, "scenes": []}
     for sc in scenes:
         cplan, clips = plan_scene_clips(sc, facts["sections"])
@@ -374,7 +467,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
         for c in clips:
             t = texts.get(c["index"]) or {}
             c["text"] = {k: t.get(k, "") for k in ("summary", "detailed_description", "overall_soundscape", "non_diegetic_music")}
-            c["prompt"] = compile_prompt(script, sc, c, c["text"])
+            c["prompt"] = compile_prompt(script, sc, c, c["text"], env=location_of(script, sc))
             c["problems"] = check_prompt(c["prompt"], c, sc.get("performance"))
         sc["plan"] = cplan
         sc["clips"] = clips
@@ -393,10 +486,18 @@ def script_markdown(script):
            f"{len(script['scenes'])} scenes, {script['clip_count']} clips.", "",
            f"**Concept.** {script['concept']}", "", f"**Look.** {script['look']}", "",
            f"**Wardrobe.** {script['wardrobe']}", ""]
+    if script.get("locations"):
+        out += ["## Locations (one person-free still each, handed to the chain as the place reference)", ""]
+        for L in script["locations"]:
+            used = [str(sc["index"] + 1) for sc in script["scenes"] if sc.get("location") == L["id"]]
+            out += [f"### {L['name']}  (`{L['id']}`, scenes {', '.join(used) or '-'}"
+                    + (", derived from a scene setting" if L.get("derived") else "") + ")", "",
+                    f"- shows: {L.get('description')}", "", "Still prompt:", "", "```", (L.get("still_prompt") or "").strip(), "```", ""]
     for sc in script["scenes"]:
         out += [f"## Scene {sc['index'] + 1}: {sc.get('title', '')}  ({sc['start']:.1f}-{sc['end']:.1f}s, "
                 f"{', '.join(sc['section_types'])})", "",
-                f"- performance: {sc.get('performance')} | framing: {sc.get('framing')} | camera: {sc.get('camera')}",
+                f"- performance: {sc.get('performance')} | framing: {sc.get('framing')} | camera: {sc.get('camera')}"
+                + (f" | location: `{sc.get('location')}`" if sc.get("location") else ""),
                 f"- setting: {sc.get('setting')}", f"- lighting: {sc.get('lighting')} | mood: {sc.get('mood')}",
                 f"- action: {sc.get('action')}", f"- why: {sc.get('why')}",
                 f"- opening still prompt: {sc.get('opening_still')}", ""]
