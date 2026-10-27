@@ -280,3 +280,50 @@ notes", close/relax in silence.
   and keep the drift score.
 - **G2 writer test:** one full script for one song, read by the user, no render.
 - **G3 one full scene chain** (3-5 clips) rendered and assembled; then the UI.
+
+## 8. G1 proposal (2026-10-27, awaiting the user's go - nothing fired)
+
+**Song (proposed, user's call):** "Where the Tides Remember" (master "de-glitched"), the song
+the August H3 lip-sync work was measured on, so we have a drift baseline to beat. Window = the
+FIRST CHORUS, nominally 82-110 s ("Where the tides remember, where the evening never ends ...");
+the real onset comes from `lyricalign` before anything renders, never the nominal arrangement.
+
+**Clip plan (upstream arithmetic):** raw clip 243 f = 10.125 s; context 39 f; advance 204 f =
+8.5 s. Two clips cover chorus_onset-1.0 s .. +17.6 s: clip 1 = the first two chorus lines sung to
+camera, clip 2 = continuation across the seam into lines three and four. Canvas 960x544 (the
+upstream example's), Ref2VA model, `res_multistep`/`simple`, shift 12/3, seed pinned.
+
+**Variables, one at a time, same seed (each pair = 2 chains):**
+- A. song lock: full master mix vs isolated lead-vocal stem (box UVR :5060 splits it; master
+  muxed back either way). Decides what the writer feeds the latent.
+- B. recipe: lightx2v Ref2VA 8-step v1.1 768p (shift 6/3) vs base 20 steps. Decides whether the
+  finish can be turbo now that H3's own audio is discarded.
+- C. text encoder: nvfp4_awq vs int8 (after `download_minimax_h3_v2.bat` has run). Decides the
+  RAM budget.
+Order A -> B -> C; each later pair runs on the winner of the earlier one.
+
+**References (two GPT images from the canonical portrait, no opening still - the upstream chain
+starts from ReferenceToVideo with refs only; scene opening stills come later via keyframes):**
+- `<Picture 1>` face/identity: "Close three-quarter portrait of the woman in the reference
+  photo, same face and long dark wavy hair, pale skin, dark smoky eye makeup, a thin silver chain
+  at her throat, high-collared black lace blouse, soft cool window light from the left against a
+  dark grey studio backdrop, calm direct gaze, mouth closed, photoreal, 85mm, shallow depth of
+  field, 3:4."
+- `<Picture 2>` full body / wardrobe: "Full-length studio photograph of the same woman from the
+  reference photo, standing relaxed, arms at her sides, facing camera, in a fitted black velvet
+  corset laced at the front over a white linen chemise slipped off one shoulder, long black
+  skirt, bare feet, plain mid-grey seamless backdrop, even soft light, photoreal, 50mm, 2:3."
+  (One reveal per image per the GPT filter notes; no brand names.)
+
+**What has to be built first (no GPU):** `backend/mv_h3.py` = per-scene chain graph builder
+(N x [ReferenceToVideo -> SongMaskedAVContext (+ AudioVAECompatibility) -> sampler] ->
+StreamLiveMusicVideoToVHS, master audio uploaded once by content hash) + a `POST
+/api/video/h3_chain` route using the existing `_submit_video`. GPT refs enter as library stills
+through the existing still import.
+
+**Cost estimate [H], extrapolated from our 1280x736 measurements:** ~4 min per turbo clip and
+~10 min per base clip at 960x544x243 f, so variable A = ~16 min, B = ~28 min, C = ~16 min.
+
+**Judge:** the user watches each chain (mouth on the words, the 10.1 s seam, identity against the
+two refs). Floor check: envelope correlation of the clip's own decoded audio vs the master slice
+should be ~1.0 by construction - if it is not, the lock did not take.
