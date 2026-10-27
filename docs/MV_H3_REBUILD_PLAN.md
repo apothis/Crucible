@@ -412,3 +412,26 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   (b) environment-only scenes (1, 5) still go through Ref2VA with the singer marked
   weak_reference - add an FL2VA (no refs) lane to mv_h3 for them; (c) the subject_definitions
   boilerplate repeats the refs' parlour sentence in quarry scenes - make `shared` refs-only.
+
+## 10. G3 result (2026-10-27 21:50) - one scene renders as a 3-clip chain [V, motion pending]
+- Scene 2 "Taught to Bow" (13.34-42.72 s) fired through `POST /api/mv/render_scene` with
+  `.mvwork/g1_refs/g3_scene2_request.json`: Ref2VA, turbo v1.1 8-step shift 6/3, 960x544,
+  seed 20261027 (+101 per clip), face + body(v2, choker) references, song window 13.34-55.34 s.
+- Box time 1413 s for 3 x 362 f (about 7.8 min per clip, same as G1). Filed in the library as a
+  `videoclip` row; copy at
+  `.mvwork/g1_refs/nevermine_G3_scene2_taught-to-bow_3clip-chain_turbo8_seed20261027.mp4`.
+- Measured: 1008 frames / 42.000 s at 24 fps = the planned span exactly (362 + 2 x 323);
+  envelope r = 1.000 at 0 lag against the master at 13.34 s (floor check passes).
+- Stills read only (contact sheet `nevermine_G3_scene2_contact_sheet.png`, 3 s steps plus both
+  seams): identity and choker hold across all three clips; framing continuous at 13.46 s and
+  26.92 s; push-in goes medium close-up -> close-up with eyes raised to the lens on the last
+  line, as scripted. A thin diagonal white streak enters top-right in the last ~4 s [H: unprompted
+  object]. Lip-sync, seam feel and pacing: USER TO WATCH.
+- Note for assembly: the chain runs to 55.34 s song time; the scene ends at 42.72 s, so the
+  final 12.6 s are overshoot to trim (or render the last clip at a shorter grid length).
+- Decided with the user after G3 fired: per-scene OpenAI images are not needed for identity,
+  but the full video needs the PLACE pinned across scenes. Next build = location references
+  (one person-free GPT still per location: parlour, corridor, mantelpiece, quarry, wrecked
+  parlour) passed as <Picture 3> "environment, fully_preserved" in the chain; first-frame
+  keyframes (AddGuide) reserved for environment-only and composition-critical openings. The
+  next render after this is a second parlour scene so the room match can be judged.
