@@ -320,15 +320,20 @@ def compile_prompt(script, scene, clip, text):
     return prompt
 
 
-def check_prompt(prompt, clip):
-    """The hard rules, mechanically. Returns a list of problems (empty = clean)."""
+def check_prompt(prompt, clip, performance="sing_to_camera"):
+    """The hard rules, mechanically. Returns a list of problems (empty = clean). A no-singing
+    scene may have vocal audible in its window (the corridor walk under the verse) - that is
+    the point of B-roll, so the <d> requirement only applies to singing scenes."""
     problems = []
+    sings = str(performance or "").startswith("sing")
     if "<Audio" in prompt:
         problems.append("names <Audio N> (the song is locked in the latent)")
     if "[Shot 2]" in prompt or "<scenetrans>" in prompt:
         problems.append("more than one shot in a chain clip")
-    if clip["vocal"] and "<d>[English]" not in prompt:
-        problems.append("vocal clip without a <d>[English] ...</d> line")
+    if sings and clip["vocal"] and "<d>[English]" not in prompt:
+        problems.append("vocal clip in a singing scene without a <d>[English] ...</d> line")
+    if not sings and "<d>" in prompt:
+        problems.append("no-singing scene carries a <d> lyric line")
     if not clip["vocal"] and "<d>" in prompt:
         problems.append("instrumental clip carries a <d> line")
     for sec in ("subject_definitions:", "summary:", "retention_analysis:", "detailed_description:",
@@ -370,7 +375,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
             t = texts.get(c["index"]) or {}
             c["text"] = {k: t.get(k, "") for k in ("summary", "detailed_description", "overall_soundscape", "non_diegetic_music")}
             c["prompt"] = compile_prompt(script, sc, c, c["text"])
-            c["problems"] = check_prompt(c["prompt"], c)
+            c["problems"] = check_prompt(c["prompt"], c, sc.get("performance"))
         sc["plan"] = cplan
         sc["clips"] = clips
         script["scenes"].append(sc)
