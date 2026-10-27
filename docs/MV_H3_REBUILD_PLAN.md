@@ -505,3 +505,18 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   `.mvwork/g1_refs/locations/location_refs.json`). Mapping for a render of this script:
   parlour_window -> parlour still, hallway -> corridor still, stone_detail -> quarry still
   (the location retention line leaves framing free); or generate the two new stills.
+- Stems RUN 2026-10-27 23:20: POST /api/mv/stems on Never Mine = 81 s on the box (RoFormer,
+  258 s stem). Alignment on the stem vs the mix (Whisper small, same lyrics): cover 0.967 vs
+  0.971, 29 lines both; |start delta| median 0.08 s, p90 0.69 s, max 1.48 s; 10 line edges move
+  by more than 0.3 s, mostly chorus openings later by 0.4-1.5 s and one held note ending 1.26 s
+  later. Stem-level check inside the disputed gaps (sung reference -15 dBFS): "Till the only
+  thing" (-36), "take the hammer" (-30) and the final "What I was" (-42) gaps are near-silent on
+  the stem, so the MIX alignment started those lines early on an instrument sound and the stem is
+  right; "never was mine" 146.1-147.4 is -14 on the stem, so the stem's later END is right (the
+  mix cut a held note short); "What I feel" 200.0-200.7 is -13 on the stem (continuous phrase),
+  ambiguous, sub-second. Verdict: the stem is the better alignment source even on this easy song
+  (fewer early starts, held notes kept); align_on=auto keeps it the default whenever a stem is
+  cached. The G5 script was aligned on the mix (written before the stem existed).
+- G4 FIRED 2026-10-27 23:22: split-script scenes 1 (chair) and 2 (profile), each one 362-f clip,
+  Ref2VA turbo, seed 20261027, pictures face + body + PARLOUR STILL (<Picture 3>), lock = mix.
+  Box confirmed 3 LoadImage, 3 refs wired, <Picture 3> in the prompt. Jobs c4b296f0 / d523e14b.
