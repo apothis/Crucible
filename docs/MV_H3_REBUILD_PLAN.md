@@ -343,3 +343,23 @@ constant swap (H3_CLIP). The refs enter as library stills through the existing s
 **Judge:** the user watches each chain (mouth on the words, the seam inside line 4, identity
 against the two refs). Floor check: the chain's own decoded audio vs the master slice should be
 ~1.0 by construction; if not, the lock did not take.
+
+### 8.1 G1 A1 result (2026-10-27 20:09, full-mix lock, turbo 8-step v1.1 768p, seed 20261027) [V]
+- Rendered 28.542 s = the planned 685 f exactly; 979 s wall for the pair (~8 min per 362 f
+  turbo clip at 960x544; my 6 min estimate was low). Filed in the library as a video clip.
+- **Lock: envelope r = 0.998 at 0.00 s lag** against the song window (August clean takes
+  0.87-1.00, drifted 0.36-0.40). The song is the audio; nothing was re-rendered.
+- Identity and wardrobe hold in every sampled frame (0.5 / 2 / 5.5 / 9 / 12.9 / 14.4 / 15.3 /
+  16.6 / 19.5 / 23 / 27.5 s). Silent tail obeyed (lips closed, eyes down, gaze back at the end).
+- Seam metric: frame-to-frame motion in the blend region mean 1.54 / max 2.64, inside the clip
+  bodies' range (1.48-1.50); no single-frame jump at the join.
+- Defects (stills; user to confirm by watching): (1) the "hand's width over fifteen seconds"
+  push overshot - medium at 0.5 s, extreme close-up by 12.9-15.3 s (H3 pace, prompt-level);
+  (2) clip 2 reset from that extreme close-up to a medium shot within ~1.5 s after the
+  protected prefix, and the choker appears only in clip 2. Cause [H]: my clip 2 text asserted
+  "the same medium close-up" before clip 1 existed, so text and prefix disagreed. Fix for the
+  pipeline: render chains sequentially and write clip N+1 from clip N's actual last frame (or
+  keep the camera static within a chain); never pre-assert the incoming framing.
+- Lip-sync: not judged from stills - user watches
+  `.mvwork/g1_refs/nevermine_G1_A1_fullmix-lock_turbo8_seed20261027.mp4`.
+- Unverified: whether comfy-kitchen INT8 attention engaged (launcher writes no log).
