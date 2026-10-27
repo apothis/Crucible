@@ -138,7 +138,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
         "look": "one sentence of visual style for every prompt: film stock feel, light, contrast, colour, camera weight (string)",
         "wardrobe": "the singer's one outfit, as it appears in the references, in one sentence (string)",
         "scenes": [{
-            "sections": "[first_index, last_index] - contiguous section indices from the table",
+            "sections": [0, 1],
             "title": "short label",
             "setting": "the place, concrete and filmable, no people, 2-3 sentences; name any visible sky",
             "performance": "one of: sing_to_camera | sing_away | no_singing_her | no_singing_environment",
@@ -157,9 +157,23 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
             + (f"USER CONCEPT (follow it): {concept}\n\n" if concept else "")
             + "MEASURED SECTIONS (real seconds on this recording; use these indices):\n"
             + _section_text(facts["sections"]) + "\n\nLYRICS:\n" + (lyrics_raw or "").strip()
-            + "\n\nCover EVERY section index exactly once, in order, across the scenes. "
+            + "\n\nCover EVERY section index exactly once, in order, across the scenes; `sections` is a JSON "
+            "array of two integers [first_index, last_index] (the same index twice for a one-section scene). "
             "Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
     return SCENE_SYSTEM, user
+
+
+def _keep_raw(cache_dir, name, text):
+    """The model's raw answer, kept beside the lyric cache so a parse failure can be read back."""
+    if not cache_dir:
+        return
+    try:
+        import os
+        os.makedirs(os.path.join(cache_dir, "writer_raw"), exist_ok=True)
+        with open(os.path.join(cache_dir, "writer_raw", name), "w") as f:
+            f.write(text or "")
+    except Exception:
+        pass
 
 
 def _extract_json(text):
@@ -179,7 +193,11 @@ def normalize_scenes(plan, sections):
     raw = plan.get("scenes") or []
     scenes, cursor = [], 0
     for sc in raw:
-        rng = sc.get("sections") or []
+        rng = sc.get("sections")
+        if isinstance(rng, str):                      # "[3, 4]", "3-4", "3" all seen from the model
+            rng = [int(x) for x in re.findall(r"\d+", rng)]
+        elif isinstance(rng, (int, float)):
+            rng = [int(rng)]
         try:
             a, b = int(rng[0]), int(rng[-1])
         except Exception:
@@ -334,6 +352,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
                  f"Both show: {refs['shared']}")
     system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept)
     raw = llm_mod.complete(provider, model, system, user, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
+    _keep_raw(cache_dir, f"{audio_id}_pass1.txt", raw)
     plan = _extract_json(raw)
     scenes = normalize_scenes(plan, facts["sections"])
     log(f"[mvw] pass 1: {len(scenes)} scenes")
@@ -345,6 +364,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
         cplan, clips = plan_scene_clips(sc, facts["sections"])
         system2, user2 = clip_prompt(script, sc, clips)
         raw2 = llm_mod.complete(provider, model, system2, user2, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
+        _keep_raw(cache_dir, f"{audio_id}_pass2_scene{sc['index']}.txt", raw2)
         texts = {int(t.get("index", i)): t for i, t in enumerate((_extract_json(raw2) or {}).get("clips") or [])}
         for c in clips:
             t = texts.get(c["index"]) or {}
