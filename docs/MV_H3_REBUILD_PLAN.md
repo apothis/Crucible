@@ -389,3 +389,26 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   does not fully pin the hands.
 - Lip-sync and seam feel: user to watch
   `.mvwork/g1_refs/nevermine_G1_A1b_fullmix-lock_turbo8_refsmatch_seed20261027.mp4`.
+
+## 9. G2 result (2026-10-27 21:08) - the writer works end to end [V]
+- `POST /api/mv/write` on Never Mine: Opus (claude-opus-5-5) at medium effort via the CLI,
+  386 s for pass 1 + ten pass-2 calls. 12 measured sections -> 10 scenes -> 22 clips, all
+  prompts pass the mechanical rule check (after making the check performance-aware).
+- The plan is a real video, not a lip-sync reel: environment intro (push toward the empty red
+  armchair), verse in the chair, corridor B-roll on "the walls came up", chorus confession at the
+  window, a cracking porcelain mask on the instrumental, the quarry with the hammer, chorus two in
+  rain, the whole guitar solo spent carving her name, the belted final chorus back in the
+  storm-wrecked parlour, an extreme-wide walk-away to the hard stop. 6 singing scenes / 4 B-roll.
+- Per clip the model kept every rule: one camera move with a distance over the whole scene and
+  a per-clip share, one main motion with seconds, hands and hair stated, sky pinned, lyrics
+  split at clip edges mid-phrase, continuation openings on clip 2+, no <Audio N>.
+- First-run bug fixed: the model returned `sections` as the string "[0, 0]"; parser now accepts
+  strings and the schema shows an int array; raw answers are kept under
+  .mvwork/lyricalign/writer_raw/.
+- Script: `.mvwork/mv_scripts/never_mine_20261027_210758.md` (+ .json). USER TO READ.
+- Gaps for G3 (render a scene): (a) the last scene's chain overshoots the song end
+  (262.98 s on 258.0 s) and /api/video/h3_chain refuses it - pad the song window with silence for
+  the final scene (a padded master is a real waveform to the node) and trim at assembly;
+  (b) environment-only scenes (1, 5) still go through Ref2VA with the singer marked
+  weak_reference - add an FL2VA (no refs) lane to mv_h3 for them; (c) the subject_definitions
+  boilerplate repeats the refs' parlour sentence in quarry scenes - make `shared` refs-only.
