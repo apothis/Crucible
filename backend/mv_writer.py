@@ -63,13 +63,15 @@ def parse_lyrics(raw):
     return blocks
 
 
-def song_facts(audio_path, lyrics_raw, duration, cache_dir=None):
+def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None):
     """Measured facts about THIS take: the aligned lines (real seconds, with cover) and a
     contiguous section table covering 0..duration. Sung sections come from the alignment;
     unsung gaps longer than GAP_IS_INSTRUMENTAL become instrumental sections (intro, solo,
     outro, breaks). Small gaps are absorbed into the preceding section."""
     blocks = parse_lyrics(lyrics_raw)
-    align = lyricalign.align_song(audio_path, blocks, cache_dir=cache_dir)
+    # align_path: the isolated vocal stem when one is cached (dense mixes bury the words for
+    # Whisper; the stem does not). Its cache key is its own basename, so both stay cached.
+    align = lyricalign.align_song(align_path or audio_path, blocks, cache_dir=cache_dir)
     sung = []
     for sec in align["sections"]:
         if sec.get("start") is None:
@@ -99,7 +101,8 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None):
         s["index"] = i
         s["start"], s["end"] = round(float(s["start"]), 3), round(float(s["end"]), 3)
     return {"duration": duration, "cover": align.get("cover"), "words_matched": align.get("words_matched"),
-            "words_total": align.get("words_total"), "sections": table, "blocks": blocks}
+            "words_total": align.get("words_total"), "sections": table, "blocks": blocks,
+            "aligned_on": "vocals" if align_path else "mix"}
 
 
 # ----------------------------------------------------------------------------- pass 1: scenes
@@ -489,12 +492,12 @@ def check_prompt(prompt, clip, performance="sing_to_camera"):
 
 def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs, concept=None,
                  provider="claude_sub", model=WRITER_MODEL, effort=WRITER_EFFORT, claude_model="",
-                 cache_dir=None, log=print):
+                 cache_dir=None, log=print, align_path=None):
     """Song -> full script JSON (scenes with chain plans and compiled per-clip prompts).
     `refs` = {"face": one-line description of <Picture 1>, "body": of <Picture 2>,
               "shared": a sentence naming what BOTH show (the details the prompt may mention)}."""
-    facts = song_facts(audio_path, lyrics_raw, duration, cache_dir=cache_dir)
-    log(f"[mvw] facts: {len(facts['sections'])} sections, cover {facts.get('cover')}")
+    facts = song_facts(audio_path, lyrics_raw, duration, cache_dir=cache_dir, align_path=align_path)
+    log(f"[mvw] facts: {len(facts['sections'])} sections, cover {facts.get('cover')}, aligned on {facts['aligned_on']}")
     refs_text = (f"<Picture 1> (face / identity): {refs['face']}\n<Picture 2> (full body / wardrobe): {refs['body']}\n"
                  f"Both show: {refs['shared']}")
     system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept)

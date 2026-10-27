@@ -29,6 +29,7 @@ from . import video as video_mod
 from . import musicvideo as musicvideo_mod
 from . import mv_h3 as mv_h3_mod
 from . import mv_writer as mv_writer_mod
+from . import mv_stems as mv_stems_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1060,9 +1061,20 @@ def _h3_chain(p: dict, meta=None):
     rec = mv_h3_mod.chain_recipe(p, "ref2va" if ref_ids else "fl2va")
     if rec["lora"] and rec["lora"] not in set(C.models("loras")):
         raise HTTPException(400, f"LoRA {rec['lora']} is not on the box (run download_minimax_h3_v2.bat)")
+    # lock: what the clip latents hear ("mix" = the song itself, "vocals" = the cached stem,
+    # "vocal_forward" = mix + stem at +6 dB). The muxed master is ALWAYS the mix window.
+    lock = (p.get("lock") or "mix").strip()
+    try:
+        lock_src = mv_stems_mod.lock_source(LIBRARY, p["audio_id"], src, lock)
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(400, str(e))
     try:
         wav = mv_h3_mod.song_window_wav(src, plan["song_start"], want)
         master = C.upload_audio(wav, _audio_name("mvsong", wav))
+        lock_name = master
+        if lock_src != src:
+            lwav = mv_h3_mod.song_window_wav(lock_src, plan["song_start"], want)
+            lock_name = C.upload_audio(lwav, _audio_name("mvlock", lwav))
         refs = []
         for rid in ref_ids:
             path = _lib_image_path(rid)
@@ -1076,10 +1088,11 @@ def _h3_chain(p: dict, meta=None):
         raise HTTPException(500, f"upload failed: {e}")
 
     def _build(q):
-        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master)
+        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
+        resolved["lock"] = lock
         resolved.update(meta or {})
         return graph, resolved
 
@@ -1095,7 +1108,9 @@ def video_h3_chain(p: dict):
         song_start (seconds into the song where clip 1 begins), frames? (362) or seconds?,
         width?/height? or megapixels? (0.5 = 960x544), context_frames? (39), seed?, turbo?,
         sampler?/scheduler?/steps?/lora?/lora_strength?/shift_video?/shift_audio?, attention?,
-        ref_image_size?, crf?, mode? ("finish" [default] | "hunt"), drafts? (hunt only)}.
+        ref_image_size?, crf?, mode? ("finish" [default] | "hunt"), drafts? (hunt only),
+        lock? ("mix" [default] | "vocals" | "vocal_forward": what the latents hear; needs
+        POST /api/mv/stems first for the stem locks; the mux is always the mix)}.
     The master handed to the graph is the song CUT to the chain window (stereo WAV, silence-padded
     past the end of the file), because the streamer muxes its master from sample 0; the recorded
     plan carries the real song times."""
@@ -1151,6 +1166,29 @@ def mv_render_scene(p: dict):
                               "location_ref_id": os.path.basename(loc_ref) if loc_ref else None})
 
 
+@app.post("/api/mv/stems")
+def mv_stems(p: dict):
+    """Isolate a library song's vocals ON THE BOX (BS-RoFormer SW, :5070; ComfyUI is freed first)
+    and cache the stem under .mvwork/mv_stems/. Serves lyric alignment (POST /api/mv/write
+    align_on) and the chain's lock option (lock=vocals|vocal_forward). p: {audio_id, force?}.
+    Returns {stem, seconds, cached}."""
+    if not p.get("audio_id"):
+        raise HTTPException(400, "audio_id is required")
+    src = _lib_source_path(p["audio_id"])
+    if not src:
+        raise HTTPException(400, "audio_id must reference a library track")
+    stem = mv_stems_mod.vocal_stem_path(LIBRARY, p["audio_id"])
+    if stem and not p.get("force"):
+        return {"stem": stem, "seconds": musicvideo_mod.audio_duration(stem), "cached": True}
+    try:
+        stem = mv_stems_mod.separate_vocals(LIBRARY, p["audio_id"], src, _separate)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"separation failed: {e}")
+    return {"stem": stem, "seconds": musicvideo_mod.audio_duration(stem), "cached": False}
+
+
 @app.post("/api/mv/write")
 def mv_write(p: dict):
     """Claude writes a whole music-video script for a library song (docs/MV_H3_REBUILD_PLAN.md 3.3):
@@ -1158,7 +1196,9 @@ def mv_write(p: dict):
     17k+5 grid -> compiled six-section Ref2VA prompt per clip. No GPU; the Claude subscription CLI.
     p: {audio_id, title, style?, lyrics (tagged text), refs: {face, body, shared} (one-line
         descriptions of the two reference stills and what both show), concept?, model?
-        (default the latest Opus), effort? ("medium"), provider? ("claude_sub")}.
+        (default the latest Opus), effort? ("medium"), provider? ("claude_sub"),
+        align_on? ("auto" [default]: the cached vocal stem when there is one, else the mix;
+        "vocals" requires a stem; "mix" ignores it)}.
     Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
@@ -1174,6 +1214,11 @@ def mv_write(p: dict):
         raise HTTPException(400, "could not read the song's duration")
     work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
     log_lines = []
+    align_on = (p.get("align_on") or "auto").strip()
+    stem = mv_stems_mod.vocal_stem_path(LIBRARY, p["audio_id"])
+    if align_on == "vocals" and not stem:
+        raise HTTPException(400, "align_on=vocals but no vocal stem is cached; POST /api/mv/stems first")
+    align_path = stem if align_on in ("auto", "vocals") else None
 
     def _log(s):
         print(s)
@@ -1185,7 +1230,8 @@ def mv_write(p: dict):
             concept=p.get("concept"), provider=p.get("provider") or "claude_sub",
             model=p.get("model") or mv_writer_mod.WRITER_MODEL,
             effort=p.get("effort") or mv_writer_mod.WRITER_EFFORT,
-            claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log)
+            claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log,
+            align_path=align_path)
     except Exception as e:
         raise HTTPException(500, f"writer failed: {e}")
     out_dir = os.path.join(work, "mv_scripts")

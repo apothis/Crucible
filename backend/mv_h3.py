@@ -118,7 +118,7 @@ def chain_recipe(p, lane="ref2va"):
     return r
 
 
-def build_h3_chain(p, ref_names, master_name):
+def build_h3_chain(p, ref_names, master_name, lock_name=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -133,6 +133,8 @@ def build_h3_chain(p, ref_names, master_name):
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
         (<Picture 1>). Any list of pictures is fine here; the prompt decides what they mean.
     master_name: ComfyUI upload name of the song window (stereo WAV), starting at song_start.
+    lock_name: optional upload of a DIFFERENT audio cut to the same window (vocal stem, or the mix
+        with the vocals forward) to lock in the clip latents; the master is still what is muxed.
     Returns (graph, resolved) like every builder in video.py."""
     clips = [c for c in (p.get("clips") or []) if (c.get("prompt") or "").strip()]
     if not clips:
@@ -179,6 +181,10 @@ def build_h3_chain(p, ref_names, master_name):
                "inputs": {"model": model, "scheduler": rec["scheduler"], "steps": rec["steps"], "denoise": 1.0}}
     g["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": rec["sampler"]}}
     g["40"] = {"class_type": "LoadAudio", "inputs": {"audio": master_name}}
+    lock_audio = ["40", 0]
+    if lock_name and lock_name != master_name:
+        g["41"] = {"class_type": "LoadAudio", "inputs": {"audio": lock_name}}
+        lock_audio = ["41", 0]
     for i, name in enumerate(ref_names):
         g[str(30 + i)] = {"class_type": "LoadImage", "inputs": {"image": name}}
 
@@ -203,7 +209,7 @@ def build_h3_chain(p, ref_names, master_name):
             g[r2v] = {"class_type": "MiniMaxH3ImageToVideo",
                       "inputs": {"clip": ["5", 0], "vae": ["6", 0], "prompt": c["prompt"].strip(),
                                  "width": w, "height": h, "length": frames}}
-        song_in = {"latent": [r2v, 1], "audio_vae": ["9", 0], "master_audio": ["40", 0],
+        song_in = {"latent": [r2v, 1], "audio_vae": ["9", 0], "master_audio": lock_audio,
                    "clip_start_seconds": float(win["clip_start"]),
                    "context_length": int(plan["context_frames"]), "source_fps": float(fps),
                    "crop": "disabled"}
@@ -241,6 +247,7 @@ def build_h3_chain(p, ref_names, master_name):
                 "lora_strength": rec["lora_strength"] if rec["lora"] else None,
                 "shift_video": rec["shift_video"], "shift_audio": rec["shift_audio"],
                 "attention": attention, "ref_image_size": ref_image_size, "ref_count": len(ref_names),
+                "lock_separate": bool(lock_name and lock_name != master_name),
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved
