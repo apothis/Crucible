@@ -541,3 +541,56 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   profile half shows the hold works), or anchor the END framing in words ("ends still a medium
   close-up, shoulders in frame") instead of a distance.
 - USER TO WATCH both (lip-sync, the cut at 28.22 s, whether the chair push reads too fast).
+
+## 15. Camera movement research (2026-10-28 00:05) - how H3 moves are actually controlled
+Problem: two renders show a prompted "slow push-in of N cm over 15 s" always travelling to a tight
+close-up, where the model invents background (streak, smeared wall). Static holds clean but a
+locked-off singer video looks dead. What the sources say [P = primary, C = community]:
+
+1. **Official amplitude grammar exists and we never used it** [P, MiniMaxAI/MiniMax-H3
+   docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md 4.3]. Camera motion is one natural-English action
+   inside the shot with two trained modifiers: amplitude "with small amplitude" / "with large
+   amplitude" and speed "at slow speed" / "at fast speed" ("medium amplitude and normal speed are
+   usually omitted"). Example: "The camera pushes in with small amplitude at slow speed toward the
+   folded letter in her hands." Verbs: Zoom In/Out, Push In/Pull Out, Pan, Truck, Tilt, Pedestal,
+   Arc Shot, Tracking Shot, Static Shot, Shake Slightly/Strongly, POV, Roll. Moves end on a subject
+   clause, or "The camera holds a static shot as ...". No metric distances anywhere in the guides:
+   our "12 cm" meant nothing to the model. The ref guide [P] says the same: "movement type,
+   amplitude, and speed" in natural English; no bracket [Push in] commands in H3 (those are the
+   hosted Hailuo Director API).
+2. **Camera reference VIDEO is a first-class input** [P, ref guide; box node]. `<Video N>` "for
+   camera movement, cuts, rhythm, or temporal structure", declared under reference generation,
+   retention "<Video 1> (camera movement and pace): weak_reference". The box's
+   MiniMaxH3ReferenceToVideo has ref_videos (up to 3, 2-15 s at 24 fps) next to ref_images.
+   Vendor guides [C]: state that the video supplies ONLY pace/movement, not its location; a
+   stable clean clip beats a busy one. No measured reports of how faithfully H3 copies a path.
+   We can MANUFACTURE the reference with exact pace: ffmpeg zoompan over the location still
+   (made: `.mvwork/g1_refs/camref_parlour_pushin_8pct_15s.mp4`, 8 % even push, 360 f).
+3. **Keyframe-bounded moves** [P, box]: core `MiniMaxH3AddGuide` (image at any frame_idx,
+   negative = from end) and `MiniMaxH3CustomKeyframes` pin exact start AND end compositions, so a
+   push-in's extent is fixed by a cropped copy of the still as the last frame. Pins her pose too,
+   so for ENVIRONMENT/B-roll scenes only (empty parlour, quarry, stone detail).
+4. **Camera LoRAs** [P cards]: Jojocodex Camera Motion (Apache-2.0, trigger "camera motion" at
+   prompt start, strength 0.8-1.0, "slow" softens, push-in its strongest move, T2V-trained, Turbo
+   compatibility unstated) and Yunjing (push/orbit/tracking/handheld, stacks with Turbo per the
+   wildminder table). They ADD motion vocabulary; they do not bound amplitude beyond words, and a
+   third LoRA on top of Turbo + two identity pictures risks identity. Hold as a fallback for moves
+   the base ignores (pan/truck/arc).
+5. **Fun ControlNet Union** on the box has no camera-trajectory type (Canny/Depth/HED/MLSD/Pose +
+   inpaint; v2 adds Scribble/Layout/Gray) [P/C]. Not a camera tool. Camera H3 path editor
+   (NyckM) and imbutus Director are prompt compilers with no guarantee [C]; nothing new under them.
+6. **Post move** (ours): render the performance take static (proved clean), FlashVSR x2, then an
+   exact ffmpeg zoompan/pan of 4-8 %. No parallax, but on a seated singer a 2D push is
+   indistinguishable from a dolly. Always available; the production fallback.
+
+Recommendation and test (G6, two renders of the chair half, ~8 min each, parlour still kept):
+- V1 prompt-only: official grammar + framing anchors: "The camera pushes in with small
+  amplitude at slow speed toward her face, from a medium shot with the whole armchair and the oil
+  lamp in frame to a medium close-up that keeps her shoulders and the lamp in frame; the lamp
+  never leaves the frame. The camera holds as she finishes the line."
+- V2 = V1 + `<Video 1>` camera reference (the 8 % zoompan clip) declared as pace/movement only.
+- Judge: does the push stop at medium close-up with the lamp in frame; any right-side invention.
+Writer change if V1 or V2 holds: camera field becomes {move, amplitude, speed, start_framing,
+end_framing, keep_in_frame}; compiler writes the official sentence; environment scenes get
+keyframe-bounded moves (3); performance takes default to small-amplitude slow moves with
+anchors, never metric distances; static stays an option, not the default.
