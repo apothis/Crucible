@@ -520,3 +520,24 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
 - G4 FIRED 2026-10-27 23:22: split-script scenes 1 (chair) and 2 (profile), each one 362-f clip,
   Ref2VA turbo, seed 20261027, pictures face + body + PARLOUR STILL (<Picture 3>), lock = mix.
   Box confirmed 3 LoadImage, 3 refs wired, <Picture 3> in the prompt. Jobs c4b296f0 / d523e14b.
+
+## 14. G4 result (2026-10-27 23:37) - location still in the chain [V, motion pending]
+- Both halves filed: chair c4b296f0 (13.34-28.42 s) and profile d523e14b (28.22-43.30 s), each
+  362 f / 15.083 s, envelope r = 1.000 at 0 lag, ~7.8 min each. Copies
+  `.mvwork/g1_refs/nevermine_G4_scene{1_chair_pushin,2_profile_static}_parlour-still_seed20261027.mp4`,
+  sheet `nevermine_G4_contact_sheet.png` (both halves + old scene 2 + the parlour still).
+- Stills read: the ROOM AGREES across the cut and with the still - same tall multi-pane sash
+  window with bare trees behind her, same brass oil lamp on the side table at her right, same
+  red wingback, dark panelled wall. The old scene 2 (no location still) had a different lamp
+  set and window; the location picture did its job [H until the user watches].
+  Geometry is not literal: the still has the chair across the room from the window, the renders
+  put the window behind her; the model kept the furniture identity, not the floor plan.
+- Profile half: static framing holds for all 15 s, three-quarter from the lamp side as scripted,
+  identity consistent, eyes come to the lens near the end. No streak in the stills.
+- Chair half: the "12 cm over 15 s" push-in was NOT honoured - it starts as a medium shot (whole
+  chair, lamp, window) and ends as a tight close-up on her face, the same travel the 42 s take
+  made. Pattern with scene 2: H3 drives a prompted push-in to a close-up regardless of the
+  distance figure [H, two renders]. Mitigations to test: static takes for performance (the
+  profile half shows the hold works), or anchor the END framing in words ("ends still a medium
+  close-up, shoulders in frame") instead of a distance.
+- USER TO WATCH both (lip-sync, the cut at 28.22 s, whether the chair push reads too fast).
