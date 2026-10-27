@@ -64,7 +64,7 @@ def claude_code_authed(ttl: int = 300) -> bool:
     return ok
 
 
-def claude_code_chat(system: str, prompt: str, model: str = "", timeout: int = 240) -> str:
+def claude_code_chat(system: str, prompt: str, model: str = "", timeout: int = 240, effort: str = "low") -> str:
     """One-shot completion through the Claude Code CLI, drawing on the user's Claude
     SUBSCRIPTION (OAuth) instead of a per-token API key. Runs `claude -p` as a
     subprocess. ANTHROPIC_API_KEY is stripped from the child env so the CLI uses the
@@ -78,8 +78,10 @@ def claude_code_chat(system: str, prompt: str, model: str = "", timeout: int = 2
     # --effort low: these are one-shot text/JSON completions, NOT agentic coding. The Claude Code CLI
     # defaults to high/xhigh effort (deep extended thinking), which made a single script generation take
     # ~15 MINUTES. Low effort drops it to under a minute with no quality loss for generation tasks.
+    # `effort` is overridable per caller: the MV script writer asks for "medium" (user 2026-10-27),
+    # every other one-shot completion keeps "low".
     cmd = [cli, "-p", prompt, "--system-prompt", system, "--output-format", "text",
-           "--effort", "low", "--disallowed-tools", *_CC_NO_TOOLS]
+           "--effort", (effort or "low"), "--disallowed-tools", *_CC_NO_TOOLS]
     if model:
         cmd += ["--model", model]
     try:
@@ -157,7 +159,7 @@ def chat(provider: str, model: str, task: str, user_input: str, claude_model: st
     return complete(provider, model, system, user_input, claude_model)
 
 
-def complete(provider: str, model: str, system: str, prompt: str, claude_model: str, timeout: int = 240) -> str:
+def complete(provider: str, model: str, system: str, prompt: str, claude_model: str, timeout: int = 240, effort: str = "low") -> str:
     """Run one system+user completion against the chosen provider (explicit system
     prompt — used by the melody composer and other structured-output features).
     `timeout` (seconds) lets big jobs (e.g. a long MV shot list) ask for more headroom."""
@@ -165,7 +167,7 @@ def complete(provider: str, model: str, system: str, prompt: str, claude_model: 
         # a long shot list needs a bigger token budget than the 1024 default, or it truncates.
         return claude_chat(model or claude_model, system, prompt, timeout=timeout, max_tokens=8192)
     if provider in ("claude_sub", "claude_code"):
-        return claude_code_chat(system, prompt, model or "", timeout=timeout)   # subscription via CLI, no per-token billing
+        return claude_code_chat(system, prompt, model or "", timeout=timeout, effort=effort)   # subscription via CLI, no per-token billing
     return ollama_chat(model or "gemma4_4b:latest", system, prompt, timeout=timeout)
 
 

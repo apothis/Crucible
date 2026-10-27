@@ -28,6 +28,7 @@ from . import yue2 as yue2_mod
 from . import video as video_mod
 from . import musicvideo as musicvideo_mod
 from . import mv_h3 as mv_h3_mod
+from . import mv_writer as mv_writer_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1090,6 +1091,58 @@ def video_h3_chain(p: dict):
         return graph, resolved
 
     return _h3_dispatch(p, lambda q: _build(q))
+
+
+@app.post("/api/mv/write")
+def mv_write(p: dict):
+    """Claude writes a whole music-video script for a library song (docs/MV_H3_REBUILD_PLAN.md 3.3):
+    measured lyric timing on THIS take -> scenes (performance and B-roll) -> chain plans on the
+    17k+5 grid -> compiled six-section Ref2VA prompt per clip. No GPU; the Claude subscription CLI.
+    p: {audio_id, title, style?, lyrics (tagged text), refs: {face, body, shared} (one-line
+        descriptions of the two reference stills and what both show), concept?, model?
+        (default the latest Opus), effort? ("medium"), provider? ("claude_sub")}.
+    Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
+    for k in ("audio_id", "title", "lyrics", "refs"):
+        if not p.get(k):
+            raise HTTPException(400, f"{k} is required")
+    refs = p["refs"]
+    if not all(refs.get(k) for k in ("face", "body", "shared")):
+        raise HTTPException(400, "refs needs face, body and shared descriptions")
+    src = _lib_source_path(p["audio_id"])
+    if not src:
+        raise HTTPException(400, "audio_id must reference a library track")
+    dur = musicvideo_mod.audio_duration(src)
+    if not dur:
+        raise HTTPException(400, "could not read the song's duration")
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    log_lines = []
+
+    def _log(s):
+        print(s)
+        log_lines.append(s)
+
+    try:
+        script = mv_writer_mod.write_script(
+            src, os.path.basename(p["audio_id"]), p["title"], p.get("style") or "", p["lyrics"], dur, refs,
+            concept=p.get("concept"), provider=p.get("provider") or "claude_sub",
+            model=p.get("model") or mv_writer_mod.WRITER_MODEL,
+            effort=p.get("effort") or mv_writer_mod.WRITER_EFFORT,
+            claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log)
+    except Exception as e:
+        raise HTTPException(500, f"writer failed: {e}")
+    out_dir = os.path.join(work, "mv_scripts")
+    os.makedirs(out_dir, exist_ok=True)
+    slug = re.sub(r"[^a-z0-9]+", "_", p["title"].lower()).strip("_") or "script"
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    jpath = os.path.join(out_dir, f"{slug}_{stamp}.json")
+    mpath = os.path.join(out_dir, f"{slug}_{stamp}.md")
+    with open(jpath, "w") as f:
+        json.dump(script, f, indent=1)
+    with open(mpath, "w") as f:
+        f.write(mv_writer_mod.script_markdown(script))
+    script["files"] = {"json": jpath, "md": mpath}
+    script["log"] = log_lines
+    return script
 
 
 def _lib_video_path(vid):
