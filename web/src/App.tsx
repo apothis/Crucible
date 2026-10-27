@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, versionInfo, type CompareSet, type Config, type LibItem, type Project, type SongDraft } from "./api";
-import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, NaturalizeForm, VideoForm } from "./forms";
+import { GenerateForm, RestyleForm, RepaintForm, LayerForm, VocalsForm, SwapForm, StemsForm, ToneForm, BackingForm, GuitarForm, MasterForm, MixForm, SongForm, DeglitchForm, ShapeForm, NaturalizeForm } from "./forms";
 import { VocalBuilderForm } from "./VocalBuilder";
 import { SoloBuilderForm } from "./SoloBuilder";
 import { ImportForm } from "./Import";
 import { LoraTrainingForm } from "./LoraTraining";
-import { MVStudioForm } from "./MVStudio";
 import { Music3StudioForm } from "./Music3Studio";
 import { Yue2StudioForm } from "./Yue2Studio";
 import { SunoStudioForm } from "./SunoStudio";
-import { CharactersForm } from "./Characters";
 import { YouTubeForm } from "./YouTube";
 import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
@@ -42,9 +40,6 @@ const MODES = [
   { id: "compare", label: "Compare" },
   { id: "mix", label: "Mix" },
   { id: "aimix", label: "AI Mix" },
-  { id: "video", label: "Video" },
-  { id: "mvstudio", label: "MV Studio" },
-  { id: "characters", label: "Characters" },
   { id: "youtube", label: "YouTube" },
   { id: "music3", label: "Music 3" },
   { id: "yue2", label: "YuE2" },
@@ -58,7 +53,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "aimix", "master", "shape", "naturalize", "deglitch", "compare"] },
-  { name: "Video", modes: ["video", "mvstudio", "characters", "youtube"] },
+  { name: "Video", modes: ["youtube"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
@@ -198,7 +193,7 @@ function AppInner() {
 
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          <div className={mode === "compare" || mode === "mvstudio" || mode === "music3" || mode === "yue2" || mode === "aimix" ? "w-full" : "max-w-2xl"}>
+          <div className={mode === "compare" || mode === "music3" || mode === "yue2" || mode === "aimix" ? "w-full" : "max-w-2xl"}>
             {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} projectName={current?.name} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>
@@ -276,12 +271,9 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "deglitch": return <DeglitchForm {...p} />;
     case "mix": return <MixForm {...p} />;
     case "aimix": return <AIMixForm {...p} setCompare={setCompare} goTo={goTo} />;
-    case "video": return <VideoForm {...p} library={library} />;
-    case "mvstudio": return <MVStudioForm {...p} library={library} song={song} goTo={goTo} />;
     case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} goTo={goTo} />;
     case "yue2": return <Yue2StudioForm {...p} song={song} projectName={projectName} library={library} goTo={goTo} />;
     case "suno": return <SunoStudioForm {...p} goTo={goTo} />;
-    case "characters": return <CharactersForm {...p} library={library} />;
     case "youtube": return <YouTubeForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} refresh={ctx.onDone} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;

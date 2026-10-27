@@ -1,3 +1,5 @@
+> **HISTORY ONLY (2026-10-27).** The pipeline this plan describes was ripped out and rebuilt; see `docs/MV_H3_REBUILD_PLAN.md`. Section 11 (the same-still loop recipe the YouTube living cover still uses) lives on in `docs/H3_LIVING_COVER.md`. Measured facts here (seed/resolution transfer, pace rules, frame grid) remain valid.
+
 # MiniMax H3 video backbone - integration plan
 
 Status: **Phase 0 BUILT + GATE PASSED (2026-08-02).** `build_h3_t2v` + `/api/video/h3_t2v` are live;
