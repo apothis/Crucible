@@ -485,3 +485,23 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   across the cut and against scene 2's old render, seam-free single clips, and whether the streak
   recurs. Requests: `.mvwork/g1_refs/g4_scene1_chair_request.json`, `g4_scene2_profile_request.json`
   (location_ref_id to fill in once the parlour still is in the library).
+
+## 13. Vocal stems (built 2026-10-27 23:10) and the G5 writer re-run
+- Stems: `backend/mv_stems.py` + `POST /api/mv/stems {audio_id}` runs BS-RoFormer SW on the box
+  (:5070, ComfyUI freed first) and caches `.mvwork/mv_stems/<id>.vocals.wav`. Uses: (1) lyric
+  alignment on the stem (`/api/mv/write` align_on auto|vocals|mix; auto = stem when cached) -
+  dense metal buries the words for Whisper, the stem does not; (2) the chain's `lock` option
+  (mix [default] | vocals | vocal_forward = mix + stem at +6 dB): what the clip latents hear.
+  The muxed master is ALWAYS the mix window (node 40); the lock audio is a second LoadAudio
+  (node 41) into the song-masked context nodes. User's point kept as the default: the whole
+  song in the latents may steer the rest of the imagery onto the beat; the stem locks are
+  switches to test on dense songs, not a new default.
+- G5 writer re-run under the shorter-take rules (520 s, Opus medium): 20 scenes / 24 clips,
+  `.mvwork/mv_scripts/never_mine_20261027_231816.{json,md}`. 18 scenes are single clips of
+  6-14.5 s; only the solo (38 s, 3 clips) and the outro (31 s, 3 clips) chain. Locations it
+  chose: parlour (6 scenes), parlour_window (2), hallway (2), quarry (8), stone_detail (2); it
+  dropped the storm-wrecked parlour and put the final chorus in the quarry. Stills on hand:
+  parlour, corridor, mantelpiece, quarry, wrecked_parlour (library ids in
+  `.mvwork/g1_refs/locations/location_refs.json`). Mapping for a render of this script:
+  parlour_window -> parlour still, hallway -> corridor still, stone_detail -> quarry still
+  (the location retention line leaves framing free); or generate the two new stills.
