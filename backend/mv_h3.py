@@ -31,8 +31,8 @@ Plain ASCII only.
 """
 import subprocess
 
-from .video import (H3_AUDIO_VAE, H3_CLIP, H3_FPS, H3_REF2VA, H3_SAMPLER, H3_SCHEDULER, H3_STEPS,
-                    H3_VIDEO_VAE, _h3_frames, _h3_size, _seed)
+from .video import (H3_AUDIO_VAE, H3_CLIP, H3_FL2VA, H3_FPS, H3_REF2VA, H3_SAMPLER, H3_SCHEDULER,
+                    H3_STEPS, H3_VIDEO_VAE, _h3_frames, _h3_size, _seed)
 
 # The example's globals: 15 s raw clips (362 f), a 39-frame protected prefix, 0.5 MP 16:9.
 CHAIN_FRAMES = 362
@@ -47,6 +47,9 @@ CHAIN_ATTENTION = "comfy kitchen attention"   # ModelAttentionBackend, as the ex
 CHAIN_TURBO = {"lora": "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors",
                "lora_strength": 1.0, "sampler": "res_multistep", "scheduler": "simple", "steps": 8,
                "shift_video": 6.0, "shift_audio": 3.0}
+# The same recipe for the FL2VA (no-reference) lane: environment-only B-roll scenes carry no
+# <Picture> at all, so they render on the fl2va weights with the matching lightx2v LoRA.
+CHAIN_TURBO_FL2VA = dict(CHAIN_TURBO, lora="minimax_h3_fl2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors")
 # Hunt drafts take base_seed + 1, + 2 ... (app._h3_dispatch), so clip seeds inside one chain step
 # by a larger stride to keep every (draft, clip) seed distinct.
 CLIP_SEED_STRIDE = 101
@@ -82,25 +85,29 @@ def song_window_wav(path, start, seconds):
     """The master song cut to [start, start + seconds] as 16-bit STEREO WAV at the source rate
     (ffmpeg, no GPU). Stereo on purpose: the song node encodes what it is given and the H3 audio
     VAE is stereo. The caller adds ~1 s of tail so the node's audio-grid lookahead never runs out
-    of real audio (it refuses to pad with silence)."""
+    of real audio (it refuses to pad with silence itself). When the window runs past the end of
+    the file (a final scene whose chain overshoots the song), the output is padded with digital
+    silence to the full `seconds`: to the node that is a real waveform, and the overshoot is
+    trimmed at assembly anyway."""
     cmd = ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{max(0.0, float(start)):.6f}",
-           "-t", f"{float(seconds):.6f}", "-i", path, "-vn", "-ac", "2", "-c:a", "pcm_s16le",
-           "-f", "wav", "pipe:1"]
+           "-t", f"{float(seconds):.6f}", "-i", path, "-vn", "-ac", "2",
+           "-af", f"apad=whole_dur={float(seconds):.6f}", "-t", f"{float(seconds):.6f}",
+           "-c:a", "pcm_s16le", "-f", "wav", "pipe:1"]
     out = subprocess.run(cmd, capture_output=True, timeout=120)
     if out.returncode != 0 or len(out.stdout) < 1000:
         raise RuntimeError(f"ffmpeg song window failed: {out.stderr.decode(errors='replace')[:300]}")
     return out.stdout
 
 
-def chain_recipe(p):
+def chain_recipe(p, lane="ref2va"):
     """sampler / scheduler / steps / LoRA / sigma shift for a chain. `turbo: True` applies
-    CHAIN_TURBO as one atomic block (the LoRA and its shift are not drop-ins on their own);
-    explicit per-request values still win over it."""
+    CHAIN_TURBO (or its FL2VA twin) as one atomic block (the LoRA and its shift are not drop-ins
+    on their own); explicit per-request values still win over it."""
     r = {"sampler": H3_SAMPLER, "scheduler": H3_SCHEDULER, "steps": H3_STEPS,
          "lora": None, "lora_strength": 1.0,
          "shift_video": CHAIN_SHIFT[0], "shift_audio": CHAIN_SHIFT[1]}
     if p.get("turbo"):
-        r.update(CHAIN_TURBO)
+        r.update(CHAIN_TURBO_FL2VA if lane == "fl2va" else CHAIN_TURBO)
     for k in ("sampler", "scheduler", "steps", "lora", "lora_strength", "shift_video", "shift_audio"):
         if p.get(k) not in (None, ""):
             r[k] = p[k]
@@ -129,8 +136,8 @@ def build_h3_chain(p, ref_names, master_name):
         raise ValueError("at least one clip with a prompt is required")
     if len(clips) > MAX_CLIPS:
         raise ValueError(f"at most {MAX_CLIPS} clips per chain")
-    if not ref_names:
-        raise ValueError("at least one reference image is required (Ref2VA)")
+    ref_names = list(ref_names or [])
+    lane = "ref2va" if ref_names else "fl2va"     # no references at all -> environment B-roll on FL2VA
     if len(ref_names) > 9:
         raise ValueError("H3 takes at most 9 reference images")
     seed = _seed(p)
@@ -141,14 +148,15 @@ def build_h3_chain(p, ref_names, master_name):
     q = dict(p)
     q.setdefault("megapixels", CHAIN_MP)
     w, h = _h3_size(q)
-    rec = chain_recipe(p)
+    rec = chain_recipe(p, lane)
+    unet = H3_REF2VA if lane == "ref2va" else H3_FL2VA
     attention = (p.get("attention") or CHAIN_ATTENTION).strip()
     ref_image_size = (p.get("ref_image_size") or "match").strip()
     prefix = p.get("prefix") or "videogen/h3chain"
 
     g = {}
     # --- shared loaders and the patched model (ids follow the example's roles)
-    g["1"] = {"class_type": "UNETLoader", "inputs": {"unet_name": H3_REF2VA, "weight_dtype": "default"}}
+    g["1"] = {"class_type": "UNETLoader", "inputs": {"unet_name": unet, "weight_dtype": "default"}}
     model = ["1", 0]
     if attention and attention != "none":
         g["2"] = {"class_type": "ModelAttentionBackend", "inputs": {"model": model, "attention": attention}}
@@ -178,12 +186,20 @@ def build_h3_chain(p, ref_names, master_name):
     for i, (c, win) in enumerate(zip(clips, plan["clips"])):
         base = 100 + 10 * i
         r2v, song, guider, noise, sampler = (str(base), str(base + 1), str(base + 2), str(base + 3), str(base + 4))
-        r2v_in = {"clip": ["5", 0], "vae": ["6", 0], "audio_vae": ["9", 0],
-                  "prompt": c["prompt"].strip(), "width": w, "height": h, "length": frames,
-                  "ref_image_size": ref_image_size}
-        for k in range(len(ref_names)):
-            r2v_in[f"ref_images.ref_image_{k}"] = [str(30 + k), 0]
-        g[r2v] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": r2v_in}
+        if lane == "ref2va":
+            r2v_in = {"clip": ["5", 0], "vae": ["6", 0], "audio_vae": ["9", 0],
+                      "prompt": c["prompt"].strip(), "width": w, "height": h, "length": frames,
+                      "ref_image_size": ref_image_size}
+            for k in range(len(ref_names)):
+                r2v_in[f"ref_images.ref_image_{k}"] = [str(30 + k), 0]
+            g[r2v] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": r2v_in}
+        else:
+            # text-to-video conditioning (no first frame): the same joint AV latent comes out of
+            # output 1, which the song node then fills. [H] untested on the box until an
+            # environment-only scene renders; the node family is the one build_h3_t2v uses.
+            g[r2v] = {"class_type": "MiniMaxH3ImageToVideo",
+                      "inputs": {"clip": ["5", 0], "vae": ["6", 0], "prompt": c["prompt"].strip(),
+                                 "width": w, "height": h, "length": frames}}
         song_in = {"latent": [r2v, 1], "audio_vae": ["9", 0], "master_audio": ["40", 0],
                    "clip_start_seconds": float(win["clip_start"]),
                    "context_length": int(plan["context_frames"]), "source_fps": float(fps),
@@ -223,5 +239,5 @@ def build_h3_chain(p, ref_names, master_name):
                 "shift_video": rec["shift_video"], "shift_audio": rec["shift_audio"],
                 "attention": attention, "ref_image_size": ref_image_size, "ref_count": len(ref_names),
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
-                "engine": "minimax_h3", "lane": "chain", "model": H3_REF2VA, "kind": "video"}
+                "engine": "minimax_h3", "lane": f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved

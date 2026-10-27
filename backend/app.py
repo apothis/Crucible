@@ -1031,26 +1031,15 @@ def video_h3_i2v(p: dict):
     return _h3_dispatch(p, lambda q: _build(q))
 
 
-@app.post("/api/video/h3_chain")
-def video_h3_chain(p: dict):
-    """MiniMax H3 SCENE CHAIN: N Ref2VA clips over one window of a song, the song locked in every
-    clip's audio latent and each clip continuing the previous one (docs/MV_H3_REBUILD_PLAN.md).
-    p: {audio_id (library song), ref_ids: [library stills, <Picture 1..9> in prompt order],
-        clips: [{prompt, seed?}, ...], song_start (seconds into the song where clip 1 begins),
-        frames? (362) or seconds?, width?/height? or megapixels? (0.5 = 960x544),
-        context_frames? (39), seed?, turbo? (CHAIN_TURBO), sampler?/scheduler?/steps?/lora?/
-        lora_strength?/shift_video?/shift_audio?, attention?, ref_image_size?, crf?,
-        mode? ("finish" [default] | "hunt"), drafts? (hunt only)}.
-    The master handed to the graph is the song CUT to the chain window (stereo WAV), because the
-    streamer muxes its master from sample 0; the recorded plan carries the real song times."""
+def _h3_chain(p: dict, meta=None):
+    """Shared body of /api/video/h3_chain and /api/mv/render_scene. `meta` is merged into the
+    recorded params (script file, scene index/title)."""
     clips = p.get("clips") or []
     if not clips or any(not (c.get("prompt") or "").strip() for c in clips):
         raise HTTPException(400, "clips: a non-empty list of {prompt} is required")
     if not p.get("audio_id"):
         raise HTTPException(400, "audio_id (the song) is required")
-    ref_ids = [r for r in (p.get("ref_ids") or []) if r]
-    if not ref_ids:
-        raise HTTPException(400, "ref_ids: at least one reference still is required")
+    ref_ids = [r for r in (p.get("ref_ids") or []) if r]     # empty = FL2VA environment lane
     src = _lib_source_path(p["audio_id"])
     if not src:
         raise HTTPException(400, "audio_id must reference a library track")
@@ -1061,16 +1050,18 @@ def video_h3_chain(p: dict):
                                     int(p.get("context_frames") or mv_h3_mod.CHAIN_CONTEXT), fps)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    song_len = musicvideo_mod.audio_duration(src)
-    if song_len and plan["song_end"] > song_len + 0.05:
-        raise HTTPException(400, f"the chain runs to {plan['song_end']}s but the song is {song_len:.2f}s long")
-    rec = mv_h3_mod.chain_recipe(p)
+    song_len = musicvideo_mod.audio_duration(src) or 0.0
+    if song_len and plan["song_start"] >= song_len:
+        raise HTTPException(400, f"song_start {plan['song_start']}s is past the end of the song ({song_len:.2f}s)")
+    # the window gets +1 s of real audio for the node's audio-grid lookahead; past the end of the
+    # file song_window_wav pads with silence (a final scene whose chain overshoots the song)
+    want = plan["span_seconds"] + 1.0
+    pad = max(0.0, plan["song_start"] + want - song_len) if song_len else 0.0
+    rec = mv_h3_mod.chain_recipe(p, "ref2va" if ref_ids else "fl2va")
     if rec["lora"] and rec["lora"] not in set(C.models("loras")):
         raise HTTPException(400, f"LoRA {rec['lora']} is not on the box (run download_minimax_h3_v2.bat)")
     try:
-        # +1 s of real audio past the last clip: the song node encodes a little lookahead to fill the
-        # 40 Hz audio grid and refuses to pad with silence.
-        wav = mv_h3_mod.song_window_wav(src, plan["song_start"], plan["span_seconds"] + 1.0)
+        wav = mv_h3_mod.song_window_wav(src, plan["song_start"], want)
         master = C.upload_audio(wav, _audio_name("mvsong", wav))
         refs = []
         for rid in ref_ids:
@@ -1088,9 +1079,63 @@ def video_h3_chain(p: dict):
         graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
+        resolved["pad_seconds"] = round(pad, 3)
+        resolved.update(meta or {})
         return graph, resolved
 
     return _h3_dispatch(p, lambda q: _build(q))
+
+
+@app.post("/api/video/h3_chain")
+def video_h3_chain(p: dict):
+    """MiniMax H3 SCENE CHAIN: N clips over one window of a song, the song locked in every clip's
+    audio latent and each clip continuing the previous one (docs/MV_H3_REBUILD_PLAN.md).
+    p: {audio_id (library song), ref_ids: [library stills, <Picture 1..9> in prompt order; EMPTY =
+        environment-only B-roll on the FL2VA weights with no references], clips: [{prompt, seed?}],
+        song_start (seconds into the song where clip 1 begins), frames? (362) or seconds?,
+        width?/height? or megapixels? (0.5 = 960x544), context_frames? (39), seed?, turbo?,
+        sampler?/scheduler?/steps?/lora?/lora_strength?/shift_video?/shift_audio?, attention?,
+        ref_image_size?, crf?, mode? ("finish" [default] | "hunt"), drafts? (hunt only)}.
+    The master handed to the graph is the song CUT to the chain window (stereo WAV, silence-padded
+    past the end of the file), because the streamer muxes its master from sample 0; the recorded
+    plan carries the real song times."""
+    return _h3_chain(p)
+
+
+@app.post("/api/mv/render_scene")
+def mv_render_scene(p: dict):
+    """Render ONE scene of a saved script as a chain (the normal path from writer to picture).
+    p: {script (path under .mvwork/mv_scripts, or the script object), scene (index),
+        ref_ids: [face still, body still] (ignored for environment-only scenes, which render with
+        no references), plus any /api/video/h3_chain knob: seed, turbo, mode, drafts, megapixels,
+        attention, steps ...}. The clips, prompts, frames and song_start come from the script."""
+    sc_src = p.get("script")
+    if isinstance(sc_src, str):
+        base = os.path.realpath(os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_scripts"))
+        path = os.path.realpath(sc_src if os.path.isabs(sc_src) else os.path.join(base, sc_src))
+        if not path.startswith(base + os.sep) or not os.path.exists(path):
+            raise HTTPException(400, "script must be a saved script under .mvwork/mv_scripts")
+        with open(path) as f:
+            script = json.load(f)
+        script_name = os.path.basename(path)
+    elif isinstance(sc_src, dict):
+        script, script_name = sc_src, "(inline)"
+    else:
+        raise HTTPException(400, "script (path or object) is required")
+    try:
+        scene = script["scenes"][int(p.get("scene", -1))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    env_only = scene.get("performance") == "no_singing_environment"
+    q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids")}
+    q.update({"audio_id": script["audio_id"], "ref_ids": [] if env_only else (p.get("ref_ids") or []),
+              "clips": [{"prompt": c["prompt"]} for c in scene["clips"]],
+              "song_start": scene["start"], "frames": scene["plan"]["frames"],
+              "context_frames": scene["plan"]["context_frames"]})
+    if not env_only and not q["ref_ids"]:
+        raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
+    return _h3_chain(q, meta={"script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
+                              "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance")})
 
 
 @app.post("/api/mv/write")
