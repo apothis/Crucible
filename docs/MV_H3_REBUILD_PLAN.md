@@ -370,3 +370,8 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   must agree on EVERY visible detail (jewellery, sleeves, hair parting); a disagreement is a coin
   flip per clip and the seam exposes it. Fix = regenerate one ref so both match, and never name
   in the prompt a detail that only one reference shows.
+- USER VERDICT (watching, 2026-10-27): **"The mouth looked fine"** on A1 - full-mix lock, turbo
+  8-step v1.1, 960x544. G1's core question is answered in the affirmative for the full-mix lock;
+  A2 (vocal-stem lock) is now a refinement test, not a gate.
+- A1b fired 2026-10-27 ~20:40: identical prompts/seed, picture 2 regenerated WITH the choker so
+  both refs agree (library still "Never Mine - Selene body ref v2 (choker)"). Variable = refs only.
