@@ -363,3 +363,10 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
 - Lip-sync: not judged from stills - user watches
   `.mvwork/g1_refs/nevermine_G1_A1_fullmix-lock_turbo8_seed20261027.mp4`.
 - Unverified: whether comfy-kitchen INT8 attention engaged (launcher writes no log).
+- USER VERDICTS (watching, 2026-10-27): (a) the push-in was NOT too extreme - defect (1) above is
+  withdrawn, a still-based misread; (b) a black choker APPEARS on her neck at the seam. Picture 1
+  (face ref) wears the choker, picture 2 (body ref) does not; clip 1 followed picture 2, clip 2
+  followed picture 1 and the retention line that named it. RULE: the references for one subject
+  must agree on EVERY visible detail (jewellery, sleeves, hair parting); a disagreement is a coin
+  flip per clip and the seam exposes it. Fix = regenerate one ref so both match, and never name
+  in the prompt a detail that only one reference shows.
