@@ -27,6 +27,7 @@ from . import music3 as music3_mod
 from . import yue2 as yue2_mod
 from . import video as video_mod
 from . import musicvideo as musicvideo_mod
+from . import mv_h3 as mv_h3_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1024,6 +1025,68 @@ def video_h3_i2v(p: dict):
         if overrender:
             resolved["overrender"] = overrender
             resolved["target_frames"] = target_frames
+        return graph, resolved
+
+    return _h3_dispatch(p, lambda q: _build(q))
+
+
+@app.post("/api/video/h3_chain")
+def video_h3_chain(p: dict):
+    """MiniMax H3 SCENE CHAIN: N Ref2VA clips over one window of a song, the song locked in every
+    clip's audio latent and each clip continuing the previous one (docs/MV_H3_REBUILD_PLAN.md).
+    p: {audio_id (library song), ref_ids: [library stills, <Picture 1..9> in prompt order],
+        clips: [{prompt, seed?}, ...], song_start (seconds into the song where clip 1 begins),
+        frames? (362) or seconds?, width?/height? or megapixels? (0.5 = 960x544),
+        context_frames? (39), seed?, turbo? (CHAIN_TURBO), sampler?/scheduler?/steps?/lora?/
+        lora_strength?/shift_video?/shift_audio?, attention?, ref_image_size?, crf?,
+        mode? ("finish" [default] | "hunt"), drafts? (hunt only)}.
+    The master handed to the graph is the song CUT to the chain window (stereo WAV), because the
+    streamer muxes its master from sample 0; the recorded plan carries the real song times."""
+    clips = p.get("clips") or []
+    if not clips or any(not (c.get("prompt") or "").strip() for c in clips):
+        raise HTTPException(400, "clips: a non-empty list of {prompt} is required")
+    if not p.get("audio_id"):
+        raise HTTPException(400, "audio_id (the song) is required")
+    ref_ids = [r for r in (p.get("ref_ids") or []) if r]
+    if not ref_ids:
+        raise HTTPException(400, "ref_ids: at least one reference still is required")
+    src = _lib_source_path(p["audio_id"])
+    if not src:
+        raise HTTPException(400, "audio_id must reference a library track")
+    fps = int(p.get("fps", video_mod.H3_FPS))
+    frames = video_mod._h3_frames(p.get("frames") or round(float(p.get("seconds", mv_h3_mod.CHAIN_FRAMES / fps)) * fps))
+    try:
+        plan = mv_h3_mod.chain_plan(float(p.get("song_start") or 0.0), len(clips), frames,
+                                    int(p.get("context_frames") or mv_h3_mod.CHAIN_CONTEXT), fps)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    song_len = musicvideo_mod.audio_duration(src)
+    if song_len and plan["song_end"] > song_len + 0.05:
+        raise HTTPException(400, f"the chain runs to {plan['song_end']}s but the song is {song_len:.2f}s long")
+    rec = mv_h3_mod.chain_recipe(p)
+    if rec["lora"] and rec["lora"] not in set(C.models("loras")):
+        raise HTTPException(400, f"LoRA {rec['lora']} is not on the box (run download_minimax_h3_v2.bat)")
+    try:
+        # +1 s of real audio past the last clip: the song node encodes a little lookahead to fill the
+        # 40 Hz audio grid and refuses to pad with silence.
+        wav = mv_h3_mod.song_window_wav(src, plan["song_start"], plan["span_seconds"] + 1.0)
+        master = C.upload_audio(wav, _audio_name("mvsong", wav))
+        refs = []
+        for rid in ref_ids:
+            path = _lib_image_path(rid)
+            if not path:
+                raise HTTPException(400, f"ref_ids: {rid} is not a still in the library")
+            with open(path, "rb") as f:
+                refs.append(C.upload_audio(f.read(), os.path.basename(path)))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"upload failed: {e}")
+
+    def _build(q):
+        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master)
+        resolved["audio_id"] = os.path.basename(p["audio_id"])
+        resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         return graph, resolved
 
     return _h3_dispatch(p, lambda q: _build(q))
