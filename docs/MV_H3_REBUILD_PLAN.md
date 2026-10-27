@@ -375,3 +375,17 @@ against the two refs). Floor check: the chain's own decoded audio vs the master 
   A2 (vocal-stem lock) is now a refinement test, not a gate.
 - A1b fired 2026-10-27 ~20:40: identical prompts/seed, picture 2 regenerated WITH the choker so
   both refs agree (library still "Never Mine - Selene body ref v2 (choker)"). Variable = refs only.
+
+### 8.2 G1 A1b result (2026-10-27 20:48, same prompts/seed, refs now agree on the choker) [V]
+- 28.542 s, lock envelope r = 0.998 @ 0 lag, 902 s wall for the pair.
+- Choker present in every sampled frame from 0.5 s to 27.5 s: the seam disagreement is gone.
+  The reference-consistency rule holds.
+- With IDENTICAL text, clip 2 this time KEPT the close-up after the seam (16.6 / 19.5 s) instead
+  of resetting to a medium shot as A1 did. So the A1 framing reset was not caused by the prompt
+  text alone; it is per-render variance between clips (refs changed, seed held). The sequencing
+  rule (write clip N+1 from clip N's real last frame) still stands as the way to make the text
+  agree with the prefix, but it is not a guaranteed fix. Marked [H] for the cause.
+- Unprompted motion at the end: a hand rises to her face (~27 s). Minor; "nothing else moves"
+  does not fully pin the hands.
+- Lip-sync and seam feel: user to watch
+  `.mvwork/g1_refs/nevermine_G1_A1b_fullmix-lock_turbo8_refsmatch_seed20261027.mp4`.
