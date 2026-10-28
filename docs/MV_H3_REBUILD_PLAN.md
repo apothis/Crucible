@@ -1488,3 +1488,5 @@ has real footage, 3 built in parallel as the fallback.
   script: `..._rw19_20261028_205405.json`. Opening-still prompt v3 (scene state override + new
   poses): `.mvwork/transfer/ssbs/dry/scene19_opening_still_prompt_v3.txt`. The user regenerates
   the still; then render scene 19 again with it. Scene 3 (ENV13) awaits the user's verdict.
+- VERDICT on ENV13 [U 23:25]: "Scene 3 passes." Second people scene passed on the i2v lane with
+  an opening still (one hauler, truck right). Scene 19 awaits the regenerated still (prompt v3).
