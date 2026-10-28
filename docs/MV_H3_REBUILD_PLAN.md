@@ -1314,3 +1314,15 @@ has real footage, 3 built in parallel as the fallback.
 - Prior from our own history: the living-cover I2V/FLF lane erred SLOW and idle (s.12). If this
   plate runs at real speed the env lane switches to i2v by default for environment-only scenes
   (opt-out), and the ref2va env path stays for keyframed plates.
+
+### 20.19 ENV9 image-to-video plate filed (2026-10-28 20:00) [V floor + proxy + graph; user to watch]
+- Job e531385c; the running graph was read off the box queue: node 100 `MiniMaxH3ImageToVideo`
+  with `first_frame` = the harbour still, fl2va weights + fl2v turbo LoRA, no ReferenceToVideo
+  node, song node present, prompt opening with the author's exact line. Execution 381 s.
+- Floor check r 0.998. Filed `ssbs_env9_harbour_768p_truckright_i2v_firstframe_fl2va_seed20261027.mp4`,
+  frames `frames/ENV9_sheet.png`.
+- Motion proxy 1.45 vs ENV2 2.19 (ENV8 2.57, keyframed plates ~0.5): the first drop of the day on
+  a free-running plate, a third less change per frame, well above the frozen regime. The sheet:
+  the clip keeps the still's own look (the window lamps, the choppier water of the photograph)
+  since frame 0 IS the still; the truck right is gentle and continuous; no colour drift at 1 s
+  spacing. Pace is not readable from stills; user to watch against ENV2.
