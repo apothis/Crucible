@@ -6,6 +6,10 @@ Built from a read-only inventory of the repo and box plus the upstream research 
 verified by us (source read, /object_info, measured), **[P]** upstream primary source, **[C]**
 community report, **[M]** a number the cited author measured, **[U]** unverified, **[H]** hypothesis.
 
+> The general rulebook distilled from this log is `docs/MV_H3_TECHNIQUES.md` (every rule with
+> provenance, no song-specific content). This file stays the per-video record of what was fired
+> and what it looked like.
+
 ## 0. Brief (user, 2026-10-27)
 
 - Start from fresh. Rip out the existing MV Studio and everything under it.
