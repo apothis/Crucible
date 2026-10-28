@@ -1403,3 +1403,21 @@ has real footage, 3 built in parallel as the fallback.
      No new still; costs 17 frames per clip and makes assembly aware of per-scene trims.
   C. Reference lane (`lane: "ref2va"`) for env scenes with people: present from frame 0, but
      the timelapse prior for outdoor water/sky; untested in an enclosed room.
+
+### 20.24 Fix A built + the unison rule (2026-10-28 21:50; nothing fired)
+- User picked the opening still, and flagged that the three men "all do the same thing at the
+  same time and look unnatural": the env one-motion rule leaked onto people. Writer changes:
+  pass 1 `others` = each person's own business, never unison; `opening_still` must contain the
+  listed people already in their opening poses (it IS frame 0 on the i2v lane); pass 2 people
+  bullet rewritten (staggered, independent, idle motion, start pose matches the opening still,
+  group rhythm in seconds, no choreography). `opening_still_prompt()` composes the frame-0
+  prompt mechanically for scripts written before the rule (location still prompt minus "no
+  people" plus the listed people, unposed, different poses, faces away).
+- Routes: `POST /api/mv/opening_still {script, scene}` -> the prompt (+ source scene/composed);
+  `POST /api/mv/scene_still` (multipart file, script, scene) files the generated picture as an
+  opening still (kind opening_still, no location row); `render_scene` accepts `first_frame_id`
+  (i2v lane only, a library still) which replaces the location still as frame 0; dry_run shows
+  `first_frame_from` request|location.
+- Scene 4 clip rewritten under the new people rule (pass 2 only, `rewrite_scene` with an empty
+  set); the opening-still prompt for the tavern is the user deliverable. Render waits for the
+  still.

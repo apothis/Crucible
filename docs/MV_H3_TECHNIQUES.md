@@ -283,8 +283,18 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   on the reference lane it was not sufficient).
   Caveat [U/M 2026-10-28, ENV11]: the lane continues the still's PIXELS, so anything the still
   does not contain (people listed in `others`) ghosts in over ~0.4 s around the 0.6-1.0 s mark.
-  Prose people do render with their counted action. Fix options in plan s.20.23 (a per-scene
-  opening still that includes them; or a pre-roll trimmed at assembly). VALIDATED on a second environment scene
+  Prose people do render with their counted action. FIX (built 2026-10-28, user's pick): a
+  per-scene OPENING STILL that already contains the people, used as frame 0 in place of the
+  location still (`POST /api/mv/opening_still` gives the prompt, the writer now puts the people
+  into `opening_still` itself; `POST /api/mv/scene_still` files the picture; `render_scene`
+  takes it as `first_frame_id`). The location still stays person-free for reuse.
+- **People never move in unison.** [U 2026-10-28, ENV11: "they all do the same thing at the
+  same time and look unnatural"] The environment one-motion rule was applied to three men
+  ("one slow movement together") and rendered a synchronised puppet show. People are not the
+  setting's one moving element: each has their own ordinary business, staggered in time, with
+  the small continuous idle movement of living people; the clip states what each is doing at the
+  start (matching the opening still) and the group's rhythm in seconds without choreographing
+  them together. Rule in both writer passes; not yet rendered. VALIDATED on a second environment scene
   [U 2026-10-28 20:40: scene 8, 9.4 s, large-amplitude push, three swells and spray, older
   multi-motion text: "speed is fine"]. Two scenes, two cameras, two clip lengths, both at real
   speed on the lane that timelapsed nine times on the reference side.

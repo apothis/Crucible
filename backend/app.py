@@ -1199,6 +1199,15 @@ def mv_render_scene(p: dict):
         raise HTTPException(400, "lane i2v has no reference-video slot")
     if lane == "i2v" and keyframes:
         raise HTTPException(400, "keyframes belong to the reference lane; lane i2v pins the first frame by itself")
+    # first_frame_id: a library still that REPLACES the location still as frame 0 on the i2v lane
+    # (a scene opening still that already contains the scene's people; s.20.23 fix A). The
+    # location still stays person-free for reuse; this one is per scene.
+    first_frame = (p.get("first_frame_id") or "").strip() or None
+    if first_frame and lane != "i2v":
+        raise HTTPException(400, "first_frame_id is the image-to-video lane's frame 0; this scene renders on the reference lane")
+    if first_frame and not _lib_image_path(first_frame):
+        raise HTTPException(400, f"first_frame_id {first_frame} is not a still in the library")
+    first_frame = first_frame or (loc_ref if lane == "i2v" else None)
     prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")),
                                           lane=lane if lane == "i2v" else None)
     if keyframes and keyframes not in ("still_first_last", "still_first", "still_last"):
@@ -1225,13 +1234,14 @@ def mv_render_scene(p: dict):
                 "ref_ids": [] if lane == "i2v" else singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
                 "clips": len(prompts), "keyframes": keyframes, "free_av": free_av, "clock_fps": clock_fps,
-                "lane": lane, "first_frame_id": os.path.basename(str(loc_ref)) if lane == "i2v" else None,
+                "lane": lane, "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
+                "first_frame_from": (None if not first_frame else ("request" if first_frame != loc_ref else "location")),
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run")}
     chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
     q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs, "lane": lane,
-              "first_frame_id": loc_ref if lane == "i2v" else None,
+              "first_frame_id": first_frame,
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
@@ -1240,7 +1250,8 @@ def mv_render_scene(p: dict):
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                               "location_ref_from": ref_from, "keyframes": keyframes,
-                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane})
+                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane,
+                              "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None})
 
 
 def _mv_load_script(sc_src):
@@ -1255,6 +1266,41 @@ def _mv_load_script(sc_src):
     if isinstance(sc_src, dict):
         return sc_src, "(inline)"
     raise HTTPException(400, "script (path or object) is required")
+
+
+@app.post("/api/mv/opening_still")
+def mv_opening_still(p: dict):
+    """The prompt for a scene's opening still (frame 0 on the image-to-video lane). p: {script,
+    scene (0-based)}. Returns {prompt, source ("scene" = the writer's own opening_still, "composed" =
+    location still prompt + the scene's people, for scripts written before the rule), others,
+    location, location_still_prompt}. The user generates the still and files it with
+    POST /api/mv/scene_still; render_scene then takes it as first_frame_id."""
+    script, name = _mv_load_script(p.get("script"))
+    try:
+        scene = script["scenes"][int(p.get("scene", -1))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    loc = mv_writer_mod.location_of(script, scene)
+    row = mv_locations_mod.get(mv_locations_mod.load(LIBRARY), loc["id"]) if loc else None
+    prompt, source = mv_writer_mod.opening_still_prompt(script, scene, location_row=row)
+    return {"script": name, "scene": scene["index"], "title": scene.get("title"), "performance": scene.get("performance"),
+            "others": scene.get("others"), "location": loc["id"] if loc else None,
+            "location_still_prompt": (row or loc or {}).get("still_prompt"), "prompt": prompt, "source": source}
+
+
+@app.post("/api/mv/scene_still")
+async def mv_scene_still(file: UploadFile = File(...), script: str = Form(...), scene: int = Form(...), label: str = Form(None)):
+    """File a scene's OPENING still (generated from /api/mv/opening_still's prompt) in the library;
+    returns its still_id for render_scene's first_frame_id. No location row is touched."""
+    scr, name = _mv_load_script(script)
+    try:
+        sc = scr["scenes"][int(scene)]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    data = await file.read()
+    filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - scene {sc['index']} opening still",
+                                 kind="opening_still", extra={"scene": sc["index"], "script": name})
+    return {"still": filed, "scene": sc["index"], "title": sc.get("title")}
 
 
 # ----------------------------------------------------------------------------- MV location library
