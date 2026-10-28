@@ -312,8 +312,8 @@ def on_complete_media(pid):
                         continue
                     fn = it["filename"]
                     ext = os.path.splitext(fn)[1].lower()
-                    if ext not in MEDIA_EXTS:
-                        continue
+                    if ext not in MEDIA_EXTS or it.get("type") == "input":
+                        continue      # a LoadVideo/LoadImage node echoes its INPUT file into history; never file that
                     data = C.view_bytes(fn, it.get("subfolder", ""), it.get("type", "output"))
                     path = os.path.join(LIBRARY, f"{pid}{ext}")
                     with open(path, "wb") as f:
@@ -480,8 +480,8 @@ def reconcile_video_job(pid, mode, params):
                 if not isinstance(it, dict) or "filename" not in it:
                     continue
                 ext = os.path.splitext(it["filename"])[1].lower()
-                if ext not in MEDIA_EXTS:
-                    continue
+                if ext not in MEDIA_EXTS or it.get("type") == "input":
+                    continue      # input echoes (LoadVideo/LoadImage) are not results
                 path = os.path.join(LIBRARY, f"{pid}{ext}")
                 if not os.path.exists(path):
                     data = C.view_bytes(it["filename"], it.get("subfolder", ""), it.get("type", "output"))
