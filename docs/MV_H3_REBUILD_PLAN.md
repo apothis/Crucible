@@ -1030,3 +1030,25 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   for ref2v; if ENV4 is still fast and ENV5 is right, the LoRA (or 8 steps) is the cause and
   environment plates render on base; if both are still fast, pace is a content prior and the
   remaining levers are `still_last` keyframes, the Motion-Speed slider LoRA, or a box-side retime.
+
+### 20.10 Shift-12 and base-recipe plates (2026-10-28 16:09) [V floor check + proxy; user to watch]
+
+| take | change vs env2 (turbo, shift 6, free plate) | wall | floor r | proxy mean (per second) |
+|------|---------------------------------------------|------|---------|-------------------------|
+| ENV4 | shift_video 12 only | 5 min 02 s | 0.998 | 2.33 (2.47 2.35 2.39 2.28 2.26) |
+| ENV5 | base: no LoRA, 20 steps, shift 12 | 10 min 58 s | 0.998 | 2.93 (2.92 2.74 3.07 2.96 2.95) |
+| env2 | (reference) | 6 min 13 s | 0.998 | 2.19 (2.46 2.19 2.15 2.11 2.11) |
+
+- By the proxy, the shift changes nothing visible and the base recipe moves MORE, not less. That
+  is the direction the research predicted (distillation damps motion; nobody reports turbo as
+  faster). Pending the user's eyes, the LoRA hypothesis is refuted and the shift is not a lever
+  for pace. Filed: `ssbs_env4_harbour_768p_truckright_turbo_shift12_seed20261027.mp4`,
+  `ssbs_env5_harbour_768p_truckright_base_recipe_noLoRA_20steps_seed20261027.mp4`.
+- Base costs 1.8x turbo wall time here (11 vs 6 min for 141 f).
+- If the user confirms: pace on an open-water environment-only plate is a CONTENT PRIOR of the
+  model (open water + no person = about 3x fast) that neither prose, shift, nor the LoRA moves.
+  Remaining levers, in order: (1) `keyframes: still_last` (free start, settle onto the still:
+  between "free" and "too static"); (2) the Motion-Speed-MMH3 slider LoRA at a negative weight
+  (Civitai 2985458, via VPN); (3) a box-side retime (RIFE/Cadence-Retime) of a free plate at
+  ~3x, replacing ffmpeg minterpolate; (4) writer rule: open-water B-roll is shot with her, or
+  the environment-only shot moves to an enclosed place.
