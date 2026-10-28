@@ -1055,3 +1055,18 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
 - **User (16:15): "Both are still sped up."** LoRA and shift recorded as not pace levers
   (techniques s.8). Four variables exhausted on the one scene: prose, first+last keyframes,
   shift, LoRA. Next on the user's instruction: the last-frame-only keyframe plate (`still_last`).
+
+### 20.11 Last-frame-only keyframe plate (2026-10-28 16:30) [V floor check + proxy; user to watch]
+
+- ENV6 = env2 + `keyframes: still_last` (one variable). 5 min 00 s, floor r 0.998. Filed as
+  `ssbs_env6_harbour_768p_truckright_keyframes_still_last_seed20261027.mp4`.
+- Motion proxy 0.49, flat (0.46-0.54 per second): the SAME regime as the first+last plate (0.53),
+  not the free plate (2.19). Anchoring only the end frame pins the whole clip as hard as anchoring
+  both; there is no free-running start by the proxy. [M] Pending the user's eyes: expected to read
+  like ENV3 (real speed, too static, no truck).
+- Standing picture of the harbour plate after seven renders: free = ~3x fast whatever the prose,
+  shift or LoRA; any same-still guide = near-static. Nothing in between from the chain's own
+  controls. Remaining: a DIFFERENT end keyframe (a GPT still with the boats displaced, so the
+  guide forces a known small motion over the clip), the Motion-Speed slider LoRA, a box-side
+  retime of the free plate, or the writer rule (open water with her, environment-only in enclosed
+  places).
