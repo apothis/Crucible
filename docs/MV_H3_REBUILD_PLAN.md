@@ -992,3 +992,24 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   signature ("start slow, speed up, settle") is a known H3 trait (Cadence-Retime exists for it).
   No node exposes fps or motion speed; the prompt guide has no pace vocabulary beyond the camera.
   New one-variable test E: turbo with shift_video 12 (publisher's value), ~6 min, ahead of test D.
+
+### 20.8 Keyframe plate and her-at-the-quay rendered (2026-10-28 15:36) [V floor check + proxy; user to watch]
+
+| take | change vs the env2 plate | frames | wall | floor r | proxy mean (per second) | filed as |
+|------|--------------------------|--------|------|---------|-------------------------|----------|
+| ENV3 | `keyframes: still_first_last` only (same seed, prose, still) | 141 | 5 min 21 s | 0.998 | 0.53, flat 0.51-0.64 then 0.22 at the tail (env2: 2.19, flat 2.1-2.5) | `ssbs_env3_harbour_768p_truckright_keyframes_still_first_last_seed20261027.mp4` |
+| HERQUAY | script scene 16 "At the end of the quay" (sing_away, wide, pull out large/slow, her 2 refs + still) | 175 | 7 min 43 s | 0.998 | 3.1 rising to 6.5 across the clip | `ssbs_herquay_harbour_768p_pullout_with_her_seed20261027.mp4` |
+
+- ENV3 stills: composition identical across all six 1 s frames (the anchors pinned it, camera
+  truck included: no visible truck, as the research predicted for a same-still guide); whitecaps
+  present in every frame. The proxy is a quarter of env2's; whether that is a real-speed swell or
+  a near-frozen plate with texture flicker is the user's call. The tail drop is the settle onto
+  the last anchor (loop-lane behaviour, section 12).
+- HERQUAY stills: she stands at the quay end in three-quarter profile, wardrobe held, bare feet,
+  rain streaks, waves breaking over the harbour mouth, the pull-out visible (a bollard enters the
+  foreground by t=3). A wall lantern not in the still appears on the cottages (an added "state"
+  element). The rising proxy is consistent with the pull-out revealing more frame, not by itself
+  a timelapse signature. Whether the sea runs at real speed around her is the hypothesis-A test
+  and is the user's call.
+- Staged, not fired: `renders/env4_shift12_768p_request.json` (turbo, shift_video 12 = the
+  publisher's REF2V value; one variable) and `renders/env5_base_768p_request.json` (turbo off).
