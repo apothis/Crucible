@@ -8,6 +8,7 @@ import math
 import os
 import random
 import re
+import subprocess
 import shutil
 import sqlite3
 import tempfile
@@ -934,13 +935,15 @@ def _h3_dispatch(p, build, *args):
             except Exception as e:
                 raise HTTPException(500, f"build failed: {e}")
             resolved["hunt_index"] = i
-            out.append(_submit_video(graph, resolved, "videoclip"))
+            out.append(_submit_video(graph, resolved, "videoclip", free=p.get("free")))
         return {"mode": "hunt", "base_seed": base, "drafts": out}
     try:
         graph, resolved = build(p, *args)             # finish: base recipe unless turbo is asked for
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
-    return _submit_video(graph, resolved, "videoclip")
+    # free: None [default] = auto (free the box's models when the model family changes); False =
+    # never (a batch queued behind a running job must not free the box mid-render); True = always.
+    return _submit_video(graph, resolved, "videoclip", free=p.get("free"))
 
 
 @app.post("/api/video/h3_t2v")
@@ -1207,7 +1210,11 @@ def mv_render_scene(p: dict):
         raise HTTPException(400, "first_frame_id is the image-to-video lane's frame 0; this scene renders on the reference lane")
     if first_frame and not _lib_image_path(first_frame):
         raise HTTPException(400, f"first_frame_id {first_frame} is not a still in the library")
-    first_frame = first_frame or (loc_ref if lane == "i2v" else None)
+    first_frame_from = "request" if first_frame else None
+    if not first_frame and lane == "i2v" and scene.get("opening_still_id") and _lib_image_path(scene["opening_still_id"]):
+        first_frame, first_frame_from = scene["opening_still_id"], "scene"      # filed by /api/mv/scene_still
+    if not first_frame and lane == "i2v":
+        first_frame, first_frame_from = loc_ref, "location"
     prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")),
                                           lane=lane if lane == "i2v" else None)
     if keyframes and keyframes not in ("still_first_last", "still_first", "still_last"):
@@ -1235,7 +1242,7 @@ def mv_render_scene(p: dict):
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
                 "clips": len(prompts), "keyframes": keyframes, "free_av": free_av, "clock_fps": clock_fps,
                 "lane": lane, "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
-                "first_frame_from": (None if not first_frame else ("request" if first_frame != loc_ref else "location")),
+                "first_frame_from": first_frame_from,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run")}
@@ -1300,7 +1307,196 @@ async def mv_scene_still(file: UploadFile = File(...), script: str = Form(...), 
     data = await file.read()
     filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - scene {sc['index']} opening still",
                                  kind="opening_still", extra={"scene": sc["index"], "script": name})
-    return {"still": filed, "scene": sc["index"], "title": sc.get("title")}
+    recorded = _mv_record_opening_still(name, sc["index"], filed["still_id"])
+    return {"still": filed, "scene": sc["index"], "title": sc.get("title"), "recorded_in_script": recorded}
+
+
+def _mv_record_opening_still(script_name, idx, still_id):
+    """Write `opening_still_id` on a scene of a SAVED script, so render_scene uses it as frame 0
+    on the image-to-video lane without being told (batch renders depend on this). Inline scripts
+    cannot be recorded. Returns True when written."""
+    if not script_name or script_name == "(inline)":
+        return False
+    path = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_scripts", script_name)
+    if not os.path.exists(path):
+        return False
+    with open(path) as f:
+        scr = json.load(f)
+    try:
+        scr["scenes"][int(idx)]["opening_still_id"] = os.path.basename(str(still_id))
+    except Exception:
+        return False
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(scr, f, indent=1)
+    os.replace(tmp, path)
+    return True
+
+
+@app.post("/api/mv/scene_still/set")
+def mv_scene_still_set(p: dict):
+    """Record an ALREADY-FILED library still as a scene's opening still. p: {script, scene, still_id}."""
+    script, name = _mv_load_script(p.get("script"))
+    if not _lib_image_path(p.get("still_id") or ""):
+        raise HTTPException(400, "still_id must be a still in the library")
+    try:
+        sc = script["scenes"][int(p.get("scene", -1))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    ok = _mv_record_opening_still(name, sc["index"], p["still_id"])
+    if not ok:
+        raise HTTPException(400, "could not record on the saved script (inline script, or file missing)")
+    return {"scene": sc["index"], "title": sc.get("title"), "opening_still_id": os.path.basename(str(p["still_id"]))}
+
+
+@app.post("/api/mv/render_script")
+def mv_render_script(p: dict):
+    """Render EVERY scene of a saved script through render_scene (the normal path: default lanes,
+    each scene's recorded opening still, the location stills from the library), queued on the box
+    one after another. p: {script, ref_ids: [face, body], skip?: [scene indexes], only?: [indexes],
+        existing?: {index: job_id} (scenes already rendered on this text, carried into the manifest
+        for assembly), dry_run?, plus the common render_scene knobs (seed, turbo, width, height,
+        attention, crf ...)}.
+    Scenes are submitted with free=False so the box is never freed under a running job; ComfyUI
+    swaps the fl2va/ref2va weights itself between jobs. Writes a batch manifest under
+    .mvwork/mv_batches/ (scene -> job_id) that /api/mv/assemble reads. Errors on one scene are
+    recorded and the batch goes on."""
+    script, name = _mv_load_script(p.get("script"))
+    skip = {int(x) for x in (p.get("skip") or [])}
+    only = {int(x) for x in (p.get("only") or [])} or None
+    existing = {int(k): v for k, v in (p.get("existing") or {}).items()}
+    common = {k: v for k, v in p.items() if k not in ("script", "scene", "skip", "only", "existing", "dry_run")}
+    dry = bool(p.get("dry_run"))
+    rows = []
+    first_live = True
+    for sc in script["scenes"]:
+        idx = sc["index"]
+        row = {"index": idx, "title": sc.get("title"), "start": sc["start"], "end": sc["end"],
+               "performance": sc.get("performance"), "location": sc.get("location"), "clips": len(sc["clips"])}
+        if idx in existing:
+            row.update({"job_id": existing[idx], "status": "existing"}); rows.append(row); continue
+        if idx in skip or (only is not None and idx not in only):
+            row.update({"job_id": None, "status": "skipped"}); rows.append(row); continue
+        req = dict(common); req.update({"script": name if name != "(inline)" else script, "scene": idx, "dry_run": dry})
+        if not dry:
+            req["free"] = None if first_live else False
+        try:
+            r = mv_render_scene(req)
+        except HTTPException as e:
+            row.update({"job_id": None, "status": "error", "error": e.detail}); rows.append(row); continue
+        except Exception as e:
+            row.update({"job_id": None, "status": "error", "error": str(e)}); rows.append(row); continue
+        if dry:
+            row.update({"job_id": None, "status": "dry", "lane": r.get("lane"), "first_frame_id": r.get("first_frame_id"),
+                        "first_frame_from": r.get("first_frame_from"), "location_ref_id": r.get("location_ref_id"),
+                        "ref_ids": r.get("ref_ids"), "frames": r.get("frames"), "prompt_chars": sum(len(x) for x in r.get("prompts", []))})
+        else:
+            first_live = False
+            row.update({"job_id": r.get("job_id"), "status": "queued"})
+        rows.append(row)
+    manifest = {"script": name, "title": script.get("title"), "audio_id": script.get("audio_id"),
+                "created": time.time(), "dry_run": dry, "common": common, "scenes": rows}
+    out_dir = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_batches")
+    os.makedirs(out_dir, exist_ok=True)
+    base = re.sub(r"\.json$", "", name) if name != "(inline)" else "inline"
+    mpath = os.path.join(out_dir, f"{base}_{'dry' if dry else 'batch'}_{time.strftime('%Y%m%d_%H%M%S')}.json")
+    with open(mpath, "w") as f:
+        json.dump(manifest, f, indent=1)
+    manifest["manifest"] = mpath
+    manifest["counts"] = {k: sum(1 for r in rows if r["status"] == k) for k in ("queued", "dry", "existing", "skipped", "error")}
+    return manifest
+
+
+@app.post("/api/mv/assemble")
+def mv_assemble(p: dict):
+    """Cut a whole song from rendered scenes. p: {batch (manifest path from render_script, under
+    .mvwork/mv_batches) or script + jobs {index: job_id}, crf? (18), fade? (seconds of audio fade
+    at the end, 1.5), name?}. Each scene's render is trimmed from its first frame to the scene's
+    window (end - start; chains render past it on the 17k+5 grid), scenes are concatenated in
+    script order, and the song is laid under from the first scene's start. A missing render is a
+    400 that lists the scenes still to come, unless partial: true, which cuts the scenes that exist
+    (each keeping its own muxed song window, so sync holds across gaps) for a progress check.
+    Output under .mvwork/mv_assembly/<stamp>/."""
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    jobs = {}
+    if p.get("batch"):
+        base = os.path.realpath(os.path.join(work, "mv_batches"))
+        bpath = os.path.realpath(p["batch"] if os.path.isabs(p["batch"]) else os.path.join(base, p["batch"]))
+        if not bpath.startswith(base + os.sep) or not os.path.exists(bpath):
+            raise HTTPException(400, "batch must be a manifest under .mvwork/mv_batches")
+        with open(bpath) as f:
+            man = json.load(f)
+        script, name = _mv_load_script(man["script"])
+        for r in man["scenes"]:
+            if r.get("job_id"):
+                jobs[int(r["index"])] = r["job_id"]
+    else:
+        script, name = _mv_load_script(p.get("script"))
+        jobs = {int(k): v for k, v in (p.get("jobs") or {}).items()}
+    for k, v in (p.get("jobs") or {}).items():       # explicit overrides win
+        jobs[int(k)] = v
+    src = _lib_source_path(script["audio_id"])
+    if not src:
+        raise HTTPException(400, "the script's song is not in the library")
+    missing, parts = [], []
+    for sc in script["scenes"]:
+        j = jobs.get(sc["index"])
+        path = os.path.join(LIBRARY, f"{j}.mp4") if j else None
+        if not j or not os.path.exists(path) or os.path.getsize(path) == 0:
+            missing.append({"index": sc["index"], "title": sc.get("title"), "job_id": j})
+        else:
+            parts.append((sc, path))
+    partial = bool(p.get("partial"))
+    if missing and not partial:
+        raise HTTPException(400, {"missing": missing, "have": len(parts), "of": len(script["scenes"])})
+    if not parts:
+        raise HTTPException(400, "no rendered scene to assemble yet")
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    out_dir = os.path.join(work, "mv_assembly", stamp)
+    os.makedirs(out_dir, exist_ok=True)
+    crf = int(p.get("crf") or 18)
+    w, h = int(p.get("width") or 1344), int(p.get("height") or 768)
+    listing = []
+    for sc, path in parts:
+        dur = float(sc["end"]) - float(sc["start"])
+        seg = os.path.join(out_dir, f"scene_{sc['index']:02d}.mp4")
+        audio = ["-c:a", "aac", "-b:a", "320k"] if partial else ["-an"]
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-t", f"{dur:.3f}", *audio,
+               "-vf", f"scale={w}:{h}:flags=lanczos,fps=24,format=yuv420p", "-c:v", "libx264", "-preset", "medium",
+               "-crf", str(crf), seg]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise HTTPException(500, f"trim failed on scene {sc['index']}: {r.stderr[-400:]}")
+        listing.append(seg)
+    lst = os.path.join(out_dir, "concat.txt")
+    with open(lst, "w") as f:
+        for seg in listing:
+            f.write(f"file '{seg}'\n")
+    video = os.path.join(out_dir, "video_only.mp4")
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", video],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise HTTPException(500, f"concat failed: {r.stderr[-400:]}")
+    total = sum(float(sc["end"]) - float(sc["start"]) for sc, _ in parts)
+    start = float(script["scenes"][0]["start"])
+    if partial:
+        slug = re.sub(r"[^a-z0-9]+", "_", (script.get("title") or "cut").lower()).strip("_")
+        out = os.path.join(out_dir, f"{p.get('name') or slug + '_partial'}.mp4")
+        os.replace(video, out)
+        return {"output": out, "seconds": round(total, 3), "scenes": len(parts), "partial": True,
+                "missing": [m["index"] for m in missing], "dir": out_dir, "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+    fade = float(p.get("fade") if p.get("fade") is not None else 1.5)
+    slug = re.sub(r"[^a-z0-9]+", "_", (script.get("title") or "cut").lower()).strip("_")
+    out = os.path.join(out_dir, f"{p.get('name') or slug + '_cut'}.mp4")
+    af = f"afade=t=out:st={max(0.0, total - fade):.3f}:d={fade:.3f}" if fade > 0 else "anull"
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", video, "-ss", f"{start:.3f}", "-i", src,
+                        "-t", f"{total:.3f}", "-map", "0:v:0", "-map", "1:a:0", "-af", af,
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart", out],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise HTTPException(500, f"mux failed: {r.stderr[-400:]}")
+    return {"output": out, "seconds": round(total, 3), "scenes": len(parts), "song_start": start, "dir": out_dir,
+            "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
 
 
 # ----------------------------------------------------------------------------- MV location library

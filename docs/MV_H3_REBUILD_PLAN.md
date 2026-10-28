@@ -1536,3 +1536,31 @@ has real footage, 3 built in parallel as the fallback.
   4, 19), her face + body. Sized at ~6 h of box time for 25 scenes / 30 clips at 768p turbo
   (s.20.28 table); three scenes already rendered on the final text. What does not exist yet: a
   whole-script batch runner and the assembly builder (both Mac-side, no GPU).
+
+### 20.30 Whole-script batch + assembler built; the second song queued overnight (2026-10-28 23:20)
+- `POST /api/mv/render_script {script, ref_ids, skip?, only?, existing?, dry_run?, knobs}`: every
+  scene through `render_scene` (default lanes, each scene's recorded `opening_still_id`, library
+  location stills), submitted with `free=False` after the first so the box is never freed under a
+  running job (ComfyUI swaps fl2va/ref2va itself). Writes a manifest under `.mvwork/mv_batches/`
+  (scene -> job_id; `existing` scenes carried in). `_h3_dispatch` now honours `free` (None auto,
+  False never, True always).
+- `POST /api/mv/scene_still` now records `opening_still_id` on the scene in the saved script;
+  `POST /api/mv/scene_still/set` records an already-filed still; `render_scene` on the i2v lane
+  takes request > scene record > location still as frame 0 (`first_frame_from`).
+- `POST /api/mv/assemble {batch | script+jobs, partial?, crf?, fade?}`: each scene's render
+  trimmed from frame 0 to its window (end - start), re-encoded 1344x768 24 fps x264, concat in
+  script order, the song laid under from scene 0's start with a 1.5 s fade at the end. `partial`
+  cuts what exists with each scene's own muxed song window (progress check). VERIFIED partial on
+  the three finished scenes: 17.93 s vs 17.9 expected, 1344x768 24 fps. The full path (song mux)
+  runs in the morning.
+- Whole-script dry run: 22 dry + 3 existing, 0 errors; lanes as designed (env-only -> i2v with
+  the location still or the scene's opening still; her scenes -> ref2va with three pictures).
+- QUEUED 23:19: 22 jobs, 0 errors, box queue 1 running + 21 pending; scene 0 (three clips, 362 f
+  each, ref2va) first. Manifest:
+  `.mvwork/mv_batches/..._batch_20261028_231*.json` (path in `renders/batch_manifest_path.txt`).
+  Estimate ~6 h. Watcher `renders/watch_batch.sh` logs to `renders/batch_watch.log` every 10 min;
+  `renders/batch_status.sh` prints the per-scene table any time. Morning: `batch_status.sh`, then
+  `POST /api/mv/assemble {"batch": <manifest>}`; a scene that failed gets re-queued with
+  `render_script {only: [idx]}` and its job id patched into the assemble call's `jobs`.
+- The backend (pid on :8000) must stay up overnight: it polls the box and files each finished
+  render into the library. No backend restarts until the batch is done.
