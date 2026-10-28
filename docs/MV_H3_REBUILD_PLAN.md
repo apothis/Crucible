@@ -632,3 +632,27 @@ anchors, never metric distances; static stays an option, not the default.
   hold in retention ("the laced corset stays visible throughout"). Frames:
   `.mvwork/g1_refs/G6_frames/dense/{V1,V2}_dense_sheet.png`. Section 16's "holds the push"
   verdict is withdrawn; the grammar bounded the END framing but via a cut.
+
+## 17. G6 V3 and G7 768p results (2026-10-28 01:50) [V stills; user to watch]
+Same chair half, seed 20261027, turbo, face + body + parlour still. 1 s frames in
+`.mvwork/g1_refs/G6_frames/dense/{V3,P768}_dense_sheet.png`.
+- **V3** (544p; one framing, "pushes in with small amplitude at slow speed toward her face
+  throughout the take, one continuous shot with no cut and no dissolve", lamp/window/shoulders
+  "stay in frame to the end", corset hold): a GENUINE continuous push, no ghost, no cut; corset
+  held through 8 s; lamp and window in frame to 8 s. Then it keeps going: lamp out of frame by
+  ~11 s, tight close-up by 13-14 s. So the one-framing wording removed the dissolve and the
+  wardrobe drift, but the move is unbounded again (same extent as G4). "Small amplitude" and
+  "stay in frame to the end" did not stop it at 544p. 8 min.
+- **G7 768p** (1344x768; the V1 wording that dissolved at 544p): a gentle continuous push that
+  STOPS - medium shot to a slightly tighter medium shot over 15 s, lamp, candle and window in
+  frame throughout, corset present throughout, no dissolve, no wardrobe drift at 1 s spacing.
+  Best chair take so far by stills. 23 min on the box (2.7x the 544p time), fits in memory with
+  three pictures and the song lock. [H, one sample] the turbo LoRA is the 768p variant and the
+  grammar is obeyed at its trained size; at 544p the same words degrade into a cut. Seed variance
+  cannot be excluded from one render.
+- Timing for a full video at 768p: 24 single clips x ~23 min + 2 chains ~ 10-11 h.
+- Recommendation: judge performance takes at 768p from now on (it is the delivery size anyway);
+  544p only for throwaway checks. Next test when awake: V3 wording at 768p (continuous + bounded?)
+  and a second seed of G7 (variance). Not fired.
+- Backend restarted 01:50 on the collector fix (type=input echoes skipped) and the writer's
+  one-framing camera rules.
