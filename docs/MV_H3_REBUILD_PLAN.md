@@ -920,3 +920,15 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
 - Dry run of the rewritten scene: same still (32de3cf9, library), same refs, 141 f, 1 clip, prose
   differs. Gate passed; fired 14:44:20 on the user's "go ahead and fire when ready": seed
   20261027, turbo, 1344x768, ONE variable (the clip prose). `.mvwork/transfer/ssbs/renders/env2_*`.
+
+### 20.6 Harbour re-render under the one-motion rule (2026-10-28 14:50) [V floor check + proxy; user to watch]
+
+- Job finished 14:50:33 (6 min 13 s for 141 f). Floor check r 0.998 at lag 0. Filed as
+  `ssbs_env2_harbour_768p_truckright_onemotion_seed20261027.mp4` beside the first take.
+- One variable (the clip prose); seed, size, still, refs, frames identical (dry-run gate).
+- Stills (`frames/ENV2_sheet.png`): place reproduced, no people; the boats sit in the same
+  positions across all six 1 s frames (in the first take they shifted between frames).
+- Motion-amount PROXY, not a verdict: mean inter-frame absolute difference (gray, 336x192):
+  first take 3.30 (max 9.11), re-render 2.19 (max 3.65). The spikes are gone; the mean is
+  a third lower. Whether the swell now reads at real speed, and whether the truck is visible,
+  is the user's call from watching.
