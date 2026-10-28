@@ -1078,3 +1078,17 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   clip pass honours as the ONE exception to the no-other-people rule, so it is a writer technique,
   not a hand-edited prompt; `rewrite_scene` gains `set` to put such fields on a scene for a
   one-variable test.
+
+### 20.12 Anchor-figure plate fired (2026-10-28 16:40) [built; render running]
+
+- Rewrite of the harbour scene with `set: {anchor_figure: true}` under the new clip rule, 0
+  problems: "Far down the quay near the harbour mouth, small in frame with his back to the camera,
+  one fisherman in dark oilskins stands at the last bollard. He hauls a rope hand over hand at a
+  natural human pace and makes four slow pulls over the 6 seconds, his face never seen." Boats
+  lift and settle once, everything else named still. Script
+  `..._rw3_20261028_144353_rw3_20261028_163956.json`.
+- Dry run: same still, refs, frames, no keyframes; only the prose differs from the free plate
+  (env2). Fired 16:40:28 on the user's "worth a try": ENV7, seed 20261027, turbo, 1344x768.
+- Readout: real speed = a distant human at human pace anchors the whole shot (then the writer
+  can offer `anchor_figure` on environment B-roll where a figure fits the world); still 3x = the
+  anchor must be the referenced singer or the pace is not about people at all.
