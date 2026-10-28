@@ -935,3 +935,8 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
 - **User verdict on the re-render (14:55): "still sped up".** The one-motion rule removed the
   spikes, not the timelapse. Rule kept (necessary), not marked passed. Waiting for the user's
   description of what moved too fast before choosing the next variable.
+- **User description (14:58): "looks the same".** The prose change is invisible to the eye on
+  this content: the proxy moved (3.30 to 2.19) and the take did not. MEASURED: on an
+  environment-only open-water shot the prompt is not a pace lever at all. Note that the
+  sing and walk takes at the cliff wall both had sea and sky in frame and did NOT timelapse:
+  the person in frame is the real-time anchor. [H to test]
