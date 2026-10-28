@@ -1149,3 +1149,36 @@ Recommended order: A, then B (both cheap, both general), D built in parallel as 
   Cadence-Retime vs RIFE/FILM. Report lands at
   `.mvwork/transfer/ssbs/research_h3_pace_v2_2026-10-28.md`; findings will be folded into s.20.13's
   ranking before anything is fired.
+
+#### 20.14a What the box's own H3 source says about time (read 2026-10-28 17:25; primary)
+Files pulled read-only from the box into `.mvwork/transfer/ssbs/boxsrc/` (core
+`comfy_extras/nodes_minimax_h3.py`, `comfy/ldm/minimax/model.py`, the Director pack).
+- **The model has one shared time axis for audio and video, in audio-latent units (1/40 s).**
+  `FRAME_RESCALE = 5/3` per pixel frame (24 fps x 5/3 = 40 = `AUDIO_LATENT_FPS`); video latent
+  tokens cover 1,4,4,4,4 pixel frames (the 17k+5 grid) and are placed on that axis by their real
+  duration. So the model always knows exactly how many seconds its frames span relative to the
+  audio. The clock is structural; the timelapse is the CONTENT prior for person-free water, not a
+  frame-rate confusion. [primary: model.py `_video_t_spans`, `_video_t_grid`, `_audio_grid`]
+- **There is no fps, speed or motion input anywhere.** The Director pack's `frame_rate` is only a
+  timeline editing rate ("Output is always 24 fps"); `use_custom_motion` just routes the editor's
+  reference-video track into `<Video k>` references. Dead ends. [primary: minimax_director.py]
+- **Reference videos sit on the same time axis ahead of the target, at their real duration.**
+  `MiniMaxH3ReferenceToVideo` takes up to 3 reference videos (5+ frames, 24 fps, cut to 17k+5,
+  <= the target length), VAE-encodes them as reference blocks AND shows Qwen the frames at 2 fps
+  with timestamps; the position grid advances the cursor by the clip's real span. The model
+  therefore reads a reference video's motion per unit of REAL time. The official template declares
+  it as `<Video k>` with retention `weak_reference`. [primary: nodes_minimax_h3.py lines 243-360,
+  model.py 354-440; template in docs/MINIMAX_H3_PLAN.md s.4]
+  => A real-speed water clip as `<Video 1>` ("pace and movement of the water only, not its
+  composition") is the one untested lever that is grounded in the model's structure rather than in
+  prose. Our chain already carries this slot (`camera_ref` -> `<Video 1>`, built for camera pace;
+  the writer's declaration text is push-in specific and would need a pace-of-water variant).
+  Caveat [U 2026-10-28, camera test]: a manufactured push-in reference added nothing visible to
+  the camera move and tripled render time at 544p. Water pace is a different ask (dynamics, not a
+  camera path), so that result does not decide this one.
+- **Keyframe guides (fl2va) are placed by frame index on the same axis** (`cursor + FRAME_RESCALE *
+  frame_index`), which is why a same-still guide at 0 and -1 reads as "nothing changed in N
+  seconds" and pins the camera too. [primary: model.py keyframes block] Consistent with ENV3/ENV6.
+- **Fun ControlNet** (`MiniMaxH3FunControlNetApply`: control_video, mask, source_video, strength,
+  start/end percent) exists in core; whether a control model for H3 is on the box, and what
+  modality it takes, is not yet checked.
