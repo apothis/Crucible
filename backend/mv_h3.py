@@ -127,7 +127,9 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         or megapixels? (0.5 = 960x544), context_frames? (39), seed?, turbo?, sampler?, scheduler?,
         steps?, lora?, lora_strength?, shift_video?, shift_audio?, attention? ("comfy kitchen
         attention" | "pytorch attention" | ...), ref_image_size? ("match" | "max"), crf? (19),
-        prefix?}
+        prefix?, keyframes? (None [default] | "still_first_last" | "still_first" | "still_last":
+        anchor the last reference picture, the location still, at those frames of every clip
+        via MiniMaxH3AddGuide; environment plates only, it pins whatever the still shows)}
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -160,6 +162,10 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
     attention = (p.get("attention") or CHAIN_ATTENTION).strip()
     ref_image_size = (p.get("ref_image_size") or "match").strip()
     prefix = p.get("prefix") or "videogen/h3chain"
+    keyframes = (p.get("keyframes") or "").strip() or None
+    keyframe_idx = {"still_first_last": (0, -1), "still_first": (0,), "still_last": (-1,)}.get(keyframes)
+    if keyframes and keyframe_idx is None:
+        raise ValueError("keyframes must be still_first_last, still_first or still_last")
 
     g = {}
     # --- shared loaders and the patched model (ids follow the example's roles)
@@ -224,7 +230,21 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         if prev_sampler is not None:
             song_in["source_latent"] = [prev_sampler, 0]
         g[song] = {"class_type": "MiniMaxH3SongMaskedAVContext", "inputs": song_in}
-        g[guider] = {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": [r2v, 0]}}
+        positive = [r2v, 0]
+        if keyframes and ref_names:
+            # Keyframe-bounded plate (opt-in, environment B-roll): anchor the LAST reference
+            # picture (the location still) at the first and/or last frame of every clip through
+            # core MiniMaxH3AddGuide (conditioning in, conditioning out; the latent is only read).
+            # Pins the composition at the anchored frames; whether it also holds the pace of an
+            # open-water shot is the hypothesis under test (docs/MV_H3_REBUILD_PLAN.md s.20.7).
+            still = [str(30 + len(ref_names) - 1), 0]
+            for j, idx in enumerate(keyframe_idx):
+                gid = str(base + 5 + j)
+                g[gid] = {"class_type": "MiniMaxH3AddGuide",
+                          "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": int(idx),
+                                     "vae": ["6", 0], "image": still}}
+                positive = [gid, 0]
+        g[guider] = {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": positive}}
         clip_seed = int(c.get("seed") if c.get("seed") not in (None, "") else seed + CLIP_SEED_STRIDE * i)
         g[noise] = {"class_type": "RandomNoise", "inputs": {"noise_seed": clip_seed}}
         g[sampler] = {"class_type": "SamplerCustomAdvanced",
@@ -257,6 +277,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "attention": attention, "ref_image_size": ref_image_size, "ref_count": len(ref_names),
                 "lock_separate": bool(lock_name and lock_name != master_name),
                 "ref_video_count": len(ref_video_names) if lane == "ref2va" else 0,
+                "keyframes": keyframes if (keyframes and ref_names) else None,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved

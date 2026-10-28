@@ -940,3 +940,32 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   environment-only open-water shot the prompt is not a pace lever at all. Note that the
   sing and walk takes at the cliff wall both had sea and sky in frame and did NOT timelapse:
   the person in frame is the real-time anchor. [H to test]
+
+### 20.7 Environment pace: what is left after the prose (2026-10-28 15:10) [built; nothing fired]
+
+- Levers ruled out for an open-water environment-only shot: the prose (two renders, "looks the
+  same"); the turbo recipe (August, ~8 %); a negative prompt (none exists, cfg-free guider).
+- Evidence for a different lever: the SING and WALK takes at the cliff wall had sea and sky in
+  frame and ran at real speed. [U] Hypothesis A: a person in frame is the real-time anchor;
+  environment-only open-water B-roll has none.
+- Candidates, each one render of about 6 min, one variable against the same harbour scene:
+  - B. Keyframe-bounded plate: the location still anchored at the first AND last frame of the
+    clip through `MiniMaxH3AddGuide` (conditioning in/out; built as `keyframes:
+    "still_first_last"`, opt-in, default off, also `still_first` / `still_last`; the chain
+    anchors the LAST reference picture, which is always the location still). Known from the
+    loop lane: the model eases out of the first anchor and settles onto the last (section 12),
+    so the extent is pinned by construction; whether the mid-clip speed is real is the test.
+    Caveat: AddGuide's resize of a 1.777 still onto a 1.75 canvas is undocumented (the I2V node
+    stretches first, crops last); a 1.5 % mismatch, acceptable for the test.
+  - A. The same place with her in it: script scene 16 "At the end of the quay" (sing_away,
+    wide, pull out large/slow, 175 f, 7.3 s), dry-run clean, 3 refs. If the sea runs at real
+    speed with her in frame, the writer rule becomes: open-water or open-sky B-roll is shot WITH
+    her (no_singing_her) or as a plate; never environment-only by prompt.
+  - C. Production fallback, already in the user's hands: the take slowed 2x and 3x with frame
+    interpolation (`renders/*RETIMED*`), no GPU; an environment plate carries the master song in
+    assembly, so retiming costs nothing but the look of interpolated water.
+- Offline check of the keyframe graph: with the flag, two AddGuide nodes (frame 0 and -1) sit
+  between ReferenceToVideo and BasicGuider, both fed the still's LoadImage and the video VAE;
+  without the flag the graph is byte-identical to before (0 AddGuide nodes). Bad values are
+  rejected. `render_scene` validates the flag, requires a location still, reports it in the
+  dry run and the job meta.

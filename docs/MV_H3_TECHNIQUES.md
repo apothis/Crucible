@@ -320,8 +320,11 @@ For background loops and living covers, also usable as B-roll plates. Full recip
    environment B-roll needs keyframe bounds (item 3).
 2. Camera extent at 768p: a second seed of each wording; whether "keep in frame" bounds a push
    at all, or only amplitude does.
-3. Keyframe-bounded B-roll moves (AddGuide with a GPT keyframe as the end frame): built in the
-   chain graph, not in the MV lane.
+3. Keyframe-bounded B-roll plates: BUILT in the MV lane 2026-10-28 (`keyframes:
+   "still_first_last" | "still_first" | "still_last"` on `/api/mv/render_scene`, opt-in,
+   anchors the location still through `MiniMaxH3AddGuide`); untested on the box. First use
+   planned: the harbour pace case (plan s.20.7). A GPT keyframe as a DIFFERENT end frame is
+   the next step once the same-still plate is judged.
 4. Final assembly: concat at scene offsets, overshoot trim, shorter last clip per scene.
 5. Shot-type regression set: a few canonical shots rendered at 768p whenever a writer rule
    changes, judged by type.

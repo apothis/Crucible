@@ -1169,6 +1169,11 @@ def mv_render_scene(p: dict):
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
     prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")))
+    keyframes = (p.get("keyframes") or "").strip() or None
+    if keyframes and keyframes not in ("still_first_last", "still_first", "still_last"):
+        raise HTTPException(400, "keyframes must be still_first_last, still_first or still_last")
+    if keyframes and not loc_ref:
+        raise HTTPException(400, "keyframes anchor the location still; this scene has none")
     if p.get("dry_run"):
         # the gate before the GPU: what WOULD be submitted, nothing queued
         return {"dry_run": True, "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
@@ -1176,7 +1181,7 @@ def mv_render_scene(p: dict):
                 "location": loc["id"] if loc else None, "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                 "location_ref_from": ref_from, "ref_ids": singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
-                "clips": len(prompts), "prompts": prompts}
+                "clips": len(prompts), "keyframes": keyframes, "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run")}
     q.update({"audio_id": script["audio_id"], "ref_ids": singer_refs + ([loc_ref] if loc_ref else []),
@@ -1187,7 +1192,7 @@ def mv_render_scene(p: dict):
                               "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
-                              "location_ref_from": ref_from})
+                              "location_ref_from": ref_from, "keyframes": keyframes})
 
 
 def _mv_load_script(sc_src):
