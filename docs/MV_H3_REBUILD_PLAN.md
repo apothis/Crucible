@@ -1184,3 +1184,68 @@ Files pulled read-only from the box into `.mvwork/transfer/ssbs/boxsrc/` (core
   (models/controlnet and models/model_patches hold nothing for H3; loras = the two v1.1 turbo
   files + two old 4-step files; diffusion_models = ref2va + fl2va int8). A control-video pace lane
   would start with a download. [checked 2026-10-28 17:30 via :5080 fs/find]
+
+### 20.15 Pace research pass 2 folded in: the ranked proposal (2026-10-28 17:55; nothing fired)
+Report: `.mvwork/transfer/ssbs/research_h3_pace_v2_2026-10-28.md` (13 mechanism findings, 10
+candidates, sources). Three key sources re-read by me before ranking (AharaOoO repo, matlowai
+MAINodes README, HF ref prompt guide). What changes versus s.20.13:
+
+**New mechanism (community, measured on other content): the model's RoPE time extent is the only
+clock, and motion per frame scales with how much world time the model is told a span covers.**
+matlowai's Motion Lab / True Clock / DyRoPE pack measured that a span whose clock is wrong runs
+its background movers at the wrong speed ("overcranks steady background movers"), and that
+rewriting the time grid to the true duration "holds world speed". Nobody has applied a UNIFORM
+clock change to a scenic shot; the two reports are about held/dilated regions. [community +
+primary source]
+- A ready node exists: AharaOoO `MiniMaxH3NativeFPSAVSyncAc` (repo ComfyUI-MiniMaxH3-FrameRate-
+  Adjustment-Ac): model + positive + av_latent in, `model_fps` 24-120; keeps the frames, scales
+  the video time coordinates by 40/fps in `position_ids`, trims/pads the audio latent to
+  round(frames/fps x 40). Placement: after LoRA and sigma shift, before the guider. Its own risk
+  table: 25-30 subtle, 31-36 "stronger retiming", 37-48 "high risk of flicker, color drift",
+  49+ research only. Needs ComfyUI >= 0.31 (box: newer). NOT on the box. [primary: repo README]
+- DIRECTION [inference, not stated by the author]: at model_fps 48 each frame is placed at 40/48
+  units instead of 5/3, so the model believes 141 frames span 2.9 s and should move the boats
+  half as far; saved at 24 fps that reads as 2x slower, generated frames, not interpolated.
+  36 = 1.5x. 72 (our 3x) sits in the research-only band. The first render decides the direction
+  and the ceiling; nothing else can.
+- Song-lock: the node resizes the audio latent, so the song mask cannot ride along. For
+  environment plates the song is laid in at assembly anyway (free AV, opt-in `free_av` chain
+  flag: skip SongMaskedAVContext; the streamer still muxes the master). Singer shots: n/a.
+- Also found: `ScaleROPE` never reaches H3 (model.py reads no rope options): do not spend a
+  render. Civitai 2985458 is the LIMB action slider, wrong tool; the motion-speed slider is FoS
+  2951265 (+8/-8, one "felt too fast, slider addressed that" comment, training unstated).
+
+**Official text now names the reference-video pacing role.** HF ref guide s.2.3: `<Video N>` is
+for "camera movement, cuts, rhythm, or temporal structure"; s.4.1 retention line format
+`<Video 1> (cut and pacing structure): weak_reference`; s.2.1 example "whose walking motion comes
+from <Video 1>". So a pace reference is the one lever the publisher documents. [primary] Our only
+trial (G6 V2 camera push-in) added nothing visible at 3x wall time, on a performance shot.
+
+**Ranked, one variable each, harbour scene 3, seed 20261027, 141 f, 1344x768, turbo:**
+1. **Clock compression ladder (free AV): model_fps 36, then 48.** The only mechanism-level lever.
+   Build: install the pack via :5080 fs/write + ComfyUI restart; chain opt-ins `clock_fps` (node
+   between LoRA/shift and BasicGuider) and `free_av`; backend restart after queue + jobs check.
+   Readout: proxy toward ~1.1 and the user's eyes; flicker/colour drift at 48 is the known risk.
+   ~6 min per render.
+2. **Pace reference video as `<Video 1>` with the official pacing line.** Zero install; the
+   `camera_ref` slot already carries a video; the writer needs a `pace_video` declaration variant
+   ("<Video 1> (pacing and motion speed of the water): fully_preserved - the water and boats move
+   at exactly this real speed; nothing of its composition carries over"). Source clip = USER's
+   call: phone footage of real water, free stock (a download, needs a yes), or a person-free crop
+   of our HERQUAY take (the water ran at real speed there by the user's eyes; AI water as a pace
+   exemplar, zero cost). Song-lock survives. ~3x wall time (ref tokens ride every step).
+3. **RIFE x3 + V2V refresh (production fallback).** Interpolate the free env2 plate 3x, take the
+   first 141 frames, re-denoise with `H3V2VGranularFractionalDenoise` at ~0.6 with the song slice
+   as source_audio (audio_strength 0) so every frame is generated over the interpolated motion.
+   All nodes on the box; new small graph builder. Answers whether a partial re-denoise makes the
+   interpolated water natural without re-accelerating it. Song-lock survives.
+4. Then the cheap writer-rule settlers from s.20.13: the enclosed tavern scene (A) and a
+   referenced extra (C, one GPT still). I2V first-frame lane (B) stays queued; nothing found on
+   its pace either way.
+Not levers (do not spend renders): prose variants, sigma shift, the turbo LoRA, same-still
+guides, ScaleROPE, Director frame_rate, the limb slider. Fun ControlNet: a real lever (frame-
+locked to a control video) but needs a composition-matched control video, a download, and an
+unknown VRAM footprint on 24 GB: last.
+
+Recommended: 1 first (two renders, one install), 2 second with the HERQUAY crop unless the user
+has real footage, 3 built in parallel as the fallback.
