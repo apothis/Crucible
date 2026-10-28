@@ -227,8 +227,11 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   once"), everything else named as still, no rhythm or frequency words, sounds of motion in
   the soundscape only. Code: `SCENE_SYSTEM` environment bullet + `action` schema,
   `CLIP_SYSTEM` environment bullet, `check_prompt` flags rhythm phrases in an environment
-  description. Verdict on the fix: pending (same scene, seed and still, prose regenerated under
-  the rule).
+  description. Verdict on the fix: FAILED. [U: "still sped up", 2026-10-28, A/B against the first
+  take] The one-motion rule is necessary (the spikes went, inter-frame proxy 3.30 to 2.19)
+  but not sufficient; the prose alone does not set the speed of an environment-only shot.
+  Next candidates, in order: keyframe bounds (same still as first and last frame, section
+  12 and item 3), the camera reference lane for pace, a different element than water.
 
 ## 9. Resolution and recipe
 

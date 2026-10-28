@@ -932,3 +932,6 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   first take 3.30 (max 9.11), re-render 2.19 (max 3.65). The spikes are gone; the mean is
   a third lower. Whether the swell now reads at real speed, and whether the truck is visible,
   is the user's call from watching.
+- **User verdict on the re-render (14:55): "still sped up".** The one-motion rule removed the
+  spikes, not the timelapse. Rule kept (necessary), not marked passed. Waiting for the user's
+  description of what moved too fast before choosing the next variable.
