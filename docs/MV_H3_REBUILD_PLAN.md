@@ -1341,3 +1341,17 @@ has real footage, 3 built in parallel as the fallback.
   rule, i.e. the harder case) through the DEFAULT path with no lane parameter. Dry run
   `.mvwork/transfer/ssbs/dry/env10_scene8_default_*.json`.
 
+
+### 20.21 ENV10 validation plate filed (2026-10-28 20:30) [V floor + graph + profile; user to watch]
+- Scene idx 8 through the DEFAULT path (no lane sent): the running graph was ImageToVideo with the
+  still on first_frame, fl2va weights, no reference node. Job cc6a30fc, 226 f = 9.42 s, exec 628 s
+  (2.8 s/frame on fl2va at 768p). Floor check r 0.997. Filed
+  `ssbs_env10_scene8_swell_768p_pushin_large_i2v_default_seed20261027.mp4`, frames
+  `frames/ENV10_sheet.png` (9 frames).
+- Motion proxy 9.04, four times anything today, so it was checked before handing over: per-second
+  profile 5.2, 7.1, 8.7, then a flat 9.5-10.3 to the end, max pair 14.9 at frame 196; no spike,
+  so no cut or dissolve. The sheet shows one continuous LARGE push toward the harbour mouth
+  across the whole frame with breaking spray and whitecaps, so nearly every pixel moves every
+  frame (camera travel + sea), where ENV9's camera barely moved and its water was calmer. The
+  proxy is not comparable across scenes; pace is the user's call. Text was the pre-one-motion
+  version (three swells with a rhythm) and the camera the large-amplitude kind: the hard case.
