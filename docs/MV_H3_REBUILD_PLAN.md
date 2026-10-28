@@ -1013,3 +1013,20 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   and is the user's call.
 - Staged, not fired: `renders/env4_shift12_768p_request.json` (turbo, shift_video 12 = the
   publisher's REF2V value; one variable) and `renders/env5_base_768p_request.json` (turbo off).
+
+### 20.9 Verdicts on ENV3 and HERQUAY; shift-12 and base plates fired (2026-10-28 15:53)
+
+- User: "the 1st one worked, but is too static, the 2nd one worked well, but we need to be able
+  to have b roll without having the singer in, go ahead."
+- ENV3 (same-still keyframes): real speed, too static, camera pinned. A plate technique for
+  near-still backgrounds, not for a sea. HERQUAY: hypothesis A CONFIRMED for this place: her in
+  frame = real-time sea. Both in techniques s.8 and open item 3.
+- Requirement restated by the user: environment-only B-roll without the singer must be possible.
+  Fired on "go ahead", one after the other, same harbour scene, seed, prose, still:
+  ENV4 = turbo with shift_video 12 (publisher's REF2V value; ONE variable vs env2);
+  ENV5 = base recipe (20 steps, no LoRA, shift 12/3; three variables vs env2, one vs env4 = the
+  LoRA + steps). 15:52:59, box running 1 pending 1. Expected ~6 min and ~15 min.
+- Readout: if ENV4 runs at real speed, the shift was the lever and the turbo block gets shift 12
+  for ref2v; if ENV4 is still fast and ENV5 is right, the LoRA (or 8 steps) is the cause and
+  environment plates render on base; if both are still fast, pace is a content prior and the
+  remaining levers are `still_last` keyframes, the Motion-Speed slider LoRA, or a box-side retime.

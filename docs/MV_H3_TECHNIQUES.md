@@ -233,6 +233,16 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   (user on the A/B: "looks the same"; the proxy moved, the picture did not). The August
   30 % prompt share was measured on grass with no water; it does not transfer to open
   water. [M: two harbour renders, one variable]
+- **A person in frame is the real-time anchor on open water.** The same harbour with her at the
+  quay end (wide, pull out, rain, waves) ran at real speed. [U: "worked well", 2026-10-28]
+  Writer consequence (to build once the remaining plate tests are in): open-water or open-sky
+  B-roll is shot WITH her (`no_singing_her`) by default; environment-only takes go to enclosed
+  or foreground-anchored places, or to a plate technique.
+- **Same-still keyframes at first and last frame give real speed but a plate that is too
+  static, and they pin the camera (no truck).** [U: "worked, but is too static"; M: proxy a
+  quarter of the free plate, composition identical across 1 s frames] Right for a background
+  that should barely move (a room, a candle); wrong for a sea. Untested middle ground: a guide
+  at the last frame only (`still_last`), or a different GPT keyframe at the end.
   Next candidates, in order: keyframe bounds (same still as first and last frame, section
   12 and item 3), the camera reference lane for pace, a different element than water.
 
@@ -320,11 +330,10 @@ For background loops and living covers, also usable as B-roll plates. Full recip
    environment B-roll needs keyframe bounds (item 3).
 2. Camera extent at 768p: a second seed of each wording; whether "keep in frame" bounds a push
    at all, or only amplitude does.
-3. Keyframe-bounded B-roll plates: BUILT in the MV lane 2026-10-28 (`keyframes:
-   "still_first_last" | "still_first" | "still_last"` on `/api/mv/render_scene`, opt-in,
-   anchors the location still through `MiniMaxH3AddGuide`); untested on the box. First use
-   planned: the harbour pace case (plan s.20.7). A GPT keyframe as a DIFFERENT end frame is
-   the next step once the same-still plate is judged.
+3. Keyframe-bounded B-roll plates: BUILT and rendered once 2026-10-28 (`keyframes:
+   "still_first_last" | "still_first" | "still_last"` on `/api/mv/render_scene`, opt-in).
+   Same-still first+last = real speed, too static, camera pinned (section 8). Next: `still_last`
+   alone, then a GPT keyframe as a DIFFERENT end frame for a bounded move.
 4. Final assembly: concat at scene offsets, overshoot trim, shorter last clip per scene.
 5. Shot-type regression set: a few canonical shots rendered at 768p whenever a writer rule
    changes, judged by type.
