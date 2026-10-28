@@ -656,3 +656,19 @@ Same chair half, seed 20261027, turbo, face + body + parlour still. 1 s frames i
   and a second seed of G7 (variance). Not fired.
 - Backend restarted 01:50 on the collector fix (type=input echoes skipped) and the writer's
   one-framing camera rules.
+
+## 18. G8: V3 wording at 768p (2026-10-28 09:17) [V stills; user to watch]
+Same chair half (13.34-28.42 s), seed 20261027, turbo, face + body + parlour still, mix lock,
+1344x768, V3 one-framing wording ("pushes in with small amplitude at slow speed throughout the
+take, one continuous shot, with the lamp and the window staying in frame"). 23 min on the box.
+Filed as `.mvwork/g1_refs/nevermine_G8_chair_768p_1344x768_V3-prompt_seed20261027.mp4`;
+1 s frames in `G6_frames/dense/P768V3_dense_sheet.png`. Floor check r = 1.000, 362 f.
+- From stills: one continuous push, no dissolve seen, corset and chemise held to the end,
+  hands move from folded to resting on the armrests around 8 s (prompt asked for still hands).
+- Extent: pushes further than G7 (V1 wording at 768p). G7 settled at a loose medium close-up
+  with lamp and window both in frame; G8 ends at a medium close-up with the window still in frame
+  but the oil lamp at the right edge, partly out of frame by 12-14 s. So at 768p the V3 wording
+  is continuous but less bounded than V1; the keep-in-frame sentence did not hold the lamp.
+- Still one sample each; seed variance not excluded. Motion continuity is for the user to judge.
+- Request: `g8_v3_768p_request.json` (V3 request minus megapixels, width 1344, height 768);
+  hand-over script `g8_handover.sh <job> <tag> <name>` (probe, floor check, copy, 1 s sheet).
