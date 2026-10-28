@@ -1092,3 +1092,8 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
 - Readout: real speed = a distant human at human pace anchors the whole shot (then the writer
   can offer `anchor_figure` on environment B-roll where a figure fits the world); still 3x = the
   anchor must be the referenced singer or the pace is not about people at all.
+- ENV7 filed 16:45:40 (5 min 12 s), floor r 0.998,
+  `ssbs_env7_harbour_768p_truckright_anchor_figure_seed20261027.mp4`. Motion proxy 2.38
+  (2.44 2.31 2.34 2.42 2.47), the free-plate regime (env2 2.19), not the keyframed one (0.5).
+  By the proxy the distant figure did not change the pace; whether the figure rendered and at
+  what pace, and whether the sea reads real, is the user's call from watching.
