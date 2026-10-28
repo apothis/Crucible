@@ -1438,3 +1438,13 @@ has real footage, 3 built in parallel as the fallback.
 - If the user passes it: the people mechanism is complete end to end (others -> opening still ->
   first_frame_id -> staggered clip) and generalises to scenes 3 and 19 (harbour, people) with
   one still each.
+- VERDICT [U 22:30]: "The tavern passes." People mechanism VALIDATED end to end. Next: scenes 3
+  and 19 (harbour, people) rewritten under the people rule, then their opening-still prompts.
+- Scenes 3 and 19 rewritten under the people rule (19 s each, 0 problems; both clips now open
+  with "At the start ..." poses). Final script:
+  `she_sings_before_the_storm_20261028_193924_rw4_20261028_200608_rw3_20261028_202026_rw19_20261028_202045.json`.
+  Composer tightened (pose extraction stops at motion sentences; "distance and shadow" instead
+  of lamplight). Opening-still prompts delivered to the user:
+  `.mvwork/transfer/ssbs/dry/scene3_opening_still_prompt.txt`, `scene19_opening_still_prompt.txt`.
+  When the stills come back: `/api/mv/scene_still` (scene 3, scene 19) -> render with
+  `first_frame_id` on the default lane.

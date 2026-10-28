@@ -553,7 +553,7 @@ def opening_still_prompt(script, scene, location_row=None):
         if sent.lower().startswith("at the start"):
             take = [sent]
             for nxt in sents[i + 1:]:
-                if re.match(r"(?i)(during|around|over|then|after|by |their |they |nobody|the camera)", nxt):
+                if re.match(r"(?i)(during|around|over|then|after|by |their |they |each |nobody|the camera|he (takes|walks|hauls)|she )", nxt):
                     break
                 take.append(nxt)
             poses = " ".join(take).strip()
@@ -561,7 +561,7 @@ def opening_still_prompt(script, scene, location_row=None):
     prompt = (f"{base} In this frame the people of the scene are already in place: {people}. "
               + (f"Opening poses, exactly: {poses} " if poses else "")
               + "Each is caught mid-activity in a different pose, as in an unposed documentary frame, none of them in unison; "
-              "faces turned away from camera or softened by shadow and lamplight, small in frame, dressed for "
+              "faces turned away from camera or softened by distance and shadow, small in frame, dressed for "
               "the period and the place. Same camera position, framing, fixed elements, light and film look as "
               "the location still.")
     return re.sub(r"\s+", " ", prompt).strip(), "composed"
