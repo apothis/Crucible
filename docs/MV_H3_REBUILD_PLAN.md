@@ -1526,3 +1526,13 @@ has real footage, 3 built in parallel as the fallback.
 - Still open (techniques s.14): camera extent seeds at 768p; the tracking-shot wobble (second
   seed); final assembly of a whole song; the regression set; the cliff_edge still; the warm
   window lamps the model adds on the harbour at dusk (ENV9, ENV13; cosmetic, unaddressed).
+
+### 20.29 cliff_edge still filed; the second song is fully provisioned (2026-10-29 00:30; nothing fired)
+- User generated the cliff_edge still from the rerun's prompt (1672x941); filed by
+  `/api/mv/locations/import_still` as 909f694e with the location row. The library now offers six
+  places for this song. The five chorus scenes (5, 7, 16, 20, 22) dry-run on the reference lane
+  with her two pictures + the cliff_edge still as <Picture 3>.
+- Provisioning complete for a full render: six location stills, three opening stills (scenes 3,
+  4, 19), her face + body. Sized at ~6 h of box time for 25 scenes / 30 clips at 768p turbo
+  (s.20.28 table); three scenes already rendered on the final text. What does not exist yet: a
+  whole-script batch runner and the assembly builder (both Mac-side, no GPU).
