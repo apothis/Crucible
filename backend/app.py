@@ -1374,13 +1374,22 @@ def mv_rewrite_scene(p: dict):
     scene, same seed on the render, only the clip prose regenerated under the new rule. No GPU;
     the Claude subscription CLI.
     p: {script (saved name under .mvwork/mv_scripts), scene (0-based index), provider?, model?,
-        effort?}. Returns {files, scene, title, problems, text, prompts, log}."""
+        effort?, set?: {scene fields to change before the pass, from: action, camera, keep_in_frame,
+        framing, lighting, mood, setting, anchor_figure (bool: one distant anonymous figure as the
+        shot's real-time anchor, the writer's only exception to no-other-people)}}.
+    Returns {files, scene, title, set, problems, text, prompts, log}."""
     script, name = _mv_load_script(p.get("script"))
     try:
         idx = int(p.get("scene", -1))
         sc = script["scenes"][idx]
     except Exception:
         raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
+    changes = p.get("set") or {}
+    allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure")
+    bad = [k for k in changes if k not in allowed]
+    if bad:
+        raise HTTPException(400, f"set: unknown scene fields {bad}; allowed {list(allowed)}")
+    sc.update(changes)
     work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
     log_lines = []
 
@@ -1397,7 +1406,7 @@ def mv_rewrite_scene(p: dict):
         raise HTTPException(500, f"writer failed: {e}")
     script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    script.setdefault("rewrites", []).append({"scene": idx, "from": os.path.basename(str(name)), "at": stamp})
+    script.setdefault("rewrites", []).append({"scene": idx, "from": os.path.basename(str(name)), "at": stamp, "set": changes})
     out_dir = os.path.join(work, "mv_scripts")
     os.makedirs(out_dir, exist_ok=True)
     base = re.sub(r"\.json$", "", os.path.basename(str(name)))
@@ -1407,7 +1416,7 @@ def mv_rewrite_scene(p: dict):
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:
         f.write(mv_writer_mod.script_markdown(script))
-    return {"files": {"json": jpath, "md": mpath}, "scene": idx, "title": sc.get("title"),
+    return {"files": {"json": jpath, "md": mpath}, "scene": idx, "title": sc.get("title"), "set": changes,
             "problems": [c["problems"] for c in sc["clips"]], "text": [c["text"] for c in sc["clips"]],
             "prompts": [c["prompt"] for c in sc["clips"]], "log": log_lines}
 

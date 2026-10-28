@@ -1070,3 +1070,11 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   guide forces a known small motion over the clip), the Motion-Speed slider LoRA, a box-side
   retime of the free plate, or the writer rule (open water with her, environment-only in enclosed
   places).
+- **User (16:40): "Its still too static, there must be some way to have it not go at timelapse
+  speed. Perhaps have some random person at a distance in the video, maybe that will make the
+  timing more real? Although that wont work for all b roll shots, worth a try."** ENV6 verdict:
+  same as ENV3. Next test, the user's: a distant anonymous figure as the real-time anchor in an
+  otherwise singer-free plate. Built as an opt-in per-scene field (`anchor_figure: true`) that the
+  clip pass honours as the ONE exception to the no-other-people rule, so it is a writer technique,
+  not a hand-edited prompt; `rewrite_scene` gains `set` to put such fields on a scene for a
+  one-variable test.
