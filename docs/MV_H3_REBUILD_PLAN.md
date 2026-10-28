@@ -741,3 +741,49 @@ G5 was on the mix). 478 s, Opus medium. `.mvwork/mv_scripts/never_mine_20261028_
 - Caveat: one run cannot separate "fit" from "offered" (it also brought back the wrecked
   parlour G5 had dropped). The transfer test on a second, different song, run once with
   "none" and once with "library", is where that gets answered.
+
+## 20. Second-song transfer test (set up 2026-10-28 12:00; song = user's pick; nothing fired)
+Purpose: every rule in `docs/MV_H3_TECHNIQUES.md` was measured on Never Mine (slow, clean solo
+vocal, one seated performer). This test asks whether the rules transfer, and settles the two open
+hypotheses: (a) the location library's offer does not bias reuse beyond fit; (b) the camera
+grammar holds on a shot that is not a seated push-in.
+
+Song: the user's pick. It should DIFFER from Never Mine where the rules are weakest: faster or
+denser (layered symphonic/power-metal vocals stress alignment and the lock), a vocal that moves
+(stress take length and setups), and a world that is not a Victorian parlour (stress the library:
+reuse should be near zero if the offer does not bias).
+
+References (user's call, default A):
+- A. reuse the Selene face + body pictures from Never Mine. Fast; but their descriptions and
+  the body picture itself show the parlour, a bias toward reusing it. The runner's default refs
+  file is `.mvwork/transfer/refs_selene_default.json`.
+- B. two new pictures in the new video's look on a plain background (the design in s.3.2),
+  from Claude prompts; descriptions free of any place. Cleaner test, costs two GPT images.
+
+Steps (runner `.mvwork/transfer/transfer_test.sh <audio_id> <tag> <title> <style_file>
+<lyrics_file> [refs_json]`, output under `.mvwork/transfer/<tag>/`; it stops before any render):
+1. vocal stem on the box (`/api/mv/stems`, ~80 s); alignment then runs on the stem by default.
+2. writer with the library WITHHELD (`locations: "none"`): the control; what it invents for
+   this song with no suggestions.
+3. writer with the library OFFERED (default): same request otherwise.
+4. compare (`compare.md`): aligned_on + cover (alignment on a dense mix), scene/clip counts,
+   singing vs B-roll, take-length range, prompt problems, the two location tables (known /
+   new / derived), every camera line, and the still prompts for the library run's NEW places.
+   Verdict (a): read both tables; a known place taken for a scene it does not suit = bias.
+5. user generates the new-place stills (GPT) and files each with
+   `POST /api/mv/locations/import_still` (file + script + location_id) - one step, the library
+   grows. More stills are always fine (memory `more-stills-are-cheap`).
+6. gated renders at 768p, one 362-f clip each, `dry_run: true` first, then the user's go per
+   render (~23 min each): three SHOT TYPES, not three scenes of one kind:
+   - sing-to-camera with a small-amplitude slow move (the proven case, new room);
+   - a standing or walking performance/B-roll with a tracking or truck move (new case for (b));
+   - an environment-only scene (location alone as <Picture 1>; later the keyframe-bounded lane).
+   Judge: floor check r, 1 s frames for cuts/ghosts/wardrobe/extent, then the user watches.
+   Same seed across the three; a second seed only on the shot that misbehaves.
+7. record: techniques doc rules confirmed / amended with the new provenance; plan s.20.x.
+
+Library songs with lyrics on file (read-only scan 2026-10-28): symphonic metal YuE2/Music 3 -
+Dream Of Me (276 s), Nine Nights (294 s), Moonlit Requiem (273 s); power metal YuE2 - Skyborn
+(227 s), Thunder in My Veins (265 s), Let the Stars Burn (~300 s). Suno imports carry no lyrics in
+the library row; their lyrics come from the project song or the user. Lyrics go to the runner as a
+tagged text file (section tags as for Never Mine); style as a one-paragraph file.
