@@ -969,3 +969,8 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   without the flag the graph is byte-identical to before (0 AddGuide nodes). Bad values are
   rejected. `render_scene` validates the flag, requires a location still, reports it in the
   dry run and the job meta.
+- **User on the retimes (15:12): the 3x one "looks okish, just not great, the speed is about
+  right but it doesnt really look natural"; 2x not mentioned as right.** Two facts from that:
+  the model renders this open-water plate about THREE times too fast; and ffmpeg minterpolate
+  on water is the unnatural part, not the speed. C stays a fallback; a box-side interpolator
+  (RIFE/FILM through ComfyUI) would be the better version of C if A and B fail.
