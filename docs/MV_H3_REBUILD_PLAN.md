@@ -681,3 +681,4 @@ Filed as `.mvwork/g1_refs/nevermine_G8_chair_768p_1344x768_V3-prompt_seed2026102
   lens"); nothing asks for closed eyes, so the lids-down opening was per-render luck, not
   wording (V1 gave both outcomes at 544p vs 768p). To get it reliably it must be written in
   explicitly (lids lowered at the start, gaze lifts into the lens on the first word). User's call.
+- **Decision (09:45):** eyes left to the model; the chair prompt stays as written. No eye-direction rule added to the writer.
