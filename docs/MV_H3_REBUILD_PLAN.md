@@ -720,3 +720,20 @@ description, still_prompt, still_id, tags, source, created/updated).
 - NOT yet exercised: a live writer run with the library offered (Claude call, ~9 min, no GPU).
   Offline: the prompt block renders, normalisation resolves reuse/alias/new/derived cases.
 Next general pieces: techniques doc; shot-type regression set; second-song transfer test.
+
+### 19.1 G9: live writer run with the library offered (2026-10-28 11:08) [V, no GPU]
+Same request as G5 plus `locations: "library"`; alignment on the vocal stem (the default now;
+G5 was on the mix). 478 s, Opus medium. `.mvwork/mv_scripts/never_mine_20261028_110755.{json,md}`.
+- Reused ALL five known places by id, invented none: parlour (5 scenes), quarry (6), mantelpiece
+  (3), wrecked_parlour (3), corridor (2). G5 without the library had invented parlour_window,
+  hallway and stone_detail and dropped the wrecked parlour; those are gone.
+- 19 scenes / 24 clips, 0 prompt problems; performance takes 6.6-19.4 s, B-roll to 38.4 s;
+  camera lines all in the model's grammar with one framing and a keep-in-frame list.
+- Known rows carry the library still id into the script: dry runs of scene 2 (singer, parlour)
+  and scene 1 (environment-only, mantelpiece as <Picture 1>) resolve `location_ref_from:
+  script` with no map in the request. Scene settings restate the library description (window
+  left, fireplace + armchair right, lamp on the side table).
+- Markdown lists the five as KNOWN, still on file; nothing for the user to generate.
+- Caveat: one run cannot separate "fit" from "offered" (it also brought back the wrecked
+  parlour G5 had dropped). The transfer test on a second, different song, run once with
+  "none" and once with "library", is where that gets answered.
