@@ -1355,3 +1355,9 @@ has real footage, 3 built in parallel as the fallback.
   frame (camera travel + sea), where ENV9's camera barely moved and its water was calmer. The
   proxy is not comparable across scenes; pace is the user's call. Text was the pre-one-motion
   version (three swells with a rhythm) and the camera the large-amplitude kind: the hard case.
+- VERDICT [U 20:40]: "Speed is fine." Camera note: the push ran along the quay path the still
+  shows, not out into the sea; on the first-frame lane the move follows the image's geometry
+  (techniques s.7/s.8). RULE VALIDATED on two environment scenes (3 and 8). Open item 1 of
+  techniques s.14 (environment pace) is closed; the pace reference video (s.20.15 fix 3) and the
+  retime+refresh fallback are no longer needed and stay documented only. The clock and free_av
+  opt-ins remain in the chain, off.

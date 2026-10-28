@@ -280,8 +280,15 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   fields verbatim); `lane: "ref2va"` is the opt-out; keyframes or a camera reference keep the
   reference lane because only it has those slots. Her scenes stay on the reference lane (her
   identity needs the pictures). The env one-motion prose rule stays (it is still good practice;
-  on the reference lane it was not sufficient). Validation on a second environment scene: s.20.20
-  of the plan.
+  on the reference lane it was not sufficient). VALIDATED on a second environment scene
+  [U 2026-10-28 20:40: scene 8, 9.4 s, large-amplitude push, three swells and spray, older
+  multi-motion text: "speed is fine"]. Two scenes, two cameras, two clip lengths, both at real
+  speed on the lane that timelapsed nine times on the reference side.
+- **On the image-to-video lane the camera follows the still's geometry.** "Push in with large
+  amplitude toward the harbour mouth" rendered as a push along the quay path the photograph
+  shows, not out over the water [U, scene 8]. Write the move in terms of the picture's own
+  lines (along the quay, toward the far wall), not toward a destination the still only implies.
+  [U one sample]
   Next candidates, in order: keyframe bounds (same still as first and last frame, section
   12 and item 3), the camera reference lane for pace, a different element than water.
 
@@ -362,17 +369,16 @@ For background loops and living covers, also usable as B-roll plates. Full recip
 
 ## 14. Open items, in order of what they would settle
 
-1. Second-song transfer test: writer half done (library bias measured and fixed; dense-mix
-   alignment cover 0.894; clean 25-scene script); three shot types rendered at 768p: sing passed,
-   walk passed with a wobble note, environment-only timelapsed (rule built, section 8). Still
-   open: the verdict on the environment pace fix; whether the one-motion rule is enough or
-   environment B-roll needs keyframe bounds (item 3).
+1. Second-song transfer test: DONE for the three shot types (sing passed, walk passed with a
+   wobble note, environment-only solved by the image-to-video lane, validated on two scenes,
+   section 8). Left from it: the wobble on tracking shots (a second seed), and a full scene run
+   of the second song once assembly exists (item 4).
 2. Camera extent at 768p: a second seed of each wording; whether "keep in frame" bounds a push
    at all, or only amplitude does.
-3. Keyframe-bounded B-roll plates: BUILT and rendered once 2026-10-28 (`keyframes:
-   "still_first_last" | "still_first" | "still_last"` on `/api/mv/render_scene`, opt-in).
-   Same-still first+last = real speed, too static, camera pinned (section 8). Next: `still_last`
-   alone, then a GPT keyframe as a DIFFERENT end frame for a bounded move.
+3. Keyframe-bounded B-roll plates: built (`keyframes` opt-in, reference lane only). Same-still
+   guides froze the plate and pinned the camera, so they are not a pace tool; the remaining use is
+   a GPT keyframe as a DIFFERENT end frame for a bounded move, which has not been rendered. Low
+   priority now that pace is solved by the lane.
 4. Final assembly: concat at scene offsets, overshoot trim, shorter last clip per scene.
 5. Shot-type regression set: a few canonical shots rendered at 768p whenever a writer rule
    changes, judged by type.
