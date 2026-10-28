@@ -862,3 +862,35 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
 - Box: queue empty, no backend jobs at 13:50. Nothing fired. Next = the user's go per render,
   recommended order sing (direct comparison with G8), walk, env; judge each by floor check,
   1 s frames, then the user watches.
+
+### 20.4 Transfer test step 6: three shot types rendered at 768p (2026-10-28 14:17) [V floor check + stills; user to watch]
+
+- Fired on the user's go ("go for 768", then "go for those too"), one request each, mirroring
+  the G8 call with the She Sings refs and no `location_refs` map (stills from the library).
+  Requests/responses/log: `.mvwork/transfer/ssbs/renders/`. Watcher + handover scripts there.
+
+  | take | scene | frames | wall time | floor r | filed as |
+  |------|-------|--------|-----------|---------|----------|
+  | SING | idx 2 "A high clear line", cliff_wall, push in small/slow | 243 (10.1 s) | 13 min 16 s | 0.998 at lag 0 | `ssbs_sing_cliffwall_768p_pushin_seed20261027.mp4` |
+  | WALK | idx 1 "The voice that walks", cliff_wall, tracking small/slow | 141 (5.9 s) | 5 min 52 s | 0.998 at lag 0 | `ssbs_walk_cliffwall_768p_tracking_seed20261027.mp4` |
+  | ENV  | idx 3 "Shutters barred, lines hauled", harbour, truck right small/slow | 141 (5.9 s) | 5 min 09 s | 0.998 at lag 0 | `ssbs_env_harbour_768p_truckright_seed20261027.mp4` |
+
+  Wall time scales with frames (about 3.3 s per frame at 768p incl. the fixed per-job cost),
+  consistent with G8's 23 min for 362 f.
+- Song lock: all three clips' audio follows the song window at r 0.998, lag 0 (clean band).
+  The masked-song latent held on a dense mix with a 0.894 stem cover.
+- From 1 s frames (`renders/frames/*_sheet.png`; stills only, motion is the user's call):
+  - SING: identity + wardrobe hold through all 10 s (green laced bodice, shift off the left
+    shoulder, shawl at the elbows); lichen wall, gorse, chapel gable and sea all present; the
+    push tightens from medium close-up to close-up by t=9 with the wall still in frame; mouth
+    moves throughout; eyes open; sky reads fixed. Same shot type as G8, new song, new place:
+    the grammar transferred at the still level.
+  - WALK: she walks barefoot along the wall in three-quarter view, one hand trailing on the
+    stones, head to the sea, chapel behind; wardrobe holds; the near wall stones shift between
+    frames (tracking present). First standing/walking take rendered under the grammar.
+  - ENV: the harbour still reproduced (whitewashed cottages, barred shutters, bollards, four
+    boats, harbour mouth), no people; boats change position between frames (swell); the near
+    bollard moves little across the six frames, so the truck's extent is small; sky reads
+    fixed. First environment-only take under the grammar, refs = the still only.
+- Open until the user watches: pace of the walk (four unhurried steps in 5.9 s?), whether the
+  track reads as a track or a drift, whether the truck is visible at all, lip-sync on SING.
