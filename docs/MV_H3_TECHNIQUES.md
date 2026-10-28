@@ -303,6 +303,9 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   `opening_still` carries them (composer for older scripts) -> the user generates that still ->
   `/api/mv/scene_still` files it -> `render_scene` i2v with `first_frame_id` -> the clip writes
   them staggered. One extra still per scene with people; the location still stays person-free.
+  VALIDATED on three scenes [U 2026-10-28: tavern (three diners, static), harbour hauler (one
+  man, truck right), harbour walkers (four men, 7.3 s)], all at real speed with the people
+  present from frame 0 and moving independently.
   The opening still must carry THIS scene's weather, time of day, light and open/closed state,
   not the location still's: a mismatch makes the model dissolve the whole world to the clip's
   state inside the first second [M 2026-10-28, ENV14: storm still under a golden-evening scene;

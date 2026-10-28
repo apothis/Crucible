@@ -1504,3 +1504,25 @@ has real footage, 3 built in parallel as the fallback.
   it, where the clip has them walking away toward the boats. If the user sees it: extras who
   walk away from camera may turn to face it mid-clip (one sample), a candidate rule for the
   people bullet ("they keep walking away; their backs stay to the camera to the end").
+- VERDICT [U 2026-10-29 00:05]: "Scene 19 passes." ALL THREE PEOPLE SCENES VALIDATED (4, 3, 19).
+
+### 20.28 Day's record, 2026-10-28 (what is now true)
+- Environment-only B-roll runs at REAL SPEED on the image-to-video lane (location still as
+  frame 0, FL2VA weights, no reference pictures); it is the default for environment-only scenes.
+  Nine reference-lane levers (prose x3, shift, LoRA/steps, two same-still guides, a prose
+  figure, RoPE clock compression) did nothing; the lane was the variable. Validated on scenes 3
+  and 8 (plain) and 4, 3, 19 (with people). [U]
+- "Solo singer" means one lead and no band; other people are allowed per scene via `others`,
+  written anonymous, staggered, never in unison, small ordinary actions only, nothing the
+  still's geometry forbids. They enter the picture through a per-scene OPENING STILL that
+  already contains them in their stated opening poses and carries the scene's own weather and
+  light (`/api/mv/opening_still` -> user generates -> `/api/mv/scene_still` -> `render_scene`
+  `first_frame_id`). Without it people ghost in over the first second; with a wrong-weather
+  still the whole world dissolves. [U/M]
+- Writer rerun on the second song under the new rules: 25 scenes, five stills reused, one new
+  place (cliff_edge, still prompt delivered), people on six scenes, 0 prompt problems.
+- Chain opt-ins that stay, off by default: `free_av`, `clock_fps`, `keyframes`, `lane: ref2va`,
+  `anchor_figure`. The AharaOoO frame-rate pack is installed on the box.
+- Still open (techniques s.14): camera extent seeds at 768p; the tracking-shot wobble (second
+  seed); final assembly of a whole song; the regression set; the cliff_edge still; the warm
+  window lamps the model adds on the harbour at dusk (ENV9, ENV13; cosmetic, unaddressed).
