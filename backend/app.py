@@ -1302,8 +1302,10 @@ def mv_write(p: dict):
         (default the latest Opus), effort? ("medium"), provider? ("claude_sub"),
         align_on? ("auto" [default]: the cached vocal stem when there is one, else the mix;
         "vocals" requires a stem; "mix" ignores it),
-        locations? ("library" [default]: offer every library location that has a still, to be
-        reused by id; "none": invent everything; or a list of library ids to offer)}.
+        locations? ("auto" [default]: offer the library places that came from THIS song, so a
+        re-run keeps its stills; "library": offer every place with a still (cross-song reuse,
+        opt-in - measured to pull another video's places into a song they do not fit);
+        "none": invent everything; or a list of library ids to offer)}.
     Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
@@ -1325,7 +1327,7 @@ def mv_write(p: dict):
         raise HTTPException(400, "align_on=vocals but no vocal stem is cached; POST /api/mv/stems first")
     align_path = stem if align_on in ("auto", "vocals") else None
     try:
-        known = mv_locations_mod.select(mv_locations_mod.load(LIBRARY), p.get("locations"))
+        known = mv_locations_mod.select(mv_locations_mod.load(LIBRARY), p.get("locations"), title=p["title"])
     except ValueError as e:
         raise HTTPException(400, str(e))
     known = [r for r in known if not r.get("still_id") or _lib_image_path(r["still_id"])]

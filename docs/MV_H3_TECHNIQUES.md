@@ -107,13 +107,19 @@ function; a rule only in prose is for the writer's system prompt or the person r
 - **Environment-only scenes put the location alone as `<Picture 1>`; a scene with no still at
   all falls back to the no-reference lane with a "no referenced subjects" header.** [design,
   verified by dry run G9] Code: `compile_prompt`, `compile_scene(with_location)`.
-- **Locations live in a library and are reused by id across re-runs and songs.** The writer is
-  offered every photographed place and reuses one wherever it serves the video, inventing only
-  where none fits. With the library offered the writer reused all five known places and
-  invented none; without it the previous run had invented three near-duplicates and orphaned the
-  stills. [M: G5 vs G9, same request] Whether the offer biases reuse beyond fit is open until the
-  second-song test (run "none" and "library"). [H] Code: `mv_locations`, `/api/mv/locations*`,
-  `write_script(known_locations=)`, `render_scene` library fallback.
+- **Locations live in a library; the writer is offered the places that came from THIS song, so
+  re-runs keep their stills.** With its own five places offered, a re-run reused all five and
+  invented none; without them the previous run had invented three near-duplicates and orphaned
+  the stills. [M: Never Mine G5 vs G9, same request] Code: `mv_locations.select` (default
+  "auto" = same-song rows), `/api/mv/locations*`, `write_script(known_locations=)`,
+  `render_scene` library fallback.
+- **Offering ANOTHER song's places biases the writer: it takes them even when they do not fit.**
+  Offered a Victorian parlour, mantelpiece and wrecked parlour, a Celtic banshee video put its
+  father-by-candlelight verse and the proud's supper in the parlour and rationalised it; the
+  control run with nothing offered invented a fisherman's cottage and a harbour tavern for the
+  same beats. [M: She Sings Before the Storm, control vs library, same request, 2026-10-28]
+  Cross-song reuse is therefore an explicit opt-in (`locations: "library"` or a list of ids),
+  never the default.
 - **More stills are always available.** A new place costs the user one image; never force reuse
   or drop a shot to save a still. Keyframes can be generated the same way when a shot needs
   them. [U, 2026-10-28; OpenAI adheres to prompts well]
@@ -273,9 +279,10 @@ For background loops and living covers, also usable as B-roll plates. Full recip
 
 ## 14. Open items, in order of what they would settle
 
-1. Second-song transfer test: writer with and without the library; camera grammar on a standing
-   or walking performance; alignment on a dense mix. Settles the library bias question and
-   whether the camera rules are shot-specific.
+1. Second-song transfer test, steps 5-6: the writer half is done (library bias measured and
+   fixed; stem alignment on a dense Celtic mix gave cover 0.894 and a clean 25-scene script).
+   Still open: the camera grammar on a standing or walking performance and an environment-only
+   scene, three shot types at 768p.
 2. Camera extent at 768p: a second seed of each wording; whether "keep in frame" bounds a push
    at all, or only amplitude does.
 3. Keyframe-bounded B-roll moves (AddGuide with a GPT keyframe as the end frame): built in the

@@ -139,14 +139,26 @@ def known_text(rows):
     return "\n".join(lines)
 
 
-def select(rows, want):
-    """Which rows the writer is offered. want: None/"library"/"auto" = every row with a still;
+def same_song(rows, title):
+    """Rows whose source song is this one (case-insensitive title match)."""
+    t = (title or "").strip().lower()
+    return [r for r in rows if t and ((r.get("source") or {}).get("title") or "").strip().lower() == t]
+
+
+def select(rows, want, title=None):
+    """Which rows the writer is offered.
+    None/"auto" [default] = the rows with a still that came from THIS song (re-runs keep their
+      stills; nothing from other songs);
+    "library" = every row with a still (cross-song reuse, explicit opt-in: MEASURED 2026-10-28 that
+      offering another video's places pulls them into a song they do not fit);
     "none" = nothing; a list of ids = those rows (with or without stills)."""
-    if want in (None, "", "library", "auto", True):
+    if want in (None, "", "auto"):
+        return with_stills(same_song(rows, title))
+    if want in ("library", True):
         return with_stills(rows)
     if want in ("none", False):
         return []
     if isinstance(want, (list, tuple)):
         ids = {slug(w) for w in want}
         return [r for r in rows if r["id"] in ids]
-    raise ValueError("locations must be 'library', 'none' or a list of ids")
+    raise ValueError("locations must be 'auto', 'library', 'none' or a list of ids")

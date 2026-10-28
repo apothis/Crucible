@@ -803,3 +803,32 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   recipe recorded as techniques 4a. Waiting on the user's two images; then
   `.mvwork/transfer/transfer_test.sh 2306adc5a44a43afb1e4743b86bd98b9 ssbs "She Sings Before the Storm" .mvwork/transfer/ssbs/style.txt .mvwork/transfer/ssbs/lyrics.txt .mvwork/transfer/ssbs/refs.json`
   (stems ~80 s on the box, two writer runs ~8 min each, no render).
+
+### 20.2 Transfer test, steps 1-4 result (2026-10-28 12:15) [V, no GPU]
+- Stem: RoFormer on the box, cached. Alignment on the stem: cover 0.894 (288/322 words), 14
+  sections, both passes identical facts. Never Mine was 0.967; a dense Celtic mix costs ~7
+  points and is still usable.
+- CONTROL (library withheld, 721 s): 25 scenes / 30 clips, 14 singing / 11 B-roll, takes
+  5.2-38.8 s, 0 problems. Five places, all invented, all in the song's world: cliff_road (chapel,
+  gorse), cliff_wall (where she sings), harbour (quay, shutters, bollards), cottage_kitchen (her
+  father by candlelight), tavern (the proud at supper). Script
+  `.mvwork/mv_scripts/she_sings_before_the_storm_20261028_115922.{json,md}`.
+- LIBRARY OFFERED (same request, 22 scenes / 27 clips, 0 problems): reused 3 of the 5 Never
+  Mine places and invented 3. The parlour took the father's candlelight verse and the proud's
+  supper (the control's cottage kitchen and tavern), the mantelpiece became a singing close-up
+  twice, the wrecked parlour took "and by morning they are gone". Its "why" lines rationalise the
+  fit after the fact ("the parlour where her father told the story waits by lamplight"); the
+  control, with no suggestion, put those beats in a fisherman's cottage and a harbour tavern.
+- **Verdict: the offer biases. Hypothesis (a) in s.20 is false.** The library's value is real
+  for RE-RUNS of the same song (G9: all five reused, stills kept) and harmful across songs by
+  default.
+- **Rule change (built, backend restarted 12:20):** `/api/mv/write locations` default is now
+  "auto" = offer only the library places that came from THIS song (title match on the row's
+  source), so re-runs keep their stills and a new song starts clean; "library" = every place,
+  an explicit opt-in for deliberate cross-song reuse; "none" and id lists unchanged. Verified
+  offline: auto on Never Mine offers 5, auto on She Sings offers 0, library offers 5.
+  `mv_locations.select(rows, want, title)`, `same_song`.
+- Carry forward: the CONTROL script. Still prompts for its five places:
+  `.mvwork/transfer/ssbs/location_still_prompts.md` (user generates; one-step filing with
+  `/api/mv/locations/import_still`). Reference pictures filed: face 2c1c49e7, body cd98a0e4.
+- Next: user's five stills, then step 6 (three shot types at 768p, dry run first, go per render).
