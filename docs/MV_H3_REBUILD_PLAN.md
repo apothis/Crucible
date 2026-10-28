@@ -682,3 +682,41 @@ Filed as `.mvwork/g1_refs/nevermine_G8_chair_768p_1344x768_V3-prompt_seed2026102
   wording (V1 gave both outcomes at 544p vs 768p). To get it reliably it must be written in
   explicitly (lids lowered at the start, gaze lifts into the lens on the first word). User's call.
 - **Decision (09:45):** eyes left to the model; the chair prompt stays as written. No eye-direction rule added to the writer.
+
+## 19. Reusable location library (built 2026-10-28 10:30) [V through the API, no GPU]
+Why: every writer run invented fresh location names (G2: parlour/corridor/mantelpiece/quarry/
+wrecked_parlour; G5: parlour/parlour_window/hallway/quarry/stone_detail), orphaning the stills
+already generated and forcing a per-song name map. The user's rule (2026-10-28): every
+experiment must land as a technique reusable across videos, never a per-song fix.
+
+What: `backend/mv_locations.py`, store `.mvwork/mv_locations/locations.json` (rows: id, name,
+description, still_prompt, still_id, tags, source, created/updated).
+- Writer (`mv_writer.write_script(..., known_locations=rows)`): pass 1 gets a KNOWN LOCATIONS
+  block (id, name, description) and the rule: reuse by exact id with `{"id", "reuse": true}`
+  wherever a known place serves THIS video, invent only where none fits, never redecorate a
+  known place. `normalize_locations(plan, scenes, known)` resolves a known id, or a new id
+  carrying a known place's name, to the library row (description, still prompt and still id
+  win; marked `known`; scene ids aliased). The markdown lists known rows as "still on file".
+  The script records `known_offered`.
+- `POST /api/mv/write` gains `locations`: "library" [default: every row with a still], "none",
+  or a list of ids. Default is to offer the library: that is the point of the request; "none"
+  reproduces the old behaviour.
+- `POST /api/mv/render_scene`: with no `location_refs`/`location_ref_id` the scene's still comes
+  from the script's row (a known location carries `still_id`) or the library by location id;
+  `use_location_library: false` turns that off; response/meta carry `location_ref_from`
+  (request | script | library). New `dry_run: true` returns everything that would be submitted
+  (refs in upload order, location and its source, frames, prompts) with nothing queued: the
+  gate before the GPU.
+- Library routes: `GET /api/mv/locations` (rows + which are offered), `POST /api/mv/locations`
+  (upsert by hand; still_id must exist), `POST /api/mv/locations/remove`, `POST
+  /api/mv/locations/import {script, location_id, still_id}` (file a script's location with its
+  imported still), `POST /api/mv/locations/import_still` (multipart: file + script +
+  location_id; files the still AND the row in one step - the normal path for a new place).
+- Seeded through the import route with the five Never Mine locations (tags never_mine,
+  victorian). Verified: dry run of the chair scene with no map resolves the parlour from the
+  library (`location_ref_from: library`), prompt carries <Picture 3>; a G5 hallway scene (not in
+  the library) resolves no still; explicit map still wins; `use_location_library: false` gives
+  her two pictures only; upsert rejects a missing still; remove works; box queue stayed 0.
+- NOT yet exercised: a live writer run with the library offered (Claude call, ~9 min, no GPU).
+  Offline: the prompt block renders, normalisation resolves reuse/alias/new/derived cases.
+Next general pieces: techniques doc; shot-type regression set; second-song transfer test.
