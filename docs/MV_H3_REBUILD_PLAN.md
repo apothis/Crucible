@@ -672,3 +672,12 @@ Filed as `.mvwork/g1_refs/nevermine_G8_chair_768p_1344x768_V3-prompt_seed2026102
 - Still one sample each; seed variance not excluded. Motion continuity is for the user to judge.
 - Request: `g8_v3_768p_request.json` (V3 request minus megapixels, width 1344, height 768);
   hand-over script `g8_handover.sh <job> <tag> <name>` (probe, floor check, copy, 1 s sheet).
+- **User verdict (09:40):** both 768p takes usable; prefers the G8 camera move (V3 wording),
+  which is already the writer's default grammar (0d05c5c). No writer change needed.
+- **Eyes:** user noted her eyes were closed at the start of earlier takes and open throughout
+  now. Face crops of t=0.2/1/2 s for all six chair takes (`G6_frames/eyes/eyes_open_sheet.png`):
+  G3 and 544p-V1 open lids-down and lift on the first line; G4, V3, G7, G8 open eyes-open into
+  the lens. Every prompt has the same line ("head slightly lowered, eyes rest just below the
+  lens"); nothing asks for closed eyes, so the lids-down opening was per-render luck, not
+  wording (V1 gave both outcomes at 544p vs 768p). To get it reliably it must be written in
+  explicitly (lids lowered at the start, gaze lifts into the lens on the first word). User's call.
