@@ -984,3 +984,11 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   false` (base weights, 20 steps, no LoRA, shift 12/3), about 2.5x the wall time (~15 min for
   141 f). If D runs at real speed, a follow-up separates LoRA from shift (turbo LoRA with shift
   12/3). Research pass launched in parallel (upstream cards, guides, community reports).
+- **Research pass back (15:40), full report `.mvwork/transfer/ssbs/research_h3_pace_2026-10-28.md`.**
+  Decisive item: the publisher (lightx2v) states video shift 12 / audio 3 for the REF2V 8-step
+  LoRA (release post #51) and says the shift-6 advice is for FL2V, not REF2V (post #57); our
+  CHAIN_TURBO runs ref2v at 6/3 on a secondary wiki's word. Every community report on H3 turbo
+  LoRAs is slower motion, not faster, and nobody reports water as timelapse; the acceleration
+  signature ("start slow, speed up, settle") is a known H3 trait (Cadence-Retime exists for it).
+  No node exposes fps or motion speed; the prompt guide has no pace vocabulary beyond the camera.
+  New one-variable test E: turbo with shift_video 12 (publisher's value), ~6 min, ahead of test D.
