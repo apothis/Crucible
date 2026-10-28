@@ -30,6 +30,7 @@ from . import musicvideo as musicvideo_mod
 from . import mv_h3 as mv_h3_mod
 from . import mv_writer as mv_writer_mod
 from . import mv_stems as mv_stems_mod
+from . import mv_locations as mv_locations_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1146,19 +1147,7 @@ def mv_render_scene(p: dict):
     stored text so the picture numbering matches what is uploaded: face, body, then the location
     still as <Picture 3> (singer scenes) or <Picture 1> alone (environment-only scenes). With no
     location still the scene renders as before (her two pictures; or no pictures on FL2VA)."""
-    sc_src = p.get("script")
-    if isinstance(sc_src, str):
-        base = os.path.realpath(os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_scripts"))
-        path = os.path.realpath(sc_src if os.path.isabs(sc_src) else os.path.join(base, sc_src))
-        if not path.startswith(base + os.sep) or not os.path.exists(path):
-            raise HTTPException(400, "script must be a saved script under .mvwork/mv_scripts")
-        with open(path) as f:
-            script = json.load(f)
-        script_name = os.path.basename(path)
-    elif isinstance(sc_src, dict):
-        script, script_name = sc_src, "(inline)"
-    else:
-        raise HTTPException(400, "script (path or object) is required")
+    script, script_name = _mv_load_script(p.get("script"))
     try:
         scene = script["scenes"][int(p.get("scene", -1))]
     except Exception:
@@ -1168,11 +1157,28 @@ def mv_render_scene(p: dict):
     loc_ref = p.get("location_ref_id") or ((p.get("location_refs") or {}).get(loc["id"]) if loc else None)
     if loc_ref and not loc:
         raise HTTPException(400, "location_ref_id given but the scene has no location (script written before locations)")
+    ref_from = "request" if loc_ref else None
+    if loc and not loc_ref and p.get("use_location_library", True):
+        # no still named for this place: the script's own row (a known location carries its
+        # still id), then the location library by id
+        loc_ref = loc.get("still_id") or mv_locations_mod.still_for(mv_locations_mod.load(LIBRARY), loc["id"])
+        ref_from = ("script" if loc.get("still_id") else "library") if loc_ref else None
+    if loc_ref and not _lib_image_path(loc_ref):
+        raise HTTPException(400, f"location still {os.path.basename(str(loc_ref))} for '{loc['id']}' is not in the library")
     singer_refs = [] if env_only else [r for r in (p.get("ref_ids") or []) if r]
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
     prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")))
-    q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id")}
+    if p.get("dry_run"):
+        # the gate before the GPU: what WOULD be submitted, nothing queued
+        return {"dry_run": True, "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
+                "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
+                "location": loc["id"] if loc else None, "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
+                "location_ref_from": ref_from, "ref_ids": singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
+                "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
+                "clips": len(prompts), "prompts": prompts}
+    q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
+                                                 "use_location_library", "dry_run")}
     q.update({"audio_id": script["audio_id"], "ref_ids": singer_refs + ([loc_ref] if loc_ref else []),
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
@@ -1180,7 +1186,87 @@ def mv_render_scene(p: dict):
     return _h3_chain(q, meta={"script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
                               "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                               "location": loc["id"] if loc else None,
-                              "location_ref_id": os.path.basename(loc_ref) if loc_ref else None})
+                              "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
+                              "location_ref_from": ref_from})
+
+
+def _mv_load_script(sc_src):
+    """A saved script (path under .mvwork/mv_scripts) or an inline script object -> (script, name)."""
+    if isinstance(sc_src, str):
+        base = os.path.realpath(os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_scripts"))
+        path = os.path.realpath(sc_src if os.path.isabs(sc_src) else os.path.join(base, sc_src))
+        if not path.startswith(base + os.sep) or not os.path.exists(path):
+            raise HTTPException(400, "script must be a saved script under .mvwork/mv_scripts")
+        with open(path) as f:
+            return json.load(f), os.path.basename(path)
+    if isinstance(sc_src, dict):
+        return sc_src, "(inline)"
+    raise HTTPException(400, "script (path or object) is required")
+
+
+# ----------------------------------------------------------------------------- MV location library
+
+@app.get("/api/mv/locations")
+def mv_locations_list():
+    """The reusable location library (docs/MV_H3_REBUILD_PLAN.md s.19): every place written and
+    photographed so far, reused by the writer across re-runs and songs and by render_scene to
+    find a scene's still. Rows with a still are what the writer is offered."""
+    rows = mv_locations_mod.load(LIBRARY)
+    for r in rows:
+        r["still_present"] = bool(r.get("still_id") and _lib_image_path(r["still_id"]))
+    return {"locations": rows, "offered": [r["id"] for r in mv_locations_mod.with_stills(rows)],
+            "store": mv_locations_mod.store_path(LIBRARY)}
+
+
+@app.post("/api/mv/locations")
+def mv_locations_upsert(p: dict):
+    """Add or edit one location by hand. p: {id (or name), name?, description?, still_prompt?,
+    still_id? (a library still, person-free), tags?}. Given fields overwrite, others are kept."""
+    if p.get("still_id") and not _lib_image_path(p["still_id"]):
+        raise HTTPException(400, "still_id must reference an image in the library")
+    try:
+        return mv_locations_mod.upsert(LIBRARY, p)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/mv/locations/remove")
+def mv_locations_remove(p: dict):
+    """Drop a row from the library (the still stays in the library). p: {id}."""
+    if not mv_locations_mod.remove(LIBRARY, p.get("id")):
+        raise HTTPException(404, "no such location")
+    return {"removed": mv_locations_mod.slug(p.get("id"))}
+
+
+@app.post("/api/mv/locations/import")
+def mv_locations_import(p: dict):
+    """File a script's location in the library with the still already imported for it (the normal
+    path after the user generates a still from the script's prompt and imports it with
+    /api/youtube/import_still). p: {script, location_id, still_id, tags?}."""
+    script, name = _mv_load_script(p.get("script"))
+    if p.get("still_id") and not _lib_image_path(p["still_id"]):
+        raise HTTPException(400, "still_id must reference an image in the library")
+    try:
+        return mv_locations_mod.import_from_script(LIBRARY, script, p.get("location_id"), p.get("still_id"), name, p.get("tags"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/mv/locations/import_still")
+async def mv_locations_import_still(file: UploadFile = File(...), script: str = Form(...), location_id: str = Form(...),
+                                    label: str = Form(None)):
+    """One step for a new place: upload the person-free still rendered from the script's prompt;
+    it is filed in the library and the location row is added with it."""
+    scr, name = _mv_load_script(script)
+    lid = mv_locations_mod.slug(location_id)
+    loc = next((L for L in scr.get("locations") or [] if L.get("id") == lid), None)
+    if loc is None:
+        raise HTTPException(400, f"the script has no location '{lid}'")
+    data = await file.read()
+    filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - location {lid}",
+                                 kind="location", extra={"location_id": lid, "script": name})
+    row = mv_locations_mod.import_from_script(LIBRARY, scr, lid, filed["still_id"], name)
+    return {"still": filed, "location": row}
 
 
 @app.post("/api/mv/stems")
@@ -1215,7 +1301,9 @@ def mv_write(p: dict):
         descriptions of the two reference stills and what both show), concept?, model?
         (default the latest Opus), effort? ("medium"), provider? ("claude_sub"),
         align_on? ("auto" [default]: the cached vocal stem when there is one, else the mix;
-        "vocals" requires a stem; "mix" ignores it)}.
+        "vocals" requires a stem; "mix" ignores it),
+        locations? ("library" [default]: offer every library location that has a still, to be
+        reused by id; "none": invent everything; or a list of library ids to offer)}.
     Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
@@ -1236,6 +1324,11 @@ def mv_write(p: dict):
     if align_on == "vocals" and not stem:
         raise HTTPException(400, "align_on=vocals but no vocal stem is cached; POST /api/mv/stems first")
     align_path = stem if align_on in ("auto", "vocals") else None
+    try:
+        known = mv_locations_mod.select(mv_locations_mod.load(LIBRARY), p.get("locations"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    known = [r for r in known if not r.get("still_id") or _lib_image_path(r["still_id"])]
 
     def _log(s):
         print(s)
@@ -1248,7 +1341,7 @@ def mv_write(p: dict):
             model=p.get("model") or mv_writer_mod.WRITER_MODEL,
             effort=p.get("effort") or mv_writer_mod.WRITER_EFFORT,
             claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log,
-            align_path=align_path)
+            align_path=align_path, known_locations=known)
     except Exception as e:
         raise HTTPException(500, f"writer failed: {e}")
     out_dir = os.path.join(work, "mv_scripts")
@@ -1694,6 +1787,12 @@ async def youtube_import_still(file: UploadFile = File(...), label: str = Form(N
     full resolution kept - the living-cover lane crops it to the canvas aspect itself and
     the thumbnail step wants the big original). Returns {still_id, media_url, width, height}."""
     data = await file.read()
+    return _file_external_still(data, file.filename, label)
+
+
+def _file_external_still(data, filename, label, kind="cover", extra=None):
+    """File externally rendered image bytes in the library as a videostill (PNG, RGB, full
+    resolution kept). Returns {still_id, media_url, width, height}."""
     if not data:
         raise HTTPException(400, "empty upload")
     import io
@@ -1706,10 +1805,11 @@ async def youtube_import_still(file: UploadFile = File(...), label: str = Form(N
     jid = uuid.uuid4().hex
     out = os.path.join(LIBRARY, f"{jid}.png")
     im.convert("RGB").save(out, format="PNG")
-    name = (label or os.path.splitext(file.filename or "")[0] or "imported cover")[:120]
-    save_done_row(jid, "videostill", {"title": f"{name} (imported)", "kind": "cover",
-                                      "imported": True, "engine": "external",
-                                      "source": file.filename or ""}, out)
+    name = (label or os.path.splitext(filename or "")[0] or "imported cover")[:120]
+    params = {"title": f"{name} (imported)", "kind": kind, "imported": True, "engine": "external",
+              "source": filename or ""}
+    params.update(extra or {})
+    save_done_row(jid, "videostill", params, out)
     return {"still_id": jid, "media_url": f"/api/media/{jid}", "width": im.width, "height": im.height}
 
 

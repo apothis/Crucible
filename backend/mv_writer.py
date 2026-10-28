@@ -118,7 +118,7 @@ Fixed facts about this production:
 - Inside a scene, the camera does ONE thing, written in the video model's own grammar (measured: it obeys this and ignores metric distances): "static", or "<verb> with <small|large> amplitude at <slow|fast> speed toward/along X throughout the take". Verbs: push in, pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc, tracking. Performance takes use small amplitude at slow speed; large amplitude only on B-roll. A scene has ONE framing (the one it starts in); never write a second framing the move should reach (measured: "from a medium shot to a medium close-up" became a hidden cut rendered as a dissolve, with the wardrobe changing across it). Bound a move only by what must stay in frame to the end (the lamp, the window, her shoulders). No whip pans, no handheld chaos, no orbit-plus-zoom, never centimetres or metres.
 - Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
-- LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location.
+- LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location. When the brief lists KNOWN LOCATIONS (places already photographed for earlier scripts or other videos, their stills on file), prefer them wherever one serves THIS video and refer to each by its exact id; invent a new location only where no known one fits the song. Never redecorate a known place: its fixed elements are what its description says, and your scene settings there must match that description.
 - Timing is NOT yours beyond choosing cut points: the system computes clip windows and which words fall where.
 
 Write for the song's genre: its pace, weight and mood should be visible in the choice of places, light, weather, movement and the proportion of performance to B-roll."""
@@ -164,13 +164,15 @@ def _section_text(sections):
     return "\n".join(out)
 
 
-def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
+def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None):
+    """known: library rows (mv_locations) the model may reuse by id; None/[] = none offered."""
     schema = {
         "concept": "2-3 sentences: what the video is about and how it moves (string)",
         "look": "one sentence of visual style for every prompt: film stock feel, light, contrast, colour, camera weight (string)",
         "wardrobe": "the singer's one outfit, as it appears in the references, in one sentence (string)",
         "locations": [{
-            "id": "snake_case id",
+            "id": "snake_case id (a KNOWN location's exact id when reusing one)",
+            "reuse": "true only when id is a KNOWN location; then omit name, description and still_prompt (boolean)",
             "name": "short name, e.g. the parlour",
             "description": "one sentence of what a reference photograph of this place shows: layout, key furniture or landforms, materials, where the light comes from; no people",
             "still_prompt": "a prompt for a photoreal 16:9 still of this place with NO people, one paragraph: camera position and height, every fixed element and where it sits in frame, materials, the light and weather of its first scene, the video's look; the elements must match this location's scene settings word for word"
@@ -196,6 +198,9 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
             f"DURATION: {facts['duration']:.1f}s. Lyric alignment cover {facts.get('cover')}.\n\n"
             f"REFERENCES (the only person in the video):\n{refs}\n\n"
             + (f"USER CONCEPT (follow it): {concept}\n\n" if concept else "")
+            + (("KNOWN LOCATIONS (already photographed; a still of each is on file). Reuse one by its exact id "
+                "with {\"id\": ..., \"reuse\": true}; a new place needs a full entry with a still prompt:\n"
+                + known_text(known) + "\n\n") if known else "")
             + "MEASURED SECTIONS (real seconds on this recording; use these indices):\n"
             + _section_text(facts["sections"]) + "\n\nLYRICS:\n" + (lyrics_raw or "").strip()
             + "\n\nThe scenes tile the whole song in order with no gaps: the first starts at 0, each `to` is the "
@@ -294,16 +299,45 @@ def _slug(x):
     return re.sub(r"[^a-z0-9]+", "_", str(x or "").lower()).strip("_")
 
 
-def normalize_locations(plan, scenes):
-    """The script's location table, and every scene pointing at one of its rows. A scene whose
+def known_text(rows):
+    """The block the writer shows the model: one line per known place, id first."""
+    return "\n".join(f"- id `{r['id']}` ({r.get('name')}): {r.get('description') or '(no description)'}" for r in rows)
+
+
+def _known_row(r):
+    return {"id": r["id"], "name": (r.get("name") or r["id"].replace("_", " ")).strip(),
+            "description": (r.get("description") or "").strip(),
+            "still_prompt": (r.get("still_prompt") or "").strip(),
+            "still_id": r.get("still_id"), "known": True}
+
+
+def normalize_locations(plan, scenes, known=None):
+    """The script's location table, and every scene pointing at one of its rows. A location whose
+    id (or name) matches a KNOWN library row is that row: the library's description, still prompt
+    and still id win, marked `known` (the still exists; nothing to generate). A scene whose
     `location` names nothing in the table gets a row of its own built from its setting (marked
     derived, with the scene's opening still as a stand-in prompt - that one may show her)."""
-    locs, seen = [], {}
+    kn = {r["id"]: r for r in (known or []) if r.get("id")}
+    by_name = {_slug(r.get("name")): r["id"] for r in kn.values() if _slug(r.get("name"))}
+    locs, seen, alias = [], {}, {}
+
+    def _add_known(lid):
+        seen[lid] = len(locs)
+        locs.append(_known_row(kn[lid]))
+
     for L in plan.get("locations") or []:
         if not isinstance(L, dict):
             continue
         lid = _slug(L.get("id") or L.get("name"))
         if not lid or lid in seen:
+            continue
+        # a known place under its own id, or under a new id with a known place's name
+        hit = lid if lid in kn else (by_name.get(_slug(L.get("name"))) or by_name.get(lid))
+        if hit:
+            if hit != lid:
+                alias[lid] = hit
+            if hit not in seen:
+                _add_known(hit)
             continue
         seen[lid] = len(locs)
         locs.append({"id": lid, "name": (L.get("name") or lid.replace("_", " ")).strip(),
@@ -311,6 +345,9 @@ def normalize_locations(plan, scenes):
                      "still_prompt": (L.get("still_prompt") or "").strip()})
     for sc in scenes:
         lid = _slug(sc.get("location"))
+        lid = alias.get(lid, lid)
+        if lid not in seen and lid in kn:
+            _add_known(lid)
         if lid not in seen:
             lid = _slug(sc.get("title")) or f"scene_{sc['index']}"
             if lid not in seen:
@@ -502,24 +539,28 @@ def check_prompt(prompt, clip, performance="sing_to_camera"):
 
 def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs, concept=None,
                  provider="claude_sub", model=WRITER_MODEL, effort=WRITER_EFFORT, claude_model="",
-                 cache_dir=None, log=print, align_path=None):
+                 cache_dir=None, log=print, align_path=None, known_locations=None):
     """Song -> full script JSON (scenes with chain plans and compiled per-clip prompts).
     `refs` = {"face": one-line description of <Picture 1>, "body": of <Picture 2>,
-              "shared": a sentence naming what BOTH show (the details the prompt may mention)}."""
+              "shared": a sentence naming what BOTH show (the details the prompt may mention)}.
+    `known_locations` = library rows (mv_locations) the model may reuse by id instead of
+    inventing a new place; a reused row carries its still id into the script."""
     facts = song_facts(audio_path, lyrics_raw, duration, cache_dir=cache_dir, align_path=align_path)
     log(f"[mvw] facts: {len(facts['sections'])} sections, cover {facts.get('cover')}, aligned on {facts['aligned_on']}")
     refs_text = (f"<Picture 1> (face / identity): {refs['face']}\n<Picture 2> (full body / wardrobe): {refs['body']}\n"
                  f"Both show: {refs['shared']}")
-    system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept)
+    system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept, known=known_locations)
     raw = llm_mod.complete(provider, model, system, user, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
     _keep_raw(cache_dir, f"{audio_id}_pass1.txt", raw)
     plan = _extract_json(raw)
     scenes = normalize_scenes(plan, facts["sections"])
-    locations = normalize_locations(plan, scenes)
-    log(f"[mvw] pass 1: {len(scenes)} scenes, {len(locations)} locations")
+    locations = normalize_locations(plan, scenes, known=known_locations)
+    log(f"[mvw] pass 1: {len(scenes)} scenes, {len(locations)} locations "
+        f"({sum(1 for L in locations if L.get('known'))} known, {len(known_locations or [])} offered)")
     script = {"title": title, "audio_id": audio_id, "style": style, "duration": duration,
               "concept": plan.get("concept", ""), "look": plan.get("look", ""),
               "wardrobe": plan.get("wardrobe", ""), "refs": refs, "facts": facts, "locations": locations,
+              "known_offered": [r["id"] for r in (known_locations or [])],
               "writer": {"provider": provider, "model": model, "effort": effort}, "scenes": []}
     for sc in scenes:
         write_scene_clips(script, sc, provider, model, effort, claude_model, cache_dir, log)
@@ -585,8 +626,13 @@ def script_markdown(script):
         for L in script["locations"]:
             used = [str(sc["index"] + 1) for sc in script["scenes"] if sc.get("location") == L["id"]]
             out += [f"### {L['name']}  (`{L['id']}`, scenes {', '.join(used) or '-'}"
-                    + (", derived from a scene setting" if L.get("derived") else "") + ")", "",
-                    f"- shows: {L.get('description')}", "", "Still prompt:", "", "```", (L.get("still_prompt") or "").strip(), "```", ""]
+                    + (", derived from a scene setting" if L.get("derived") else "")
+                    + (", KNOWN: still on file" if L.get("known") else "") + ")", "",
+                    f"- shows: {L.get('description')}", ""]
+            if L.get("known"):
+                out += [f"- still: library {L.get('still_id') or '(none yet)'}; nothing to generate", ""]
+            else:
+                out += ["Still prompt:", "", "```", (L.get("still_prompt") or "").strip(), "```", ""]
     for sc in script["scenes"]:
         out += [f"## Scene {sc['index'] + 1}: {sc.get('title', '')}  ({sc['start']:.1f}-{sc['end']:.1f}s, "
                 f"{', '.join(sc['section_types'])})", "",
