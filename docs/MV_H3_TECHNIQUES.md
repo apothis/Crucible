@@ -280,7 +280,11 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   fields verbatim); `lane: "ref2va"` is the opt-out; keyframes or a camera reference keep the
   reference lane because only it has those slots. Her scenes stay on the reference lane (her
   identity needs the pictures). The env one-motion prose rule stays (it is still good practice;
-  on the reference lane it was not sufficient). VALIDATED on a second environment scene
+  on the reference lane it was not sufficient).
+  Caveat [U/M 2026-10-28, ENV11]: the lane continues the still's PIXELS, so anything the still
+  does not contain (people listed in `others`) ghosts in over ~0.4 s around the 0.6-1.0 s mark.
+  Prose people do render with their counted action. Fix options in plan s.20.23 (a per-scene
+  opening still that includes them; or a pre-roll trimmed at assembly). VALIDATED on a second environment scene
   [U 2026-10-28 20:40: scene 8, 9.4 s, large-amplitude push, three swells and spray, older
   multi-motion text: "speed is fine"]. Two scenes, two cameras, two clip lengths, both at real
   speed on the lane that timelapsed nine times on the reference side.

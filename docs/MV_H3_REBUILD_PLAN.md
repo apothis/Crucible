@@ -1381,3 +1381,25 @@ has real footage, 3 built in parallel as the fallback.
 - Rendering note: env-only scenes 3, 4 and 19 now carry prose people AND default to the i2v
   lane; prose people on the first-frame lane are untested (on ref2va the ENV7 fisherman rendered
   fine). Scene 4 (tavern, static camera, 5.2 s) is the cheapest first check.
+
+### 20.23 ENV11 tavern plate: prose people on the I2V lane (2026-10-28 21:25) [V floor + frames; user to watch]
+- Scene 4 of the rerun script through the default path (job 8f15c8fb, i2v, tavern still as frame
+  0, no references). Exec 326 s, floor r 0.998, proxy 0.36 (static room, small men). Filed
+  `ssbs_env11_tavern_768p_static_three_fishermen_i2v_default_seed20261027.mp4`; frames
+  `frames/ENV11_sheet.png`, arrival tile `frames/ENV11_arrival_0-29_every3.png`.
+- The three fishermen RENDER, with the counted action as written (tankards up by ~2 s, heads
+  back at ~3 s, settled by ~5 s), faces lit but small; the room, lamps and fire hold still.
+- THE FLAW: frame 0 is the person-free still, the room stays empty for ~0.6 s, the men ghost in
+  over ~0.4 s (frames 15-21) and are solid at ~1 s. The first-frame lane continues the still's
+  pixels; people the still does not contain must dissolve in. Measured per-frame change: ~0.05
+  for frames 2-12, rising through 0.2-0.6 over frames 13-24.
+- General fixes (both opt-in, user to pick; nothing built):
+  A. Per-scene opening still WITH the people for env-only scenes that carry `others` (the scene
+     schema already has `opening_still`; the writer would add the listed people to it; the user
+     generates it; render_scene takes it as the first frame instead of the location still).
+     Frame 0 then holds the people and the location still stays person-free for reuse.
+  B. Pre-roll: render such scenes one grid step longer (+17 f) with the song window starting
+     ~0.7 s early, and drop the first 24 frames at assembly (the wind-intro offset mechanism).
+     No new still; costs 17 frames per clip and makes assembly aware of per-scene trims.
+  C. Reference lane (`lane: "ref2va"`) for env scenes with people: present from frame 0, but
+     the timelapse prior for outdoor water/sky; untested in an enclosed room.
