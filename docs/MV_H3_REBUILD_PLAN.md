@@ -1490,3 +1490,17 @@ has real footage, 3 built in parallel as the fallback.
   the still; then render scene 19 again with it. Scene 3 (ENV13) awaits the user's verdict.
 - VERDICT on ENV13 [U 23:25]: "Scene 3 passes." Second people scene passed on the i2v lane with
   an opening still (one hauler, truck right). Scene 19 awaits the regenerated still (prompt v3).
+
+### 20.27 ENV15: scene 19 again with the golden-evening still (2026-10-28 23:55) [V floor + frames; user to watch]
+- New still 41308b2d (clear evening, shutters open, four men walking, coiled rope on the last
+  man's shoulder) filed; scene 19 of the final script rendered with it as frame 0 (job f40c39fd,
+  175 f, exec 433 s). Floor r 0.999, proxy 0.97. Filed
+  `ssbs_env15_scene19_harbour_768p_four_walking_noboarding_goldenstill_i2v_seed20261027.mp4`.
+- The world HOLDS: golden evening, open shutters and glassy water through all seven 1 s frames;
+  first-second change 0.3-2.3 with only the 4-frame token tick (ENV14 had the 2-3.5 dissolve
+  spikes). The state override in the opening still fixed the dissolve [M]. No boarding, no leap
+  in the frames.
+- To watch for [frames]: by ~4 s the group looks turned toward the camera, walking back toward
+  it, where the clip has them walking away toward the boats. If the user sees it: extras who
+  walk away from camera may turn to face it mid-clip (one sample), a candidate rule for the
+  people bullet ("they keep walking away; their backs stay to the camera to the end").
