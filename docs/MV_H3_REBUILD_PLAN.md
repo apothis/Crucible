@@ -787,3 +787,19 @@ Dream Of Me (276 s), Nine Nights (294 s), Moonlit Requiem (273 s); power metal Y
 (227 s), Thunder in My Veins (265 s), Let the Stars Burn (~300 s). Suno imports carry no lyrics in
 the library row; their lyrics come from the project song or the user. Lyrics go to the runner as a
 tagged text file (section tags as for Never Mine); style as a one-paragraph file.
+
+### 20.1 Song and references chosen (2026-10-28 12:40)
+- Song: **She Sings Before the Storm**, the naturalized Suno version the YouTube tab used:
+  library `2306adc5a44a43afb1e4743b86bd98b9` (252.4 s; md5 identical to the user's
+  `/Volumes/SSD1/Downloads/She_Sings_Before_the_Storm_naturalized.wav`). 150 bpm A minor Celtic
+  folk metal, mezzo belting to keening head voice, dual guitars, fiddle and whistle: faster,
+  denser and a different world from Never Mine on every axis the test wants.
+- Runner inputs under `.mvwork/transfer/ssbs/`: `lyrics.txt` (tagged, from the project song:
+  2 verses, 2 pre-choruses, 3 choruses, solo, bridge, outro), `style.txt` (bpm/key/tags + the
+  Suno house-format style), `refs.json` (place-free descriptions), `ref_prompts.md`.
+- References: option B. Two new pictures on a plain slate-grey backdrop in the song's world
+  (Irish coastal 19th-c. dress: green laced wool bodice, white linen shift off the left
+  shoulder, charcoal skirt, dark shawl, bare feet, no jewellery), prompts in `ref_prompts.md`,
+  recipe recorded as techniques 4a. Waiting on the user's two images; then
+  `.mvwork/transfer/transfer_test.sh 2306adc5a44a43afb1e4743b86bd98b9 ssbs "She Sings Before the Storm" .mvwork/transfer/ssbs/style.txt .mvwork/transfer/ssbs/lyrics.txt .mvwork/transfer/ssbs/refs.json`
+  (stems ~80 s on the box, two writer runs ~8 min each, no render).

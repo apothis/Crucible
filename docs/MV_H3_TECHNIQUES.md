@@ -121,6 +121,29 @@ function; a rule only in prose is for the writer's system prompt or the person r
   element and where it sits in frame, materials, the first scene's light and weather, and the
   video's look.** [design; the five Never Mine stills came back usable first time]
 
+### 4a. Reference-picture recipe (per video, two GPT images)
+
+The user generates both from Claude's prompts with the canonical Selene portrait as the image
+input. [design s.3.2; proved on Never Mine] The recipe, song-independent:
+- **Plain seamless studio backdrop for both, nothing else in frame.** A place in the picture or
+  in its description nudges the writer toward that place (the Never Mine body picture showed the
+  parlour; its description named it). [H, flagged 2026-10-28; the reason for option B on the
+  transfer test]
+- **Picture 1: close three-quarter portrait, 85 mm, 3:4; picture 2: full length standing, facing
+  camera, arms relaxed, 50 mm, 2:3.** Face in the song's makeup and key light; body in the song's
+  one wardrobe. [design]
+- **One wardrobe sentence, used verbatim three times**: in the body prompt, in the writer's
+  `refs.body`, and (its neckline part) in the face prompt. Both pictures must agree on every
+  visible detail; a detail only one shows is a coin flip per clip. [M + U: G1 choker]
+- **Writer descriptions (`refs.face`, `refs.body`, `refs.shared`) are place-free**: identity,
+  makeup, light, wardrobe; never a room or landscape. [same reason as the backdrop]
+- **Identity constants for Selene**: long dark wavy hair, pale skin, grey-green eyes, dark brows.
+  Everything else (makeup, jewellery, wardrobe) is per video. [the pictures on file]
+- **Look: the first draft is the sensual version** (bodice laced low, a shoulder slipped, back
+  arched), period-correct for the song's world, nudity excluded; **one reveal per image** and no
+  cleavage/sheer/sensual vocabulary, which the GPT filter refuses. [U 2026-09-15; filter notes]
+- **No brand names, no text, no watermark** in any prompt. [filter notes]
+
 ## 6. Take length and setups
 
 - **Performance takes 8-15 s by default, never more than 28 s; B-roll up to 45 s; nothing under
