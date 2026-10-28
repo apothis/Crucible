@@ -1448,3 +1448,43 @@ has real footage, 3 built in parallel as the fallback.
   `.mvwork/transfer/ssbs/dry/scene3_opening_still_prompt.txt`, `scene19_opening_still_prompt.txt`.
   When the stills come back: `/api/mv/scene_still` (scene 3, scene 19) -> render with
   `first_frame_id` on the default lane.
+
+### 20.26 Scenes 3 and 19 with opening stills (2026-10-28 23:05) [scene 3 filed; scene 19 rendering]
+- User generated both stills from the composed prompts (1672x941 each); filed as b4c2d2ee
+  (scene 3, one hauler) and 6f6e7b51 (scene 19, four walking). Both fired on the default lane
+  with `first_frame_id`; graphs checked on the queue (node 30 = each scene's own still, lengths
+  141 and 175).
+- ENV13 (scene 3, job 3793ed2a): exec 376 s, floor r 0.998, proxy 0.64; first-second change
+  flat at ~0.4 with a ~1.0 tick every fourth frame (the 17k+5 token cadence, also faintly visible
+  on ENV12), no ghost rise. Frames: the hauler is in frame 0 bent to the line and leans back as he
+  pulls; truck right continuous. Model-added element: the cottage windows light up amber within
+  the first second (not in the still or the prompt; the same warm-window drift appeared on
+  ENV9). Filed `ssbs_env13_scene3_harbour_768p_truckright_one_hauler_openingstill_i2v_seed20261027.mp4`.
+  User to watch for pace and the hauling motion.
+- ENV14 (scene 19, job f068bb2d): exec 456 s, 175 f, floor r 0.999, proxy 1.15. Filed
+  `ssbs_env14_scene19_harbour_768p_pushin_four_walking_openingstill_i2v_seed20261027.mp4`. The men
+  are in frame 0 and walk; BUT the frames show the WHOLE WORLD dissolving from the still's storm
+  (slate sky, choppy sea, shutters barred) into a golden calm evening with open shutters inside
+  the first second, plus a fifth man appearing in the nearest boat by ~4 s. Cause [M, mine]: the
+  opening-still composer used the LOCATION still prompt's weather and light; scene 19's own
+  setting is "a clear evening, pale gold sky, calm glassy harbour, shutters open" and the clip
+  text says so, so frame 0 contradicted the clip and the model reconciled the two by dissolving.
+  Scenes 3 and 4 matched their location's first-scene weather by luck.
+  FIX (general): the composer now appends THIS SCENE'S STATE (setting + lighting) as an explicit
+  override of the location still's weather, time of day, light and open/closed state. Scene 19
+  prompt regenerated (`dry/scene19_opening_still_prompt_v2.txt`); the user regenerates the still.
+  The writer's own `opening_still` field already takes the scene's light (schema), so new
+  scripts are unaffected.
+- VERDICT on ENV14 [U 23:15]: "nope, that ones no good, one of the men flies through the air onto
+  the boat" and "They cant step down to the boat, its too far away". Two faults: (1) my
+  opening-still composer carried the location still's storm light under a clear-evening scene
+  (fixed above, state override); (2) the writer's action "one steps down into the nearest boat"
+  is a large body transition for an extra AND impossible in the still's geometry (the boats are
+  moored off the quay on ropes), so the model rendered a leap. Rule added to both writer passes:
+  extras keep to small ordinary actions, never climbing/jumping/stepping into or out of a boat/
+  mounting/falling, and nothing the still's geometry makes impossible (techniques s.8).
+- Scene 19 rewritten with `set: {action: "... none of them boards ..."}` under the new rule
+  (21 s, 0 problems; each man walks at his own pace, laughs staggered, no boarding). Final
+  script: `..._rw19_20261028_205405.json`. Opening-still prompt v3 (scene state override + new
+  poses): `.mvwork/transfer/ssbs/dry/scene19_opening_still_prompt_v3.txt`. The user regenerates
+  the still; then render scene 19 again with it. Scene 3 (ENV13) awaits the user's verdict.

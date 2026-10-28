@@ -280,7 +280,10 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   fields verbatim); `lane: "ref2va"` is the opt-out; keyframes or a camera reference keep the
   reference lane because only it has those slots. Her scenes stay on the reference lane (her
   identity needs the pictures). The env one-motion prose rule stays (it is still good practice;
-  on the reference lane it was not sufficient).
+  on the reference lane it was not sufficient). VALIDATED on a second environment scene
+  [U 2026-10-28 20:40: scene 8, 9.4 s, large-amplitude push, three swells and spray, older
+  multi-motion text: "speed is fine"]. Two scenes, two cameras, two clip lengths, both at real
+  speed on the lane that timelapsed nine times on the reference side.
   Caveat [U/M 2026-10-28, ENV11]: the lane continues the still's PIXELS, so anything the still
   does not contain (people listed in `others`) ghosts in over ~0.4 s around the 0.6-1.0 s mark.
   Prose people do render with their counted action. FIX (built 2026-10-28, user's pick): a
@@ -299,17 +302,24 @@ seated performance shot, one seed, with only the camera wording or the resolutio
 - **The people mechanism, end to end (validated on the tavern):** scene `others` -> the writer's
   `opening_still` carries them (composer for older scripts) -> the user generates that still ->
   `/api/mv/scene_still` files it -> `render_scene` i2v with `first_frame_id` -> the clip writes
-  them staggered. One extra still per scene with people; the location still stays person-free. VALIDATED on a second environment scene
-  [U 2026-10-28 20:40: scene 8, 9.4 s, large-amplitude push, three swells and spray, older
-  multi-motion text: "speed is fine"]. Two scenes, two cameras, two clip lengths, both at real
-  speed on the lane that timelapsed nine times on the reference side.
+  them staggered. One extra still per scene with people; the location still stays person-free.
+  The opening still must carry THIS scene's weather, time of day, light and open/closed state,
+  not the location still's: a mismatch makes the model dissolve the whole world to the clip's
+  state inside the first second [M 2026-10-28, ENV14: storm still under a golden-evening scene;
+  composer fixed to append the scene's setting + lighting as an override].
+- **Extras do small ordinary things only; never a large body transition.** [U 2026-10-28, ENV14:
+  "one of the men flies through the air onto the boat"] "One steps down into the nearest boat"
+  rendered as a leap, and the user's reading of the still explains it: the boats are moored off
+  the quay on their ropes, too far to step into, so the action was impossible in the picture's
+  geometry. Two halves of the rule: extras keep to small ordinary actions (walking, standing,
+  hauling, drinking, talking, coiling; never climbing, jumping, stepping into or out of a boat,
+  mounting, falling), and nothing the still's geometry makes impossible. Rule in both writer
+  passes; one sample.
 - **On the image-to-video lane the camera follows the still's geometry.** "Push in with large
   amplitude toward the harbour mouth" rendered as a push along the quay path the photograph
   shows, not out over the water [U, scene 8]. Write the move in terms of the picture's own
   lines (along the quay, toward the far wall), not toward a destination the still only implies.
   [U one sample]
-  Next candidates, in order: keyframe bounds (same still as first and last frame, section
-  12 and item 3), the camera reference lane for pace, a different element than water.
 
 ## 9. Resolution and recipe
 
