@@ -1249,3 +1249,26 @@ unknown VRAM footprint on 24 GB: last.
 
 Recommended: 1 first (two renders, one install), 2 second with the HERQUAY crop unless the user
 has real footage, 3 built in parallel as the fallback.
+
+### 20.16 Clock-compression lane built; harbour plate dry-run at model_fps 36 (2026-10-28 18:30; NOT fired)
+- Pack `AharaOoO/ComfyUI-MiniMaxH3-FrameRate-Adjustment-Ac` (v0.1.2, commit a5c8bb1, GPL-3.0, no pip
+  deps) read in full on the Mac first (`.mvwork/transfer/ssbs/boxpack/`): it clones the model, wraps
+  `extra_conds` to rewrite the PackedLayout's time axis (video rows at 40/fps per frame, refs and
+  keyframes retimed on the same cursor), trims/pads the audio latent to round(frames/fps x 40),
+  tags the conditioning with `minimax_frame_count`, and refuses a flat noise mask when the audio
+  length changes. Deployed by :5080 fs/write (9 files), pycompile OK on the box, ComfyUI restarted
+  (queue was empty), node `MiniMaxH3NativeFPSAVSyncAc` present in /object_info (model_fps 12-120).
+- Chain opt-ins in `build_h3_chain`: `free_av` (no SongMaskedAVContext; the sampler takes the
+  ref2v latent directly; single-clip only) and `clock_fps` (requires free_av; node id base+7 after
+  the guides, before BasicGuider; model, positive and latent all pass through it). Baseline graph
+  unchanged without the flags (offline test). `render_scene` validates: clock needs free_av,
+  free_av needs an environment-only single-clip scene; dry_run and job meta carry both.
+- Dry run (`.mvwork/transfer/ssbs/dry/env8_clock36_*.json`): scene 3 harbour, one-motion prose,
+  location still from the library, 141 f, 1344x768, turbo, seed 20261027, free_av true,
+  clock_fps 36 -> the model believes 3.92 s; saved at 24 fps = 5.88 s; expected 1.5x slow-down
+  if the direction inference holds. The two rejection paths returned the right 400s.
+- Two variables move against ENV2 (free AV and the clock). If 36 reads slower, a free_av-only
+  control at 24 attributes the effect; if it reads the same, that control is unnecessary.
+- Known unknowns for the run: the streamer receives a latent whose audio part is 157 ticks
+  instead of 235 (it muxes the master, so this should be ignored, [H] untested); turbo LoRA under
+  non-native coordinates (the author warns distilled LoRAs may interact).

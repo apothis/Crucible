@@ -1128,7 +1128,9 @@ def video_h3_chain(p: dict):
         lock? ("mix" [default] | "vocals" | "vocal_forward": what the latents hear; needs
         POST /api/mv/stems first for the stem locks; the mux is always the mix),
         camera_ref? (an mp4 under .mvwork sent as <Video 1>, the camera-pace reference; the
-        prompt must declare it - render_scene does)}.
+        prompt must declare it - render_scene does), free_av? (bool: no song in the latent, the
+        model generates its own audio, the master is muxed over it; env-only single-clip plates),
+        clock_fps? (12-120, needs free_av: MiniMaxH3NativeFPSAVSyncAc clock compression, s.20.15)}.
     The master handed to the graph is the song CUT to the chain window (stereo WAV, silence-padded
     past the end of the file), because the streamer muxes its master from sample 0; the recorded
     plan carries the real song times."""
@@ -1174,6 +1176,17 @@ def mv_render_scene(p: dict):
         raise HTTPException(400, "keyframes must be still_first_last, still_first or still_last")
     if keyframes and not loc_ref:
         raise HTTPException(400, "keyframes anchor the location still; this scene has none")
+    free_av = bool(p.get("free_av"))
+    clock_fps = p.get("clock_fps")
+    clock_fps = float(clock_fps) if clock_fps not in (None, "", 0, "0") else None
+    if clock_fps is not None and not (12.0 <= clock_fps <= 120.0):
+        raise HTTPException(400, "clock_fps must be between 12 and 120 (24 = native)")
+    if clock_fps is not None and not free_av:
+        raise HTTPException(400, "clock_fps resizes the audio latent; it needs free_av true (environment plates)")
+    if free_av and not env_only:
+        raise HTTPException(400, "free_av drops the song from the latent; environment-only scenes only (the song is laid in at assembly)")
+    if free_av and len(prompts) > 1:
+        raise HTTPException(400, "free_av is for single-clip plates; this scene chains more than one clip")
     if p.get("dry_run"):
         # the gate before the GPU: what WOULD be submitted, nothing queued
         return {"dry_run": True, "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
@@ -1181,7 +1194,8 @@ def mv_render_scene(p: dict):
                 "location": loc["id"] if loc else None, "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                 "location_ref_from": ref_from, "ref_ids": singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
-                "clips": len(prompts), "keyframes": keyframes, "prompts": prompts}
+                "clips": len(prompts), "keyframes": keyframes, "free_av": free_av, "clock_fps": clock_fps,
+                "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run")}
     q.update({"audio_id": script["audio_id"], "ref_ids": singer_refs + ([loc_ref] if loc_ref else []),
@@ -1192,7 +1206,8 @@ def mv_render_scene(p: dict):
                               "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
-                              "location_ref_from": ref_from, "keyframes": keyframes})
+                              "location_ref_from": ref_from, "keyframes": keyframes,
+                              "free_av": free_av, "clock_fps": clock_fps})
 
 
 def _mv_load_script(sc_src):

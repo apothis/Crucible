@@ -129,7 +129,15 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         attention" | "pytorch attention" | ...), ref_image_size? ("match" | "max"), crf? (19),
         prefix?, keyframes? (None [default] | "still_first_last" | "still_first" | "still_last":
         anchor the last reference picture, the location still, at those frames of every clip
-        via MiniMaxH3AddGuide; environment plates only, it pins whatever the still shows)}
+        via MiniMaxH3AddGuide; environment plates only, it pins whatever the still shows),
+        free_av? (False [default]; True = no MiniMaxH3SongMaskedAVContext: the model generates its
+        own audio and the streamer muxes the master over it; single-clip environment plates only,
+        the song is laid in at assembly anyway), clock_fps? (None [default] = the model's native
+        24; a value 12-120 inserts MiniMaxH3NativeFPSAVSyncAc (AharaOoO pack) after the guides and
+        before the guider: same frames, video time coordinates scaled by 40/fps so the model
+        believes the clip spans frames/fps seconds; saved at 24 fps a value above 24 reads as
+        slow motion with generated frames [H, direction inferred from the source, s.20.15]; the
+        node resizes the audio latent, so it requires free_av)}
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -166,6 +174,15 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
     keyframe_idx = {"still_first_last": (0, -1), "still_first": (0,), "still_last": (-1,)}.get(keyframes)
     if keyframes and keyframe_idx is None:
         raise ValueError("keyframes must be still_first_last, still_first or still_last")
+    free_av = bool(p.get("free_av"))
+    clock_fps = p.get("clock_fps")
+    clock_fps = float(clock_fps) if clock_fps not in (None, "", 0, "0") else None
+    if clock_fps is not None and not (12.0 <= clock_fps <= 120.0):
+        raise ValueError("clock_fps must be between 12 and 120 (24 = native)")
+    if clock_fps is not None and not free_av:
+        raise ValueError("clock_fps resizes the audio latent, so the song cannot ride in it: set free_av true")
+    if free_av and len(clips) > 1:
+        raise ValueError("free_av is for single-clip plates (no song context to chain the clips on)")
 
     g = {}
     # --- shared loaders and the patched model (ids follow the example's roles)
@@ -223,13 +240,16 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
             g[r2v] = {"class_type": "MiniMaxH3ImageToVideo",
                       "inputs": {"clip": ["5", 0], "vae": ["6", 0], "prompt": c["prompt"].strip(),
                                  "width": w, "height": h, "length": frames}}
-        song_in = {"latent": [r2v, 1], "audio_vae": ["9", 0], "master_audio": lock_audio,
-                   "clip_start_seconds": float(win["clip_start"]),
-                   "context_length": int(plan["context_frames"]), "source_fps": float(fps),
-                   "crop": "disabled"}
-        if prev_sampler is not None:
-            song_in["source_latent"] = [prev_sampler, 0]
-        g[song] = {"class_type": "MiniMaxH3SongMaskedAVContext", "inputs": song_in}
+        latent = [r2v, 1]
+        if not free_av:
+            song_in = {"latent": latent, "audio_vae": ["9", 0], "master_audio": lock_audio,
+                       "clip_start_seconds": float(win["clip_start"]),
+                       "context_length": int(plan["context_frames"]), "source_fps": float(fps),
+                       "crop": "disabled"}
+            if prev_sampler is not None:
+                song_in["source_latent"] = [prev_sampler, 0]
+            g[song] = {"class_type": "MiniMaxH3SongMaskedAVContext", "inputs": song_in}
+            latent = [song, 0]
         positive = [r2v, 0]
         if keyframes and ref_names:
             # Keyframe-bounded plate (opt-in, environment B-roll): anchor the LAST reference
@@ -244,12 +264,21 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                           "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": int(idx),
                                      "vae": ["6", 0], "image": still}}
                 positive = [gid, 0]
-        g[guider] = {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": positive}}
+        clip_model = model
+        if clock_fps is not None:
+            # Clock compression (opt-in, free-AV plates): the pack's node retimes the packed
+            # layout's time axis for this clip's conditioning, latent and model together. It must
+            # see the final conditioning (after the guides) and sit right before the guider.
+            cid = str(base + 7)
+            g[cid] = {"class_type": "MiniMaxH3NativeFPSAVSyncAc",
+                      "inputs": {"model": model, "positive": positive, "av_latent": latent, "model_fps": clock_fps}}
+            clip_model, positive, latent = [cid, 0], [cid, 1], [cid, 2]
+        g[guider] = {"class_type": "BasicGuider", "inputs": {"model": clip_model, "conditioning": positive}}
         clip_seed = int(c.get("seed") if c.get("seed") not in (None, "") else seed + CLIP_SEED_STRIDE * i)
         g[noise] = {"class_type": "RandomNoise", "inputs": {"noise_seed": clip_seed}}
         g[sampler] = {"class_type": "SamplerCustomAdvanced",
                       "inputs": {"noise": [noise, 0], "guider": [guider, 0], "sampler": ["12", 0],
-                                 "sigmas": ["11", 0], "latent_image": [song, 0]}}
+                                 "sigmas": ["11", 0], "latent_image": latent}}
         prev_sampler = sampler
         samplers.append(sampler)
         seeds.append(clip_seed)
@@ -278,6 +307,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "lock_separate": bool(lock_name and lock_name != master_name),
                 "ref_video_count": len(ref_video_names) if lane == "ref2va" else 0,
                 "keyframes": keyframes if (keyframes and ref_names) else None,
+                "free_av": free_av, "clock_fps": clock_fps,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved
