@@ -213,6 +213,11 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   Prose rules in `SCENE_SYSTEM` ("name any visible sky", one main motion) and `CLIP_SYSTEM`.
 - **Pace can only be steered positively: the chain is cfg-free, there is no negative prompt.**
   [P: BasicGuider] Do not blame the turbo LoRA for pace; that was true of LTX, not H3. [M]
+  Confirmed again 2026-10-28 on the harbour plate with the current block (lightx2v ref2v
+  8-step v1.1 768p): the publisher's shift 12 for REF2V changed nothing, and the base recipe
+  (no LoRA, 20 steps) was still sped up and moved MORE by the proxy (2.93 vs 2.19). [U: "both
+  are still sped up"; M: one variable each] The LoRA and the sigma shift are NOT pace levers.
+  Base costs 1.8x turbo wall time; there is no pace reason to leave turbo.
 - **Open-sky wide B-roll is intrinsically more motion-prone; prefer a near-foreground anchor for
   held shots.** [M corollary]
 - **Environment-only shots are the pace failure case. With no person on screen there is no

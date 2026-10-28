@@ -1052,3 +1052,6 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   (Civitai 2985458, via VPN); (3) a box-side retime (RIFE/Cadence-Retime) of a free plate at
   ~3x, replacing ffmpeg minterpolate; (4) writer rule: open-water B-roll is shot with her, or
   the environment-only shot moves to an enclosed place.
+- **User (16:15): "Both are still sped up."** LoRA and shift recorded as not pace levers
+  (techniques s.8). Four variables exhausted on the one scene: prose, first+last keyframes,
+  shift, LoRA. Next on the user's instruction: the last-frame-only keyframe plate (`still_last`).
