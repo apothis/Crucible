@@ -832,3 +832,33 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   `.mvwork/transfer/ssbs/location_still_prompts.md` (user generates; one-step filing with
   `/api/mv/locations/import_still`). Reference pictures filed: face 2c1c49e7, body cd98a0e4.
 - Next: user's five stills, then step 6 (three shot types at 768p, dry run first, go per render).
+
+### 20.3 Stills filed, three shot types dry-run (2026-10-28 13:50) [V through the API, no GPU]
+
+- The user generated the five location stills from `location_still_prompts.md` (GPT, 1672x941,
+  all person-free, all match their prompts on the named objects: chapel + belfry, lichen wall +
+  gable, bollards + four boats, candle + oilskin + sea boots, fiddle + lamps + hearth).
+- Filed with the one-step route, one call per still:
+  `curl -F file=@stills/<id>.webp -F script=she_sings_before_the_storm_20261028_115922.json
+  -F location_id=<id> /api/mv/locations/import_still`. Each call stored the still in the library
+  and upserted the location row (description + still prompt verbatim from the script, source =
+  this song). Library now 10 rows, five per song, every still on disk:
+  cliff_road 7bb11d6c, cliff_wall 88d6056e, harbour 32de3cf9, cottage_kitchen 84bcecd9,
+  tavern 0fc6c295. `.mvwork/transfer/ssbs/stills/` + `import_still_<id>.json`.
+- Three dry runs at 1344x768, seed 20261027, turbo, refs face 2c1c49e7 + body cd98a0e4, NO
+  `location_refs` map in the request: every scene resolved its still from the library
+  (`location_ref_from: library`). Requests/responses + full prompts in
+  `.mvwork/transfer/ssbs/dry/` (`dry_run_prompts.md`).
+
+  | tag  | scene (0-based) | type | place | frames | notes |
+  |------|-----------------|------|-------|--------|-------|
+  | sing | 2 "A high clear line" 42.06-51.64 | sing_to_camera, medium close-up, push in small/slow | cliff_wall | 243 + 39 ctx, 1 clip | refs face+body+still; the G8 shot type on a new song |
+  | walk | 1 "The voice that walks" 36.72-42.06 | no_singing_her, medium wide, tracking small/slow | cliff_wall | 141 + 39 ctx, 1 clip | "her one motion is a slow, steady walk of about four unhurried steps"; FIRST standing/walking take |
+  | env  | 3 "Shutters barred, lines hauled" 51.64-57.20 | no_singing_environment, wide, truck right small/slow | harbour | 141 + 39 ctx, 1 clip | refs = the still only (no singer refs, as designed); FIRST environment-only take |
+
+  All three prompts carry one action, one framing, keep-in-frame bounds, the no-cut/no-dissolve
+  clause and a pinned sky. Scenes are shorter than 362 f, so each is one clip at its own length
+  (cheaper than the s.20 estimate of ~23 min; expect roughly proportional).
+- Box: queue empty, no backend jobs at 13:50. Nothing fired. Next = the user's go per render,
+  recommended order sing (direct comparison with G8), walk, env; judge each by floor check,
+  1 s frames, then the user watches.
