@@ -1180,5 +1180,7 @@ Files pulled read-only from the box into `.mvwork/transfer/ssbs/boxsrc/` (core
   frame_index`), which is why a same-still guide at 0 and -1 reads as "nothing changed in N
   seconds" and pins the camera too. [primary: model.py keyframes block] Consistent with ENV3/ENV6.
 - **Fun ControlNet** (`MiniMaxH3FunControlNetApply`: control_video, mask, source_video, strength,
-  start/end percent) exists in core; whether a control model for H3 is on the box, and what
-  modality it takes, is not yet checked.
+  start/end percent) exists in core, but NO H3 control or model-patch file is on the box
+  (models/controlnet and models/model_patches hold nothing for H3; loras = the two v1.1 turbo
+  files + two old 4-step files; diffusion_models = ref2va + fl2va int8). A control-video pace lane
+  would start with a download. [checked 2026-10-28 17:30 via :5080 fs/find]
