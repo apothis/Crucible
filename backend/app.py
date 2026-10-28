@@ -1068,10 +1068,24 @@ def _h3_chain(p: dict, meta=None):
         lock_src = mv_stems_mod.lock_source(LIBRARY, p["audio_id"], src, lock)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
+    # camera_ref: a short mp4 under .mvwork (a manufactured pace clip) sent as <Video 1>
+    cam_ref = p.get("camera_ref")
+    cam_path = None
+    if cam_ref:
+        base = os.path.realpath(os.path.join(os.path.dirname(LIBRARY), ".mvwork"))
+        cam_path = os.path.realpath(cam_ref if os.path.isabs(cam_ref) else os.path.join(base, cam_ref))
+        if not cam_path.startswith(base + os.sep) or not os.path.exists(cam_path):
+            raise HTTPException(400, "camera_ref must be a video under .mvwork")
+        if not ref_ids:
+            raise HTTPException(400, "camera_ref needs the Ref2VA lane (at least one reference picture)")
     try:
         wav = mv_h3_mod.song_window_wav(src, plan["song_start"], want)
         master = C.upload_audio(wav, _audio_name("mvsong", wav))
         lock_name = master
+        ref_videos = []
+        if cam_path:
+            with open(cam_path, "rb") as f:
+                ref_videos.append(C.upload_audio(f.read(), os.path.basename(cam_path)))
         if lock_src != src:
             lwav = mv_h3_mod.song_window_wav(lock_src, plan["song_start"], want)
             lock_name = C.upload_audio(lwav, _audio_name("mvlock", lwav))
@@ -1088,8 +1102,9 @@ def _h3_chain(p: dict, meta=None):
         raise HTTPException(500, f"upload failed: {e}")
 
     def _build(q):
-        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name)
+        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
+        resolved["camera_ref"] = os.path.basename(cam_path) if cam_path else None
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
         resolved["lock"] = lock
@@ -1110,7 +1125,9 @@ def video_h3_chain(p: dict):
         sampler?/scheduler?/steps?/lora?/lora_strength?/shift_video?/shift_audio?, attention?,
         ref_image_size?, crf?, mode? ("finish" [default] | "hunt"), drafts? (hunt only),
         lock? ("mix" [default] | "vocals" | "vocal_forward": what the latents hear; needs
-        POST /api/mv/stems first for the stem locks; the mux is always the mix)}.
+        POST /api/mv/stems first for the stem locks; the mux is always the mix),
+        camera_ref? (an mp4 under .mvwork sent as <Video 1>, the camera-pace reference; the
+        prompt must declare it - render_scene does)}.
     The master handed to the graph is the song CUT to the chain window (stereo WAV, silence-padded
     past the end of the file), because the streamer muxes its master from sample 0; the recorded
     plan carries the real song times."""
@@ -1154,7 +1171,7 @@ def mv_render_scene(p: dict):
     singer_refs = [] if env_only else [r for r in (p.get("ref_ids") or []) if r]
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
-    prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref))
+    prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")))
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id")}
     q.update({"audio_id": script["audio_id"], "ref_ids": singer_refs + ([loc_ref] if loc_ref else []),
               "clips": [{"prompt": pr} for pr in prompts],

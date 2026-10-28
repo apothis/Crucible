@@ -118,7 +118,7 @@ def chain_recipe(p, lane="ref2va"):
     return r
 
 
-def build_h3_chain(p, ref_names, master_name, lock_name=None):
+def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -135,6 +135,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None):
     master_name: ComfyUI upload name of the song window (stereo WAV), starting at song_start.
     lock_name: optional upload of a DIFFERENT audio cut to the same window (vocal stem, or the mix
         with the vocals forward) to lock in the clip latents; the master is still what is muxed.
+    ref_video_names: optional uploads (mp4 in the input folder) used as <Video 1..3> references,
+        e.g. a manufactured camera-pace clip; Ref2VA lane only (the node has three video slots).
     Returns (graph, resolved) like every builder in video.py."""
     clips = [c for c in (p.get("clips") or []) if (c.get("prompt") or "").strip()]
     if not clips:
@@ -187,6 +189,10 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None):
         lock_audio = ["41", 0]
     for i, name in enumerate(ref_names):
         g[str(30 + i)] = {"class_type": "LoadImage", "inputs": {"image": name}}
+    ref_video_names = list(ref_video_names or [])[:3]
+    for k, name in enumerate(ref_video_names):
+        g[str(60 + 2 * k)] = {"class_type": "LoadVideo", "inputs": {"file": name}}
+        g[str(61 + 2 * k)] = {"class_type": "GetVideoComponents", "inputs": {"video": [str(60 + 2 * k), 0]}}
 
     # --- the clips
     prev_sampler = None
@@ -201,6 +207,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None):
                       "ref_image_size": ref_image_size}
             for k in range(len(ref_names)):
                 r2v_in[f"ref_images.ref_image_{k}"] = [str(30 + k), 0]
+            for k in range(len(ref_video_names)):
+                r2v_in[f"ref_videos.ref_video_{k}"] = [str(61 + 2 * k), 0]
             g[r2v] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": r2v_in}
         else:
             # text-to-video conditioning (no first frame): the same joint AV latent comes out of
@@ -248,6 +256,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None):
                 "shift_video": rec["shift_video"], "shift_audio": rec["shift_audio"],
                 "attention": attention, "ref_image_size": ref_image_size, "ref_count": len(ref_names),
                 "lock_separate": bool(lock_name and lock_name != master_name),
+                "ref_video_count": len(ref_video_names) if lane == "ref2va" else 0,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved

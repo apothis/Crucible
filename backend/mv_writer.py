@@ -397,7 +397,7 @@ def clip_prompt(script, scene, clips):
     return CLIP_SYSTEM, json.dumps(user, indent=1)
 
 
-def compile_prompt(script, scene, clip, text, env=None):
+def compile_prompt(script, scene, clip, text, env=None, cam_video=False):
     """The six-section Ref2VA prompt for one clip: fixed boilerplate from the script's references
     and wardrobe + Claude's four fields. The style opening is the script's look sentence.
 
@@ -405,7 +405,9 @@ def compile_prompt(script, scene, clip, text, env=None):
     the last reference picture (<Picture 3> behind her two, or <Picture 1> alone in an
     environment-only scene); None = no location picture (her two pictures only, or none at all
     for an environment-only scene on the FL2VA weights). Picture numbering here must match the
-    order the route uploads them in: face, body, location."""
+    order the route uploads them in: face, body, location.
+    cam_video: a manufactured camera-pace clip rides along as <Video 1>; it is declared as pace
+    and movement only (the official guide's camera-reference role, weak_reference)."""
     refs = script["refs"]
     env_only = scene.get("performance") == "no_singing_environment"
     singer_def = ("<Subject 1> is the singer: her facial identity comes from <Picture 1>; "
@@ -425,6 +427,11 @@ def compile_prompt(script, scene, clip, text, env=None):
                 "same place; camera position, framing, weather, time of day and the state changes described "
                 "below are free to differ from the photograph.\n")
 
+    cam_def = ("<Video 1> is the camera reference: a slow, even push-in filmed in this same place. It supplies "
+               "only the camera movement, its amplitude and its pace; nothing of its content, framing or timing of "
+               "action carries over.\n") if cam_video else ""
+    cam_ret = ("<Video 1> (camera movement and pace): weak_reference - follow its push-in amplitude and speed; "
+               "the picture, subjects, performance and sound come from the description below.\n") if cam_video else ""
     if env_only and env:
         subject = "subject_definitions:\n" + env_def(1, 1)
         retention = "retention_analysis:\n" + env_ret(1, 1)
@@ -437,6 +444,8 @@ def compile_prompt(script, scene, clip, text, env=None):
     else:
         subject = "subject_definitions:\n" + singer_def
         retention = "retention_analysis:\n" + singer_ret
+    subject += cam_def
+    retention += cam_ret
     desc = (text.get("detailed_description") or "").strip()
     if not desc.startswith("[Shot 1]"):
         desc = "[Shot 1] " + desc
@@ -451,7 +460,7 @@ def compile_prompt(script, scene, clip, text, env=None):
     return prompt
 
 
-def compile_scene(script, scene, with_location=True):
+def compile_scene(script, scene, with_location=True, cam_video=False):
     """Recompile every clip prompt of a scene from its stored text (the writer keeps the four
     fields per clip), with or without the location picture. Clips with no stored text keep the
     prompt they have. Returns the list of prompts in clip order."""
@@ -459,7 +468,7 @@ def compile_scene(script, scene, with_location=True):
     out = []
     for c in scene["clips"]:
         if c.get("text"):
-            out.append(compile_prompt(script, scene, c, c["text"], env=env))
+            out.append(compile_prompt(script, scene, c, c["text"], env=env, cam_video=cam_video))
         else:
             out.append(c["prompt"])
     return out
