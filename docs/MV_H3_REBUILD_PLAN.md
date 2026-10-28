@@ -1421,3 +1421,20 @@ has real footage, 3 built in parallel as the fallback.
 - Scene 4 clip rewritten under the new people rule (pass 2 only, `rewrite_scene` with an empty
   set); the opening-still prompt for the tavern is the user deliverable. Render waits for the
   still.
+
+### 20.25 ENV12 tavern plate with the opening still (2026-10-28 22:20) [V floor + ghost check + frames; user to watch]
+- User generated the opening still from the composed prompt (1672x941, three men in three
+  different poses at the far table); filed by `/api/mv/scene_still` as still 5efaeba1; scene 4
+  of the rewritten script rendered on the i2v lane with `first_frame_id` = that still
+  (`first_frame_from: request`, graph checked on the box: node 30 = the new still). Job ebab28d3,
+  exec 322 s, floor r 0.998. Filed
+  `ssbs_env12_tavern_768p_static_three_fishermen_openingstill_staggered_i2v_seed20261027.mp4`.
+- GHOSTING GONE [M]: first-second per-frame change stays 0.04-0.33 with no rise (ENV11 rose
+  0.05 -> 0.6 over frames 13-24); the arrival tile shows the men present from frame 0.
+- INDEPENDENT MOVEMENT [frames]: t0 left man laughing with tankard up, middle at shoulder
+  height, right leaning back; t2 middle man's tankard up; t4 left man lowered, right man
+  drinking. Whole-clip proxy 0.16 = locked camera + small figures. Naturalness of the movement
+  is the user's call.
+- If the user passes it: the people mechanism is complete end to end (others -> opening still ->
+  first_frame_id -> staggered clip) and generalises to scenes 3 and 19 (harbour, people) with
+  one still each.

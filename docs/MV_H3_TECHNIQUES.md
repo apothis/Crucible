@@ -294,7 +294,8 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   setting's one moving element: each has their own ordinary business, staggered in time, with
   the small continuous idle movement of living people; the clip states what each is doing at the
   start (matching the opening still) and the group's rhythm in seconds without choreographing
-  them together. Rule in both writer passes; not yet rendered. VALIDATED on a second environment scene
+  them together. Rule in both writer passes. Rendered once with the opening still (ENV12):
+  the men move independently across the clip [frames]; ghosting gone [M]; user to judge the look. VALIDATED on a second environment scene
   [U 2026-10-28 20:40: scene 8, 9.4 s, large-amplitude push, three swells and spray, older
   multi-motion text: "speed is fine"]. Two scenes, two cameras, two clip lengths, both at real
   speed on the lane that timelapsed nine times on the reference side.
