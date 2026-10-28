@@ -894,3 +894,29 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
     fixed. First environment-only take under the grammar, refs = the still only.
 - Open until the user watches: pace of the walk (four unhurried steps in 5.9 s?), whether the
   track reads as a track or a drift, whether the truck is visible at all, lip-sync on SING.
+
+### 20.5 Verdicts on the three takes; environment pace rule built (2026-10-28 14:45) [U + built; fix render pending]
+
+- User watched all three: "1st is fine, 2nd the camera wobbles a little before tracking, looks
+  like a hand cam, but its ok, 3rd one, the boats is massively sped up like a timelapse."
+- SING passes: the camera grammar transferred to a second song, place and pair of reference
+  pictures. WALK passes with a note (handheld wobble before the track settles; one sample;
+  hypothesis for a fix in techniques s.7, no render spent). ENV fails on pace.
+- Cause, found in the writer, not guessed: `CLIP_SYSTEM`'s motion rule read "One main physical
+  motion for HER per clip", so an environment-only scene had no one-motion rule; the harbour prose
+  stacked boats + ropes + shutters + water with "about once every two seconds". The August pace
+  measurement (busy prompt accelerates) predicts exactly this.
+- Built (no GPU): environment bullet in `SCENE_SYSTEM` + `action` schema; environment bullet in
+  `CLIP_SYSTEM` (one moving element, counted over the whole clip, everything else still by name,
+  no rhythm/frequency, sounds to the soundscape); `check_prompt` flags rhythm phrases in an
+  environment description (flags the rendered harbour prompt, passes her shots and the clean
+  form). New route `POST /api/mv/rewrite_scene {script, scene}`: re-runs pass 2 for one scene
+  under current rules, saves `<script>_rw<scene>_<stamp>.json/.md`, original untouched. Backend
+  restarted 14:40 (box idle, no jobs).
+- Rewrite of scene 3 under the rule: 0 problems; "The one moving element is the four boats on the
+  swell: over the whole 6 seconds the boats lift and settle once, slowly and heavily, together";
+  shutters, ropes, cottages, bollards, sea band and sky all named still; creaks and rattles moved
+  to the soundscape. Script `she_sings_before_the_storm_20261028_115922_rw3_20261028_144353.json`.
+- Dry run of the rewritten scene: same still (32de3cf9, library), same refs, 141 f, 1 clip, prose
+  differs. Gate passed; fired 14:44:20 on the user's "go ahead and fire when ready": seed
+  20261027, turbo, 1344x768, ONE variable (the clip prose). `.mvwork/transfer/ssbs/renders/env2_*`.

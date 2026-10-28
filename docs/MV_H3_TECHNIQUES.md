@@ -181,6 +181,15 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   pushed further than asked, the lamp leaving frame (G8, V3 words). One sample each; seed
   variance not excluded. [H] The user watched both 768p takes and finds both usable, preferring
   G8's move. [U]
+- **The grammar transfers across songs and places on a sing-to-camera take.** The She Sings
+  cliff-wall push-in at 768p (new song, new place, new reference pictures, still from the
+  library) was passed as is. [U: "1st is fine", 2026-10-28; M: identity, wardrobe and place held
+  for 10 s, floor r 0.998]
+- **A tracking move on a walking take settles after a short handheld wobble.** [U: She Sings
+  cliff-wall tracking, "the camera wobbles a little before tracking, looks like a hand cam, but
+  it's ok"] One sample; the style line already asks for "a heavy, grounded camera". [H] A
+  rails/slider word in the camera sentence, or the camera reference lane, would remove it;
+  untested, and not worth a render until a tracking take fails.
 - **Performance takes use small amplitude at slow speed; large amplitude only on B-roll.**
   [P guide + design] Static is an option, never the default: a locked-off singer looks dead. [U]
 - **The camera reference video lane (`<Video 1>`, weak_reference, pace only) added nothing
@@ -206,6 +215,20 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   [P: BasicGuider] Do not blame the turbo LoRA for pace; that was true of LTX, not H3. [M]
 - **Open-sky wide B-roll is intrinsically more motion-prone; prefer a near-foreground anchor for
   held shots.** [M corollary]
+- **Environment-only shots are the pace failure case. With no person on screen there is no
+  real-time anchor, and a description with more than one moving element, or any rhythm phrase,
+  renders as a timelapse.** [U: She Sings harbour quay at 768p, "the boats is massively sped up
+  like a timelapse", 2026-10-28] The prose had the boats lifting "about once every two
+  seconds", ropes drawing tight "with each tug", shutters shuddering "as gusts pass" and water
+  rippling: four motions and a frequency. The writer's one-motion rule said "one main physical
+  motion for HER", so environment scenes had no rule at all; her shots from the same run were
+  fine. Rule, built 2026-10-28: an environment-only clip has exactly ONE moving element, named
+  once, counted over the whole clip ("over the whole 6 seconds the boats lift and settle
+  once"), everything else named as still, no rhythm or frequency words, sounds of motion in
+  the soundscape only. Code: `SCENE_SYSTEM` environment bullet + `action` schema,
+  `CLIP_SYSTEM` environment bullet, `check_prompt` flags rhythm phrases in an environment
+  description. Verdict on the fix: pending (same scene, seed and still, prose regenerated under
+  the rule).
 
 ## 9. Resolution and recipe
 
@@ -277,12 +300,18 @@ For background loops and living covers, also usable as B-roll plates. Full recip
 - **Validate on a second, different song before calling a technique proven.** Never Mine is the
   easy case: clean vocal, slow tempo, one singer. [U]
 
+- **A writer-rule change is tested on one scene as one variable: `POST /api/mv/rewrite_scene
+  {script, scene}` re-runs the clip pass for that scene under the current rules and saves a NEW
+  script beside the original; render it with the same seed, size and still.** No hand-edited
+  prompts, no whole re-write. [design, 2026-10-28; first use: the harbour pace fix]
+
 ## 14. Open items, in order of what they would settle
 
-1. Second-song transfer test, steps 5-6: the writer half is done (library bias measured and
-   fixed; stem alignment on a dense Celtic mix gave cover 0.894 and a clean 25-scene script).
-   Still open: the camera grammar on a standing or walking performance and an environment-only
-   scene, three shot types at 768p.
+1. Second-song transfer test: writer half done (library bias measured and fixed; dense-mix
+   alignment cover 0.894; clean 25-scene script); three shot types rendered at 768p: sing passed,
+   walk passed with a wobble note, environment-only timelapsed (rule built, section 8). Still
+   open: the verdict on the environment pace fix; whether the one-motion rule is enough or
+   environment B-roll needs keyframe bounds (item 3).
 2. Camera extent at 768p: a second seed of each wording; whether "keep in frame" bounds a push
    at all, or only amplitude does.
 3. Keyframe-bounded B-roll moves (AddGuide with a GPT keyframe as the end frame): built in the

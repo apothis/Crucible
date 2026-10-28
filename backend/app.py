@@ -1361,6 +1361,52 @@ def mv_write(p: dict):
     return script
 
 
+@app.post("/api/mv/rewrite_scene")
+def mv_rewrite_scene(p: dict):
+    """Re-run the writer's clip pass (pass 2) for ONE scene of a saved script under the CURRENT
+    writer rules and save the result as a NEW script next to the original (the original is not
+    touched). This is how a writer-rule change is tested as a single variable: same script, same
+    scene, same seed on the render, only the clip prose regenerated under the new rule. No GPU;
+    the Claude subscription CLI.
+    p: {script (saved name under .mvwork/mv_scripts), scene (0-based index), provider?, model?,
+        effort?}. Returns {files, scene, title, problems, text, prompts, log}."""
+    script, name = _mv_load_script(p.get("script"))
+    try:
+        idx = int(p.get("scene", -1))
+        sc = script["scenes"][idx]
+    except Exception:
+        raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    log_lines = []
+
+    def _log(s):
+        print(s)
+        log_lines.append(s)
+
+    try:
+        mv_writer_mod.write_scene_clips(
+            script, sc, p.get("provider") or "claude_sub", p.get("model") or mv_writer_mod.WRITER_MODEL,
+            p.get("effort") or mv_writer_mod.WRITER_EFFORT, CFG.get("claude_model", ""),
+            os.path.join(work, "lyricalign"), _log)
+    except Exception as e:
+        raise HTTPException(500, f"writer failed: {e}")
+    script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    script.setdefault("rewrites", []).append({"scene": idx, "from": os.path.basename(str(name)), "at": stamp})
+    out_dir = os.path.join(work, "mv_scripts")
+    os.makedirs(out_dir, exist_ok=True)
+    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
+    jpath = os.path.join(out_dir, f"{base}_rw{idx}_{stamp}.json")
+    mpath = os.path.join(out_dir, f"{base}_rw{idx}_{stamp}.md")
+    with open(jpath, "w") as f:
+        json.dump(script, f, indent=1)
+    with open(mpath, "w") as f:
+        f.write(mv_writer_mod.script_markdown(script))
+    return {"files": {"json": jpath, "md": mpath}, "scene": idx, "title": sc.get("title"),
+            "problems": [c["problems"] for c in sc["clips"]], "text": [c["text"] for c in sc["clips"]],
+            "prompts": [c["prompt"] for c in sc["clips"]], "log": log_lines}
+
+
 def _lib_video_path(vid):
     """Absolute path to a library video (clip or assembled music video) by id."""
     vid = os.path.basename(vid or "")

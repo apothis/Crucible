@@ -118,6 +118,7 @@ Fixed facts about this production:
 - Inside a scene, the camera does ONE thing, written in the video model's own grammar (measured: it obeys this and ignores metric distances): "static", or "<verb> with <small|large> amplitude at <slow|fast> speed toward/along X throughout the take". Verbs: push in, pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc, tracking. Performance takes use small amplitude at slow speed; large amplitude only on B-roll. A scene has ONE framing (the one it starts in); never write a second framing the move should reach (measured: "from a medium shot to a medium close-up" became a hidden cut rendered as a dissolve, with the wardrobe changing across it). Bound a move only by what must stay in frame to the end (the lamp, the window, her shoulders). No whip pans, no handheld chaos, no orbit-plus-zoom, never centimetres or metres.
 - Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
+- Environment-only B-roll (no person in frame) moves ONE element only (the sea, a curtain, the rain, a flame), slowly, with everything else still. A second moving element, or any rhythm ("every few seconds", "with each gust"), makes the model run the shot as a timelapse (measured). Sounds belong to the soundscape, not to the picture.
 - LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location. When the brief lists KNOWN LOCATIONS (places already photographed for earlier scripts or other videos, their stills on file), prefer them wherever one serves THIS video and refer to each by its exact id; invent a new location only where no known one fits the song. Never redecorate a known place: its fixed elements are what its description says, and your scene settings there must match that description.
 - Timing is NOT yours beyond choosing cut points: the system computes clip windows and which words fall where.
 
@@ -189,7 +190,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "keep_in_frame": "one or two fixed things that must stay in frame until the end of the take, e.g. 'the oil lamp and the window' (string)",
             "lighting": "one sentence",
             "mood": "three words",
-            "action": "what she does (or what moves, for environment B-roll), 1-3 sentences, one main motion",
+            "action": "what she does, 1-3 sentences, one main motion; for environment B-roll exactly ONE moving element, slow, and what stays still",
             "opening_still": "a prompt for a photoreal still of the first frame of this scene (she in the setting, or the environment alone), one paragraph",
             "why": "one sentence: why this scene belongs at this point of the song"
         }],
@@ -410,6 +411,7 @@ Hard rules (they come from measured failures; do not bend them):
 - detailed_description starts with "[Shot 1]" and is ONE continuous shot. No [Shot 2], no cuts, no <scenetrans>.
 - Exactly ONE camera motion for the scene, as given, repeated in every clip in the model's own grammar: "The camera pushes in with small amplitude at slow speed toward X throughout the take, one continuous shot with no cut and no dissolve." Name what must stay in frame ("The oil lamp and the window stay in frame to the end.") and never name a second framing for the move to reach (that reads as a cut). Never metric distances (centimetres mean nothing to the model). If static: "The camera is static, locked off for the full clip."
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
+- Environment-only clips (performance no_singing_environment) have no person to anchor real time, so the discipline is stricter: exactly ONE moving element in the whole description (the boats on the swell, OR the shutters, OR the rain), named once, with a whole-clip anchor stated as a count ("over the whole 6 seconds the boats lift and settle once, slowly"). Every other element is said to be still, by name. No second moving element, no rhythm or frequency ("every two seconds", "with each gust", "again and again"), never water plus wind plus weather together. The camera move is the only other motion. Sounds of motion (creak, rattle, slap) go in overall_soundscape, never in detailed_description. (Measured: a harbour clip written with boats, ropes, shutters and water and a two-second rhythm rendered as a timelapse.)
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
 - Never describe other people. Never change the wardrobe.
 - The scene's location is also a referenced subject (a person-free photograph of the place is handed to the model). Call the place by its name (the parlour, the quarry); the system numbers subjects and pictures. Do not redesign the place: its fixed elements are those in the scene setting; you may add weather, time of day and the state changes the scene calls for.
@@ -532,6 +534,14 @@ def check_prompt(prompt, clip, performance="sing_to_camera"):
                 "overall_soundscape:", "non_diegetic_music:"):
         if sec not in prompt:
             problems.append(f"missing section {sec}")
+    if str(performance or "") == "no_singing_environment":
+        # measured 2026-10-28: a rhythm or frequency phrase in an environment-only description
+        # (boats "once every two seconds", shutters "with each gust") rendered as a timelapse
+        desc = prompt.split("detailed_description:", 1)[-1].split("overall_soundscape:", 1)[0]
+        m = re.search(r"\b(every|each) (one|two|three|four|five|few|couple of|\d+) seconds?\b"
+                      r"|\bwith each\b|\bagain and again\b|\bevery few\b", desc, re.I)
+        if m:
+            problems.append(f"environment clip carries a rhythm phrase ('{m.group(0)}'); one slow motion, counted over the whole clip")
     return problems
 
 
