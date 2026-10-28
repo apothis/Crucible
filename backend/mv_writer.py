@@ -115,7 +115,7 @@ Fixed facts about this production:
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
 - Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; a B-roll take may run up to 45 seconds; nothing shorter than 5 seconds. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
 - Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second before a sung line begins). Choose cuts where the words break.
-- Inside a scene, the camera does ONE thing: static, or one slow move with a real-world distance sized to the take's seconds (about 10-15 cm of push-in over a 15-second take; never an arm's length over 40 seconds). No whip pans, no handheld chaos, no orbit-plus-zoom.
+- Inside a scene, the camera does ONE thing, written in the video model's own grammar (measured: it obeys this and ignores metric distances): "static", or "<verb> with <small|large> amplitude at <slow|fast> speed toward/along X, from <start framing> to <end framing>". Verbs: push in, pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc, tracking. Performance takes use small amplitude at slow speed; large amplitude only on B-roll. Every move names what must stay in frame to the end (the lamp, the window, her shoulders) and ends with the camera holding still. No whip pans, no handheld chaos, no orbit-plus-zoom, never centimetres or metres.
 - Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
 - LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location.
@@ -183,7 +183,8 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None):
             "setting": "the place, concrete and filmable, no people, 2-3 sentences; name any visible sky",
             "performance": "one of: sing_to_camera | sing_away | no_singing_her | no_singing_environment",
             "framing": "e.g. medium close-up, medium, wide, extreme wide, detail",
-            "camera": "static, or ONE slow move with a real-world distance and 'over the whole scene'",
+            "camera": "'static', or ONE move in the model's grammar: '<verb> with small amplitude at slow speed toward X, from <start framing> to <end framing>' (no distances)",
+            "keep_in_frame": "one or two fixed things that must stay in frame until the end of the take, e.g. 'the oil lamp and the window' (string)",
             "lighting": "one sentence",
             "mood": "three words",
             "action": "what she does (or what moves, for environment B-roll), 1-3 sentences, one main motion",
@@ -370,7 +371,7 @@ Hard rules (they come from measured failures; do not bend them):
 - The song is already locked into the clip's audio. NEVER write <Audio 1>, never call the song a reference, never ask the model to generate or match music. Write non_diegetic_music as a description of the current song section itself and say the visible performance stays synchronized to it.
 - The singer is <Subject 1>. When she sings, write: <Subject 1> (S1) sings <d>[English] exact words</d>. Only the words audible inside THIS clip's window go inside <d>; a line that starts before the clip begins mid-phrase; a line that ends after the clip is cut mid-phrase. Instrumental passages have no <d>. Lips closed and relaxed when no vocal is audible; one open vowel shape held through sustained notes.
 - detailed_description starts with "[Shot 1]" and is ONE continuous shot. No [Shot 2], no cuts, no <scenetrans>.
-- Exactly ONE camera motion for the scene, as given, with its real-world distance and duration anchor repeated in every clip; or "the camera is static" if static.
+- Exactly ONE camera motion for the scene, as given, repeated in every clip in the model's own grammar: "The camera pushes in with small amplitude at slow speed toward X, from <start framing> to <end framing>." Then name what must stay in frame ("The lamp never leaves the frame.") and end the move with "The camera holds a static shot as ...". Never metric distances (centimetres mean nothing to the model). If static: "The camera is static, locked off for the full clip."
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
 - Never describe other people. Never change the wardrobe.
@@ -384,7 +385,7 @@ def clip_prompt(script, scene, clips):
     user = {
         "song": script["title"], "look": script["look"], "wardrobe": script["wardrobe"],
         "concept": script["concept"],
-        "scene": {k: scene.get(k) for k in ("title", "setting", "performance", "framing", "camera",
+        "scene": {k: scene.get(k) for k in ("title", "setting", "performance", "framing", "camera", "keep_in_frame",
                                             "lighting", "mood", "action", "section_types", "start", "end")},
         "location": ({k: loc.get(k) for k in ("name", "description")} if loc else None),
         "clips": [{"index": c["index"], "seconds": c["seconds"], "song_start": c["song_start"],
@@ -590,6 +591,7 @@ def script_markdown(script):
         out += [f"## Scene {sc['index'] + 1}: {sc.get('title', '')}  ({sc['start']:.1f}-{sc['end']:.1f}s, "
                 f"{', '.join(sc['section_types'])})", "",
                 f"- performance: {sc.get('performance')} | framing: {sc.get('framing')} | camera: {sc.get('camera')}"
+                + (f" | keep in frame: {sc.get('keep_in_frame')}" if sc.get("keep_in_frame") else "")
                 + (f" | location: `{sc.get('location')}`" if sc.get("location") else ""),
                 f"- setting: {sc.get('setting')}", f"- lighting: {sc.get('lighting')} | mood: {sc.get('mood')}",
                 f"- action: {sc.get('action')}", f"- why: {sc.get('why')}",
