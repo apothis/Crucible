@@ -594,3 +594,28 @@ Writer change if V1 or V2 holds: camera field becomes {move, amplitude, speed, s
 end_framing, keep_in_frame}; compiler writes the official sentence; environment scenes get
 keyframe-bounded moves (3); performance takes default to small-amplitude slow moves with
 anchors, never metric distances; static stays an option, not the default.
+
+## 16. G6 result (2026-10-28 01:20) - the official camera grammar holds the push [V stills, motion pending]
+- Three chair-half renders, same seed/turbo/pictures/window, only the camera wording differs
+  (+ a reference clip in V2):
+  | render | camera control | 0 s | 14.9 s | box time |
+  |---|---|---|---|---|
+  | G4 | "slow push-in ... about 12 cm over 15 s" (metric) | medium | tight close-up, lamp and window gone | 7.8 min |
+  | G6 V1 | "pushes in with small amplitude at slow speed ... to a medium close-up that keeps her shoulders and the lamp in frame; the lamp never leaves the frame; holds a static shot as she finishes" | medium | medium close-up, lamp and window in frame | 8.5 min |
+  | G6 V2 | V1 + 8 % zoompan clip as <Video 1> (pace only, weak_reference) | medium | medium close-up, lamp and window in frame | 25 min |
+- V1 and V2 both stop where the words say. The reference clip added nothing visible in stills
+  and tripled the render time (reference-video tokens ride through every step). Verdict: the
+  model's own amplitude/speed grammar plus framing anchors is the control; the camera-reference
+  lane stays available but is not the default. Background stayed stable in both (lamp, window,
+  chair in place at every sample); no right-side invention in the stills.
+- To check by eye: a dark cord/lace hangs down the chemise in V1/V2 from ~7 s that is not in the
+  references [H wardrobe drift, stills only]; lip-sync; the push's feel.
+- Misfiling found and fixed (5d48f28): with a LoadVideo node in the graph, ComfyUI history lists
+  the reference clip under that node as type "input"; both collectors took the first media entry
+  and filed the reference clip as the render. Collectors now skip type=input. The real V2
+  (h3chain_00007-audio.mp4) was pulled from the box by hand over the misfiled copy. The backend
+  still runs the old code until the next restart (deferred: the 768p test is on the box).
+- Copies: `.mvwork/g1_refs/nevermine_G6_V1_chair_official-grammar_parlour-still_seed20261027.mp4`,
+  `nevermine_G6_V2_chair_grammar-plus-camref-video_parlour-still_seed20261027.mp4`, sheet
+  `nevermine_G6_contact_sheet.png`.
+- G7 (768p timing test) fired 01:13:01: chair half, V1 prompt, 1344x768, same seed/turbo.
