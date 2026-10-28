@@ -118,7 +118,7 @@ def chain_recipe(p, lane="ref2va"):
     return r
 
 
-def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None):
+def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None, first_frame_name=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -137,7 +137,12 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         before the guider: same frames, video time coordinates scaled by 40/fps so the model
         believes the clip spans frames/fps seconds; saved at 24 fps a value above 24 reads as
         slow motion with generated frames [H, direction inferred from the source, s.20.15]; the
-        node resizes the audio latent, so it requires free_av)}
+        node resizes the audio latent, so it requires free_av),
+        lane? (None [default] = ref2va when any picture, else fl2va text-to-video; "i2v" = the
+        image-to-video lane: FL2VA weights + their turbo LoRA, `first_frame_name` fed raw as the
+        node's first_frame (the place arrives as pixels to continue, not as a subject to retain),
+        NO reference pictures, prompts in the three-section FL2VA format; s.20.18)}
+    first_frame_name: upload name of the first-frame still for lane "i2v" (the location still).
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -155,6 +160,13 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         raise ValueError(f"at most {MAX_CLIPS} clips per chain")
     ref_names = list(ref_names or [])
     lane = "ref2va" if ref_names else "fl2va"     # no references at all -> environment B-roll on FL2VA
+    i2v = (p.get("lane") or "").strip() == "i2v"
+    if i2v:
+        if ref_names:
+            raise ValueError("lane i2v takes no reference pictures; the still is the first frame")
+        if not first_frame_name:
+            raise ValueError("lane i2v needs a first-frame still")
+        lane = "fl2va"
     if len(ref_names) > 9:
         raise ValueError("H3 takes at most 9 reference images")
     seed = _seed(p)
@@ -212,6 +224,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         lock_audio = ["41", 0]
     for i, name in enumerate(ref_names):
         g[str(30 + i)] = {"class_type": "LoadImage", "inputs": {"image": name}}
+    if i2v:
+        g["30"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
     ref_video_names = list(ref_video_names or [])[:3]
     for k, name in enumerate(ref_video_names):
         g[str(60 + 2 * k)] = {"class_type": "LoadVideo", "inputs": {"file": name}}
@@ -237,9 +251,11 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
             # text-to-video conditioning (no first frame): the same joint AV latent comes out of
             # output 1, which the song node then fills. [H] untested on the box until an
             # environment-only scene renders; the node family is the one build_h3_t2v uses.
-            g[r2v] = {"class_type": "MiniMaxH3ImageToVideo",
-                      "inputs": {"clip": ["5", 0], "vae": ["6", 0], "prompt": c["prompt"].strip(),
-                                 "width": w, "height": h, "length": frames}}
+            i2v_in = {"clip": ["5", 0], "vae": ["6", 0], "prompt": c["prompt"].strip(),
+                      "width": w, "height": h, "length": frames}
+            if i2v:
+                i2v_in["first_frame"] = ["30", 0]     # fed raw, as build_h3_i2v does (stretched to the canvas)
+            g[r2v] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2v_in}
         latent = [r2v, 1]
         if not free_av:
             song_in = {"latent": latent, "audio_vae": ["9", 0], "master_audio": lock_audio,
@@ -307,7 +323,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "lock_separate": bool(lock_name and lock_name != master_name),
                 "ref_video_count": len(ref_video_names) if lane == "ref2va" else 0,
                 "keyframes": keyframes if (keyframes and ref_names) else None,
-                "free_av": free_av, "clock_fps": clock_fps,
+                "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
-                "engine": "minimax_h3", "lane": f"chain_{lane}", "model": unet, "kind": "video"}
+                "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved

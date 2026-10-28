@@ -1087,6 +1087,13 @@ def _h3_chain(p: dict, meta=None):
         if cam_path:
             with open(cam_path, "rb") as f:
                 ref_videos.append(C.upload_audio(f.read(), os.path.basename(cam_path)))
+        first_frame = None
+        if p.get("first_frame_id"):
+            ff_path = _lib_image_path(p["first_frame_id"])
+            if not ff_path:
+                raise HTTPException(400, f"first_frame_id: {p['first_frame_id']} is not a still in the library")
+            with open(ff_path, "rb") as f:
+                first_frame = C.upload_audio(f.read(), os.path.basename(ff_path))
         if lock_src != src:
             lwav = mv_h3_mod.song_window_wav(lock_src, plan["song_start"], want)
             lock_name = C.upload_audio(lwav, _audio_name("mvlock", lwav))
@@ -1103,8 +1110,10 @@ def _h3_chain(p: dict, meta=None):
         raise HTTPException(500, f"upload failed: {e}")
 
     def _build(q):
-        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos)
+        graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos,
+                                                   first_frame_name=first_frame)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
+        resolved["first_frame_id"] = os.path.basename(str(p["first_frame_id"])) if p.get("first_frame_id") else None
         resolved["camera_ref"] = os.path.basename(cam_path) if cam_path else None
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
@@ -1170,8 +1179,19 @@ def mv_render_scene(p: dict):
     singer_refs = [] if env_only else [r for r in (p.get("ref_ids") or []) if r]
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
-    prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")))
+    lane = (p.get("lane") or "").strip() or None
+    if lane not in (None, "i2v"):
+        raise HTTPException(400, "lane must be omitted (reference lane) or 'i2v' (image-to-video from the location still)")
+    if lane == "i2v" and not env_only:
+        raise HTTPException(400, "lane i2v is for environment-only scenes (her identity needs the reference lane)")
+    if lane == "i2v" and not loc_ref:
+        raise HTTPException(400, "lane i2v uses the location still as the first frame; this scene has none")
+    if lane == "i2v" and p.get("camera_ref"):
+        raise HTTPException(400, "lane i2v has no reference-video slot")
+    prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")), lane=lane)
     keyframes = (p.get("keyframes") or "").strip() or None
+    if keyframes and lane == "i2v":
+        raise HTTPException(400, "keyframes belong to the reference lane; lane i2v pins the first frame by itself")
     if keyframes and keyframes not in ("still_first_last", "still_first", "still_last"):
         raise HTTPException(400, "keyframes must be still_first_last, still_first or still_last")
     if keyframes and not loc_ref:
@@ -1192,13 +1212,17 @@ def mv_render_scene(p: dict):
         return {"dry_run": True, "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
                 "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                 "location": loc["id"] if loc else None, "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
-                "location_ref_from": ref_from, "ref_ids": singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
+                "location_ref_from": ref_from,
+                "ref_ids": [] if lane == "i2v" else singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
                 "clips": len(prompts), "keyframes": keyframes, "free_av": free_av, "clock_fps": clock_fps,
+                "lane": lane or "ref2va", "first_frame_id": os.path.basename(str(loc_ref)) if lane == "i2v" else None,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run")}
-    q.update({"audio_id": script["audio_id"], "ref_ids": singer_refs + ([loc_ref] if loc_ref else []),
+    chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
+    q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs,
+              "first_frame_id": loc_ref if lane == "i2v" else None,
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
@@ -1207,7 +1231,7 @@ def mv_render_scene(p: dict):
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                               "location_ref_from": ref_from, "keyframes": keyframes,
-                              "free_av": free_av, "clock_fps": clock_fps})
+                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane or "ref2va"})
 
 
 def _mv_load_script(sc_src):

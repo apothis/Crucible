@@ -1293,3 +1293,24 @@ has real footage, 3 built in parallel as the fallback.
   proxy's rise was real (more change, not slower water). 48 and 72 are not worth firing: the
   author's own risk band starts at 37 and the direction gave nothing at 36. Lane stays in the
   chain, off by default. Day's tally on the harbour: nine renders, one positive (her in frame).
+
+### 20.18 Image-to-video lane built; harbour plate dry-run on it (2026-10-28 19:35; NOT fired)
+- User: "I cant believe that no-one else has this problem, this is a basic landscape scene." The
+  answer: nobody shoots a landscape from a still the way our environment lane does. Everyone
+  else runs IMAGE-TO-VIDEO (the still is frame 0 and the model continues it); our env lane hands
+  the still to REFERENCE-to-video as a subject to retain, the mode built for her face and body.
+  The research pass found no report of anyone pacing a seascape through the reference mode.
+- Built, opt-in `lane: "i2v"` on render_scene (env-only scenes with a location still; no
+  keyframes, no camera_ref): FL2VA weights + `minimax_h3_fl2v_turbo_8step_v1.1_768p` at shift 6/3
+  (CHAIN_TURBO_FL2VA), `MiniMaxH3ImageToVideo` with `first_frame` = the location still fed raw
+  (16:9 still onto 1.75 canvas: a 1.5 % stretch), NO reference pictures, song lock unchanged.
+  Prompt = the official three-section FL2VA format behind the author's exact opening line
+  (`compile_prompt_i2v`), with Claude's four fields reused verbatim so the lane is the only
+  variable against ENV2. `_h3_chain` uploads `first_frame_id`; dry_run and meta carry `lane`.
+- Dry run `.mvwork/transfer/ssbs/dry/env9_i2v_*.json`: scene 3, 141 f, 1344x768, seed 20261027,
+  turbo, lane i2v, first frame = harbour still 32de3cf9. Three rejection paths return the right
+  400s. (The dry run's `ref_ids` line listed the still although the chain gets none; fixed in
+  code, live at the next backend restart; the submitted graph is unaffected.)
+- Prior from our own history: the living-cover I2V/FLF lane erred SLOW and idle (s.12). If this
+  plate runs at real speed the env lane switches to i2v by default for environment-only scenes
+  (opt-out), and the ref2va env path stays for keyframed plates.

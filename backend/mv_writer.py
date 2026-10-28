@@ -502,14 +502,37 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False):
     return prompt
 
 
-def compile_scene(script, scene, with_location=True, cam_video=False):
+I2V_OPENING = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."
+
+
+def compile_prompt_i2v(script, scene, clip, text):
+    """The image-to-video prompt for one clip (FL2VA weights, the location still as the FIRST
+    FRAME, no reference pictures): the official three-section format behind the author's exact
+    opening line (docs/MINIMAX_H3_PLAN.md s.4). Claude's four fields are reused UNCHANGED so the
+    lane is the only variable against the ref2va plate of the same clip; the summary and the
+    retention lines have no place in this format and are dropped."""
+    desc = (text.get("detailed_description") or "").strip()
+    if desc.startswith("[Shot 1]"):
+        desc = desc[len("[Shot 1]"):].strip()
+    soundscape = (text.get("overall_soundscape") or "Near-silent ambience; no other sound.").strip()
+    music = (text.get("non_diegetic_music") or "N/A").strip()
+    return (I2V_OPENING + "\n\n"
+            + "integrated_multimodal_description: [Shot 1] " + script["look"].strip() + " " + desc + "\n"
+            + "overall_soundscape: " + soundscape + "\n"
+            + "non_diegetic_music: " + music + "\n")
+
+
+def compile_scene(script, scene, with_location=True, cam_video=False, lane=None):
     """Recompile every clip prompt of a scene from its stored text (the writer keeps the four
     fields per clip), with or without the location picture. Clips with no stored text keep the
-    prompt they have. Returns the list of prompts in clip order."""
+    prompt they have. Returns the list of prompts in clip order.
+    lane="i2v": the image-to-video prompt instead (first-frame lane, no references)."""
     env = location_of(script, scene) if with_location else None
     out = []
     for c in scene["clips"]:
-        if c.get("text"):
+        if c.get("text") and lane == "i2v":
+            out.append(compile_prompt_i2v(script, scene, c, c["text"]))
+        elif c.get("text"):
             out.append(compile_prompt(script, scene, c, c["text"], env=env, cam_video=cam_video))
         else:
             out.append(c["prompt"])
