@@ -1326,3 +1326,18 @@ has real footage, 3 built in parallel as the fallback.
   the clip keeps the still's own look (the window lamps, the choppier water of the photograph)
   since frame 0 IS the still; the truck right is gentle and continuous; no colour drift at 1 s
   spacing. Pace is not readable from stills; user to watch against ENV2.
+
+### 20.20 ENV9 verdict: REAL SPEED. Image-to-video becomes the environment default (2026-10-28 20:05)
+- User: "ENV9 runs at real speed." After nine failures on the reference lane, the lane itself was
+  the variable: the reference mode retains the place as a subject (timelapse prior for scenery
+  without a referenced person); image-to-video continues the still as pixels (real footage pace).
+- Changed: `render_scene` lane default = `i2v` for environment-only scenes with a location still
+  and no keyframes / camera_ref; `lane: "ref2va"` opts out; keyframes or a camera reference imply
+  the reference lane. Routing checked through the real route on four cases (env default -> i2v,
+  explicit ref2va with the still as <Picture 1>, keyframes -> ref2va, a singer scene -> ref2va
+  with three pictures). Techniques s.8 rewritten; memory updated.
+- Validation plate: scene idx 8 "Swell in the harbour" (83.84-93.02, 9.2 s, push in with LARGE
+  amplitude toward the harbour mouth, spray over the outer wall; text predates the one-motion
+  rule, i.e. the harder case) through the DEFAULT path with no lane parameter. Dry run
+  `.mvwork/transfer/ssbs/dry/env10_scene8_default_*.json`.
+

@@ -265,12 +265,23 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   `anchor_figure` scene flag stays as an opt-in for story reasons, not as a pace tool.
 - **RoPE clock compression (model_fps 36, free AV) is not a pace lever on open water either.**
   [U 2026-10-28: "both still fast", the native-clock baseline "slightly better"; proxy 2.57 vs
-  2.19] Nine harbour renders now: prose x3, shift, LoRA/steps, two same-still guides, a prose
-  figure, the clock. Only the referenced singer in frame ran at real speed [U]. Until a pace
-  reference video or a retime+refresh is measured, the WORKING rule is: open water, sky and
-  weather as the moving element are shot WITH her in frame (she may be small, distant, back to
-  camera: performance no_singing_her); singer-free B-roll keeps to enclosed or still subjects
-  where pace cannot read as timelapse. The clock and free_av opt-ins stay in the chain, off.
+  2.19] The clock and free_av opt-ins stay in the chain, off.
+- **ENVIRONMENT-ONLY SCENES RENDER ON THE IMAGE-TO-VIDEO LANE (the location still as frame 0,
+  FL2VA weights, no reference pictures). That is what fixed the timelapse.** [U 2026-10-28 20:05:
+  ENV9 "runs at real speed"; proxy 1.45 vs 2.19 on the reference lane, same text and seed]
+  Mechanism [inference, consistent with nine renders]: the reference lane hands the place to the
+  model as a SUBJECT to retain, the mode built for her face and body; with no referenced person
+  the model's prior for a retained scenic subject is timelapse footage, and no prose, shift,
+  LoRA, clock or guide moves it. On the image-to-video lane the still is pixels to CONTINUE and
+  the model continues them at the pace of real footage. This is also how everyone else shoots a
+  landscape from a still, which is why nobody reports the problem.
+  Rule: `render_scene` defaults an environment-only scene with a location still to `lane: "i2v"`
+  (prompt = the official three-section format behind the author's opening line, Claude's four
+  fields verbatim); `lane: "ref2va"` is the opt-out; keyframes or a camera reference keep the
+  reference lane because only it has those slots. Her scenes stay on the reference lane (her
+  identity needs the pictures). The env one-motion prose rule stays (it is still good practice;
+  on the reference lane it was not sufficient). Validation on a second environment scene: s.20.20
+  of the plan.
   Next candidates, in order: keyframe bounds (same still as first and last frame, section
   12 and item 3), the camera reference lane for pace, a different element than water.
 
