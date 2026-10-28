@@ -1272,3 +1272,19 @@ has real footage, 3 built in parallel as the fallback.
 - Known unknowns for the run: the streamer receives a latent whose audio part is 157 ticks
   instead of 235 (it muxes the master, so this should be ignored, [H] untested); turbo LoRA under
   non-native coordinates (the author warns distilled LoRAs may interact).
+
+### 20.17 ENV8 clock-36 plate filed (2026-10-28 18:52) [V floor + proxy + graph; user to watch]
+- Job fd25fdbb; the running graph on the box was checked while it ran: node 107
+  `MiniMaxH3NativeFPSAVSyncAc` model_fps 36 between ReferenceToVideo and BasicGuider, no song
+  node, sampler fed from the clock node's latent. Execution 324 s (env2 ~465 s: the audio latent
+  is 157 ticks instead of 235, so the attention sequence is shorter), 141 f at 24 fps, 5.875 s,
+  the streamer muxed the master without complaint (the short-audio-latent unknown is settled).
+- Floor check r 0.998 (the muxed master, as expected on free AV). Filed as
+  `ssbs_env8_harbour_768p_truckright_clock36_freeAV_seed20261027.mp4`; frames
+  `frames/ENV8_sheet.png`; proxy script now saved as `renders/motion_proxy.sh` (reproduces env2
+  2.19, env7 2.38, env6 0.49 exactly).
+- Motion proxy 2.57 vs env2 2.19: MORE inter-frame change, not less. The proxy cannot separate
+  water pace from camera travel or flicker (the pack warns of flicker above 30), so this is not
+  a verdict either way; the sheet shows a continuous truck right with composition held and no
+  obvious colour drift at 1 s spacing. The user watches; two variables moved against env2
+  (free AV and the clock), so if it reads slower a free-AV-only control at 24 attributes it.
