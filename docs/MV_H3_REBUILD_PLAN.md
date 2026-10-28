@@ -974,3 +974,13 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   the model renders this open-water plate about THREE times too fast; and ffmpeg minterpolate
   on water is the unnatural part, not the speed. C stays a fallback; a box-side interpolator
   (RIFE/FILM through ComfyUI) would be the better version of C if A and B fail.
+- **LoRA hypothesis (user, 15:25): "I wonder if its caused by the lora."** Checked against the
+  record: the August exoneration of the turbo recipe (~8 % of motion) was measured with the
+  AUTHOR's ULTRA+TURBO block (4-step LoRA, euler/beta, 8 steps, shift 12/3) on a grass shot. The
+  current turbo block is DIFFERENT: lightx2v-style `minimax_h3_ref2v_turbo_8step_v1.1_768p` at
+  1.0, res_multistep/simple, 8 steps, shift 6/3. Its effect on pace has never been isolated, and
+  shift_video is known in DiT video models to trade motion amount against stability. So the
+  hypothesis is open, not refuted. One-variable test D: the same harbour scene with `turbo:
+  false` (base weights, 20 steps, no LoRA, shift 12/3), about 2.5x the wall time (~15 min for
+  141 f). If D runs at real speed, a follow-up separates LoRA from shift (turbo LoRA with shift
+  12/3). Research pass launched in parallel (upstream cards, guides, community reports).
