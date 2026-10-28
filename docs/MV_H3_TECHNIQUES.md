@@ -248,6 +248,14 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   quarter of the free plate, composition identical across 1 s frames] Right for a background
   that should barely move (a room, a candle); wrong for a sea. Untested middle ground: a guide
   at the last frame only (`still_last`), or a different GPT keyframe at the end.
+- **A guide at the last frame only pins the clip as hard as guides at both ends.** [M: proxy 0.49
+  vs 0.53 vs free 2.19; U: "still too static", 2026-10-28] There is no middle ground from
+  same-still guides.
+- **A distant anonymous figure written into the prose does NOT anchor real time; the referenced
+  singer does.** [U: "still timelapse speed even with the figure", 2026-10-28; M: proxy 2.38 vs
+  free 2.19] The figure rendered at the far bollard, so the model saw it; the anchor effect
+  belongs to the reference-subject mode, not to a human shape in the frame. [H] The
+  `anchor_figure` scene flag stays as an opt-in for story reasons, not as a pace tool.
   Next candidates, in order: keyframe bounds (same still as first and last frame, section
   12 and item 3), the camera reference lane for pace, a different element than water.
 

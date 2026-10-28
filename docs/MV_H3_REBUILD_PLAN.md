@@ -1097,3 +1097,6 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
   (2.44 2.31 2.34 2.42 2.47), the free-plate regime (env2 2.19), not the keyframed one (0.5).
   By the proxy the distant figure did not change the pace; whether the figure rendered and at
   what pace, and whether the sea reads real, is the user's call from watching.
+- **User (16:50): "Still timelapse speed even with the figure."** Recorded (techniques s.8). The
+  harbour plate after eight renders: free running ~3x fast under every prose, shift, recipe and
+  prose-figure tried; any same-still guide near-static; the referenced singer in frame = real.
