@@ -1361,3 +1361,23 @@ has real footage, 3 built in parallel as the fallback.
   techniques s.14 (environment pace) is closed; the pace reference video (s.20.15 fix 3) and the
   retime+refresh fallback are no longer needed and stay documented only. The clock and free_av
   opt-ins remain in the chain, off.
+
+### 20.22 Writer rerun on She Sings Before the Storm with the new rules (2026-10-28 20:50; no render)
+- User: "Maybe think about rerunning the writer now we've got rid of the rule banning other people
+  appearing?" Reran `/api/mv/write` with the ORIGINAL SSBS request (`write_library_request.json`,
+  same style, lyrics, refs, Opus medium) and the default `locations: auto` (this song's five
+  stills offered). 676 s. Output `mv_scripts/she_sings_before_the_storm_20261028_193924.{json,md}`.
+- Result: 25 scenes, 30 clips, 0 prompt problems, aligned on vocals, cover 0.894. All five known
+  places REUSED (cliff_road x7, cliff_wall x4, harbour x3, cottage_kitchen x3, tavern x3) plus ONE
+  new place, `cliff_edge` (5 scenes, the chorus "she sings before the storm" setups on the
+  headland lip with a huge sky): its still prompt is the user deliverable (in the .md).
+- `others` used on 6 of 25 scenes, all where the lyric names people: the fisherman hauling the
+  line (3, env-only), the proud at supper (4, env-only, three fishermen laughing once over the
+  clip), the quay (12, her + one fisherman coiling a line), the hearth (13, her unheard by three
+  diners), the dance (18, five or six couples in a slow reel in soft focus behind her), laughing
+  seaward (19, env-only, four fishermen walking to the boats). Clip prose checked on 4 and 18:
+  anonymous, faces unreadable, one counted action, never a band. `anchor_figure` unused (right:
+  it is a story flag now). Environment one-motion rule held in the env clips read.
+- Rendering note: env-only scenes 3, 4 and 19 now carry prose people AND default to the i2v
+  lane; prose people on the first-frame lane are untested (on ref2va the ENV7 fisherman rendered
+  fine). Scene 4 (tavern, static camera, 5.2 s) is the cheapest first check.
