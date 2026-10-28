@@ -1100,3 +1100,34 @@ tagged text file (section tags as for Never Mine); style as a one-paragraph file
 - **User (16:50): "Still timelapse speed even with the figure."** Recorded (techniques s.8). The
   harbour plate after eight renders: free running ~3x fast under every prose, shift, recipe and
   prose-figure tried; any same-still guide near-static; the referenced singer in frame = real.
+
+### 20.13 What is left for singer-free B-roll at real speed (2026-10-28 16:55; proposal, nothing fired)
+
+Facts in hand: free plate ~3x fast under prose, shift, base recipe and a prose figure; same-still
+guides near-static; the referenced singer in frame = real. The box has the Frame-Interpolation
+pack (RIFE VFI, FILM VFI, GMFSS Fortuna VFI, ...) and `MiniMaxH3ImageToVideo` exposes an optional
+`first_frame` that our environment lane never uses. Ranked by information per render:
+
+- **A. Enclosed environment-only scene, no build.** Script scene idx 4 "The proud at supper"
+  (tavern, push in toward the hearth, 5.2 s, env-only, still on file). Tests whether the 3x prior
+  is specific to open water and sky. Real speed = the writer rule writes itself: environment-only
+  B-roll lives in enclosed or foreground-anchored places, open water and sky are shot with her.
+  Still fast = the prior is "no referenced person", whatever the place. ~5 min.
+- **B. Harbour plate on the image-to-video mode with the still as the FIRST FRAME (small build).**
+  A different model mode from reference-to-video: the place arrives as pixels to continue, not
+  as a subject to retain. The living-cover lane (I2V/FLF from a still) erred on the slow and idle
+  side, the opposite prior. Opt-in `lane: "i2v"` on env-only scenes: FL2VA weights + its turbo
+  LoRA, `first_frame` = the still, no reference pictures. ~5 min after the build.
+- **C. A referenced person as the anchor instead of a prose one (needs one GPT still).** A
+  distant fisherman supplied as a reference picture (<Picture 2>, back to camera, small) tests
+  whether the anchor is the reference-subject mode rather than a human shape. If yes, singer-free
+  B-roll can carry an anonymous referenced extra where the world allows one. ~5 min.
+- **D. Box-side retime of a free plate (production fallback).** Render free (the pace the user
+  judged right at 3x), then RIFE VFI or FILM VFI x3 on the box instead of ffmpeg minterpolate,
+  which the user found unnatural. Needs a small interpolation graph; GPU minutes. Works for any
+  plate regardless of the model's prior; costs the look of interpolated water.
+- **E. Motion-Speed-MMH3 slider LoRA at a negative weight** (Civitai 2985458, via VPN). Community,
+  trained on character action, turbo compatibility unstated. Last.
+- Floor, regardless: the writer rule from A, plus `anchor_figure` kept for story use only.
+
+Recommended order: A, then B (both cheap, both general), D built in parallel as the fallback.
