@@ -1288,3 +1288,8 @@ has real footage, 3 built in parallel as the fallback.
   a verdict either way; the sheet shows a continuous truck right with composition held and no
   obvious colour drift at 1 s spacing. The user watches; two variables moved against env2
   (free AV and the clock), so if it reads slower a free-AV-only control at 24 attributes it.
+- VERDICT [U 19:05]: "Both still fast, the 2nd one (env2, native clock) looks slightly better, but
+  still like a timelapse." Clock compression at 36 is not a pace lever on this content; the
+  proxy's rise was real (more change, not slower water). 48 and 72 are not worth firing: the
+  author's own risk band starts at 37 and the direction gave nothing at 36. Lane stays in the
+  chain, off by default. Day's tally on the harbour: nine renders, one positive (her in frame).

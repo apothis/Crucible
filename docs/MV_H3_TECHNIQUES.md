@@ -263,6 +263,14 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   free 2.19] The figure rendered at the far bollard, so the model saw it; the anchor effect
   belongs to the reference-subject mode, not to a human shape in the frame. [H] The
   `anchor_figure` scene flag stays as an opt-in for story reasons, not as a pace tool.
+- **RoPE clock compression (model_fps 36, free AV) is not a pace lever on open water either.**
+  [U 2026-10-28: "both still fast", the native-clock baseline "slightly better"; proxy 2.57 vs
+  2.19] Nine harbour renders now: prose x3, shift, LoRA/steps, two same-still guides, a prose
+  figure, the clock. Only the referenced singer in frame ran at real speed [U]. Until a pace
+  reference video or a retime+refresh is measured, the WORKING rule is: open water, sky and
+  weather as the moving element are shot WITH her in frame (she may be small, distant, back to
+  camera: performance no_singing_her); singer-free B-roll keeps to enclosed or still subjects
+  where pace cannot read as timelapse. The clock and free_av opt-ins stay in the chain, off.
   Next candidates, in order: keyframe bounds (same still as first and last frame, section
   12 and item 3), the camera reference lane for pace, a different element than water.
 
