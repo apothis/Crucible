@@ -619,3 +619,16 @@ anchors, never metric distances; static stays an option, not the default.
   `nevermine_G6_V2_chair_grammar-plus-camref-video_parlour-still_seed20261027.mp4`, sheet
   `nevermine_G6_contact_sheet.png`.
 - G7 (768p timing test) fired 01:13:01: chair half, V1 prompt, 1344x768, same seed/turbo.
+- CORRECTION 01:35 (user watched: "loads of weird artifacts"; 1 s frames confirm): V1 is NOT a
+  dolly. Between 5 and 7 s it cross-dissolves from the medium shot to the medium close-up (a
+  ghost double exposure at 6 s), and the wardrobe changes across the dissolve (laced corset gone
+  from 7 s, a dark beaded cord appears on the chemise). V2 jumps medium -> medium close-up between
+  8 and 9 s with the same drift (black lacing/cords over the chemise, corset gone, a candle appears
+  by the lamp); the reference clip did not prevent it. [H] naming TWO framings ("from a medium shot
+  to a medium close-up") reads as two shots joined by a hidden cut; the distilled sampler renders
+  the cut as a dissolve, and the re-establish lets the wardrobe drift. G4's single-framing push was
+  a true continuous move, only unbounded. Next (V3, not fired): one framing, the move bounded only
+  by what must stay in frame, "one continuous shot with no cut and no dissolve", and a wardrobe
+  hold in retention ("the laced corset stays visible throughout"). Frames:
+  `.mvwork/g1_refs/G6_frames/dense/{V1,V2}_dense_sheet.png`. Section 16's "holds the push"
+  verdict is withdrawn; the grammar bounded the END framing but via a cut.
