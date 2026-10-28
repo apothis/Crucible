@@ -1131,3 +1131,21 @@ pack (RIFE VFI, FILM VFI, GMFSS Fortuna VFI, ...) and `MiniMaxH3ImageToVideo` ex
 - Floor, regardless: the writer rule from A, plus `anchor_figure` kept for story use only.
 
 Recommended order: A, then B (both cheap, both general), D built in parallel as the fallback.
+
+### 20.14 "Solo" clarified; pace research pass 2 (2026-10-28 17:10; nothing fired)
+- User: the one-person rule was never the brief. "Solo" meant the one lead singer and no whole
+  band; other characters in scenes are fine where they make sense. Writer changed: SCENE_SYSTEM
+  fixed fact rewritten (one lead, no band, `others` per scene, null by default); scene schema
+  gains `others`; CLIP_SYSTEM writes only the people a scene lists (or `anchor_figure`), anonymous,
+  one slow action each, never a band; `rewrite_scene` `set` accepts `others`. Memory + techniques
+  s.4 updated. Not yet exercised on a script (the next pass-1 run on any song will show it).
+- User: "there must be guidance out there why this is happening with the sped up motion, and
+  ways round it". The first research pass (s.20.7) was LoRA-centred. A second, wider pass is
+  running (web + node sources), briefed with all eight renders and with two leads the box's node
+  list exposes that we have never used: `ref_videos` on MiniMaxH3ReferenceToVideo (a real-speed
+  reference video as a pace anchor?) and `frame_rate` / `use_custom_motion` on MiniMaxH3DirectorCS,
+  plus MiniMaxH3FunControlNetApply (control video), the I2V first-frame lane, free-AV audio for
+  env clips (model generates its own ambient sound; song replaces it at assembly), slider LoRAs,
+  Cadence-Retime vs RIFE/FILM. Report lands at
+  `.mvwork/transfer/ssbs/research_h3_pace_v2_2026-10-28.md`; findings will be folded into s.20.13's
+  ranking before anything is fired.

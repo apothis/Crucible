@@ -1385,7 +1385,7 @@ def mv_rewrite_scene(p: dict):
     except Exception:
         raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
     changes = p.get("set") or {}
-    allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure")
+    allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure", "others")
     bad = [k for k in changes if k not in allowed]
     if bad:
         raise HTTPException(400, f"set: unknown scene fields {bad}; allowed {list(allowed)}")

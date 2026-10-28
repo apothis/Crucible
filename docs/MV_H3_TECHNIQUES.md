@@ -90,6 +90,13 @@ function; a rule only in prose is for the writer's system prompt or the person r
   may not change.** [design] A retention line can hold a garment through a move: "the laced
   corset stays visible throughout" held the corset where earlier takes lost it. [M: G6 V3, G7,
   G8 vs V1/V2; stills]
+- **She is the one lead and the only referenced identity; there is no band. Other people are
+  allowed where a scene needs them, never by default.** The user's "solo singer" brief meant no
+  whole band, not an empty world (clarified 2026-10-28). The writer carries a per-scene `others`
+  field (null unless the story needs a landlord, mourners, a fisherman); the clip pass writes only
+  the people a scene lists, anonymous, one slow action each, never a face competing with hers for
+  the lens. A prose figure renders fine on ref2va (the ENV7 fisherman) [U]; a prose person NEAR
+  the referenced singer is untested for identity bleed [open]. [design + U]
 
 ## 5. Places: one person-free still per location
 

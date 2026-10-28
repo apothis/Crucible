@@ -19,7 +19,8 @@ Rules baked in from the measured work (see the plan and memory): no <Audio 1> - 
 locked in the latent; one described motion per shot with a real-world duration anchor; pin the
 sky when it is visible; pin the hands; readable mouth on the vocal phrases that matter; a
 generation seam is not a cut; references for one subject must agree, so the prompt never names
-a detail only one reference shows. Solo singer only - no other people, ever.
+a detail only one reference shows. One lead (the singer) and no band; other people only where a
+scene lists them in `others` (or `anchor_figure`), as anonymous prose figures (user 2026-10-28).
 
 Plain ASCII only.
 """
@@ -110,7 +111,7 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
 SCENE_SYSTEM = """You are the director of a music video for one song, writing for a video model (MiniMax H3) that renders each scene as one continuous take of up to 15 seconds, chained into longer takes when needed, with the real song locked to the picture. You return STRICT JSON only - no prose before or after it, no markdown fences.
 
 Fixed facts about this production:
-- There is exactly ONE person in the whole video: the singer. No band, no extras, no crowd, no hands of others, no silhouettes of other people. Ever.
+- The singer is the one lead and the only person the references define. There is no band: never a band, never other musicians, never a performance crowd by default. Other people are allowed where the story needs them (a landlord, a fisherman on the far quay, a child at a window, mourners at a grave): list them in the scene's "others" field, anonymous and few, each with a place in frame and one slow action, and write null when the scene needs nobody. Most scenes need nobody; the video is about her.
 - Her identity and wardrobe come from two reference photographs described to you. One wardrobe for the whole video; you may add weathering (rain, dust, wind in the hair) but not change garments.
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
 - Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; a B-roll take may run up to 45 seconds; nothing shorter than 5 seconds. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
@@ -191,6 +192,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "lighting": "one sentence",
             "mood": "three words",
             "action": "what she does, 1-3 sentences, one main motion; for environment B-roll exactly ONE moving element, slow, and what stays still",
+            "others": "null, or one sentence: the other people this scene needs (who, how many, where in frame, what they do), anonymous; no band",
             "opening_still": "a prompt for a photoreal still of the first frame of this scene (she in the setting, or the environment alone), one paragraph",
             "why": "one sentence: why this scene belongs at this point of the song"
         }],
@@ -413,7 +415,7 @@ Hard rules (they come from measured failures; do not bend them):
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
 - Environment-only clips (performance no_singing_environment) have no person to anchor real time, so the discipline is stricter: exactly ONE moving element in the whole description (the boats on the swell, OR the shutters, OR the rain), named once, with a whole-clip anchor stated as a count ("over the whole 6 seconds the boats lift and settle once, slowly"). Every other element is said to be still, by name. No second moving element, no rhythm or frequency ("every two seconds", "with each gust", "again and again"), never water plus wind plus weather together. The camera move is the only other motion. Sounds of motion (creak, rattle, slap) go in overall_soundscape, never in detailed_description. (Measured: a harbour clip written with boats, ropes, shutters and water and a two-second rhythm rendered as a timelapse.)
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
-- Never describe other people. Never change the wardrobe. ONE exception, only when the scene carries anchor_figure: true: one distant anonymous figure (a fisherman in oilskins, a woman with a basket), small in frame, back to camera or face unreadable, doing ONE slow everyday action at a natural human pace for the whole clip (walking the far quay, hauling a rope hand over hand, sweeping a step). It is the real-time anchor of the shot: say how many steps or pulls it makes over the clip's seconds. Never near the camera, never a second figure, never interacting with anything the singer owns.
+- Never change the wardrobe. Other people appear ONLY when the scene lists them (its others field, or anchor_figure: true): write exactly those, anonymous, never a face that competes with hers for the lens, each with ONE slow action and a duration anchor, and never anyone the scene did not list; never a band. The anchor_figure case is one distant anonymous figure (a fisherman in oilskins, a woman with a basket), small in frame, back to camera or face unreadable, doing ONE slow everyday action at a natural human pace for the whole clip (walking the far quay, hauling a rope hand over hand, sweeping a step). It is the real-time anchor of the shot: say how many steps or pulls it makes over the clip's seconds. Never near the camera, never a second figure, never interacting with anything the singer owns.
 - The scene's location is also a referenced subject (a person-free photograph of the place is handed to the model). Call the place by its name (the parlour, the quarry); the system numbers subjects and pictures. Do not redesign the place: its fixed elements are those in the scene setting; you may add weather, time of day and the state changes the scene calls for.
 - Lip-sync clips: mouth readable (face toward camera, medium close-up or closer, nothing covering the mouth).
 - 150-320 words of detailed_description per clip; concrete, visual, in order of time."""
@@ -425,7 +427,7 @@ def clip_prompt(script, scene, clips):
         "song": script["title"], "look": script["look"], "wardrobe": script["wardrobe"],
         "concept": script["concept"],
         "scene": {k: scene.get(k) for k in ("title", "setting", "performance", "framing", "camera", "keep_in_frame",
-                                            "lighting", "mood", "action", "section_types", "start", "end", "anchor_figure")},
+                                            "lighting", "mood", "action", "section_types", "start", "end", "anchor_figure", "others")},
         "location": ({k: loc.get(k) for k in ("name", "description")} if loc else None),
         "clips": [{"index": c["index"], "seconds": c["seconds"], "song_start": c["song_start"],
                    "song_end": c["song_end"], "continues_previous": c["index"] > 0,
