@@ -1964,3 +1964,25 @@ already shows her, the building and her hands, which is the user's direction. No
   OK and only specific things were called out. Lesson filed as memory
   (feedback_fix-callouts-not-legislate): fix the called-out shots against the mostly-good render;
   verify a claimed problem against the audio or the user before proposing any rule.
+
+### 20.43 Scene 0 clip text refreshed and re-fired (2026-10-29 18:35) [fired; result pending]
+
+- Before firing scene 0 "as-is" (user go), the dry run showed the clip prompts still carried the
+  frame-relative wording "walk to the right along the ridge" (the move_cut rewrite re-ran pass 2 on
+  scenes 1 and 2 only; scene 0's clips were the split-fire text). Only the scene summary had the
+  new direction. Firing that text with the same seed would most likely reproduce the doubled take,
+  so I stopped and said so.
+- User: refresh scene 0's clip text, show the wording, fire. POST /api/mv/rewrite_scene {scene 0,
+  set {}} = pass 2 on scene 0 only, no field changes, still df88beb8 kept, 0 problems ->
+  `..._mc1_20261029_154720_rw0_20261029_183530.json` (now final_script_name.txt). New wording:
+  "walks slowly across the frame on the far ground, away from the chapel and toward the cliff
+  edge ... keeps the same distance from the camera and stays the same tiny size to the last frame.
+  She never turns toward the camera and never comes closer." No "to the right" anywhere.
+- Dry run identical to the split fire: ref2va, body ref cd98a0e4 + cliff_road still 7bb11d6c
+  (distant => face ref dropped), 362/39, 2 clips, anchor OFF, seed 20261027.
+- Fired 18:36: job d7d1d6ae, running on the box, queue otherwise empty.
+  `renders/fire_scene0_rw0.sh` waits, floor-checks at offset 0, files
+  `ssbs_scene0_roadatevening_768p_2clips_extremewide_static_bodyref_CAMERA_RELATIVE_WALK_seed20261027.mp4`
+  and `split_cmp/scene0_rw0_d7d1d6ae_sheet.png`.
+- ONE variable vs the SPLIT scene 0 take: the clip direction wording. Verdict = the user watching:
+  one woman, same size throughout, in the 0-18.36 s window.
