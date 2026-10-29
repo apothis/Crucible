@@ -450,3 +450,25 @@ For background loops and living covers, also usable as B-roll plates. Full recip
    scenes with their own opening stills), or a frame-0 anchor plus a keyframe at each clip
    boundary (the opening-still direction in section 8). Frame-0 convergence on the reference
    lane (her fade-in, building morph over the first 2 s) is the same open item.
+
+### Lip-sync in close-ups and the first-line setup (user rules, 2026-10-29)
+- A medium close-up or closer while a sung line is audible is ALWAYS sing_to_camera. A close shot
+  of her silent face under words reads as a mistake (seen: the chain's invented close-up at the
+  tail of a no_singing_her take while the first verse played). no_singing_her and sing_away are
+  written at medium and wider; a silent close-up belongs to instrumental passages.
+- The first line lands on her face: the scene holding the song's first sung line is a lip-sync
+  setup (sing_to_camera, medium close-up or closer) that starts at least FIRST_LINE_LEAD (2 s)
+  before that line, so she is already in frame, facing the lens, when the first word arrives.
+  `cut_points` adds that point inside the intro and the brief lists it as FIRST-LINE SETUP.
+- Code: `check_scene` in mv_writer (run by `_finish_scene`, field `scene_problems`, printed as
+  SCENE PROBLEMS in the script markdown) flags both mechanically. Scripts written before
+  2026-10-29 have no field; the SSBS split script's scene 2 (medium, sing_away, 0.5 s before the
+  first line) fails both rules and is the first thing a rewrite under them changes.
+
+### Walking direction is named relative to the camera (measured 2026-10-29)
+- "To the right along the ridge, never toward the camera" doubled her size in 18 s: the road in
+  the location still runs from the far chapel toward the camera foreground, and the model follows
+  the path, not the negation. A path that leads to the camera is a walk toward the lens whichever
+  side it lies on. Write "away from the camera, deeper into the frame" or "across the frame on the
+  near ground"; on such a path she walks away toward the far end, or stands. SCENE_SYSTEM and
+  CLIP_SYSTEM both carry it.

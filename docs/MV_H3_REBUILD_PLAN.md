@@ -1888,3 +1888,18 @@ already shows her, the building and her hands, which is the user's direction. No
   Proposed hard rule for SCENE_SYSTEM, not yet written in: a medium close-up or closer while a
   vocal line is audible is ALWAYS sing_to_camera; no_singing_her and sing_away are for medium and
   wider; CLIP_SYSTEM already requires the mouth readable and the exact words in <d>.
+
+### 20.40 Three rules written into the writer (2026-10-29 16:00) [built; offline test; no GPU]
+- U: at 20 s of the scene 1 file (song 38.4 s, first verse) her face is close enough to sing and
+  she does not; and the writer should put her in a lip-sync shot BEFORE the first sung line.
+  That 20 s frame is the chain's invented close-up past the 18.36 s window (20.38); the rule is
+  general and now mechanical.
+- mv_writer: SCENE_SYSTEM gains the close-up-under-words rule, the first-line setup rule (2 s
+  lead, new FIRST-LINE SETUP cut point in the brief) and the camera-relative direction rule;
+  CLIP_SYSTEM gains the direction rule; `FIRST_LINE_LEAD = 2.0`; `cut_points` adds the setup
+  point; `first_sung_line`, `is_close`, `check_scene` (scene_problems via `_finish_scene`, printed
+  as SCENE PROBLEMS in the markdown). Offline test on the SSBS sections: setup point 35.22 listed;
+  scene 2 "Walking the wall" (medium, sing_away, starts 36.72) flagged on both rules; a silent
+  close-up under words flagged; a compliant 35.22-44.76 MCU sing_to_camera scene clean.
+- Not run: a rewrite of the split script under the new rules (scene 1 would end at 35.22 and
+  scene 2 become an MCU sing_to_camera setup). Backend restarted so the routes carry the code.

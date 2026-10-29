@@ -115,10 +115,11 @@ Fixed facts about this production:
 - Her identity and wardrobe come from two reference photographs described to you. One wardrobe for the whole video; you may add weathering (rain, dust, wind in the hair) but not change garments.
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
 - Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; any take SHE is in (singing or not) runs at most 30 seconds (measured: longer chains re-invent the shot around 25-31 seconds); an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than 5 seconds. A long passage she is in is therefore two or more scenes, cut between them.
-- HER SCALE IS FIXED INSIDE A SCENE (measured on two takes, 2026-10-29: a face that starts tiny and grows as she approaches resolves badly all the way in). Never write her walking toward the camera from a distance, never "grows larger in frame", never an approach that changes how big she is. Her distance from the camera at the end of a scene is what it was at the start: she moves across the frame, away, or in place. A change of scale (far to near, wide to close) is always a CUT to a new scene with its own framing, never a move inside one scene. Push-ins on her are small amplitude only. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
-- Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second before a sung line begins). Choose cuts where the words break.
+- HER SCALE IS FIXED INSIDE A SCENE (measured on two takes, 2026-10-29: a face that starts tiny and grows as she approaches resolves badly all the way in). Never write her walking toward the camera from a distance, never "grows larger in frame", never an approach that changes how big she is. Her distance from the camera at the end of a scene is what it was at the start: she moves across the frame, away, or in place. A change of scale (far to near, wide to close) is always a CUT to a new scene with its own framing, never a move inside one scene. Push-ins on her are small amplitude only. Her walking direction is named relative to the CAMERA, never to the frame edge: "away from the camera, deeper into the frame" or "across the frame on the near ground". A road or path that runs from the far ground toward the camera is a walk toward the lens whichever side it is on (measured 2026-10-29: "to the right along the ridge, never toward the camera" doubled her size in 18 seconds because the road led to the camera), so on such a path she walks away, toward the far end, or stands. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
+- Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second before a sung line begins), or the listed FIRST-LINE SETUP point (two seconds before the song's first sung line: the lip-sync scene for the first word starts there). Choose cuts where the words break.
 - Inside a scene, the camera does ONE thing, written in the video model's own grammar (measured: it obeys this and ignores metric distances): "static", or "<verb> with <small|large> amplitude at <slow|fast> speed toward/along X throughout the take". Verbs: push in, pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc, tracking. Performance takes use small amplitude at slow speed; large amplitude only on B-roll. A scene has ONE framing (the one it starts in); never write a second framing the move should reach (measured: "from a medium shot to a medium close-up" became a hidden cut rendered as a dissolve, with the wardrobe changing across it). Bound a move only by what must stay in frame to the end (the lamp, the window, her shoulders). No whip pans, no handheld chaos, no orbit-plus-zoom, never centimetres or metres.
-- Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
+- Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less. The converse is a hard rule (user, 2026-10-29): a medium close-up or anything closer while a vocal line is audible is ALWAYS sing_to_camera. A close shot of her silent face under a sung line reads as a mistake, so no_singing_her and sing_away are written at medium and wider only; a silent close-up belongs to instrumental passages.
+- THE FIRST LINE LANDS ON HER FACE (user, 2026-10-29): the scene that holds the first sung line of the song is a lip-sync setup (sing_to_camera, medium close-up or closer) that STARTS AT LEAST 2 SECONDS BEFORE that line, so she is already in frame, facing the lens, when the first word arrives. The intro therefore ends on a cut point two or more seconds ahead of the first word, not on the section edge half a second before it.
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
 - Environment-only B-roll (no person in frame) moves ONE element only (the sea, a curtain, the rain, a flame), slowly, with everything else still. A second moving element, or any rhythm ("every few seconds", "with each gust"), makes the model run the shot as a timelapse (measured). Sounds belong to the soundscape, not to the picture.
 - LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location. When the brief lists KNOWN LOCATIONS (places already photographed for earlier scripts or other videos, their stills on file), prefer them wherever one serves THIS video and refer to each by its exact id; invent a new location only where no known one fits the song. Never redecorate a known place: its fixed elements are what its description says, and your scene settings there must match that description.
@@ -128,6 +129,7 @@ Write for the song's genre: its pace, weight and mood should be visible in the c
 
 
 LINE_LEAD = 0.5          # a line's cut point sits this far before the line begins
+FIRST_LINE_LEAD = 2.0    # the lip-sync setup for the song's FIRST sung line starts this far ahead of it (user rule, 2026-10-29)
 
 
 def cut_points(sections):
@@ -143,7 +145,50 @@ def cut_points(sections):
             if s["start"] < c < s["end"]:
                 pts.add(round(c, 3))
             prev_end = l["end"]
+    first = first_sung_line(sections)
+    if first and first["start"] - FIRST_LINE_LEAD > 0:        # the lip-sync setup for the first word
+        pts.add(round(first["start"] - FIRST_LINE_LEAD, 3))   # starts this far ahead of it (user rule)
     return sorted(pts)
+
+
+def first_sung_line(sections):
+    """The song's first sung line (dict with start/end/text), or None for an instrumental."""
+    for s in sections:
+        for l in s.get("lines") or []:
+            return l
+    return None
+
+
+CLOSE_FRAMINGS = ("medium close-up", "medium close up", "close-up", "close up", "extreme close-up", "extreme close up", "mcu", "cu")
+
+
+def is_close(framing):
+    """Medium close-up or closer: the framings where her mouth is readable."""
+    fr = str(framing or "").strip().lower()
+    return any(fr.startswith(c) for c in CLOSE_FRAMINGS)
+
+
+def check_scene(sc, sections):
+    """Scene-level hard rules (user, 2026-10-29), mechanically; a list of problems, empty = clean.
+    1. A medium close-up or closer while a sung line is audible is sing_to_camera: never her
+       silent face, close, under words. 2. The scene holding the song's first sung line is a
+       lip-sync setup that starts FIRST_LINE_LEAD or more before that line."""
+    problems = []
+    perf = str(sc.get("performance") or "")
+    a, b = float(sc["start"]), float(sc["end"])
+    audible = [l for s in sections for l in (s.get("lines") or []) if l["end"] > a and l["start"] < b]
+    if audible and is_close(sc.get("framing")) and perf != "sing_to_camera":
+        problems.append(f"close framing '{sc.get('framing')}' with performance {perf or '(none)'} while "
+                        f"{len(audible)} sung line(s) are audible: a close shot under words is sing_to_camera")
+    first = first_sung_line(sections)
+    if first and a <= first["start"] < b:
+        if perf != "sing_to_camera" or not is_close(sc.get("framing")):
+            problems.append(f"holds the first sung line ({first['start']:.2f}s) but is {perf or '(none)'} "
+                            f"'{sc.get('framing')}': the first line lands on her face (sing_to_camera, medium close-up or closer)")
+        if first["start"] - a < FIRST_LINE_LEAD - 0.05:
+            problems.append(f"starts {first['start'] - a:.2f}s before the first sung line; the lip-sync setup "
+                            f"starts at least {FIRST_LINE_LEAD:.0f}s ahead of it (cut point {first['start'] - FIRST_LINE_LEAD:.2f}s)")
+    return problems
 
 
 def snap_cut(t, points):
@@ -152,18 +197,20 @@ def snap_cut(t, points):
 
 def _section_text(sections):
     out = []
+    first = first_sung_line(sections)
+    setup = round(first["start"] - FIRST_LINE_LEAD, 3) if first and first["start"] - FIRST_LINE_LEAD > 0 else None
     for s in sections:
         head = f"[{s['index']}] {s['type']}  {s['start']:.2f}-{s['end']:.2f}s  ({s['end'] - s['start']:.1f}s)"
+        out.append(head if s["vocal"] else head + "  instrumental, no vocal")
+        if setup is not None and s["start"] <= setup < s["end"]:
+            out.append(f"      cut {setup:6.2f} | FIRST-LINE SETUP: the lip-sync scene for the first word starts here")
         if s["vocal"]:
-            out.append(head)
             prev_end = s["start"]
             for l in s["lines"]:
                 c = max(l["start"] - LINE_LEAD, prev_end)
                 tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] else "            |"
                 out.append(f"      {tag} {l['start']:7.2f}-{l['end']:6.2f}  {l['text']}")
                 prev_end = l["end"]
-        else:
-            out.append(head + "  instrumental, no vocal")
     return "\n".join(out)
 
 
@@ -243,6 +290,7 @@ def _finish_scene(sc, sections):
     sc["sections"] = [idx[0], idx[-1]]
     sc["section_types"] = [sections[k]["type"] for k in idx]
     sc["lipsync"] = str(sc.get("performance", "")).startswith("sing")
+    sc["scene_problems"] = check_scene(sc, sections)
     return sc
 
 
@@ -413,7 +461,7 @@ Hard rules (they come from measured failures; do not bend them):
 - The singer is <Subject 1>. When she sings, write: <Subject 1> (S1) sings <d>[English] exact words</d>. Only the words audible inside THIS clip's window go inside <d>; a line that starts before the clip begins mid-phrase; a line that ends after the clip is cut mid-phrase. Instrumental passages have no <d>. Lips closed and relaxed when no vocal is audible; one open vowel shape held through sustained notes.
 - detailed_description starts with "[Shot 1]" and is ONE continuous shot. No [Shot 2], no cuts, no <scenetrans>.
 - Exactly ONE camera motion for the scene, as given, repeated in every clip in the model's own grammar: "The camera pushes in with small amplitude at slow speed toward X throughout the take, one continuous shot with no cut and no dissolve." Name what must stay in frame ("The oil lamp and the window stay in frame to the end.") and never name a second framing for the move to reach (that reads as a cut). Never metric distances (centimetres mean nothing to the model). If static: "The camera is static, locked off for the full clip."
-- Her scale is fixed for the whole scene: she never walks toward the camera, never comes closer, never grows in frame; the distance between her and the camera at the end of the clip is what it was at the start (she moves across the frame, away, or in place). If the scene's framing is wide or extreme wide she stays small to the last frame and her face is never shown closer; a change of scale is the next scene's job, not this clip's. (Measured 2026-10-29: an approach from the far end of a road rendered her face broken all the way in.)
+- Her scale is fixed for the whole scene: she never walks toward the camera, never comes closer, never grows in frame; the distance between her and the camera at the end of the clip is what it was at the start (she moves across the frame, away, or in place). If the scene's framing is wide or extreme wide she stays small to the last frame and her face is never shown closer; a change of scale is the next scene's job, not this clip's. (Measured 2026-10-29: an approach from the far end of a road rendered her face broken all the way in.) Name her direction relative to the CAMERA ("away from the camera, deeper into the frame", "across the frame on the near ground"), never as "to the right" or "to the left": a path that runs from the far ground toward the camera is a walk toward the lens whichever side it lies on, and the model follows the path, not the negation (measured 2026-10-29: "to the right along the ridge, never toward the camera" doubled her size in 18 seconds). On such a path she walks away toward the far end, or stands.
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
 - Environment-only clips (performance no_singing_environment) have no person to anchor real time, so the discipline is stricter: exactly ONE moving element in the whole description (the boats on the swell, OR the shutters, OR the rain), named once, with a whole-clip anchor stated as a count ("over the whole 6 seconds the boats lift and settle once, slowly"). Every other element is said to be still, by name. No second moving element, no rhythm or frequency ("every two seconds", "with each gust", "again and again"), never water plus wind plus weather together. The camera move is the only other motion. Sounds of motion (creak, rattle, slap) go in overall_soundscape, never in detailed_description. (Measured: a harbour clip written with boats, ropes, shutters and water and a two-second rhythm rendered as a timelapse.)
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
@@ -764,6 +812,8 @@ def script_markdown(script):
                 f"- setting: {sc.get('setting')}", f"- lighting: {sc.get('lighting')} | mood: {sc.get('mood')}",
                 f"- action: {sc.get('action')}", f"- why: {sc.get('why')}",
                 f"- opening still prompt: {sc.get('opening_still')}", ""]
+        if sc.get("scene_problems"):
+            out += ["SCENE PROBLEMS: " + "; ".join(sc["scene_problems"]), ""]
         for c in sc["clips"]:
             words = " / ".join(l["text"] for l in c["lines"]) or "(instrumental)"
             out += [f"### Clip {c['index'] + 1}: song {c['song_start']:.2f}-{c['song_end']:.2f}s, {c['frames']}f", "",
