@@ -1806,3 +1806,16 @@ already shows her, the building and her hands, which is the user's direction. No
   wall, she stands at the wall corner in three-quarter profile, turns her head to the camera
   and back, no singing; needs its own opening still (prompt in the scene's `opening_still`).
   Request `rewrite/split_scene0_request.json`; writer running.
+- 11:30 split landed in 57 s: new script `..._sp0_20261029_113024.json` (26 scenes, original
+  untouched). 0 "The road at evening" 0.00-18.36 extreme wide static, 2 clips, 0 problems: she
+  stands 3 s then walks ~10 steps right along the ridge away from the chapel, "never toward the
+  camera", "the same tiny size until the last frame", stops short of the edge facing the sea;
+  opening still df88beb8 kept. 1 "At the chapel wall" 18.36-36.72 medium wide, truck right
+  small/slow, 2 clips, 0 problems: stands at the wall corner in three-quarter profile, turns her
+  head to the lens over ~6 s, holds, turns back to the sea; "her distance from the camera and her
+  size in frame do not change". No approach wording in either half beyond the negations. The
+  second half has no opening still yet: prompt in `dry/scene1_chapel_wall_opening_still_prompt.txt`.
+- Not fired. To render both halves on the split script: 0 as is (anchor off, the reference lane
+  as the batch, or anchor on; one variable each), 1 after its still is filed. The later scenes
+  are renumbered (+1) in the split script; the batch manifest's job ids still belong to the
+  original numbering.
