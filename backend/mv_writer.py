@@ -114,7 +114,8 @@ Fixed facts about this production:
 - The singer is the one lead and the only person the references define. There is no band: never a band, never other musicians, never a performance crowd by default. Other people are allowed where the story needs them (a landlord, a fisherman on the far quay, a child at a window, mourners at a grave): list them in the scene's "others" field, anonymous and few, each with a place in frame and their own ordinary business, and write null when the scene needs nobody. People never act in unison (measured: three men written as "one slow movement together" rendered as a synchronised puppet show); each does a different thing, staggered in time. Extras do SMALL ordinary things only: walking, standing, hauling, drinking, talking, coiling a rope. Never a large body transition for an extra: no climbing, jumping, stepping down into or out of a boat, mounting, falling; and only actions the location's geometry allows (the harbour's boats are moored off the quay on their ropes, so nobody can step into one). Measured: "one steps down into the nearest boat" rendered as a man flying through the air onto a boat that was too far away to reach. Most scenes need nobody; the video is about her.
 - Her identity and wardrobe come from two reference photographs described to you. One wardrobe for the whole video; you may add weathering (rain, dust, wind in the hair) but not change garments.
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
-- Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; a B-roll take may run up to 45 seconds; nothing shorter than 5 seconds. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
+- Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; any take SHE is in (singing or not) runs at most 30 seconds (measured: longer chains re-invent the shot around 25-31 seconds); an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than 5 seconds. A long passage she is in is therefore two or more scenes, cut between them.
+- HER SCALE IS FIXED INSIDE A SCENE (measured on two takes, 2026-10-29: a face that starts tiny and grows as she approaches resolves badly all the way in). Never write her walking toward the camera from a distance, never "grows larger in frame", never an approach that changes how big she is. Her distance from the camera at the end of a scene is what it was at the start: she moves across the frame, away, or in place. A change of scale (far to near, wide to close) is always a CUT to a new scene with its own framing, never a move inside one scene. Push-ins on her are small amplitude only. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
 - Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second before a sung line begins). Choose cuts where the words break.
 - Inside a scene, the camera does ONE thing, written in the video model's own grammar (measured: it obeys this and ignores metric distances): "static", or "<verb> with <small|large> amplitude at <slow|fast> speed toward/along X throughout the take". Verbs: push in, pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc, tracking. Performance takes use small amplitude at slow speed; large amplitude only on B-roll. A scene has ONE framing (the one it starts in); never write a second framing the move should reach (measured: "from a medium shot to a medium close-up" became a hidden cut rendered as a dissolve, with the wardrobe changing across it). Bound a move only by what must stay in frame to the end (the lamp, the window, her shoulders). No whip pans, no handheld chaos, no orbit-plus-zoom, never centimetres or metres.
 - Lip-sync scenes need her mouth readable: medium close-up or close-up, face toward camera. Wider performance is fine when the words matter less.
@@ -412,6 +413,7 @@ Hard rules (they come from measured failures; do not bend them):
 - The singer is <Subject 1>. When she sings, write: <Subject 1> (S1) sings <d>[English] exact words</d>. Only the words audible inside THIS clip's window go inside <d>; a line that starts before the clip begins mid-phrase; a line that ends after the clip is cut mid-phrase. Instrumental passages have no <d>. Lips closed and relaxed when no vocal is audible; one open vowel shape held through sustained notes.
 - detailed_description starts with "[Shot 1]" and is ONE continuous shot. No [Shot 2], no cuts, no <scenetrans>.
 - Exactly ONE camera motion for the scene, as given, repeated in every clip in the model's own grammar: "The camera pushes in with small amplitude at slow speed toward X throughout the take, one continuous shot with no cut and no dissolve." Name what must stay in frame ("The oil lamp and the window stay in frame to the end.") and never name a second framing for the move to reach (that reads as a cut). Never metric distances (centimetres mean nothing to the model). If static: "The camera is static, locked off for the full clip."
+- Her scale is fixed for the whole scene: she never walks toward the camera, never comes closer, never grows in frame; the distance between her and the camera at the end of the clip is what it was at the start (she moves across the frame, away, or in place). If the scene's framing is wide or extreme wide she stays small to the last frame and her face is never shown closer; a change of scale is the next scene's job, not this clip's. (Measured 2026-10-29: an approach from the far end of a road rendered her face broken all the way in.)
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
 - Environment-only clips (performance no_singing_environment) have no person to anchor real time, so the discipline is stricter: exactly ONE moving element in the whole description (the boats on the swell, OR the shutters, OR the rain), named once, with a whole-clip anchor stated as a count ("over the whole 6 seconds the boats lift and settle once, slowly"). Every other element is said to be still, by name. No second moving element, no rhythm or frequency ("every two seconds", "with each gust", "again and again"), never water plus wind plus weather together. The camera move is the only other motion. Sounds of motion (creak, rattle, slap) go in overall_soundscape, never in detailed_description. (Measured: a harbour clip written with boats, ropes, shutters and water and a two-second rhythm rendered as a timelapse.)
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
@@ -702,19 +704,27 @@ def write_scene_clips(script, sc, provider="claude_sub", model=WRITER_MODEL, eff
     return sc
 
 
+SPLIT_SNAP_TOL = 1.0     # a split snaps to a cut point this close; further away (an instrumental span) it stays put
+
+
 def split_scene(script, index, at, second):
-    """Cut scene `index` in two at `at` seconds (snapped to a cut point). The first half keeps the
-    scene's fields (override with second['first'] if given); the second half takes `second`'s
-    fields over a copy. Both halves lose their clips (run write_scene_clips on each). Scenes are
-    renumbered. Returns (first, second)."""
+    """Cut scene `index` in two at `at` seconds (snapped to a cut point when one lies within
+    SPLIT_SNAP_TOL; inside a lineless span, an intro or a solo, the cut stays where asked). The
+    first half keeps the scene's fields (override with second['first'] if given) including its
+    filed opening still; the second half takes `second`'s fields over a copy and starts without
+    an opening still (it is a new setup, so it needs its own). Both halves lose their clips (run
+    write_scene_clips on each). Scenes are renumbered. Returns (first, second)."""
     sections = script["facts"]["sections"]
-    at = snap_cut(float(at), cut_points(sections))
+    at = float(at)
+    near = snap_cut(at, cut_points(sections))
+    if abs(near - at) <= SPLIT_SNAP_TOL:
+        at = near
     sc = script["scenes"][index]
     if not sc["start"] < at < sc["end"]:
         raise ValueError(f"cut {at}s is not inside scene {index} ({sc['start']}-{sc['end']}s)")
     keep = {k: v for k, v in sc.items() if k not in ("plan", "clips", "index", "sections", "section_types", "lipsync")}
     a = dict(keep, **(second.get("first") or {}))
-    b = dict(keep, **{k: v for k, v in second.items() if k != "first"})
+    b = dict({k: v for k, v in keep.items() if k != "opening_still_id"}, **{k: v for k, v in second.items() if k != "first"})
     a["start"], a["end"] = sc["start"], at
     b["start"], b["end"] = at, sc["end"]
     script["scenes"][index:index + 1] = [a, b]

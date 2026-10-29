@@ -1785,3 +1785,24 @@ already shows her, the building and her hands, which is the user's direction. No
   new scene with its own opening still, never her approach inside one shot. Applies to the
   writer (no "walks toward the camera", no "grows larger in frame", push-ins on her bounded to
   small amplitude) and to the opening-still brief (she is already at the shot's scale at frame 0).
+
+### 20.37 Fixed-scale rule written into the writer; scene 0 split (2026-10-29 11:30) [built; no GPU]
+- SCENE_SYSTEM: any take SHE is in runs at most 30 s (measured: 3-clip chains re-invent the shot
+  at 25-31 s; 1-2 clip scenes held); environment-only B-roll keeps its 45 s. New bullet HER SCALE
+  IS FIXED INSIDE A SCENE: never walks toward camera, never grows in frame, distance at the end
+  is the distance at the start (across, away or in place); a change of scale is a CUT to a new
+  scene with its own framing; push-ins on her small amplitude only.
+- CLIP_SYSTEM: the clip-level form (she never comes closer; wide / extreme wide stays small to
+  the last frame; the next scene changes scale, not this clip).
+- `split_scene` helper: the cut snaps to a cut point only within 1 s (an intro has none, the
+  cut stays where asked); the second half starts without the first half's opening still.
+  New route `POST /api/mv/split_scene {script, scene, at, first?, second}`: cuts the scene, runs
+  pass 2 on both halves under the current rules, saves `<script>_sp<idx>_<stamp>.json` (original
+  untouched), records the split in `rewrites`.
+- Scene 0 under the rule (my proposal, creative fields are the user's to change): cut at 18.36 s.
+  0a "The road at evening" 0.00-18.36, extreme wide, static camera, she stays tiny at the far
+  end and walks ALONG the ridge away from the chapel (opening still df88beb8 kept).
+  0b "At the chapel wall" 18.36-36.72, medium wide, truck right small/slow along the chapel
+  wall, she stands at the wall corner in three-quarter profile, turns her head to the camera
+  and back, no singing; needs its own opening still (prompt in the scene's `opening_still`).
+  Request `rewrite/split_scene0_request.json`; writer running.

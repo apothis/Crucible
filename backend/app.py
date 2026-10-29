@@ -1746,6 +1746,79 @@ def mv_rewrite_scene(p: dict):
             "prompts": [c["prompt"] for c in sc["clips"]], "log": log_lines}
 
 
+@app.post("/api/mv/split_scene")
+def mv_split_scene(p: dict):
+    """Cut ONE scene of a saved script into two scenes at `at` seconds (the fixed-scale rule: a
+    change of her scale is a cut, and a take she is in runs at most 30 s), run the writer's clip
+    pass on both halves under the CURRENT rules, and save the result as a NEW script next to the
+    original (untouched). No GPU; the Claude subscription CLI.
+    p: {script, scene (0-based), at (seconds; snaps to a cut point within 1 s, else stays, e.g.
+        inside an intro), first?: {scene fields to change on the first half}, second: {scene
+        fields for the second half: title, framing, action, camera, keep_in_frame, setting,
+        lighting, mood, performance, others, opening_still ...}, provider?, model?, effort?}.
+    The first half keeps the scene's filed opening still; the second half has none until one is
+    filed for it (/api/mv/scene_still). Returns {files, scenes: [two {index, title, start, end,
+    framing, performance, clips, problems, text, prompts}], log}."""
+    script, name = _mv_load_script(p.get("script"))
+    try:
+        idx = int(p.get("scene", -1))
+        script["scenes"][idx]
+    except Exception:
+        raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
+    if p.get("at") in (None, ""):
+        raise HTTPException(400, "at (seconds) is required")
+    second = dict(p.get("second") or {})
+    if p.get("first"):
+        second["first"] = p["first"]
+    allowed = ("title", "framing", "action", "camera", "keep_in_frame", "setting", "lighting", "mood", "performance",
+               "others", "opening_still", "anchor_figure", "why", "location")
+    bad = [k for k in list(second) + list(p.get("first") or {}) if k not in allowed and k != "first"]
+    if bad:
+        raise HTTPException(400, f"unknown scene fields {bad}; allowed {list(allowed)}")
+    try:
+        a, b = mv_writer_mod.split_scene(script, idx, float(p["at"]), second)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    log_lines = []
+
+    def _log(s):
+        print(s)
+        log_lines.append(s)
+
+    try:
+        for sc in (a, b):
+            mv_writer_mod.write_scene_clips(
+                script, sc, p.get("provider") or "claude_sub", p.get("model") or mv_writer_mod.WRITER_MODEL,
+                p.get("effort") or mv_writer_mod.WRITER_EFFORT, CFG.get("claude_model", ""),
+                os.path.join(work, "lyricalign"), _log)
+    except Exception as e:
+        raise HTTPException(500, f"writer failed: {e}")
+    script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
+    script["scene_count"] = len(script["scenes"])
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    script.setdefault("rewrites", []).append({"split": idx, "at": a["end"], "from": os.path.basename(str(name)),
+                                              "stamp": stamp, "second": {k: v for k, v in second.items() if k != "first"},
+                                              "first": second.get("first")})
+    out_dir = os.path.join(work, "mv_scripts")
+    os.makedirs(out_dir, exist_ok=True)
+    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
+    jpath = os.path.join(out_dir, f"{base}_sp{idx}_{stamp}.json")
+    mpath = os.path.join(out_dir, f"{base}_sp{idx}_{stamp}.md")
+    with open(jpath, "w") as f:
+        json.dump(script, f, indent=1)
+    with open(mpath, "w") as f:
+        f.write(mv_writer_mod.script_markdown(script))
+    out = []
+    for sc in (a, b):
+        out.append({"index": sc["index"], "title": sc.get("title"), "start": sc["start"], "end": sc["end"],
+                    "framing": sc.get("framing"), "performance": sc.get("performance"), "camera": sc.get("camera"),
+                    "action": sc.get("action"), "opening_still_id": sc.get("opening_still_id"),
+                    "clips": len(sc["clips"]), "problems": [c["problems"] for c in sc["clips"]],
+                    "text": [c["text"] for c in sc["clips"]], "prompts": [c["prompt"] for c in sc["clips"]]})
+    return {"files": {"json": jpath, "md": mpath}, "scenes": out, "log": log_lines}
+
+
 def _lib_video_path(vid):
     """Absolute path to a library video (clip or assembled music video) by id."""
     vid = os.path.basename(vid or "")
