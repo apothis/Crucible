@@ -1618,3 +1618,23 @@ has real footage, 3 built in parallel as the fallback.
 - Morning: `batch_status.sh`; frames of the new scene 0 vs the old; then assemble. If scene 0
   still shows the portrait insertion, H1 is wrong and the candidates are the chain itself (H2)
   and frame-0 anchoring (H3).
+
+### 20.33 Direction for tomorrow (user, 2026-10-29 01:45): first frames drive the video
+- User: "This is why I said I think we need more first frame generations to drive the vid, rather
+  than relying on adding character purely through reference. Gives better control."
+- What today supports: every shot that started from a generated frame (the harbour plates, the
+  tavern, the hauler, the walkers) held its world, its pace and its people from frame 0; the
+  failures left are the reference lane converging from noise (scene 0: chapel morph, her
+  fade-in) and reference debt paid mid-chain (the portrait insertion, fix under test).
+- Design to build tomorrow (not started): a per-scene OPENING STILL WITH HER for scenes she is
+  in (GPT from her reference pictures; the writer's `opening_still` already describes the first
+  frame with her in the setting), used as frame 0:
+  - environment-only scenes: already the I2V lane (still as first_frame);
+  - her scenes: the reference lane keeps her face/body pictures for identity and lip-sync, and
+    the opening still is anchored at frame 0 through the existing AddGuide path (`keyframes:
+    still_first` today anchors the LOCATION still; make it take the scene's opening still). To
+    test: one-variable on scene 0 (same prompt, fix included) with and without the frame-0
+    anchor; and a sing_to_camera scene to confirm lip-sync survives the anchor.
+  - fallback if the anchor pins the camera (as same-still first+last did): the I2V lane with the
+    opening still for her non-singing scenes, where identity comes from the still itself.
+- Morning first: the overnight batch results and the scene 0 verdict (s.20.32).
