@@ -1755,3 +1755,24 @@ already shows her, the building and her hands, which is the user's direction. No
   AddGuide 108 at frame 0 on clip 1 (checked on :8188/queue). One variable against d15c63bd.
   Handover script `renders/handover_scene0_anchor.sh` (floor check, named copy, 1 s sheet, old
   vs new first 8 s at 0.5 s steps).
+- 2026-10-29 10:33 LANDED: job 2a25065c, 42.0 s, 1344x768, 1008 frames, floor r 0.998 at
+  lag 0.00. Filed `renders/ssbs_scene0_cliffroad_768p_3clips_bodyref_ANCHOR_openingstill_frame0_seed20261027.mp4`;
+  sheets in `renders/scene0_anchor_cmp/` (1 s sheet; old vs new first 8 s at 0.5 s steps).
+  Frames (user to watch):
+  - ANCHOR TOOK. Frame 0 of the new render is the opening still: chapel on the left, the road,
+    her tiny at the far end. No fade-in of her, no morph of the chapel over the first 2 s. The
+    old render had neither building nor her settled until t=2.
+  - GHOST BUILDING STILL ARRIVES, now as a second house: at 2.5 s a translucent building appears
+    to the right of the anchored chapel and is solid by 4 s; it stays beside the chapel through
+    clip 1. In the old render the ghost rose BEHIND the chapel at 1 s. Reading (hypothesis): the
+    location reference picture <Picture 2> (cliff_road still 7bb11d6c) shows a different chapel
+    than the opening still; with frame 0 pinned to one, the model retains the other as a second
+    subject and draws both. Same mechanism as the old ghost, now visible as two buildings.
+  - CHAIN WANDER WORSE: camera pushes to the chapel by 8 s, she is a medium shot by 13 s (old:
+    t=30), the chapel grows a red door by 14 s, a translucent building overlay returns at 30-36 s.
+    One variable, but the anchor changes the whole trajectory, so the earlier push cannot be
+    separated from seed variance on this one take.
+- Next one-variable test (proposed, not fired): keep the anchor and make the location REFERENCE
+  the same pixels as the anchor (opening still as <Picture 2> in place of the cliff_road still),
+  so the model holds one building, not two. Prompt structure unchanged. Alternative: drop the
+  location picture entirely (body picture only + anchor), which also changes the prompt.
