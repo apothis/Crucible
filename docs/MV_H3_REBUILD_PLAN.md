@@ -2032,3 +2032,31 @@ already shows her, the building and her hands, which is the user's direction. No
 - User, after watching: her OUTFIT differs between the two SPLIT9 takes as well, "I feel we're
   going backwards". User is handing the build to a different model; handover written to
   docs/MV_H3_HANDOVER_20261029.md. Nothing more fires.
+
+### 20.45 Scene 0 (0-9 s) redone as a standing shot on the image-to-video lane (2026-10-29 20:05) [built; dry-run; nothing fired]
+- Handover read (docs/MV_H3_HANDOVER_20261029.md). User's picks: KEEP the SPLIT9 ridge take
+  (scene 1, 9.0-18.36) as is; redo the 0-9 s wide as a STANDING shot (no walk) with an opening
+  still as frame 0 on the image-to-video lane, so the sky, the outfit and one woman come from the
+  still's pixels.
+- Facts checked, not causes: the cliff_road location still 7bb11d6c is itself a dark storm bank
+  over a rough sea, and the SPLIT9 wide (body ref + that still) reproduced it although its text said
+  pale sky and calm sea; the ridge take used the same still and rendered pale, so the still alone
+  does not decide the sky [H]. The body picture cd98a0e4 shows the shift off BOTH shoulders (puffed
+  sleeves at the upper arms) while the script's wardrobe and refs text say "slipped off her left
+  shoulder": text and picture disagree on a visible detail (s.4 rule) [H as a cause of the outfit
+  drift; not changed].
+- Writer: POST /api/mv/rewrite_scene {scene 0, set {action: stands still in front of the chapel the
+  whole take, no step, one slow head turn along the coast; keep_in_frame: the chapel and her whole
+  figure}} -> `..._sp0_20261029_192903_rw0_20261029_200343.json` (now final_script_name.txt;
+  previous in final_script_name_before_standing.txt). 1 clip, 226 frames, 0 problems.
+- Code (opt-in, defaults unchanged): render_scene accepts an explicit `lane: "i2v"` on a scene she
+  is in when the performance is no_singing_her and her opening still is filed (or first_frame_id
+  passed); never the person-free location still. compile_prompt_i2v writes "the woman" for
+  <Subject 1> (S1), since that lane declares no subjects. Untested for her shots [H: identity and
+  wardrobe held by the frame-0 pixels as on the people plates].
+- Dry runs `transfer/ssbs/dry/standing/scene0_{i2v,ref2va}_dry.json`: i2v = no refs, 1 clip, 226
+  frames, frame 0 = the scene's filed still, which is still the OLD extreme-wide df88beb8 (her tiny
+  at the far end); the new still must be filed on scene 0 before firing.
+- Next: the user generates the opening still (prompt given in chat), files it on scene 0, dry run
+  shows it as first_frame_id, then fire on the user's go. Verdict = the user watching it cut against
+  the ridge take.

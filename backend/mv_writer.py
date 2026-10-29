@@ -589,6 +589,9 @@ def compile_prompt_i2v(script, scene, clip, text):
     desc = (text.get("detailed_description") or "").strip()
     if desc.startswith("[Shot 1]"):
         desc = desc[len("[Shot 1]"):].strip()
+    # her scenes on this lane (opt-in): no subject is declared, she is the woman in frame 0
+    desc = re.sub(r"<Subject 1>\s*\(S1\)|<Subject 1>|\bS1\b", "the woman", desc)
+    desc = re.sub(r"(^|[.!?]\s+)the woman", lambda m: m.group(1) + "The woman", desc)
     soundscape = (text.get("overall_soundscape") or "Near-silent ambience; no other sound.").strip()
     music = (text.get("non_diegetic_music") or "N/A").strip()
     return (I2V_OPENING + "\n\n"

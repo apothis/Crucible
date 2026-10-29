@@ -1205,8 +1205,14 @@ def mv_render_scene(p: dict):
         # reference lane timelapsed). Keyframes or a camera reference need the reference lane, so
         # they keep it; lane "ref2va" is the explicit opt-out.
         lane = "i2v" if (env_only and loc_ref and not keyframes and not p.get("camera_ref")) else "ref2va"
-    if lane == "i2v" and not env_only:
-        raise HTTPException(400, "lane i2v is for environment-only scenes (her identity needs the reference lane)")
+    # her silent scenes may opt in to i2v (s.20.45, untested): identity then comes from a filed
+    # opening still WITH her as frame 0, never from the person-free location still
+    her_i2v = lane == "i2v" and not env_only
+    if her_i2v and scene.get("performance") != "no_singing_her":
+        raise HTTPException(400, "lane i2v on a scene she is in is for no_singing_her only (lip-sync there is untested)")
+    if her_i2v and not (p.get("first_frame_id") or (scene.get("opening_still_id") and _lib_image_path(scene["opening_still_id"]))):
+        raise HTTPException(400, "lane i2v on a scene she is in needs her opening still as frame 0: file it with "
+                                 "/api/mv/scene_still (or pass first_frame_id)")
     if lane == "i2v" and not loc_ref:
         raise HTTPException(400, "lane i2v uses the location still as the first frame; this scene has none")
     if lane == "i2v" and p.get("camera_ref"):
