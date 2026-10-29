@@ -1690,3 +1690,27 @@ has real footage, 3 built in parallel as the fallback.
   their candles; the people scenes (3, 4, 13, 18, 19) hold their extras.
 - Next (user's direction, s.20.33): the opening-still frame-0 anchor on the reference lane,
   one-variable on scene 0, then a sing_to_camera check. Nothing fired until the user says so.
+
+### 20.35 User's notes on the first cut (2026-10-29 morning) [U = ground truth; frames confirm]
+Frames at the reported times in `renders/user_flags_20261029/user_flags_sheet.png`.
+1. 0:01 (scene 0, ref2va, 3 clips, body ref only): a ghost building appears behind the chapel at
+   1 s, slides onto it and stays for the whole scene (the "drape" in s.20.34 is this ghost). U.
+2. 0:32-0:45 (scene 1 Walking the wall, ref2va, face + body + location refs, sing_away, medium):
+   a gold crown-like ornament on her head and a brown object in her left hand. Not in the prompt
+   (checked the prompt node in the box history: "no jewellery" twice, "one hand trailing over the
+   stones", no prop) and not in either reference picture (bare head, empty hands). U.
+3. 2:30 (scene 17 The finest evening, t=4.7, ref2va, 3 clips, body ref only): a second ghost
+   chapel appears to the right of the first and slides onto it; the background warps. U.
+4. 2:46 (scene 17, t=21): her walk jumps to a run for a moment; after it the background warps
+   and a cliff edge comes into view from nowhere (t=25-31, the segment s.20.34 called a cut to
+   a closer shot). U.
+5. 3:40 (scene 22 And by morning, ref2va, face + body + location refs, sing_to_camera, close): a
+   pale claw-like shape hooked over the left side of her face for the whole clip. Not in the
+   prompt ("her hands stay still and out of frame", "hair clings to her temple and cheek") and
+   not in the references. U.
+Reading (hypothesis): 1, 3 and 4 are the reference lane converging from noise over a long chain
+(frame-0 has no picture to hold the building or her scale; the chain re-invents the world around
+25-31 s). 2 and 5 are the model inventing objects on her at frame 0 of a close shot with nothing
+pinning her first frame; both are single-clip close shots that would start from a generated
+opening still under the s.20.33 design. All five are the same missing piece: a first frame that
+already shows her, the building and her hands, which is the user's direction. Nothing fired.
