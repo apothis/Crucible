@@ -1928,3 +1928,18 @@ already shows her, the building and her hands, which is the user's direction. No
   rewrite if wanted.
 - Not fired. Scene 2 needs its opening still before its first-frame tests; the reference lane
   render needs nothing new.
+
+### 20.42 First-line setup fired: scene 2 of the working script (2026-10-29 16:38) [fired; result pending]
+- Scene 2 opening still (user, from the chat prompt: hand on the wall, face to the lens, chapel
+  gable behind) filed as still c4bae7c1 on scene 2 of `..._mc1_20261029_154720.json`
+  (`dry/scene2_opening_still_filed.json`). Dry run `dry/split/scene2_dry.json`: reference lane,
+  face + body + cliff_wall still 88d6056e, ONE clip of 243 frames (10.12 s for a 9.54 s window),
+  static, anchor OFF (the filed still is not in the graph), 0 problems.
+- Fired 16:38 (user go): job 4ac3db3d, graph verified on the box (no AddGuide, no node 29,
+  LoadImage 30/31/32 = the three refs, one ReferenceToVideo). `renders/fire_scene2_setup.sh`
+  waits, floor-checks at song offset 35.22, files
+  `ssbs_scene2_voiceatevening_768p_1clip_mcu_static_singtocamera_FIRSTLINE_SETUP_seed20261027.mp4`
+  and a half-second sheet in `renders/split_cmp/`.
+- What this tests: the first-line setup rule as ONE variable (silent two seconds, then the first
+  verse lines to the lens, single clip, no chain hand-off). Verdict = the user watching: does she
+  hold the lens silently before the first word, and does the mouth read on the words.
