@@ -1638,3 +1638,43 @@ has real footage, 3 built in parallel as the fallback.
   - fallback if the anchor pins the camera (as same-still first+last did): the I2V lane with the
     opening still for her non-singing scenes, where identity comes from the still itself.
 - Morning first: the overnight batch results and the scene 0 verdict (s.20.32).
+
+### 20.34 Morning after the overnight batch (2026-10-29 06:30) [frames; user to watch the cut]
+- Batch: 25/25 scenes rendered by 06:21 (box queue empty). Audio floor check on every scene vs its
+  song window: envelope r 0.996-1.000 at lag 0.00 s; no drift anywhere
+  (`renders/batch_floor_check.txt`). Renders overshoot the scene window on the 17k+5 grid as
+  expected (scene 24: 28.5 s rendered for a 17.9 s window), the assembler trims to the window.
+- Scene 0 re-render on the H1 fix (body picture only + partial retention + props-free look), old
+  df8568aa vs new d15c63bd, 1 s frame sheets in `renders/scene0_cmp/`:
+  - GONE: the reference portrait and the candles superimposed mid-chain (old t=17-32). Nothing
+    of the portrait or any interior appears in the new render. H1 holds for the CONTENT of the
+    insertion: what was bleeding in was the face reference picture itself and the look
+    sentence's candle clause.
+  - STILL THERE (expected, not addressed): frame-0 convergence. She is absent at t=0 and fades in
+    on the path by t=2; the chapel changes shape over the first seconds and then carries a dark
+    net-like drape on its left side from t=6 to the end (a new artefact, not in the old render).
+  - NEW PROBLEM: the shot does not stay distant. She walks toward the camera for the whole chain
+    and is a medium shot by t=30-36 (inside the 36.72 s window), against "never shown closer".
+- The other re-queued regime scenes (same fix), sheets in `renders/regime_cmp/`:
+  - 12 Down the quay (1 clip, 5.6 s): holds. She mid-distance on the quay, the fisherman down the
+    quay, boats and sea consistent.
+  - 15 The road in the gale (1 clip, 7.2 s): holds. She small by the chapel, storm sky stable.
+  - 21 Alone in the storm (1 clip, 7.5 s): holds. Night storm, arms spread, no insertion.
+  - 24 Singing still (2 clips, 28.5 s rendered): holds for the whole chain. She stays small on
+    the path, the house keeps its shape.
+  - 17 The finest evening (3 clips, 42 s rendered): the long-chain failure again. First 12 s wide
+    and clean (a second white building briefly doubles beside the chapel at t=4-5), then at
+    t=25-31 a cut to a medium close shot of her (scene-consistent this time: same wardrobe, same
+    sky, no portrait, no candles), a translucent crossfade back at t=31, wide again to the end.
+  - 6 Between the dark and morning (1 clip, old prompt, face + body refs): holds. Data point:
+    a 1-clip sing_away wide at this distance did not need the fix.
+- Reading (hypothesis, from the frames above): the mid-chain cut to a closer shot is a property
+  of the long chain (3 clips, 35-40 s), not of the face reference. H1 removed WHAT was inserted
+  (portrait + candles) but a 3-clip chain still inserts a closer shot of her around 25-31 s,
+  now drawn from the body picture and the scene. Every 1-clip and the one 2-clip distant scene
+  held. Two candidate rules, both general, neither tested: (a) cap distant chains at 2 clips and
+  let the writer split a long no_singing_her span into two scenes with their own opening stills;
+  (b) the frame-0 anchor plus a keyframe at each clip boundary (s.20.33 design), which also
+  answers the convergence. (b) is the direction the user set; (a) is the cheap fallback.
+- Cut: `POST /api/mv/assemble {batch, name: ssbs_first_cut_20261029}` fired 06:30 (full path:
+  trim to window, concat, song under, 1.5 s fade). Result recorded below when it lands.

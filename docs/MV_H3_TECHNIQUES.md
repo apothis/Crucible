@@ -422,3 +422,10 @@ For background loops and living covers, also usable as B-roll plates. Full recip
    changes, judged by type.
 6. Stem-lock A/B on a dense song (mix vs vocals vs vocal forward): does the whole mix in the
    latents put B-roll on the beat, as the user expects.
+7. Long chains of a distant shot (3 clips, 35-40 s) cut to a closer shot of her around 25-31 s
+   even with the body picture only (second song scenes 0 and 17, 2026-10-29 frames); every 1-clip
+   and the one 2-clip distant scene held. Hypothesis, untested: the chain length, not the
+   reference set. Candidates: cap distant chains at 2 clips (writer splits the span into two
+   scenes with their own opening stills), or a frame-0 anchor plus a keyframe at each clip
+   boundary (the opening-still direction in section 8). Frame-0 convergence on the reference
+   lane (her fade-in, building morph over the first 2 s) is the same open item.
