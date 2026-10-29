@@ -1274,8 +1274,15 @@ def mv_render_scene(p: dict):
     if free_av and len(prompts) > 1:
         raise HTTPException(400, "free_av is for single-clip plates; this scene chains more than one clip")
     if p.get("dry_run"):
-        # the gate before the GPU: what WOULD be submitted, nothing queued
-        return {"dry_run": True, "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
+        # the gate before the GPU: what WOULD be submitted, nothing queued. settings = the exact
+        # recipe/size/seed the chain would run (seed drawn now when none was sent, so a fire from
+        # this dry run can pin it); flags = deviations from the proven settings + pace problems
+        model_lane = "fl2va" if (lane == "i2v" or not (singer_refs or loc_ref)) else "ref2va"
+        settings = mv_h3_mod.chain_settings(p, model_lane)
+        pace = [pr for x in prompts for pr in mv_writer_mod.pace_problems(x, scene.get("performance"))]
+        return {"dry_run": True, "settings": settings,
+                "flags": mv_h3_mod.settings_flags(settings) + list(dict.fromkeys(pace)),
+                "prompt_hash": hashlib.sha1("\n\x00".join(prompts).encode()).hexdigest()[:16], "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
                 "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                 "location": loc["id"] if loc else None, "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                 "location_ref_from": ref_from,
@@ -1440,13 +1447,43 @@ def mv_render_script(p: dict):
     Scenes are submitted with free=False so the box is never freed under a running job; ComfyUI
     swaps the fl2va/ref2va weights itself between jobs. Writes a batch manifest under
     .mvwork/mv_batches/ (scene -> job_id) that /api/mv/assemble reads. Errors on one scene are
-    recorded and the batch goes on."""
+    recorded and the batch goes on.
+    GATE (s.20.48): a live fire must be {from_dry: <dry manifest>, accept_flags?: [indexes]} and
+    nothing else. It replays that dry run exactly (its script, settings, only/skip/existing and
+    each scene's pinned seed); a scene whose prompt changed since the dry run is refused, and a
+    scene the dry run flagged (settings off the proven ones, pace problems) is refused unless its
+    index is in accept_flags. So what was checked in the dry run is what renders."""
+    dry = bool(p.get("dry_run"))
+    accept = {int(x) for x in (p.get("accept_flags") or [])}
+    pinned = {}
+    dry_rows = {}
+    if not dry:
+        extra = sorted(set(p) - {"from_dry", "accept_flags", "dry_run"})
+        if not p.get("from_dry"):
+            raise HTTPException(400, "a live batch fires from a dry run: send {from_dry: <the dry manifest>} "
+                                     "(dry-run first with dry_run: true and check its settings and flags)")
+        if extra:
+            raise HTTPException(400, f"a fire from a dry run takes no other settings ({', '.join(extra)}); "
+                                     "change them in a new dry run")
+        base = os.path.realpath(os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_batches"))
+        dpath = os.path.realpath(p["from_dry"] if os.path.isabs(p["from_dry"]) else os.path.join(base, p["from_dry"]))
+        if not dpath.startswith(base + os.sep) or not os.path.exists(dpath):
+            raise HTTPException(400, "from_dry must be a dry manifest under .mvwork/mv_batches")
+        with open(dpath) as f:
+            dman = json.load(f)
+        if not dman.get("dry_run"):
+            raise HTTPException(400, "from_dry names a live batch manifest, not a dry run")
+        p = dict(dman.get("common") or {})
+        p.update({"script": dman["script"], "only": dman.get("only"), "skip": dman.get("skip"),
+                  "existing": dman.get("existing")})
+        dry_rows = {int(r["index"]): r for r in dman["scenes"]}
+        pinned = {i: (r.get("settings") or {}).get("seed") for i, r in dry_rows.items()}
     script, name = _mv_load_script(p.get("script"))
     skip = {int(x) for x in (p.get("skip") or [])}
     only = {int(x) for x in (p.get("only") or [])} or None
     existing = {int(k): v for k, v in (p.get("existing") or {}).items()}
-    common = {k: v for k, v in p.items() if k not in ("script", "scene", "skip", "only", "existing", "dry_run")}
-    dry = bool(p.get("dry_run"))
+    common = {k: v for k, v in p.items() if k not in ("script", "scene", "skip", "only", "existing", "dry_run",
+                                                     "from_dry", "accept_flags")}
     rows = []
     first_live = True
     for sc in script["scenes"]:
@@ -1461,6 +1498,21 @@ def mv_render_script(p: dict):
             row.update({"job_id": None, "status": "skipped"}); rows.append(row); continue
         req = dict(common); req.update({"script": name if name != "(inline)" else script, "scene": idx, "dry_run": dry})
         if not dry:
+            d = dry_rows.get(idx) or {}
+            if d.get("status") != "dry":
+                row.update({"job_id": None, "status": "error", "error": "this scene did not pass the dry run"}); rows.append(row); continue
+            if pinned.get(idx) is not None:
+                req["seed"] = pinned[idx]
+            try:      # re-check against the dry run before anything is queued
+                now = mv_render_scene(dict(req, dry_run=True))
+            except HTTPException as e:
+                row.update({"job_id": None, "status": "error", "error": e.detail}); rows.append(row); continue
+            if now.get("prompt_hash") != d.get("prompt_hash") or now.get("settings") != d.get("settings"):
+                row.update({"job_id": None, "status": "blocked",
+                            "error": "prompt or settings changed since the dry run; dry-run again"}); rows.append(row); continue
+            if d.get("flags") and idx not in accept:
+                row.update({"job_id": None, "status": "blocked", "flags": d["flags"],
+                            "error": "flagged in the dry run; fix it or list the index in accept_flags"}); rows.append(row); continue
             req["free"] = None if first_live else False
         try:
             r = mv_render_scene(req)
@@ -1471,13 +1523,19 @@ def mv_render_script(p: dict):
         if dry:
             row.update({"job_id": None, "status": "dry", "lane": r.get("lane"), "first_frame_id": r.get("first_frame_id"),
                         "first_frame_from": r.get("first_frame_from"), "location_ref_id": r.get("location_ref_id"),
-                        "ref_ids": r.get("ref_ids"), "frames": r.get("frames"), "prompt_chars": sum(len(x) for x in r.get("prompts", []))})
+                        "ref_ids": r.get("ref_ids"), "frames": r.get("frames"), "prompt_chars": sum(len(x) for x in r.get("prompts", [])),
+                        "settings": r.get("settings"), "flags": r.get("flags"), "prompt_hash": r.get("prompt_hash")})
         else:
             first_live = False
             row.update({"job_id": r.get("job_id"), "status": "queued"})
         rows.append(row)
     manifest = {"script": name, "title": script.get("title"), "audio_id": script.get("audio_id"),
-                "created": time.time(), "dry_run": dry, "common": common, "scenes": rows}
+                "created": time.time(), "dry_run": dry, "common": common, "scenes": rows,
+                "only": sorted(only) if only is not None else None, "skip": sorted(skip),
+                "existing": {str(k): v for k, v in existing.items()}}
+    if not dry:
+        manifest["from_dry"] = dpath
+        manifest["accept_flags"] = sorted(accept)
     out_dir = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_batches")
     os.makedirs(out_dir, exist_ok=True)
     base = re.sub(r"\.json$", "", name) if name != "(inline)" else "inline"
@@ -1485,7 +1543,8 @@ def mv_render_script(p: dict):
     with open(mpath, "w") as f:
         json.dump(manifest, f, indent=1)
     manifest["manifest"] = mpath
-    manifest["counts"] = {k: sum(1 for r in rows if r["status"] == k) for k in ("queued", "dry", "existing", "skipped", "error")}
+    manifest["counts"] = {k: sum(1 for r in rows if r["status"] == k) for k in ("queued", "dry", "existing", "skipped", "error", "blocked")}
+    manifest["flagged"] = [r["index"] for r in rows if r.get("flags")]
     return manifest
 
 

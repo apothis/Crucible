@@ -623,7 +623,7 @@ Hard rules (they come from measured failures; do not bend them):
 - Exactly ONE camera motion for the scene, as given, repeated in every clip in the model's own grammar: "The camera pushes in with small amplitude at slow speed toward X throughout the take, one continuous shot with no cut and no dissolve." Name what must stay in frame ("The oil lamp and the window stay in frame to the end.") and never name a second framing for the move to reach (that reads as a cut). Never metric distances (centimetres mean nothing to the model). If static: "The camera is static, locked off for the full clip."
 - Her scale is fixed for the whole scene: she never walks toward the camera, never comes closer, never grows in frame; the distance between her and the camera at the end of the clip is what it was at the start (she moves across the frame, away, or in place). If the scene's framing is wide or extreme wide she stays small to the last frame and her face is never shown closer; a change of scale is the next scene's job, not this clip's. (Measured 2026-10-29: an approach from the far end of a road rendered her face broken all the way in.) Name her direction relative to the CAMERA ("away from the camera, deeper into the frame", "across the frame on the near ground"), never as "to the right" or "to the left": a path that runs from the far ground toward the camera is a walk toward the lens whichever side it lies on, and the model follows the path, not the negation (measured 2026-10-29: "to the right along the ridge, never toward the camera" doubled her size in 18 seconds). On such a path she walks away toward the far end, or stands.
 - One main physical motion for her per clip, with a duration anchor (how long it takes, in seconds). Hands: say what they do or that they stay still. Hair: say whether it moves. If sky/clouds/stars are visible: say they hold fixed positions with no drift and no cloud movement.
-- Environment-only clips (performance no_singing_environment) have no person to anchor real time, so the discipline is stricter: exactly ONE moving element in the whole description (the boats on the swell, OR the shutters, OR the rain), named once, with a whole-clip anchor stated as a count ("over the whole 6 seconds the boats lift and settle once, slowly"). Every other element is said to be still, by name. No second moving element, no rhythm or frequency ("every two seconds", "with each gust", "again and again"), never water plus wind plus weather together. The camera move is the only other motion. Sounds of motion (creak, rattle, slap) go in overall_soundscape, never in detailed_description. (Measured: a harbour clip written with boats, ropes, shutters and water and a two-second rhythm rendered as a timelapse.)
+- Environment-only clips (performance no_singing_environment) have no person to anchor real time, so the discipline is stricter: exactly ONE moving element in the whole description (the boats on the swell, OR the shutters, OR the rain), named once, with a whole-clip anchor stated as a count ("over the whole 6 seconds the boats lift and settle once, slowly"). The sky is never that element: if sky, cloud or stars are visible they hold fixed positions with no drift and no cloud movement (sky motion is the strongest timelapse cue; a cloud bank rolling in over 9 seconds rendered as a timelapse, 2026-10-29). Every other element is said to be still, by name. No second moving element, no rhythm or frequency ("every two seconds", "with each gust", "again and again"), never water plus wind plus weather together. The camera move is the only other motion. Sounds of motion (creak, rattle, slap) go in overall_soundscape, never in detailed_description. (Measured: a harbour clip written with boats, ropes, shutters and water and a two-second rhythm rendered as a timelapse.)
 - Clip 2 and later CONTINUE: the first lines say that the incoming motion, camera, framing, lighting and state continue uninterrupted from the protected video context, then say what that ongoing motion becomes. Never restart an action already in progress, never re-establish the shot, never return to the reference pose.
 - Never change the wardrobe. Other people appear ONLY when the scene lists them (its others field, or anchor_figure: true): write exactly those, anonymous, never a face that competes with hers for the lens, and never anyone the scene did not list; never a band. People are NOT the environment's one moving element and the one-motion rule does not apply to them: real people never act in unison. Give each person their own ordinary business, staggered in time (one drinks while another talks and the third leans back; a laugh starts with one man and the others follow a second or two later), with the small continuous idle movement of living people (weight shifts, a hand turning a tankard, a head turn, a glance). Say what each is doing at the start of the clip (it must match the opening still) and give the group's rhythm across the clip in seconds without choreographing them together. Extras keep to small ordinary actions (walk, stand, haul, drink, talk, coil); never write a large body transition for an extra (climbing, jumping, stepping down into or out of a boat, mounting, falling), and nothing the still's geometry makes impossible (a boat moored off the quay cannot be stepped into): the model renders the impossible as a leap (measured). (Measured: "over the whole 6 seconds they make one slow movement together" rendered three men raising tankards and throwing their heads back in perfect sync, which read as unnatural.) The anchor_figure case is one distant anonymous figure (a fisherman in oilskins, a woman with a basket), small in frame, back to camera or face unreadable, doing ONE slow everyday action at a natural human pace for the whole clip (walking the far quay, hauling a rope hand over hand, sweeping a step). It is the real-time anchor of the shot: say how many steps or pulls it makes over the clip's seconds. Never near the camera, never a second figure, never interacting with anything the singer owns.
 - The scene's location is also a referenced subject (a person-free photograph of the place is handed to the model). Call the place by its name (the parlour, the quarry); the system numbers subjects and pictures. Do not redesign the place: its fixed elements are those in the scene setting; you may add weather, time of day and the state changes the scene calls for.
@@ -849,14 +849,46 @@ def check_prompt(prompt, clip, performance="sing_to_camera"):
                 "overall_soundscape:", "non_diegetic_music:"):
         if sec not in prompt:
             problems.append(f"missing section {sec}")
+    problems += pace_problems(prompt, performance)
+    return problems
+
+
+SKY_WORDS = re.compile(r"(?i)\b(sky|skies|cloud\w*|overcast|stars?|milky way)\b")
+SKY_MOVES = re.compile(r"(?i)\b(roll\w*|drift\w*|creep\w*|rac(e|es|ing)|scud\w*|stream\w*|sweep\w*|swirl\w*|churn\w*"
+                       r"|boil\w*|tumbl\w*|gather\w*|mov(e|es|ing)|pass(es|ing)?|advanc\w*|spread\w*|surg\w*|tear(s|ing)"
+                       r"|sweep\w*|blow\w*)\b")
+SKY_PINNED = re.compile(r"(?i)\bno (cloud )?(drift|movement|cloud movement)\b|\bhold\w* (fixed|still)\b"
+                        r"|\b(do|does) not (move|drift)\b|\bstays? (still|fixed)\b|\bmotionless\b")
+
+
+def pace_problems(prompt, performance=None):
+    """Pace rules that read as a timelapse when broken, checked on the compiled prompt of either
+    lane. Run at write time (check_prompt) and again in the render dry run, so a scene that
+    breaks them never reaches the GPU unseen. A list of problems, empty = clean."""
+    desc = prompt
+    for head in ("detailed_description:", "integrated_multimodal_description:"):
+        if head in desc:
+            desc = desc.split(head, 1)[1]
+    desc = desc.split("overall_soundscape:", 1)[0]
+    problems = []
     if str(performance or "") == "no_singing_environment":
         # measured 2026-10-28: a rhythm or frequency phrase in an environment-only description
         # (boats "once every two seconds", shutters "with each gust") rendered as a timelapse
-        desc = prompt.split("detailed_description:", 1)[-1].split("overall_soundscape:", 1)[0]
         m = re.search(r"\b(every|each) (one|two|three|four|five|few|couple of|\d+) seconds?\b"
                       r"|\bwith each\b|\bagain and again\b|\bevery few\b", desc, re.I)
         if m:
             problems.append(f"environment clip carries a rhythm phrase ('{m.group(0)}'); one slow motion, counted over the whole clip")
+    # rulebook s.8 rule 2: unmentioned sky gets animated and sky motion is the strongest timelapse
+    # cue; 2026-10-29 scene 0 made the cloud bank its one moving element and rendered as a timelapse
+    # the look line ("grey-white skies" in the grade) and "no sky shows" are not a visible sky
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", desc)
+                 if not re.search(r"(?i)\b(film|grade|grain|palette)\b|\bno (sky|skies)\b", s)]
+    for s in sentences:
+        if SKY_WORDS.search(s) and SKY_MOVES.search(s) and not SKY_PINNED.search(s):
+            problems.append(f"the sky moves ('{s.strip()[:120]}'); sky motion reads as a timelapse: pin it, move something else")
+            break
+    if any(SKY_WORDS.search(s) for s in sentences) and not any(SKY_WORDS.search(s) and SKY_PINNED.search(s) for s in sentences):
+        problems.append("sky or cloud is visible but never pinned ('holds fixed positions with no drift and no cloud movement')")
     return problems
 
 

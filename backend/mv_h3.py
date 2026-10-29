@@ -54,6 +54,32 @@ CHAIN_TURBO_FL2VA = dict(CHAIN_TURBO, lora="minimax_h3_fl2v_turbo_8step_v1.1_768
 # by a larger stride to keep every (draft, clip) seed distinct.
 CLIP_SEED_STRIDE = 101
 MAX_CLIPS = 20                      # the streamer's clip_1 .. clip_20 sockets
+# The settings every passed take was rendered on (24 SSBS locks, ENV9/ENV10 real-speed plates,
+# 2026-10-28/29): the turbo recipe at 1344x768. A batch dry run flags any scene that would render
+# on something else (s.20.48: a fire that dropped them ran base 20-step 960x544 on every scene).
+PROVEN = {"turbo": True, "width": 1344, "height": 768}
+
+
+def chain_settings(p, lane="ref2va"):
+    """The recipe, size and seed build_h3_chain WILL use for request p on lane "ref2va" | "fl2va",
+    without building a graph. A missing seed is drawn here so the caller can pin it."""
+    q = dict(p)
+    q.setdefault("megapixels", CHAIN_MP)
+    w, h = _h3_size(q)
+    rec = chain_recipe(p, lane)
+    return {"turbo": bool(p.get("turbo")), "steps": rec["steps"], "shift_video": rec["shift_video"],
+            "lora": rec["lora"], "width": w, "height": h, "seed": _seed(p)}
+
+
+def settings_flags(s):
+    """How settings `s` (chain_settings) differ from PROVEN, as readable flags; empty = proven."""
+    out = []
+    if bool(s.get("turbo")) != PROVEN["turbo"]:
+        out.append(f"turbo {'on' if s.get('turbo') else 'off'} ({s.get('steps')} steps, shift {s.get('shift_video')}); "
+                   f"passed takes used the turbo recipe")
+    if (s.get("width"), s.get("height")) != (PROVEN["width"], PROVEN["height"]):
+        out.append(f"{s.get('width')}x{s.get('height')}, not the proven {PROVEN['width']}x{PROVEN['height']}")
+    return out
 
 
 def chain_plan(song_start, n_clips, frames=CHAIN_FRAMES, context=CHAIN_CONTEXT, fps=H3_FPS):
