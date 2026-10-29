@@ -1996,3 +1996,21 @@ already shows her, the building and her hands, which is the user's direction. No
   direction wording was not the lever for the doubling: one seed, one variable, same result. Not
   a rule. Untested candidates, all hypotheses: seed variance (one other seed), the I2V lane with the
   filed opening still as frame 0 (the env B-roll lane), a shorter scene. User's call.
+
+### 20.44 Scene 0 split into two closer shots (2026-10-29 19:29) [written; nothing fired]
+
+- User on the CAMERA_RELATIVE_WALK take: apart from the doubling, she is too far from the camera
+  for too long. Wants her a bit closer for the first part, then another shot, closer again, from a
+  different angle.
+- POST /api/mv/split_scene {scene 0, at 9.0 (inside the intro, no cut point needed), first: wide
+  static, full figure readable by the chapel then the walk away toward the cliff edge; second:
+  "On the ridge", medium wide static, low on the road looking up the ridge, sea and sky behind her,
+  three-quarter profile, slow head turn along the coast} -> `..._rw0_20261029_183530_sp0_20261029_192903.json`
+  (now final_script_name.txt). 27 scenes, 31 clips. Scene 0 = 0-9.0 wide, scene 1 = 9.0-18.36
+  medium wide, both ONE clip (no chain hand-off), 0 scene problems, 0 clip problems. Scenes
+  renumbered: chapel wall = 2, first-line setup = 3.
+- Scene 0 keeps the old extreme-wide still id df88beb8 on the record (the split route keeps the
+  first half's still; the render path with the anchor OFF does not use it). Both halves have new
+  opening_still prompts; given to the user in chat. Scene 1 has no still until one is filed.
+- Note for the user: the writer's wide clip says she "stands small" with her face unreadable; if
+  "a bit closer" means her face should read, the first half wants medium wide instead.
