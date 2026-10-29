@@ -1564,3 +1564,33 @@ has real footage, 3 built in parallel as the fallback.
   `render_script {only: [idx]}` and its job id patched into the assemble call's `jobs`.
 - The backend (pid on :8000) must stay up overnight: it polls the box and files each finished
   render into the library. No backend restarts until the batch is done.
+
+### 20.31 Scene 0 in the partial cut: "basically unusable" (2026-10-29 01:05) [U + frames]
+- User on the first 30 s: the building and the person change and appear from nothing; candles
+  and other scenes mix in and meld. Frame sheet at 1 s (`frames/scene0/scene0_1s_sheet.png`):
+  (a) 0-3 s: the chapel changes shape (a white translucent building at 1 s), she fades in at the
+  far end of the road at ~3 s; (b) 15-31 s: lit candles appear, then HER FACE PORTRAIT at
+  close-up double-exposed over the landscape with candles, then back to the wide shot; (c) 31-42 s
+  (clip 3): clean wide shot, she walks to the chapel. Per-second change 2.0-2.5 for 0-22 s,
+  ~1.0 after 26 s.
+- Regime: the first CHAINED take of this song (3 clips x 362 f, 42 s, extreme wide, she a tiny
+  figure, no singing). Every validated plate today was ONE clip; her validated shots were
+  medium close-up (sing) and a wide tracking walk (141 f).
+- Hypotheses, ranked by how well they fit the frames [H, nothing measured yet]:
+  H1 (fits best): the inserted image IS her reference portrait. Every clip of hers carries
+  "fully_preserved - retain the referenced face, eyes, hair, skin ..." while the prose puts her
+  at 20 px at the far end of a road: the retention cannot be met in the picture, so the model
+  pays the reference debt by superimposing the portrait. The candles come from the LOOK sentence
+  in every prompt ("candle and lamp interiors burn deep amber"), which names a prop the exterior
+  cannot hold. Fix (general): distant/wide shots pass the BODY picture only with a
+  partially_preserved retention (silhouette, hair, wardrobe; "her face is not readable at this
+  distance"), and the style sentence names grade and camera only, never props.
+  H2: the chain itself (clip 2's protected context + "continue" prose) weakens the scene prior;
+  the insertion sits in clip 2. Less specific.
+  H3: ref2va has no frame-0 pin, so the first ~2 s converge from noise (chapel morph, her
+  fade-in); invisible on close shots, glaring on an extreme wide. Fix candidates: an opening
+  still WITH her (GPT from her reference) anchored at frame 0 via the existing AddGuide path, or
+  keep extreme wides to the I2V lane with her absent and bring her in on a closer setup.
+- Same regime still queued: 17 (3 clips, extreme wide, ~60 min) and 24 (2 clips, extreme wide,
+  ~40 min) at the end of the queue; single-clip extreme wides 6, 15, 21 (sing_away) are cheap
+  data points either way.
