@@ -2100,3 +2100,8 @@ already shows her, the building and her hands, which is the user's direction. No
   the reference lane), 6 waiting for stills (3, 21, 23, 26, 31, 33), 24 carried as existing.
 - Look note for the user's eyes [frames, not a verdict]: the locked ridge and chapel wall takes
   have pale calm skies; the new intro plates around them follow the arc's slate evening.
+- Partial assembly of the 24 locked takes through /api/mv/assemble (partial, 179.24 s, missing
+  0, 3, 4, 21-26, 31, 33): `.mvwork/mv_assembly/20261029_202923/ssbs_redesign_LOCKED_TAKES_ONLY_partial.mp4`.
+  Trimmed locks in sync: chapel wall (in-point 0) r 0.998, "Singing still" (in-point 8.48 s) r 1.000
+  at lag 0, and the same segment against the untrimmed offset 0.212 (control: the seek is real).
+  First-line take r 0.998. Note: `batch` must be an absolute path or a bare name under mv_batches.
