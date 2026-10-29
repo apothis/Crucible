@@ -1997,7 +1997,7 @@ already shows her, the building and her hands, which is the user's direction. No
   a rule. Untested candidates, all hypotheses: seed variance (one other seed), the I2V lane with the
   filed opening still as frame 0 (the env B-roll lane), a shorter scene. User's call.
 
-### 20.44 Scene 0 split into two closer shots (2026-10-29 19:29) [written; nothing fired]
+### 20.44 Scene 0 split into two closer shots (2026-10-29 19:29) [fired; scene 1 clean, scene 0 walks at the lens]
 
 - User on the CAMERA_RELATIVE_WALK take: apart from the doubling, she is too far from the camera
   for too long. Wants her a bit closer for the first part, then another shot, closer again, from a
@@ -2014,3 +2014,18 @@ already shows her, the building and her hands, which is the user's direction. No
   opening_still prompts; given to the user in chat. Scene 1 has no still until one is filed.
 - Note for the user: the writer's wide clip says she "stands small" with her face unreadable; if
   "a bit closer" means her face should read, the first half wants medium wide instead.
+- 19:31 fired both on the user's go: scene 0 job a1c19da6 (body ref + road still 7bb11d6c, 226
+  frames), scene 1 job 4f085048 (face + body + road still, 226 frames); graphs verified on the box
+  (no AddGuide, no node 29). Landed 19:43 (686 s) and 19:55 (731 s). Floor checks r = 1.000 (offset
+  0) and r = 0.997 (offset 9.0). Filed `..._wide_static_bodyref_SPLIT9_seed20261027.mp4` and
+  `..._mediumwide_static_lowangle_facebodyref_SPLIT9_seed20261027.mp4`; half-second sheets in
+  `split_cmp/sp0b_*`.
+- Frame reading (user watches for the verdict). Scene 0: ONE woman, chapel held, static wide, but
+  she walks DOWN the road toward the camera and roughly doubles in size over the 9 s: on this
+  geometry the road runs from the chapel at the far end toward the lens, so "away from the chapel
+  toward the cliff edge" IS the approach the no-approach rule forbids. The writer named her path by
+  the landmark, not the camera. Sky rendered as a dark storm bank, sea rough. Scene 1: clean; she
+  holds the ridge edge in three-quarter profile at one size, face readable, hair and shawl in the
+  wind, the chapel small on the left; pale calm evening sky, warm light on the gorse. The cut
+  between them therefore jumps from storm sky and rough sea to pale sky and calm sea: a look
+  mismatch to judge by eye.
