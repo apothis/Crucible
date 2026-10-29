@@ -74,11 +74,23 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
     # Whisper; the stem does not). Its cache key is its own basename, so both stay cached.
     align = lyricalign.align_song(align_path or audio_path, blocks, cache_dir=cache_dir)
     sung = []
+    prev_end = 0.0
+    all_lines = lyricalign._lyric_stream(blocks)[2]
     for sec in align["sections"]:
         if sec.get("start") is None:
             continue
         lines = [{"start": l["start"], "end": l["end"], "text": l["text"], "cover": l["cover"]}
                  for l in sec["lines"] if l.get("start") is not None]
+        if align_path and sec["lines"]:
+            # the aligner drops unmatched lines from its sections; the block's own lines before
+            # the first matched one are the opening lines Whisper missed
+            first_idx = min(l["index"] for l in sec["lines"])
+            missing = [l for l in all_lines if l["block"] == sec["index"] and l["index"] < first_idx]
+            lead = stem_timed_lead(align_path, missing, min(l["start"] for l in sec["lines"]), prev_end)
+            if lead:
+                lines = lead + lines
+                sec = dict(sec, start=lead[0]["start"])
+        prev_end = sec["end"]
         sung.append({"type": sec["type"], "start": max(0.0, sec["start"] - 0.5),
                      "end": min(duration, sec["end"] + 0.3), "lines": lines, "vocal": True})
     table, t = [], 0.0
@@ -105,6 +117,55 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
     return {"duration": duration, "cover": align.get("cover"), "words_matched": align.get("words_matched"),
             "words_total": align.get("words_total"), "sections": table, "blocks": blocks,
             "aligned_on": "vocals" if align_path else "mix"}
+
+
+STEM_HOP = 0.25          # seconds per vocal-stem frame
+STEM_ON_DB = 30.0        # a frame is voiced within this many dB of the stem's loudest frame
+STEM_BRIDGE = 0.75       # unvoiced runs up to this long (breaths) do not end a vocal run
+
+
+def stem_timed_lead(stem_path, lead, first, floor=0.0):
+    """Whisper can miss a section's OPENING lines (SSBS verse 1, 2026-10-29: the first two lines
+    unmatched, so the verse 'began' 5 s after her voice did and the cut to her came late). For
+    the unmatched opening lines `lead` of a section whose first matched line starts at `first`,
+    the vocal stem says where the voice really comes in: walk back from `first` while the stem
+    stays voiced (breaths bridged), not before `floor` (the previous section's end). The missing
+    lines are spread evenly from there to `first`, cover 0, timed 'stem'. Returns those lines, or
+    [] when nothing is missing, nothing earlier is voiced, or the stem cannot be read."""
+    if not lead:
+        return []
+    first = float(first)
+    try:
+        import numpy as np
+        import soundfile as sf
+        x, sr = sf.read(stem_path, always_2d=True)
+    except Exception:
+        return []
+    x = x.mean(axis=1)
+    hop = int(STEM_HOP * sr)
+    n = len(x) // hop
+    if n == 0:
+        return []
+    db = 20 * np.log10(np.sqrt(np.mean(x[:n * hop].reshape(n, hop) ** 2, axis=1)) + 1e-9)
+    voiced = db > db.max() - STEM_ON_DB
+    i = min(n - 1, int(first / STEM_HOP))
+    lo = int(max(0.0, floor) / STEM_HOP)
+    gap = 0
+    entry = None
+    while i > lo:
+        i -= 1
+        if voiced[i]:
+            entry, gap = i, 0
+        else:
+            gap += 1
+            if gap * STEM_HOP > STEM_BRIDGE:
+                break
+    if entry is None or first - entry * STEM_HOP < 1.0:
+        return []
+    t0 = entry * STEM_HOP
+    step = (first - t0) / len(lead)
+    return [{"start": round(t0 + k * step, 3), "end": round(t0 + (k + 1) * step, 3), "text": l["text"],
+             "cover": 0.0, "timed": "stem"} for k, l in enumerate(lead)]
 
 
 LEVEL_HOP = 0.5          # seconds per loudness frame
@@ -972,7 +1033,13 @@ def split_scene(script, index, at, second):
         raise ValueError(f"cut {at}s is not inside scene {index} ({sc['start']}-{sc['end']}s)")
     keep = {k: v for k, v in sc.items() if k not in ("plan", "clips", "index", "sections", "section_types", "lipsync")}
     a = dict(keep, **(second.get("first") or {}))
-    b = dict({k: v for k, v in keep.items() if k != "opening_still_id"}, **{k: v for k, v in second.items() if k != "first"})
+    b = dict({k: v for k, v in keep.items() if k not in ("opening_still_id", "locked")},
+             **{k: v for k, v in second.items() if k != "first"})
+    if a.get("locked"):
+        if second.get("first"):
+            a.pop("locked")                 # a changed first half is a new shot: it re-renders
+        else:
+            a["plan"], a["clips"] = sc.get("plan"), sc.get("clips")   # the passed take, trimmed to the first half
     a["start"], a["end"] = sc["start"], at
     b["start"], b["end"] = at, sc["end"]
     script["scenes"][index:index + 1] = [a, b]
@@ -991,7 +1058,7 @@ def move_cut(script, index, to, first=None, second=None):
     Both scenes lose their clips (run write_scene_clips on each). Returns (first, second)."""
     sections = script["facts"]["sections"]
     to = float(to)
-    near = snap_cut(to, cut_points(sections))
+    near = snap_scene_cut(to, sections, cut_points(sections))   # free inside a lineless section
     if abs(near - to) > SPLIT_SNAP_TOL:
         raise ValueError(f"{to}s is not within {SPLIT_SNAP_TOL}s of a cut point (nearest {near}s)")
     to = near
@@ -1000,14 +1067,20 @@ def move_cut(script, index, to, first=None, second=None):
     a, b = script["scenes"][index], script["scenes"][index + 1]
     if not a["start"] < to < b["end"]:
         raise ValueError(f"cut {to}s must fall inside {a['start']}-{b['end']}s (scenes {index} and {index + 1})")
-    for sc, ch in ((a, first), (b, second)):
+    # a passed take keeps its lock only when its scene merely shrinks inside it, unchanged;
+    # otherwise the scene is a new shot and re-renders
+    a_keeps = bool(a.get("locked")) and not first and to < a["end"]
+    b_keeps = bool(b.get("locked")) and not second and to > b["start"]
+    for sc, ch, keeps in ((a, first, a_keeps), (b, second, b_keeps)):
         ch = dict(ch or {})
         if ("framing" in ch and ch["framing"] != sc.get("framing")) or \
            ("performance" in ch and ch["performance"] != sc.get("performance")):
             sc.pop("opening_still_id", None)
         sc.update(ch)
-        sc.pop("plan", None)
-        sc.pop("clips", None)
+        if not keeps:
+            sc.pop("locked", None)
+            sc.pop("plan", None)
+            sc.pop("clips", None)
     a["end"], b["start"] = to, to
     _finish_scene(a, sections)
     _finish_scene(b, sections)

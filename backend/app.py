@@ -1824,11 +1824,17 @@ def mv_rewrite_scene(p: dict):
     except Exception:
         raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
     changes = p.get("set") or {}
-    allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure", "others")
+    allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure", "others",
+               "performance", "title")
     bad = [k for k in changes if k not in allowed]
     if bad:
         raise HTTPException(400, f"set: unknown scene fields {bad}; allowed {list(allowed)}")
+    if ("framing" in changes and changes["framing"] != sc.get("framing")) or \
+       ("performance" in changes and changes["performance"] != sc.get("performance")):
+        sc.pop("opening_still_id", None)       # made for the old shot
     sc.update(changes)
+    sc.pop("locked", None)                     # rewritten text = a new shot: it re-renders
+    mv_writer_mod._finish_scene(sc, script["facts"]["sections"])
     work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
     log_lines = []
 
@@ -1858,6 +1864,44 @@ def mv_rewrite_scene(p: dict):
     return {"files": {"json": jpath, "md": mpath}, "scene": idx, "title": sc.get("title"), "set": changes,
             "problems": [c["problems"] for c in sc["clips"]], "text": [c["text"] for c in sc["clips"]],
             "prompts": [c["prompt"] for c in sc["clips"]], "log": log_lines}
+
+
+@app.post("/api/mv/refresh_facts")
+def mv_refresh_facts(p: dict):
+    """Re-measure a saved script's song facts (alignment on the cached vocal stem, sections,
+    levels) under the CURRENT song_facts, keep every scene and its text, re-check each scene
+    against the new sections, and save a NEW script. For scripts written before a facts fix
+    (s.20.48: Whisper-missed opening lines are now timed from the stem). No GPU, no writer pass.
+    p: {script}. Returns {files, changed_sections: [{old, new}], scene_problems: {index: [...]}}."""
+    script, name = _mv_load_script(p.get("script"))
+    src = _lib_source_path(script["audio_id"])
+    if not src:
+        raise HTTPException(400, "the script's song is not in the library")
+    stem = mv_stems_mod.vocal_stem_path(LIBRARY, script["audio_id"])
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    lyrics_raw = "\n".join(f"[{b.get('type')}]\n{b.get('lyrics') or ''}" for b in script["facts"]["blocks"])
+    old = script["facts"]["sections"]
+    facts = mv_writer_mod.song_facts(src, lyrics_raw, script["duration"], cache_dir=os.path.join(work, "lyricalign"),
+                                     align_path=stem)
+    script["facts"] = facts
+    for sc in script["scenes"]:
+        mv_writer_mod._finish_scene(sc, facts["sections"])
+    key = lambda s: (s["type"], s["start"], s["end"], len(s["lines"]))
+    changed = [{"old": {k: o[k] for k in ("type", "start", "end")}, "new": {k: n[k] for k in ("type", "start", "end")},
+                "lines_before": len(o["lines"]), "lines_now": len(n["lines"])}
+               for o, n in zip(old, facts["sections"]) if key(o) != key(n)]
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    script.setdefault("rewrites", []).append({"refresh_facts": True, "from": os.path.basename(str(name)), "stamp": stamp})
+    out_dir = os.path.join(work, "mv_scripts")
+    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
+    jpath = os.path.join(out_dir, f"{base}_facts_{stamp}.json")
+    mpath = os.path.join(out_dir, f"{base}_facts_{stamp}.md")
+    with open(jpath, "w") as f:
+        json.dump(script, f, indent=1)
+    with open(mpath, "w") as f:
+        f.write(mv_writer_mod.script_markdown(script))
+    return {"files": {"json": jpath, "md": mpath}, "changed_sections": changed,
+            "scene_problems": {sc["index"]: sc["scene_problems"] for sc in script["scenes"] if sc.get("scene_problems")}}
 
 
 @app.post("/api/mv/split_scene")
@@ -1902,6 +1946,8 @@ def mv_split_scene(p: dict):
 
     try:
         for sc in (a, b):
+            if sc.get("locked"):
+                continue                       # a passed take, trimmed: no new text
             mv_writer_mod.write_scene_clips(
                 script, sc, p.get("provider") or "claude_sub", p.get("model") or mv_writer_mod.WRITER_MODEL,
                 p.get("effort") or mv_writer_mod.WRITER_EFFORT, CFG.get("claude_model", ""),
@@ -1974,6 +2020,8 @@ def mv_move_cut(p: dict):
 
     try:
         for sc in (a, b):
+            if sc.get("locked"):
+                continue                       # a passed take, trimmed: no new text
             mv_writer_mod.write_scene_clips(
                 script, sc, p.get("provider") or "claude_sub", p.get("model") or mv_writer_mod.WRITER_MODEL,
                 p.get("effort") or mv_writer_mod.WRITER_EFFORT, CFG.get("claude_model", ""),
