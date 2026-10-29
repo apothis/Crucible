@@ -1861,3 +1861,30 @@ already shows her, the building and her hands, which is the user's direction. No
   location (hypothesis, unverified: the retention text asks to retain the layout of a picture
   whose chapel sits mid-left, and the model fills the left third with more masonry). Candidate
   test, not fired: the opening still as the location reference picture too.
+
+### 20.39 User's notes on the split takes (2026-10-29 afternoon) [U = ground truth; frames located]
+- U: scene 0 "actually has 2 of the woman at one point". Located: a second woman fades in beside
+  her at ~23.5 s (ghost at 23.5 s, solid from 24 s) and both walk on to the end of the 28.5 s file
+  (`split_cmp/scene0_tail_18_to_28s.png`). That is past the 18.36 s window the cut uses, ~10 s into
+  clip 2, but it is the chain re-inventing the shot again, and earlier than the 25-31 s band.
+- CORRECTION to 20.38's frame reading: she does NOT stay the same size in scene 0. At 0 s she is
+  tiny by the chapel; by 18 s her face is readable (roughly double her height in frame, frame
+  reading, `split_cmp/scene0_crop_chapel_0_to_18s.png`). The clip prose said "walks slowly to the
+  right along the ridge, never toward the camera, the same tiny size until the last frame", but the
+  road in the location still runs FROM the far chapel TOWARD the camera foreground, so "along the
+  road to the right" is a walk toward the lens and the model followed the geometry, not the
+  negation. Lesson for the writer (not yet written in): on a path that leads to the camera the only
+  fixed-scale walk is AWAY (deeper into the frame, toward the far end) or across on the near
+  ground; name the direction relative to the camera, never relative to the frame edge.
+- U: scene 1 "isn't too bad, the fading could be considered artistic, but it's not ideal" (the
+  dissolve to a close-up at 18.1 s, 20.38).
+- U: "when there is a close up shot of her, and there is singing, she should be lipsyncing."
+  On paper the split script already does this: every medium close-up and close-up scene is
+  sing_to_camera (scenes 3, 6, 8, 11, 12, 15, 17, 19, 21, 23, 24) and every no_singing_her scene is
+  extreme wide / medium wide / wide. So a silent close-up during a sung line in the cut came from
+  the render, not the script: either a sing_to_camera take where the model kept her mouth shut, or
+  a close-up the chain invented inside a wider non-singing or sing_away scene (as the 18.1 s
+  dissolve here). Which take it was is still to be identified (user to say where in the cut).
+  Proposed hard rule for SCENE_SYSTEM, not yet written in: a medium close-up or closer while a
+  vocal line is audible is ALWAYS sing_to_camera; no_singing_her and sing_away are for medium and
+  wider; CLIP_SYSTEM already requires the mouth readable and the exact words in <d>.
