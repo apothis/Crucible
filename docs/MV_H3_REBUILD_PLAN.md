@@ -2029,3 +2029,6 @@ already shows her, the building and her hands, which is the user's direction. No
   wind, the chapel small on the left; pale calm evening sky, warm light on the gorse. The cut
   between them therefore jumps from storm sky and rough sea to pale sky and calm sea: a look
   mismatch to judge by eye.
+- User, after watching: her OUTFIT differs between the two SPLIT9 takes as well, "I feel we're
+  going backwards". User is handing the build to a different model; handover written to
+  docs/MV_H3_HANDOVER_20261029.md. Nothing more fires.
