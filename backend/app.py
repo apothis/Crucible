@@ -1231,6 +1231,11 @@ def mv_render_scene(p: dict):
     if not first_frame and lane == "i2v" and scene.get("opening_still_id") and _lib_image_path(scene["opening_still_id"]):
         first_frame, first_frame_from = scene["opening_still_id"], "scene"      # filed by /api/mv/scene_still
     if not first_frame and lane == "i2v":
+        if scene.get("matches_location_still") is False:
+            # the writer said this scene's light, weather or people differ from the location
+            # still; frame 0 from it dissolves into the scene's state (measured, ENV14)
+            raise HTTPException(400, "this scene needs its own opening still (its light, weather or people differ "
+                                     "from the location still): file it with /api/mv/scene_still or pass first_frame_id")
         first_frame, first_frame_from = loc_ref, "location"
     # anchor_first (opt-in, s.20.36): on the reference lane, the scene's opening still (her already
     # in place, this scene's light) guides frame 0 of the first clip through AddGuide, while the
@@ -1300,6 +1305,40 @@ def mv_render_scene(p: dict):
                               "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                               "anchor_first": anchor_first, "anchor_from": anchor_from,
                               "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None})
+
+
+def _mv_resolve_locks(raw):
+    """Locked takes for the writer: [{job_id (full or a unique prefix), script, scene, start?, end?}]
+    -> [{start, end, scene, locked}]. The take is the render of `scene` in `script`, so its frame 0
+    is that scene's start (take_start); start/end default to that scene's window and may trim it,
+    never reach before frame 0 or past the render's length."""
+    out = []
+    for L in raw or []:
+        jid = str(L.get("job_id") or "").strip()
+        hits = [f for f in os.listdir(LIBRARY) if f.startswith(jid) and f.endswith(".mp4")] if jid else []
+        if len(hits) != 1:
+            raise HTTPException(400, f"lock job_id {jid!r}: {len(hits)} renders in the library match")
+        path = os.path.join(LIBRARY, hits[0])
+        src, _ = _mv_load_script(L.get("script"))
+        try:
+            sc = src["scenes"][int(L.get("scene"))]
+        except Exception:
+            raise HTTPException(400, f"lock {jid}: scene must index a scene of {L.get('script')}")
+        take_start = float(sc["start"])
+        a = float(L.get("start", sc["start"]))
+        b = float(L.get("end", sc["end"]))
+        length = musicvideo_mod.audio_duration(path) or 0.0
+        if a < take_start - 1e-3 or b <= a or (length and b - take_start > length + 0.05):
+            raise HTTPException(400, f"lock {jid}: window {a}-{b}s is outside its render "
+                                     f"({take_start}-{take_start + length:.2f}s)")
+        out.append({"start": a, "end": b, "scene": sc,
+                    "locked": {"job_id": hits[0][:-4], "take_start": take_start,
+                               "script": os.path.basename(str(L.get("script")))}})
+    out.sort(key=lambda x: x["start"])
+    for x, y in zip(out, out[1:]):
+        if y["start"] < x["end"] - 1e-3:
+            raise HTTPException(400, f"locks overlap at {y['start']}s")
+    return out
 
 
 def _mv_load_script(sc_src):
@@ -1414,6 +1453,8 @@ def mv_render_script(p: dict):
         idx = sc["index"]
         row = {"index": idx, "title": sc.get("title"), "start": sc["start"], "end": sc["end"],
                "performance": sc.get("performance"), "location": sc.get("location"), "clips": len(sc["clips"])}
+        if idx not in existing and sc.get("locked"):
+            existing[idx] = sc["locked"]["job_id"]            # a passed take: never re-rendered
         if idx in existing:
             row.update({"job_id": existing[idx], "status": "existing"}); rows.append(row); continue
         if idx in skip or (only is not None and idx not in only):
@@ -1474,6 +1515,9 @@ def mv_assemble(p: dict):
     else:
         script, name = _mv_load_script(p.get("script"))
         jobs = {int(k): v for k, v in (p.get("jobs") or {}).items()}
+    for sc in script["scenes"]:                      # locked takes carry their own render
+        if sc.get("locked") and sc["index"] not in jobs:
+            jobs[sc["index"]] = sc["locked"]["job_id"]
     for k, v in (p.get("jobs") or {}).items():       # explicit overrides win
         jobs[int(k)] = v
     src = _lib_source_path(script["audio_id"])
@@ -1500,9 +1544,11 @@ def mv_assemble(p: dict):
     listing = []
     for sc, path in parts:
         dur = float(sc["end"]) - float(sc["start"])
+        # a locked take may be trimmed: its render starts at take_start, the scene later
+        inpt = max(0.0, float(sc["start"]) - float(sc["locked"].get("take_start", sc["start"]))) if sc.get("locked") else 0.0
         seg = os.path.join(out_dir, f"scene_{sc['index']:02d}.mp4")
         audio = ["-c:a", "aac", "-b:a", "320k"] if partial else ["-an"]
-        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-t", f"{dur:.3f}", *audio,
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{inpt:.3f}", "-i", path, "-t", f"{dur:.3f}", *audio,
                "-vf", f"scale={w}:{h}:flags=lanczos,fps=24,format=yuv420p", "-c:v", "libx264", "-preset", "medium",
                "-crf", str(crf), seg]
         r = subprocess.run(cmd, capture_output=True, text=True)
@@ -1641,7 +1687,9 @@ def mv_write(p: dict):
         locations? ("auto" [default]: offer the library places that came from THIS song, so a
         re-run keeps its stills; "library": offer every place with a still (cross-song reuse,
         opt-in - measured to pull another video's places into a song they do not fit);
-        "none": invent everything; or a list of library ids to offer)}.
+        "none": invent everything; or a list of library ids to offer),
+        locks? ([{job_id, script, scene, start?, end?}]: takes the user passed; kept as they are at
+        their windows, the writer fills only the gaps; see _mv_resolve_locks)}.
     Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
@@ -1667,6 +1715,7 @@ def mv_write(p: dict):
     except ValueError as e:
         raise HTTPException(400, str(e))
     known = [r for r in known if not r.get("still_id") or _lib_image_path(r["still_id"])]
+    locks = _mv_resolve_locks(p.get("locks"))
 
     def _log(s):
         print(s)
@@ -1679,7 +1728,7 @@ def mv_write(p: dict):
             model=p.get("model") or mv_writer_mod.WRITER_MODEL,
             effort=p.get("effort") or mv_writer_mod.WRITER_EFFORT,
             claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log,
-            align_path=align_path, known_locations=known)
+            align_path=align_path, known_locations=known, locks=locks)
     except Exception as e:
         raise HTTPException(500, f"writer failed: {e}")
     out_dir = os.path.join(work, "mv_scripts")

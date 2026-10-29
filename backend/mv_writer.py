@@ -101,9 +101,57 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
     for i, s in enumerate(table):
         s["index"] = i
         s["start"], s["end"] = round(float(s["start"]), 3), round(float(s["end"]), 3)
+    song_levels(audio_path, table)
     return {"duration": duration, "cover": align.get("cover"), "words_matched": align.get("words_matched"),
             "words_total": align.get("words_total"), "sections": table, "blocks": blocks,
             "aligned_on": "vocals" if align_path else "mix"}
+
+
+LEVEL_HOP = 0.5          # seconds per loudness frame
+LOUD_BAND = 2.5          # a section this close to the song's median dB (or above) is loud
+LEVEL_BAND = 5.0         # this far below the median, a section is quiet
+QUIET_DROP = 6.0         # dB below the median, held QUIET_MIN seconds, is a quiet span inside a section
+QUIET_MIN = 2.0
+
+
+def song_levels(audio_path, sections):
+    """Measured loudness per section, from the audio (not the style text: measured 2026-10-29, a
+    style that said 'hushed opening' had the full band from 2.5 s). Adds to each section
+    level_db (mean RMS dB), level (loud | mid | quiet against the song's median) and
+    quiet_spans [[a, b], ...]. Plain numpy on the Mac; on any read error the sections are left
+    as they were."""
+    try:
+        import numpy as np
+        import soundfile as sf
+        x, sr = sf.read(audio_path, always_2d=True)
+        x = x.mean(axis=1)
+        hop = int(sr * LEVEL_HOP)
+        n = len(x) // hop
+        db = 20 * np.log10(np.sqrt((x[:n * hop].reshape(n, hop) ** 2).mean(axis=1)) + 1e-9)
+    except Exception:
+        return sections
+    med = float(np.median(db))
+    k = max(1, int(round(2.0 / LEVEL_HOP)))
+    smooth = np.convolve(db, np.ones(k) / k, mode="same")
+    for s in sections:
+        i0, i1 = int(s["start"] / LEVEL_HOP), max(int(s["start"] / LEVEL_HOP) + 1, int(s["end"] / LEVEL_HOP))
+        seg = db[i0:i1]
+        if not len(seg):
+            continue
+        lvl = float(seg.mean())
+        s["level_db"] = round(lvl, 1)
+        s["level"] = "loud" if lvl >= med - LOUD_BAND else ("quiet" if lvl < med - LEVEL_BAND else "mid")
+        spans, run = [], None
+        for i in range(i0, min(i1, len(smooth))):
+            low = smooth[i] < med - QUIET_DROP
+            if low and run is None:
+                run = i
+            if (not low or i == min(i1, len(smooth)) - 1) and run is not None:
+                if (i - run) * LEVEL_HOP >= QUIET_MIN:
+                    spans.append([round(run * LEVEL_HOP, 1), round(i * LEVEL_HOP, 1)])
+                run = None
+        s["quiet_spans"] = spans
+    return sections
 
 
 # ----------------------------------------------------------------------------- pass 1: scenes
@@ -114,7 +162,15 @@ Fixed facts about this production:
 - The singer is the one lead and the only person the references define. There is no band: never a band, never other musicians, never a performance crowd by default. Other people are allowed where the story needs them (a landlord, a fisherman on the far quay, a child at a window, mourners at a grave): list them in the scene's "others" field, anonymous and few, each with a place in frame and their own ordinary business, and write null when the scene needs nobody. People never act in unison (measured: three men written as "one slow movement together" rendered as a synchronised puppet show); each does a different thing, staggered in time. Extras do SMALL ordinary things only: walking, standing, hauling, drinking, talking, coiling a rope. Never a large body transition for an extra: no climbing, jumping, stepping down into or out of a boat, mounting, falling; and only actions the location's geometry allows (the harbour's boats are moored off the quay on their ropes, so nobody can step into one). Measured: "one steps down into the nearest boat" rendered as a man flying through the air onto a boat that was too far away to reach. Most scenes need nobody; the video is about her.
 - Her identity and wardrobe come from two reference photographs described to you. One wardrobe for the whole video; you may add weathering (rain, dust, wind in the hair) but not change garments.
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
-- Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. A performance (lip-sync) take runs 8-15 seconds by default and never more than 28 seconds; any take SHE is in (singing or not) runs at most 30 seconds (measured: longer chains re-invent the shot around 25-31 seconds); an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than 5 seconds. A long passage she is in is therefore two or more scenes, cut between them.
+- Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. Any take SHE is in (singing or not) runs at most 15 seconds, one rendered clip (measured: 4 of 5 scenes of hers that chained a second clip re-invented the shot inside it: a second copy of her, a dissolve to a close-up, a ghost building, a jump to a run; her one-clip scenes held); an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than 5 seconds. A long passage she is in is therefore two or more scenes, cut between them.
+- SHOT PALETTE, by what has rendered reliably (measured over two songs); build the video from the reliable types:
+  (a) RELIABLE: her singing to camera at medium close-up or close-up (lip-sync and identity hold); her standing at medium or medium wide while wind, hair, a head turn or a small camera move carries the motion; her small in a wide or extreme wide shot ONLY if she stays in place (stands, turns, lifts her arms) for one clip; environment-only plates of a place, where LARGE camera moves are safe (push, truck, crane along the still's own lines); townspeople and extras in their places doing ordinary things.
+  (b) UNRELIABLE, never write: her walking any distance along a path or road (she approaches the lens or doubles), her travelling between places inside a scene, a scene of hers longer than one clip.
+- MOTION comes from the camera on the B-roll plates, from the cutting, from weather and light, and from wind, hair and small gestures on her; not from her travelling. A static camera is a choice for a held moment, never the default: a video of locked-off shots is dull.
+- PACE FOLLOWS THE MEASURED LEVEL of each section (listed with the sections; it is measured from the audio, so trust it over the style text): a loud section is cut faster, with shorter scenes (5-9 seconds) and more setups, and its B-roll uses large camera moves; a quiet section or quiet span holds longer scenes with small moves. A loud intro is not a slow establishing shot: it is several plates cut to the music.
+- SECTION ROLES (adapt to the song, do not force): intro = plates of the world cut to its energy, one shot revealing her, ending on the first-line setup; verse = her performance with cutaways to what the lyric names; pre-chorus = the world reacting (people, places); chorus = performance-heavy, the fastest cutting, two or three setups; a long instrumental or solo = a montage of plates and people that carries a story beat, never one long take of her; bridge = a contrast in time, place or light; outro = aftermath plates and a last shot of her or a return to the opening image.
+- AN ARC AND PAYOFFS: light, weather or time of day progress across the sections and the video says how (the `arc` field). Objects the lyrics name (a coat, a fiddle, a boat, a letter) are shown early and shown again near the end, changed (empty, left behind, gone): those are the payoff shots.
+- FRAME 0 MATCHES THE SCENE: an environment plate starts from its location's still unless the scene's light, weather, time of day or people differ from that still, in which case the scene needs its own opening still (measured: a storm still under a calm-evening scene made the model dissolve the whole world within the first second). Mark it with matches_location_still. Stills are cheap; a new one is fine wherever a scene needs it.
 - HER SCALE IS FIXED INSIDE A SCENE (measured on two takes, 2026-10-29: a face that starts tiny and grows as she approaches resolves badly all the way in). Never write her walking toward the camera from a distance, never "grows larger in frame", never an approach that changes how big she is. Her distance from the camera at the end of a scene is what it was at the start: she moves across the frame, away, or in place. A change of scale (far to near, wide to close) is always a CUT to a new scene with its own framing, never a move inside one scene. Push-ins on her are small amplitude only. Her walking direction is named relative to the CAMERA, never to the frame edge: "away from the camera, deeper into the frame" or "across the frame on the near ground". A road or path that runs from the far ground toward the camera is a walk toward the lens whichever side it is on (measured 2026-10-29: "to the right along the ridge, never toward the camera" doubled her size in 18 seconds because the road led to the camera), so on such a path she walks away, toward the far end, or stands. A verse or a chorus is therefore covered by two or three SETUPS in the same location, cut between them: a change of angle or framing (chair front-on, then three-quarter profile from the lamp side; wide, then detail), each its own scene with its own camera. The location reference keeps the place consistent across those cuts.
 - Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second before a sung line begins), or the listed FIRST-LINE SETUP point (two seconds before the song's first sung line: the lip-sync scene for the first word starts there). Choose cuts where the words break.
 - Inside a scene, the camera does ONE thing, written in the video model's own grammar (measured: it obeys this and ignores metric distances): "static", or "<verb> with <small|large> amplitude at <slow|fast> speed toward/along X throughout the take". Verbs: push in, pull out, pan left/right, truck left/right, tilt up/down, pedestal up/down, arc, tracking. Performance takes use small amplitude at slow speed; large amplitude only on B-roll. A scene has ONE framing (the one it starts in); never write a second framing the move should reach (measured: "from a medium shot to a medium close-up" became a hidden cut rendered as a dissolve, with the wardrobe changing across it). Bound a move only by what must stay in frame to the end (the lamp, the window, her shoulders). No whip pans, no handheld chaos, no orbit-plus-zoom, never centimetres or metres.
@@ -201,6 +257,10 @@ def _section_text(sections):
     setup = round(first["start"] - FIRST_LINE_LEAD, 3) if first and first["start"] - FIRST_LINE_LEAD > 0 else None
     for s in sections:
         head = f"[{s['index']}] {s['type']}  {s['start']:.2f}-{s['end']:.2f}s  ({s['end'] - s['start']:.1f}s)"
+        if s.get("level"):
+            head += f"  level {s['level']} ({s['level_db']:.0f} dB)"
+            if s.get("quiet_spans"):
+                head += ", quiet " + ", ".join(f"{a:.1f}-{b:.1f}s" for a, b in s["quiet_spans"])
         out.append(head if s["vocal"] else head + "  instrumental, no vocal")
         if setup is not None and s["start"] <= setup < s["end"]:
             out.append(f"      cut {setup:6.2f} | FIRST-LINE SETUP: the lip-sync scene for the first word starts here")
@@ -214,12 +274,24 @@ def _section_text(sections):
     return "\n".join(out)
 
 
-def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None):
-    """known: library rows (mv_locations) the model may reuse by id; None/[] = none offered."""
+def locks_text(locks):
+    """The ALREADY SHOT block: one line per locked take, in song order."""
+    out = []
+    for L in sorted(locks, key=lambda x: x["start"]):
+        s = L["scene"]
+        out.append(f"- {L['start']:.2f}-{L['end']:.2f}s  \"{s.get('title')}\": {s.get('framing')}, {s.get('performance')}, "
+                   f"location `{s.get('location')}`, camera {s.get('camera')}. {s.get('action') or ''}".strip())
+    return "\n".join(out)
+
+
+def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None, locks=None):
+    """known: library rows (mv_locations) the model may reuse by id; None/[] = none offered.
+    locks: takes already shot and passed ({start, end, scene}); the model writes only the gaps."""
     schema = {
         "concept": "2-3 sentences: what the video is about and how it moves (string)",
         "look": "one sentence of visual style for every prompt: film stock feel, light QUALITY, contrast, colour grade, camera weight ONLY. Never name an object or a light source in it (no candles, lamps, fires, torches, windows): the sentence rides on every exterior prompt too, and a prop named here gets hallucinated into shots that cannot hold it (measured: 'candle and lamp interiors' put lit candles over a cliff road). Interior warmth belongs in that scene's lighting field (string)",
         "wardrobe": "the singer's one outfit, as it appears in the references, in one sentence (string)",
+        "arc": "how light, weather and time of day progress across the song's sections, and the payoff objects from the lyrics (where each is first shown and where it returns changed), 2-4 sentences (string)",
         "locations": [{
             "id": "snake_case id (a KNOWN location's exact id when reusing one)",
             "reuse": "true only when id is a KNOWN location; then omit name, description and still_prompt (boolean)",
@@ -242,6 +314,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "action": "what she does, 1-3 sentences, one main motion; for environment B-roll exactly ONE moving element, slow, and what stays still",
             "others": "null, or one sentence: the other people this scene needs (who, how many, where in frame, what they do), anonymous; no band",
             "opening_still": "a prompt for a photoreal 16:9 still of the FIRST FRAME of this scene, one paragraph: the location still's camera position, framing, fixed elements and light, with she in the setting where the scene has her, and with every person listed in others ALREADY IN PLACE in their opening pose (each caught mid-activity, each different, faces turned away or softened by shadow, small in frame). On the image-to-video lane this still IS frame 0, so anyone missing from it has to fade in (measured)",
+            "matches_location_still": "true when this scene's light, weather, time of day and people are what the location's still shows (that still can be frame 0); false when the scene needs its own opening still (boolean)",
             "why": "one sentence: why this scene belongs at this point of the song"
         }],
     }
@@ -254,9 +327,19 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
                 + known_text(known) + "\n\n") if known else "")
             + "MEASURED SECTIONS (real seconds on this recording; use these indices):\n"
             + _section_text(facts["sections"]) + "\n\nLYRICS:\n" + (lyrics_raw or "").strip()
-            + "\n\nThe scenes tile the whole song in order with no gaps: the first starts at 0, each `to` is the "
-            "next scene's `from`, the last ends at the song's end. Every from/to is a section edge or a listed "
-            "cut point. Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
+            + ("\n\nALREADY SHOT (the user has passed these takes; they are fixed, with their places, framings and "
+               "light. Do NOT write scenes for these windows. Write scenes only for the GAPS between them, and plan "
+               "the gaps so the cut flows into and out of each one; the arc must fit them):\n" + locks_text(locks)
+               if locks else "")
+            + ("\n\nYour scenes tile every gap in order: within a gap the first scene starts at the gap's start, "
+               "each `to` is the next scene's `from`, the last ends at the gap's end. Every from/to is a section "
+               "edge, a listed cut point or a locked take's edge; inside a lineless span (intro, solo, outro) any "
+               "second is allowed. List only your own scenes, in song order. "
+               if locks else
+               "\n\nThe scenes tile the whole song in order with no gaps: the first starts at 0, each `to` is the "
+               "next scene's `from`, the last ends at the song's end. Every from/to is a section edge or a listed "
+               "cut point; inside a lineless span (intro, solo, outro) any second is allowed. ")
+            + "Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
     return SCENE_SYSTEM, user
 
 
@@ -294,16 +377,81 @@ def _finish_scene(sc, sections):
     return sc
 
 
-def normalize_scenes(plan, sections):
+FREE_CUT_MARGIN = 2.5    # inside a lineless section a cut may fall anywhere this far from its edges
+
+
+def snap_scene_cut(t, sections, points):
+    """A scene boundary: anywhere inside a lineless (instrumental) section, at least
+    FREE_CUT_MARGIN from its edges (a solo or an intro is cut to its music, not to words);
+    elsewhere the nearest cut point."""
+    for s in sections:
+        if not s["vocal"] and s["start"] + FREE_CUT_MARGIN <= t <= s["end"] - FREE_CUT_MARGIN:
+            return round(t, 2)
+    return snap_cut(t, points)
+
+
+def normalize_scenes(plan, sections, locks=None):
     """Make the scene list tile the song in order. Scenes given as from/to seconds are snapped to
-    cut points (section edges and line cut points) and forced contiguous; scenes given as a
-    `sections` range (older answers) take those sections' edges. Empty scenes are dropped. Returns
-    the scenes with index/start/end/sections/section_types/lipsync filled in."""
+    cut points (section edges and line cut points; any second inside a lineless section) and
+    forced contiguous; scenes given as a `sections` range (older answers) take those sections'
+    edges. Empty scenes are dropped. `locks` ({start, end, scene, locked}) are takes already shot:
+    they are placed at their windows as given and the model's scenes fill the gaps between them
+    (a model scene reaching into a lock is cut at the lock's start; a gap the model left empty
+    becomes a flagged placeholder). Returns the scenes with index/start/end/sections/
+    section_types/lipsync filled in."""
     n = len(sections)
-    pts = cut_points(sections)
+    locks = sorted(locks or [], key=lambda L: L["start"])
+    pts = sorted(set(cut_points(sections)) | {round(x, 3) for L in locks for x in (L["start"], L["end"])})
     song_end = sections[-1]["end"]
     raw = plan.get("scenes") or []
-    scenes, cursor = [], 0.0
+    scenes, cursor, li = [], 0.0, 0
+
+    def _place_locks():
+        nonlocal cursor, li
+        while li < len(locks) and locks[li]["start"] <= cursor + 1e-3:
+            L = locks[li]
+            sc = {k: v for k, v in L["scene"].items() if k not in ("index", "sections", "section_types", "lipsync", "scene_problems")}
+            sc["start"], sc["end"] = round(L["start"], 3), round(L["end"], 3)
+            sc["locked"] = L["locked"]
+            scenes.append(sc)
+            cursor = max(cursor, L["end"])
+            li += 1
+
+    def _gap_end():
+        return locks[li]["start"] if li < len(locks) else song_end
+
+    if locks:
+        _place_locks()
+        for sc in raw:
+            if not isinstance(sc, dict) or cursor >= song_end:
+                continue
+            try:
+                b = snap_scene_cut(float(sc["to"]), sections, pts)
+            except (KeyError, TypeError, ValueError):
+                continue
+            b = min(b, _gap_end())
+            if b <= cursor + 1e-3:
+                continue
+            sc = {k: v for k, v in sc.items() if k not in ("from", "to")}
+            sc["start"], sc["end"] = round(cursor, 3), round(b, 3)
+            scenes.append(sc)
+            cursor = b
+            _place_locks()
+        while cursor < song_end - 1e-3:                   # a gap the model did not fill
+            end = _gap_end()
+            if scenes and not scenes[-1].get("locked") and abs(scenes[-1]["end"] - cursor) < 1e-3:
+                scenes[-1]["end"] = round(end, 3)
+            else:
+                scenes.append({"title": "(gap not written)", "start": round(cursor, 3), "end": round(end, 3),
+                               "performance": "no_singing_environment", "gap": True})
+            cursor = end
+            _place_locks()
+        for i, sc in enumerate(scenes):
+            sc["index"] = i
+            _finish_scene(sc, sections)
+            if sc.get("gap"):
+                sc["scene_problems"].append("the writer left this gap empty")
+        return scenes
     for sc in raw:
         if not isinstance(sc, dict):
             continue
@@ -326,7 +474,7 @@ def normalize_scenes(plan, sections):
             i0, i1 = max(0, min(i0, n - 1)), max(0, min(max(i1, i0), n - 1))
             a, b = sections[i0]["start"], sections[i1]["end"]
         a = cursor                                    # contiguity: every scene starts where the last ended
-        b = snap_cut(b, pts)
+        b = snap_scene_cut(b, sections, pts)
         if b <= a:
             continue
         sc = dict(sc)
@@ -353,7 +501,19 @@ def _slug(x):
 
 def known_text(rows):
     """The block the writer shows the model: one line per known place, id first."""
-    return "\n".join(f"- id `{r['id']}` ({r.get('name')}): {r.get('description') or '(no description)'}" for r in rows)
+    return "\n".join(f"- id `{r['id']}` ({r.get('name')}): {r.get('description') or '(no description)'}"
+                     + (f" Its still shows: {still_state(r.get('still_prompt'))}" if still_state(r.get("still_prompt")) else "")
+                     for r in rows)
+
+
+STATE_WORDS = re.compile(r"(?i)\b(sky|cloud|storm|rain|sun|sunset|dusk|dawn|evening|night|morning|light|lit|weather|fog|mist|candle|lamp)\w*")
+
+
+def still_state(prompt):
+    """The sentences of a still prompt that fix its light, weather and time of day: what frame 0
+    of a plate from that still will show, so the writer can tell when a scene needs its own."""
+    sents = re.split(r"(?<=[.!?])\s+", (prompt or "").strip())
+    return " ".join(s for s in sents if STATE_WORDS.search(s))[:400]
 
 
 def _known_row(r):
@@ -704,8 +864,11 @@ def check_prompt(prompt, clip, performance="sing_to_camera"):
 
 def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs, concept=None,
                  provider="claude_sub", model=WRITER_MODEL, effort=WRITER_EFFORT, claude_model="",
-                 cache_dir=None, log=print, align_path=None, known_locations=None):
+                 cache_dir=None, log=print, align_path=None, known_locations=None, locks=None):
     """Song -> full script JSON (scenes with chain plans and compiled per-clip prompts).
+    `locks` = takes the user passed, kept as they are ({start, end, scene: the source scene with
+    its clips, locked: {job_id, take_start, script}}): the writer fills only the gaps and pass 2
+    skips them.
     `refs` = {"face": one-line description of <Picture 1>, "body": of <Picture 2>,
               "shared": a sentence naming what BOTH show (the details the prompt may mention)}.
     `known_locations` = library rows (mv_locations) the model may reuse by id instead of
@@ -714,21 +877,23 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
     log(f"[mvw] facts: {len(facts['sections'])} sections, cover {facts.get('cover')}, aligned on {facts['aligned_on']}")
     refs_text = (f"<Picture 1> (face / identity): {refs['face']}\n<Picture 2> (full body / wardrobe): {refs['body']}\n"
                  f"Both show: {refs['shared']}")
-    system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept, known=known_locations)
+    system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept, known=known_locations, locks=locks)
     raw = llm_mod.complete(provider, model, system, user, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
     _keep_raw(cache_dir, f"{audio_id}_pass1.txt", raw)
     plan = _extract_json(raw)
-    scenes = normalize_scenes(plan, facts["sections"])
+    scenes = normalize_scenes(plan, facts["sections"], locks=locks)
     locations = normalize_locations(plan, scenes, known=known_locations)
     log(f"[mvw] pass 1: {len(scenes)} scenes, {len(locations)} locations "
         f"({sum(1 for L in locations if L.get('known'))} known, {len(known_locations or [])} offered)")
     script = {"title": title, "audio_id": audio_id, "style": style, "duration": duration,
               "concept": plan.get("concept", ""), "look": plan.get("look", ""),
-              "wardrobe": plan.get("wardrobe", ""), "refs": refs, "facts": facts, "locations": locations,
-              "known_offered": [r["id"] for r in (known_locations or [])],
+              "wardrobe": plan.get("wardrobe", ""), "arc": plan.get("arc", ""), "refs": refs, "facts": facts,
+              "locations": locations, "known_offered": [r["id"] for r in (known_locations or [])],
               "writer": {"provider": provider, "model": model, "effort": effort}, "scenes": []}
     for sc in scenes:
-        write_scene_clips(script, sc, provider, model, effort, claude_model, cache_dir, log)
+        if not sc.get("locked") and not sc.get("gap"):
+            write_scene_clips(script, sc, provider, model, effort, claude_model, cache_dir, log)
+        sc.setdefault("clips", [])
         script["scenes"].append(sc)
     script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
     return script
@@ -825,6 +990,14 @@ def script_markdown(script):
            f"{len(script['scenes'])} scenes, {script['clip_count']} clips.", "",
            f"**Concept.** {script['concept']}", "", f"**Look.** {script['look']}", "",
            f"**Wardrobe.** {script['wardrobe']}", ""]
+    if script.get("arc"):
+        out += [f"**Arc.** {script['arc']}", ""]
+    # only plates: her scenes render on the reference lane, where a still is not frame 0
+    need = [sc for sc in script["scenes"] if not sc.get("locked") and sc.get("matches_location_still") is False
+            and sc.get("performance") == "no_singing_environment" and not sc.get("opening_still_id")]
+    if need:
+        out += ["**Opening stills needed** (the scene's light, weather or people differ from its location still): "
+                + ", ".join(f"scene {sc['index'] + 1} {sc.get('title')}" for sc in need), ""]
     if script.get("locations"):
         out += ["## Locations (one person-free still each, handed to the chain as the place reference)", ""]
         for L in script["locations"]:
@@ -839,7 +1012,9 @@ def script_markdown(script):
                 out += ["Still prompt:", "", "```", (L.get("still_prompt") or "").strip(), "```", ""]
     for sc in script["scenes"]:
         out += [f"## Scene {sc['index'] + 1}: {sc.get('title', '')}  ({sc['start']:.1f}-{sc['end']:.1f}s, "
-                f"{', '.join(sc['section_types'])})", "",
+                f"{', '.join(sc['section_types'])})"
+                + (f"  LOCKED: passed take, from {sc['locked'].get('take_start', sc['start']):.2f}s of its render"
+                   if sc.get("locked") else ""), "",
                 f"- performance: {sc.get('performance')} | framing: {sc.get('framing')} | camera: {sc.get('camera')}"
                 + (f" | keep in frame: {sc.get('keep_in_frame')}" if sc.get("keep_in_frame") else "")
                 + (f" | location: `{sc.get('location')}`" if sc.get("location") else ""),

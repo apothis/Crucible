@@ -472,3 +472,44 @@ For background loops and living covers, also usable as B-roll plates. Full recip
   side it lies on. Write "away from the camera, deeper into the frame" or "across the frame on the
   near ground"; on such a path she walks away toward the far end, or stands. SCENE_SYSTEM and
   CLIP_SYSTEM both carry it.
+
+## 15. Designing a video: the general recipe (2026-10-29, user-approved; writer pass 1)
+
+Built after a day spent re-shooting one opening shot. The writer now designs every song from
+what has rendered reliably, and keeps what the user has passed. Code: `SCENE_SYSTEM`,
+`song_levels`, `normalize_scenes(locks=)`, `write_script(locks=)`, `/api/mv/write locks`,
+`/api/mv/assemble` (locked in-point). Validate on a second song before calling it proven.
+- **Shot palette by record.** Reliable: her singing to camera MCU/CU [U, every take]; her standing
+  at medium or medium wide with wind, head turn or a small camera move [U: ridge, chapel wall];
+  her small in a wide ONLY standing in place for one clip [M: 5 one-clip distant scenes held,
+  2026-10-29]; environment plates with large camera moves on the image-to-video lane [U]; people
+  plates from an opening still [U]. Unreliable, never written: her walking along a path or road
+  [U: approach and doubling], her travelling inside a scene, any scene of hers longer than one
+  clip [M: 4 of 5 two- and three-clip scenes of hers re-invented the shot in the chained clip].
+  Her scenes are therefore capped at one clip (15 s), down from 30 s.
+- **Motion comes from the camera on the plates, the cutting, weather and light, and wind and
+  small gestures on her**, not from her travelling. Static is a choice, never the default. [U]
+- **Pace follows the measured level per section** (`song_levels`: mean RMS dB per section against
+  the song's median, loud / mid / quiet, plus quiet spans of 2 s or more). Measured on SSBS: the
+  style text implied a hushed opening, the audio has the full band from 2.5 s. Loud = shorter
+  scenes (5-9 s), more setups, large moves on plates; quiet = held scenes.
+- **Section roles**: intro = plates cut to its energy, one reveal of her, ending on the first-line
+  setup; verse = performance plus cutaways to what the lyric names; pre-chorus = the world
+  reacting; chorus = performance-heavy, fastest cutting; long instrumental or solo = a montage of
+  plates and people carrying a story beat, never one long take of her; bridge = a contrast in
+  time, place or light; outro = aftermath plates and a last shot of her or a return. [design]
+- **Arc and payoffs**: the script carries an `arc` (light, weather, time of day across sections)
+  and payoff objects from the lyrics, shown early and again near the end, changed. [design]
+- **Frame 0 matches the scene**: a plate whose light, weather, time or people differ from its
+  location still needs its own opening still (`matches_location_still` false; the markdown lists
+  "Opening stills needed"). Known locations are offered with what their still shows
+  (`still_state`). [M: ENV14 dissolve]
+- **Cuts inside lineless sections are free** (at least 2.5 s from the section's edges): a solo or
+  an intro is cut to its music, not snapped to its edges. [design]
+- **Passed takes are locked.** `/api/mv/write {locks: [{job_id, script, scene, start?, end?}]}`
+  places each passed render at its window (trimmed if asked; its frame 0 is the source scene's
+  start), the writer writes only the gaps, pass 2 skips locked scenes, `render_script` carries
+  them as existing, and `assemble` seeks into a trimmed take. A re-design never re-renders what
+  the user already passed. [design, from the user's "considerable chunks were OK"]
+- **A moving shot that fails is swept over 3-4 seeds before it is simplified** (every SSBS scene 0
+  take on 2026-10-29 was the same seed). [U]

@@ -2060,3 +2060,43 @@ already shows her, the building and her hands, which is the user's direction. No
 - Next: the user generates the opening still (prompt given in chat), files it on scene 0, dry run
   shows it as first_frame_id, then fire on the user's go. Verdict = the user watching it cut against
   the ridge take.
+
+### 20.46 Re-design from the general recipe, passed takes locked (2026-10-29 21:00) [built; writer run; no GPU]
+- User: a whole day on scene 0 and no further forward; start again from the song and its stills
+  and design a cool video with what we know, reproducible for any song and style. The design was
+  written as the general recipe (TECHNIQUES s.15) and applied here; user: "ok".
+- Built: `song_levels` (SSBS: every section loud except the bridge, mid -18 dB with a quiet
+  188.5-191.5 s; the intro is loud from 2.5 s), SCENE_SYSTEM palette / motion / pace / section
+  roles / arc / frame-0 rules, her scenes capped at one clip, free cuts inside lineless sections,
+  `arc` and `matches_location_still` in the schema, locked takes through writer, batch and
+  assembly. Offline: lock tiling (a model scene reaching into a lock is cut at it; an empty gap
+  becomes a flagged placeholder), levels, still state.
+- Locks for SSBS (24): ridge SPLIT9 4f085048 9.0-18.36; chapel wall 82380164 trimmed 18.36-25.0
+  (before her head turn, so she is looking out to sea at the cut); first-line setup 4ac3db3d
+  35.22-44.76; last night's unflagged scenes 2-16, 18-21, 23 at their windows; "Singing still"
+  b4a68d7e trimmed 243.0-252.44. Gaps for the writer: 0-9.0 and 25.0-35.22 (intro), 145.3-184.14
+  (solo), 218.5-225.16 (the flagged close-up), 234.52-243.0 (outro). Request
+  `transfer/ssbs/redesign/write_locked_request.json`.
+- Writer run (Claude, no GPU): `she_sings_before_the_storm_20261029_202712.json`, then pass 2 rerun
+  on scene 23 (its clip carried "with each", flagged by check_prompt) ->
+  `..._202712_rw23_20261029_202818.json` (now final_script_name.txt; previous in
+  final_script_name_before_redesign.txt). 35 scenes: 24 locked, 11 new, 0 scene problems, 0 clip
+  problems. Arc: slate evening with a pale band -> dusk and first rain -> black night storm (solo,
+  last chorus) -> colourless dawn. Payoffs: the fiddle (lit tavern in the intro, abandoned at dawn
+  in the outro), the boats (whole, pitching in the solo, gone on "and by morning they are gone"),
+  father's coat on its peg in the storm night.
+  New scenes: 0 The front comes in (cliff_edge plate, push to the horizon); 3 The old bar the
+  shutters (harbour, one old woman barring a shutter, truck); 4 The fiddle waits (tavern plate,
+  push to the fiddle); solo 21 The sea turns (cliff_edge night, fast push), 22 She holds the edge
+  (her, medium wide, arms lifting, small arc; reference lane), 23 Boats on their ropes (harbour
+  night, truck), 24 The coat stays on its peg (kitchen candle, truck), 25 Rain on her face (her
+  close-up, silent in the solo, eyes open to the sea; reference lane), 26 The chapel in the gale
+  (cliff_road night, pedestal up); 31 Empty moorings (harbour dawn, on "and by morning they are
+  gone", replacing the flagged close-up); 33 The fiddle left behind (tavern dawn).
+- Guard added: render_scene refuses an image-to-video scene the writer marked
+  matches_location_still false until its own still is filed (would have rendered the location
+  still's weather and dissolved). Markdown "Opening stills needed" lists plates only.
+- Batch dry run: 5 new scenes ready (0, 4, 24 plates from their location stills; 22 and 25 hers on
+  the reference lane), 6 waiting for stills (3, 21, 23, 26, 31, 33), 24 carried as existing.
+- Look note for the user's eyes [frames, not a verdict]: the locked ridge and chapel wall takes
+  have pale calm skies; the new intro plates around them follow the arc's slate evening.
