@@ -1819,3 +1819,22 @@ already shows her, the building and her hands, which is the user's direction. No
   as the batch, or anchor on; one variable each), 1 after its still is filed. The later scenes
   are renumbered (+1) in the split script; the batch manifest's job ids still belong to the
   original numbering.
+
+### 20.38 Split test fired: scene 0 + scene 1 of the split script (2026-10-29 13:14) [fired; results pending]
+- User kept the split and generated the chapel wall opening still from
+  `dry/scene1_chapel_wall_opening_still_prompt.txt`: filed as still 18adfe3c (1672x941) on scene 1
+  "At the chapel wall" of `..._sp0_20261029_113024.json` via `/api/mv/scene_still`
+  (`dry/scene1_opening_still_filed.json`). Working script pointer `rewrite/final_script_name.txt`
+  now = the split script (pre-split name kept in `final_script_name_before_split.txt`).
+- Dry runs `dry/split/scene{0,1}_dry.json`, batch knobs (1344x768, seed 20261027, turbo, kitchen
+  attention, reference lane, no keyframes, ANCHOR OFF): scene 0 distant rule -> body + cliff_road
+  location still, 2 clips, 362 frames; scene 1 face + body + location still, 2 clips, 362 frames.
+  Both clip passes say her distance from the camera and her size in frame do not change.
+  With the anchor off neither filed opening still enters the graph: this is the split / fixed-scale
+  rewrite as ONE variable against the old 36.7 s three-clip scene 0 (d15c63bd).
+- Fired 13:14 (user go): scene 0 job 98b2a984, scene 1 job 82380164 (queued behind it). Graphs
+  verified on the box: no MiniMaxH3AddGuide, no node 29, LoadImage 30/31(/32) = the refs above,
+  two ReferenceToVideo nodes each. Script `renders/fire_split_scene0_scene1.sh` waits, floor-checks
+  (scene 1 at song offset 18.36), files `ssbs_scene0_roadatevening_768p_2clips_..._SPLIT_seed20261027.mp4`
+  and `ssbs_scene1_chapelwall_768p_2clips_..._SPLIT_seed20261027.mp4`, 1 s sheets in `renders/split_cmp/`.
+- Verdict = the user watching both takes; the frames cannot judge motion.
