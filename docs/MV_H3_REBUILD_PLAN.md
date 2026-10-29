@@ -2124,3 +2124,28 @@ already shows her, the building and her hands, which is the user's direction. No
 - Full cut, 35 scenes, 252.44 s, 1344x768, song laid under:
   `.mvwork/mv_assembly/20261029_225322/ssbs_redesign_FULL_new_scenes_544p_upscaled.mp4`.
   Not yet watched by the user; motion and look are theirs to judge.
+
+### 20.48 User callouts on the first full cut; gate before the GPU (2026-10-29)
+- User: scene 0 "back to the timelapse effect"; the cut to her singing comes "a couple of seconds"
+  after she starts; 2:01 she stands at the back of the tavern not lip-syncing, should be much
+  closer; the 0:09-0:19 ridge stand is "too long for nothing happening".
+- Scene 0 ran on i2v (box graph: MiniMaxH3ImageToVideo, fl2va weights), but on base 20 steps,
+  shift 12, no fl2v turbo LoRA, 960x544, random seed: the fire omitted the settings (s.20.47).
+  Its text also makes the cloud bank the one moving element. Locked scene 12 has the same kind of
+  text on the proven settings and was passed, so the settings are the stronger candidate [H].
+- Gate built (af69a07): a live batch fires only {from_dry, accept_flags}; the dry run shows each
+  scene's resolved settings + pinned seed and flags settings off PROVEN (turbo, 1344x768) and pace
+  problems (moving or unpinned sky); a changed prompt or flagged scene is refused. Refusal paths
+  tested through the route with the box queue empty before and after.
+- First line: the vocal stem enters at 32.25 s; Whisper missed "On the cliff road past the
+  chapel / Where the gorse grows bent and low", so the verse aligned at 36.72 and the first-line
+  setup was cut at 35.22. song_facts now times missed opening lines from the stem (only verse 1
+  changed on SSBS); /api/mv/refresh_facts re-measures a saved script (30ad5db).
+- Edits (writer passes, no GPU): first-line scene 30.25-44.76 (setup 2 s before the first word;
+  passed take dropped, it cannot start before 35.22); old woman 25.0-27.75, fiddle 27.75-30.25;
+  2:01 "Unheard by the hearth" rewritten sing_to_camera medium close-up, fishermen behind;
+  ridge split at 13.5 (passed take trimmed to 9.0-13.5) + new "Wind on the ridge" medium
+  close-up (wind lifts hair and shawl, one slow head turn sea -> chapel). Script:
+  `..._facts_20261029_232452_mc4_..._mc3_..._rw17_..._sp1_20261029_232657.json`.
+- Gated dry run: 14 to render at turbo 1344x768 seed 20261027, 22 passed takes, 102 s of video;
+  flagged: scene 0 (sky moves / unpinned).
