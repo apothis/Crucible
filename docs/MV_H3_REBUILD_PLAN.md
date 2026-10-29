@@ -1776,3 +1776,12 @@ already shows her, the building and her hands, which is the user's direction. No
   the same pixels as the anchor (opening still as <Picture 2> in place of the cliff_road still),
   so the model holds one building, not two. Prompt structure unchanged. Alternative: drop the
   location picture entirely (body picture only + anchor), which also changes the prompt.
+- 2026-10-29 10:50 USER VERDICT on the anchored take: "actually worse" than the unanchored one.
+  Frame 0 holding the still does not pay for the second building and the earlier push-in.
+- USER RULE (general, 2026-10-29): no shots where she walks toward camera from a distance. A face
+  that starts tiny and grows as she approaches resolves badly all the way in ("the face being so
+  small looks really messed up as it gets closer"). Her scale in a shot is fixed: distant shots
+  stay distant for their whole length, close shots start close; a change of scale is a CUT to a
+  new scene with its own opening still, never her approach inside one shot. Applies to the
+  writer (no "walks toward the camera", no "grows larger in frame", push-ins on her bounded to
+  small amplitude) and to the opening-still brief (she is already at the shot's scale at frame 0).

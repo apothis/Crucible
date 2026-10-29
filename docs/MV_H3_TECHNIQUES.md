@@ -330,14 +330,26 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   lines (along the quay, toward the far wall), not toward a destination the still only implies.
   [U one sample]
 
-### Frame-0 anchor on the reference lane (built 2026-10-29, UNTESTED)
+### Frame-0 anchor on the reference lane (built 2026-10-29; first take WORSE, user)
 `render_scene {anchor_first: true}` guides frame 0 of the first clip with the scene's filed
 opening still (her already in place, this scene's light) through MiniMaxH3AddGuide while the
 face/body/location pictures stay as references; the prompt is unchanged (one variable). Opt-in;
 refused on the image-to-video lane and with keyframes still_first. Hypothesis under test (plan
 s.20.36): removes the reference lane's frame-0 convergence (her fade-in, building morph, ghost
 building) on her scenes the way the still-as-first-frame did on environment scenes. Does not
-touch clips 2+ of a chain.
+touch clips 2+ of a chain. First take on scene 0 (plan s.20.36): frame 0 held the still, but the
+location reference picture's building arrived as a second house from 2.5 s and the chain pushed
+to a medium shot by 13 s; the user judged it worse than the unanchored take. Open: whether the
+conflict is the two differing pictures of one place (test: opening still as the location
+reference too) before the anchor is used on any other scene.
+
+### Her scale is fixed inside a shot (user rule, 2026-10-29)
+No shot in which she walks toward camera from a distance: a face that starts tiny and grows as
+she approaches resolves badly the whole way in. Distant shots stay distant for their length,
+close shots start close, and a change of scale is a CUT to a new scene with its own opening
+still, never her approach within one shot. Writer: no "walks toward the camera", no "grows in
+frame", push-ins on her at small amplitude only; opening-still brief: she is already at the
+shot's scale at frame 0. (Not yet written into SCENE_SYSTEM / CLIP_SYSTEM; see plan.)
 
 ## 9. Resolution and recipe
 
