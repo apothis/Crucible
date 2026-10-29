@@ -1955,3 +1955,12 @@ already shows her, the building and her hands, which is the user's direction. No
   enters (the batch's sing_to_camera scenes all began on a line, so this was never visible);
   alternative: something vocal-like in the track at 35.22-37.22 (check the vocal stem's energy
   there before blaming the model).
+- 2026-10-29 user verdict: the take is fine. The singing is mid-word when the clip starts, so
+  the mouth moving from frame 0 is CORRECT. The "two silent seconds" never existed in the audio:
+  the FIRST-LINE SETUP point was placed from the lyric timing in the script (first word at 37.22),
+  which I never checked against the track; the vocal is already going at 35.22. Non-problem,
+  hypothesis withdrawn, no rule. User, same message: we have spent the day making rules around
+  small things and generating new stills when considerable chunks of last night's render were
+  OK and only specific things were called out. Lesson filed as memory
+  (feedback_fix-callouts-not-legislate): fix the called-out shots against the mostly-good render;
+  verify a claimed problem against the audio or the user before proposing any rule.
