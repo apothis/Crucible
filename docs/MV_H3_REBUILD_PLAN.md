@@ -2105,3 +2105,22 @@ already shows her, the building and her hands, which is the user's direction. No
   Trimmed locks in sync: chapel wall (in-point 0) r 0.998, "Singing still" (in-point 8.48 s) r 1.000
   at lag 0, and the same segment against the untrimmed offset 0.212 (control: the seek is real).
   First-line take r 0.998. Note: `batch` must be an absolute path or a bare name under mv_batches.
+
+### 20.47 The 11 new scenes rendered; first full cut (2026-10-29)
+
+- Stills filed with /api/mv/scene_still for scenes 3, 21, 23, 26, 31, 33 (copies in
+  .mvwork/transfer/ssbs/redesign/stills/, named by scene). Dry run: 11 ready, 24 existing.
+- Batch fired on the user's go: manifest `..._rw23_20261029_202818_batch_20261029_214750.json`.
+  All 11 done, no errors. Lanes engaged as planned (job params): 9 on i2v, each with its own
+  first_frame_id (the filed stills; 0, 4, 24 from their location stills); 22 and 25 on ref2va.
+- Mistake on the fire: the call passed only script + ref_ids, so render_scene defaults applied:
+  960x544 and a random seed per scene, NOT the 1344x768 / seed 20261027 the earlier dry run had
+  been given. The 24 locked takes are 1344x768; assemble scales all to 1344x768, so the 11 new
+  ones are upscaled from 544p. Lesson: a render_script fire must repeat the dry run's width,
+  height and seed explicitly (the dry run does not pin them for the fire).
+- Floor check (envelope r at lag 0, song offset = scene start): 0 1.000, 3 0.998, 4 0.998,
+  21 0.997, 22 0.999, 23 0.999, 24 0.997, 25 0.998, 26 0.999, 31 0.997, 33 0.998. All clean.
+- Named copies: .mvwork/transfer/ssbs/redesign/takes_544p/.
+- Full cut, 35 scenes, 252.44 s, 1344x768, song laid under:
+  `.mvwork/mv_assembly/20261029_225322/ssbs_redesign_FULL_new_scenes_544p_upscaled.mp4`.
+  Not yet watched by the user; motion and look are theirs to judge.
