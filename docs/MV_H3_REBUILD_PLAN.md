@@ -1838,3 +1838,26 @@ already shows her, the building and her hands, which is the user's direction. No
   (scene 1 at song offset 18.36), files `ssbs_scene0_roadatevening_768p_2clips_..._SPLIT_seed20261027.mp4`
   and `ssbs_scene1_chapelwall_768p_2clips_..._SPLIT_seed20261027.mp4`, 1 s sheets in `renders/split_cmp/`.
 - Verdict = the user watching both takes; the frames cannot judge motion.
+- 14:48 both takes landed (46-47 min each on the box, 685 frames = 28.5 s rendered per 18.36 s
+  window, two clips of 362 frames with 39 context frames, clip 2 from ~13.5 s). Floor checks
+  clean: scene 0 r = 0.999, scene 1 r = 0.998 at lag 0. Filed under `renders/` with the SPLIT names
+  above; 1 s sheets + `split_cmp/scene1_end_16_to_19s.png`.
+- Frame reading (NOT a motion verdict; the user watches):
+  Scene 0: static extreme wide, she is tiny at the far end of the road and stays the same size in
+  every frame, moving slowly right along the path. The fixed-scale rewrite held on the frames.
+  BUT two buildings stand on the left from frame 0 (a chapel plus a larger rounded building beside
+  it), held consistently through the take. Both reference pictures (location still 7bb11d6c and the
+  filed opening still df88beb8, which did not enter this graph) show ONE chapel: the second building
+  is invented by the model, the same pattern as the ghost building in the first cut, now present
+  from frame 0 rather than arriving at 1 s.
+  Scene 1: she stands fixed at the wall corner at the same size for the whole window, head turn
+  to camera visible around 7-12 s, camera trucks right (the wall slides). A second chapel appears
+  in the background right from ~7 s and stays. Then a DISSOLVE to a close-up of her (hand at her
+  chin) begins at ~18.1 s and is clearly visible by 18.25 s, against the prompt's "one continuous
+  shot with no cut and no dissolve": the chain re-invents the shot ~4.6 s into clip 2, inside the
+  30 s cap. The scene window ends at 18.36 s, so the last ~0.3 s of the used window is
+  contaminated; trimming the window to 18.0 s would clear it (assembly detail, user's call).
+- Open: the invented second building is now the recurring defect on the reference lane for this
+  location (hypothesis, unverified: the retention text asks to retain the layout of a picture
+  whose chapel sits mid-left, and the model fills the left third with more masonry). Candidate
+  test, not fired: the opening still as the location reference picture too.
