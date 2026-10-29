@@ -783,6 +783,37 @@ def split_scene(script, index, at, second):
     return a, b
 
 
+def move_cut(script, index, to, first=None, second=None):
+    """Move the boundary between scene `index` and scene `index + 1` to `to` seconds, which must
+    lie within SPLIT_SNAP_TOL of a cut point (a boundary is always a cut point; the first-line
+    setup point counts). `first` / `second` are field overrides for the two scenes. A scene whose
+    framing or performance changes loses its filed opening still (it was made for the old shot).
+    Both scenes lose their clips (run write_scene_clips on each). Returns (first, second)."""
+    sections = script["facts"]["sections"]
+    to = float(to)
+    near = snap_cut(to, cut_points(sections))
+    if abs(near - to) > SPLIT_SNAP_TOL:
+        raise ValueError(f"{to}s is not within {SPLIT_SNAP_TOL}s of a cut point (nearest {near}s)")
+    to = near
+    if not 0 <= index < len(script["scenes"]) - 1:
+        raise ValueError(f"scene {index} has no scene after it")
+    a, b = script["scenes"][index], script["scenes"][index + 1]
+    if not a["start"] < to < b["end"]:
+        raise ValueError(f"cut {to}s must fall inside {a['start']}-{b['end']}s (scenes {index} and {index + 1})")
+    for sc, ch in ((a, first), (b, second)):
+        ch = dict(ch or {})
+        if ("framing" in ch and ch["framing"] != sc.get("framing")) or \
+           ("performance" in ch and ch["performance"] != sc.get("performance")):
+            sc.pop("opening_still_id", None)
+        sc.update(ch)
+        sc.pop("plan", None)
+        sc.pop("clips", None)
+    a["end"], b["start"] = to, to
+    _finish_scene(a, sections)
+    _finish_scene(b, sections)
+    return a, b
+
+
 def script_markdown(script):
     """A readable rendering of a script for review (the user reads this, not the JSON)."""
     out = [f"# {script['title']} - music video script", "",
