@@ -118,7 +118,8 @@ def chain_recipe(p, lane="ref2va"):
     return r
 
 
-def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None, first_frame_name=None):
+def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None, first_frame_name=None,
+                   anchor_name=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -143,6 +144,12 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         node's first_frame (the place arrives as pixels to continue, not as a subject to retain),
         NO reference pictures, prompts in the three-section FL2VA format; s.20.18)}
     first_frame_name: upload name of the first-frame still for lane "i2v" (the location still).
+    anchor_name: optional upload of the scene's OPENING still (her already in place) anchored at
+        frame 0 of the FIRST clip only, through MiniMaxH3AddGuide, on the reference lane (opt-in,
+        s.20.36). The references stay as they are for identity and lip-sync; this is pixel
+        guidance for the first frame, not a <Picture n>, so the prompt is unchanged. Later clips
+        continue from the previous clip's context frames and are not anchored. Not combinable
+        with keyframes still_first / still_first_last (two guides on the same frame).
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -195,6 +202,10 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         raise ValueError("clock_fps resizes the audio latent, so the song cannot ride in it: set free_av true")
     if free_av and len(clips) > 1:
         raise ValueError("free_av is for single-clip plates (no song context to chain the clips on)")
+    if anchor_name and (i2v or lane != "ref2va"):
+        raise ValueError("the frame-0 anchor is a reference-lane guide; lane i2v pins the first frame by itself")
+    if anchor_name and keyframes in ("still_first", "still_first_last"):
+        raise ValueError("anchor and keyframes still_first both guide frame 0; choose one")
 
     g = {}
     # --- shared loaders and the patched model (ids follow the example's roles)
@@ -226,6 +237,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         g[str(30 + i)] = {"class_type": "LoadImage", "inputs": {"image": name}}
     if i2v:
         g["30"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
+    if anchor_name:
+        g["29"] = {"class_type": "LoadImage", "inputs": {"image": anchor_name}}
     ref_video_names = list(ref_video_names or [])[:3]
     for k, name in enumerate(ref_video_names):
         g[str(60 + 2 * k)] = {"class_type": "LoadVideo", "inputs": {"file": name}}
@@ -280,6 +293,16 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                           "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": int(idx),
                                      "vae": ["6", 0], "image": still}}
                 positive = [gid, 0]
+        if anchor_name and i == 0:
+            # Frame-0 anchor (opt-in, s.20.36): the scene's opening still, with her and the place
+            # as the first frame should look, guides frame 0 of clip 1 through the same AddGuide
+            # the keyframe plates use (the node centre-resizes the still to the canvas and
+            # VAE-encodes it). The reference pictures are untouched.
+            gid = str(base + 8)
+            g[gid] = {"class_type": "MiniMaxH3AddGuide",
+                      "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": 0,
+                                 "vae": ["6", 0], "image": ["29", 0]}}
+            positive = [gid, 0]
         clip_model = model
         if clock_fps is not None:
             # Clock compression (opt-in, free-AV plates): the pack's node retimes the packed
@@ -324,6 +347,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "ref_video_count": len(ref_video_names) if lane == "ref2va" else 0,
                 "keyframes": keyframes if (keyframes and ref_names) else None,
                 "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
+                "anchor_first": bool(anchor_name),
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved

@@ -330,6 +330,15 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   lines (along the quay, toward the far wall), not toward a destination the still only implies.
   [U one sample]
 
+### Frame-0 anchor on the reference lane (built 2026-10-29, UNTESTED)
+`render_scene {anchor_first: true}` guides frame 0 of the first clip with the scene's filed
+opening still (her already in place, this scene's light) through MiniMaxH3AddGuide while the
+face/body/location pictures stay as references; the prompt is unchanged (one variable). Opt-in;
+refused on the image-to-video lane and with keyframes still_first. Hypothesis under test (plan
+s.20.36): removes the reference lane's frame-0 convergence (her fade-in, building morph, ghost
+building) on her scenes the way the still-as-first-frame did on environment scenes. Does not
+touch clips 2+ of a chain.
+
 ## 9. Resolution and recipe
 
 - **Judge performance takes at the turbo LoRA's trained size, 1344x768.** The same camera

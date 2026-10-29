@@ -1097,6 +1097,13 @@ def _h3_chain(p: dict, meta=None):
                 raise HTTPException(400, f"first_frame_id: {p['first_frame_id']} is not a still in the library")
             with open(ff_path, "rb") as f:
                 first_frame = C.upload_audio(f.read(), os.path.basename(ff_path))
+        anchor = None
+        if p.get("anchor_still_id"):
+            a_path = _lib_image_path(p["anchor_still_id"])
+            if not a_path:
+                raise HTTPException(400, f"anchor_still_id: {p['anchor_still_id']} is not a still in the library")
+            with open(a_path, "rb") as f:
+                anchor = C.upload_audio(f.read(), os.path.basename(a_path))
         if lock_src != src:
             lwav = mv_h3_mod.song_window_wav(lock_src, plan["song_start"], want)
             lock_name = C.upload_audio(lwav, _audio_name("mvlock", lwav))
@@ -1114,9 +1121,10 @@ def _h3_chain(p: dict, meta=None):
 
     def _build(q):
         graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos,
-                                                   first_frame_name=first_frame)
+                                                   first_frame_name=first_frame, anchor_name=anchor)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
         resolved["first_frame_id"] = os.path.basename(str(p["first_frame_id"])) if p.get("first_frame_id") else None
+        resolved["anchor_still_id"] = os.path.basename(str(p["anchor_still_id"])) if p.get("anchor_still_id") else None
         resolved["camera_ref"] = os.path.basename(cam_path) if cam_path else None
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
@@ -1218,6 +1226,25 @@ def mv_render_scene(p: dict):
         first_frame, first_frame_from = scene["opening_still_id"], "scene"      # filed by /api/mv/scene_still
     if not first_frame and lane == "i2v":
         first_frame, first_frame_from = loc_ref, "location"
+    # anchor_first (opt-in, s.20.36): on the reference lane, the scene's opening still (her already
+    # in place, this scene's light) guides frame 0 of the first clip through AddGuide, while the
+    # face/body/location pictures stay as references. anchor_still_id overrides the scene's filed
+    # opening_still_id (and implies anchor_first).
+    anchor_still = (p.get("anchor_still_id") or "").strip() or None
+    anchor_first = bool(p.get("anchor_first")) or bool(anchor_still)
+    anchor_from = "request" if anchor_still else None
+    if anchor_first and lane != "ref2va":
+        raise HTTPException(400, "anchor_first is a reference-lane guide; lane i2v pins the first frame by itself")
+    if anchor_first and not anchor_still:
+        if scene.get("opening_still_id") and _lib_image_path(scene["opening_still_id"]):
+            anchor_still, anchor_from = scene["opening_still_id"], "scene"
+        else:
+            raise HTTPException(400, "anchor_first needs this scene's opening still: file it with /api/mv/scene_still "
+                                     "(or pass anchor_still_id)")
+    if anchor_still and not _lib_image_path(anchor_still):
+        raise HTTPException(400, f"anchor_still_id {anchor_still} is not a still in the library")
+    if anchor_first and keyframes in ("still_first", "still_first_last"):
+        raise HTTPException(400, "anchor_first and keyframes still_first both guide frame 0; choose one")
     prompts = mv_writer_mod.compile_scene(script, scene, with_location=bool(loc_ref), cam_video=bool(p.get("camera_ref")),
                                           lane=lane if lane == "i2v" else None)
     if keyframes and keyframes not in ("still_first_last", "still_first", "still_last"):
@@ -1247,12 +1274,14 @@ def mv_render_scene(p: dict):
                 "distant": distant,
                 "lane": lane, "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                 "first_frame_from": first_frame_from,
+                "anchor_first": anchor_first, "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
+                "anchor_from": anchor_from,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
-                                                 "use_location_library", "dry_run")}
+                                                 "use_location_library", "dry_run", "anchor_first")}
     chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
     q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs, "lane": lane,
-              "first_frame_id": first_frame,
+              "first_frame_id": first_frame, "anchor_still_id": anchor_still if anchor_first else None,
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
@@ -1262,7 +1291,9 @@ def mv_render_scene(p: dict):
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                               "location_ref_from": ref_from, "keyframes": keyframes,
                               "free_av": free_av, "clock_fps": clock_fps, "lane": lane, "distant": distant,
-                              "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None})
+                              "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
+                              "anchor_first": anchor_first, "anchor_from": anchor_from,
+                              "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None})
 
 
 def _mv_load_script(sc_src):

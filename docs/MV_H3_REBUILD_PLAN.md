@@ -1714,3 +1714,36 @@ Reading (hypothesis): 1, 3 and 4 are the reference lane converging from noise ov
 pinning her first frame; both are single-clip close shots that would start from a generated
 opening still under the s.20.33 design. All five are the same missing piece: a first frame that
 already shows her, the building and her hands, which is the user's direction. Nothing fired.
+
+### 20.36 Frame-0 anchor on the reference lane built (2026-10-29 07:20) [built; dry-run; nothing fired]
+- What: `render_scene {anchor_first: true}` (or `anchor_still_id: <library still>`, which implies
+  it) anchors the scene's OPENING still at frame 0 of the FIRST clip through MiniMaxH3AddGuide,
+  on the reference lane, while the face/body/location pictures stay as references for identity
+  and lip-sync. The still is pixel guidance (the node centre-resizes it to the canvas and VAE
+  encodes it), not a <Picture n>, so the compiled prompt is byte-identical to the unanchored run:
+  one variable. Clips 2+ continue from context frames and are not anchored. Opt-in, default off.
+  - chain: `build_h3_chain(..., anchor_name=)`: LoadImage "29", AddGuide at clip-1 node base+8
+    (after any keyframe guides, before the clock node and the guider); refused on lane i2v and
+    with keyframes still_first / still_first_last (two guides on one frame); `resolved.anchor_first`.
+  - submit: `_h3_chain` uploads `anchor_still_id` like `first_frame_id`.
+  - render_scene: precedence request `anchor_still_id` > the scene's filed `opening_still_id`
+    (from /api/mv/scene_still) > 400 "file it first". dry_run and meta carry `anchor_first`,
+    `anchor_still_id`, `anchor_from`.
+- Verified offline (package import): a 3-clip graph has AddGuide 108 {positive 100, latent 100,
+  frame_idx 0, image 29} feeding guider 102; guiders 112 and 122 take the raw conditioning; both
+  guard rails refuse. Backend restarted (box queue empty, no backend jobs).
+- Dry run through the route, scene 0, same knobs as the batch (seed 20261027, turbo, 1344x768):
+  the gate returns 400 until the scene's opening still is filed; with the cliff_road location
+  still passed as a STAND-IN anchor (plumbing only) the dry run shows lane ref2va, distant True,
+  refs [body, cliff_road], 3 clips, anchor_first True, anchor_from request, prompts unchanged.
+  `dry/scene0_anchor_standin_dry.json`.
+- The real test needs scene 0's opening still with her in it: prompt in
+  `dry/scene0_opening_still_prompt.txt` (the writer's own `opening_still` for the scene, plus:
+  far from camera, face not readable, nothing on her head or in her hands, same camera and fixed
+  elements as the location still, THIS scene's pale sky and light rather than the still's storm
+  front, no other people). User generates it from the location still + her body picture, 16:9;
+  file with POST /api/mv/scene_still {script, scene 0}; then fire
+  `render_scene {scene 0, anchor_first true}` = one variable against d15c63bd (same seed, same
+  prompt, same refs). Expected if the anchor works: she and the chapel present at frame 0 with
+  no fade-in and no ghost building in the first seconds. NOT expected to fix the 25-31 s
+  mid-chain wander of a 3-clip chain (clips 2 and 3 are unanchored; open item 7).
