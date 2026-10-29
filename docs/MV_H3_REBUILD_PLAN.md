@@ -1965,7 +1965,7 @@ already shows her, the building and her hands, which is the user's direction. No
   (feedback_fix-callouts-not-legislate): fix the called-out shots against the mostly-good render;
   verify a claimed problem against the audio or the user before proposing any rule.
 
-### 20.43 Scene 0 clip text refreshed and re-fired (2026-10-29 18:35) [fired; result pending]
+### 20.43 Scene 0 clip text refreshed and re-fired (2026-10-29 18:35) [result: doubled again, inside the window]
 
 - Before firing scene 0 "as-is" (user go), the dry run showed the clip prompts still carried the
   frame-relative wording "walk to the right along the ridge" (the move_cut rewrite re-ran pass 2 on
@@ -1986,3 +1986,13 @@ already shows her, the building and her hands, which is the user's direction. No
   and `split_cmp/scene0_rw0_d7d1d6ae_sheet.png`.
 - ONE variable vs the SPLIT scene 0 take: the clip direction wording. Verdict = the user watching:
   one woman, same size throughout, in the 0-18.36 s window.
+- 19:23 landed (46.7 min on the box, 685 frames = 28.54 s, window 18.36 s). Floor check r = 0.999
+  at lag 0. Filed `..._CAMERA_RELATIVE_WALK_seed20261027.mp4`; sheets
+  `split_cmp/scene0_rw0_d7d1d6ae_sheet.png`, `split_cmp/scene0_rw0_figure_crop_0_to_18s.png`.
+- Frame reading (user watches for the verdict): static extreme wide holds, she walks away from the
+  chapel along the ridge toward the cliff edge at a fixed size as written. BUT a SECOND woman in the
+  same wardrobe fades in beside her at about 9 s and walks with her to the end of the window, i.e.
+  INSIDE 0-18.36 s this time (the SPLIT take doubled her at 23.5 s, in the over-render tail). The
+  direction wording was not the lever for the doubling: one seed, one variable, same result. Not
+  a rule. Untested candidates, all hypotheses: seed variance (one other seed), the I2V lane with the
+  filed opening still as frame 0 (the env B-roll lane), a shorter scene. User's call.
