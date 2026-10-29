@@ -170,7 +170,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
     """known: library rows (mv_locations) the model may reuse by id; None/[] = none offered."""
     schema = {
         "concept": "2-3 sentences: what the video is about and how it moves (string)",
-        "look": "one sentence of visual style for every prompt: film stock feel, light, contrast, colour, camera weight (string)",
+        "look": "one sentence of visual style for every prompt: film stock feel, light QUALITY, contrast, colour grade, camera weight ONLY. Never name an object or a light source in it (no candles, lamps, fires, torches, windows): the sentence rides on every exterior prompt too, and a prop named here gets hallucinated into shots that cannot hold it (measured: 'candle and lamp interiors' put lit candles over a cliff road). Interior warmth belongs in that scene's lighting field (string)",
         "wardrobe": "the singer's one outfit, as it appears in the references, in one sentence (string)",
         "locations": [{
             "id": "snake_case id (a KNOWN location's exact id when reusing one)",
@@ -439,7 +439,19 @@ def clip_prompt(script, scene, clips):
     return CLIP_SYSTEM, json.dumps(user, indent=1)
 
 
-def compile_prompt(script, scene, clip, text, env=None, cam_video=False):
+def is_distant(scene):
+    """She is a small figure: an extreme wide, or a wide shot where she is not singing to camera.
+    Such shots get her BODY picture only with a partial retention (measured 2026-10-29, scene 0:
+    a face picture with 'fully_preserved ... face' on a 20 px figure made the model superimpose
+    the portrait over the landscape mid-chain). Not 'medium wide'."""
+    fr = (scene.get("framing") or "").strip().lower()
+    perf = scene.get("performance") or ""
+    if perf == "no_singing_environment":
+        return False
+    return fr.startswith("extreme wide") or (fr.startswith("wide") and perf != "sing_to_camera")
+
+
+def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant=False):
     """The six-section Ref2VA prompt for one clip: fixed boilerplate from the script's references
     and wardrobe + Claude's four fields. The style opening is the script's look sentence.
 
@@ -449,15 +461,28 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False):
     for an environment-only scene on the FL2VA weights). Picture numbering here must match the
     order the route uploads them in: face, body, location.
     cam_video: a manufactured camera-pace clip rides along as <Video 1>; it is declared as pace
-    and movement only (the official guide's camera-reference role, weak_reference)."""
+    and movement only (the official guide's camera-reference role, weak_reference).
+    distant: she is a small figure (is_distant): the route uploads her BODY picture only, so it
+    is <Picture 1> and the location still <Picture 2>; the retention is partial and says her face
+    is not readable at this distance."""
     refs = script["refs"]
     env_only = scene.get("performance") == "no_singing_environment"
-    singer_def = ("<Subject 1> is the singer: her facial identity comes from <Picture 1>; "
-                  "her full-body appearance, body proportions and wardrobe come from <Picture 2>. "
-                  f"{refs['shared']} Wardrobe: {script['wardrobe']}\n")
-    singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the "
-                  "referenced face, eyes, hair, skin, body proportions and the wardrobe exactly, while pose, "
-                  "expression, framing, lighting and movement follow the performance described below.\n")
+    if distant:
+        singer_def = ("<Subject 1> is the singer, seen at a distance: her full-body appearance, build, hair and "
+                      f"wardrobe come from <Picture 1>. Wardrobe: {script['wardrobe']}\n")
+        singer_ret = ("<Subject 1> (appears throughout [Shot 1], a small figure in a wide frame): partially_preserved - "
+                      "retain her silhouette, long dark hair, build and the wardrobe; her face is not readable at this "
+                      "distance and is never shown closer; the framing stays as described below and no close view of "
+                      "her is inserted.\n")
+        loc_pic = 2
+    else:
+        singer_def = ("<Subject 1> is the singer: her facial identity comes from <Picture 1>; "
+                      "her full-body appearance, body proportions and wardrobe come from <Picture 2>. "
+                      f"{refs['shared']} Wardrobe: {script['wardrobe']}\n")
+        singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the "
+                      "referenced face, eyes, hair, skin, body proportions and the wardrobe exactly, while pose, "
+                      "expression, framing, lighting and movement follow the performance described below.\n")
+        loc_pic = 3
 
     def env_def(n, pic):
         return (f"<Subject {n}> is the location, {env['name']}, shown in <Picture {pic}>: "
@@ -481,8 +506,8 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False):
         subject = "subject_definitions:\nNo referenced subjects: this clip is environment only, with no people on screen.\n"
         retention = "retention_analysis:\nNothing to retain from references; the setting, style and palette follow the description below.\n"
     elif env:
-        subject = "subject_definitions:\n" + singer_def + env_def(2, 3)
-        retention = "retention_analysis:\n" + singer_ret + env_ret(2, 3)
+        subject = "subject_definitions:\n" + singer_def + env_def(2, loc_pic)
+        retention = "retention_analysis:\n" + singer_ret + env_ret(2, loc_pic)
     else:
         subject = "subject_definitions:\n" + singer_def
         retention = "retention_analysis:\n" + singer_ret
@@ -579,12 +604,13 @@ def compile_scene(script, scene, with_location=True, cam_video=False, lane=None)
     prompt they have. Returns the list of prompts in clip order.
     lane="i2v": the image-to-video prompt instead (first-frame lane, no references)."""
     env = location_of(script, scene) if with_location else None
+    distant = is_distant(scene)
     out = []
     for c in scene["clips"]:
         if c.get("text") and lane == "i2v":
             out.append(compile_prompt_i2v(script, scene, c, c["text"]))
         elif c.get("text"):
-            out.append(compile_prompt(script, scene, c, c["text"], env=env, cam_video=cam_video))
+            out.append(compile_prompt(script, scene, c, c["text"], env=env, cam_video=cam_video, distant=distant))
         else:
             out.append(c["prompt"])
     return out

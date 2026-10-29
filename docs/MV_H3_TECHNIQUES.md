@@ -83,6 +83,12 @@ function; a rule only in prose is for the writer's system prompt or the person r
   choker appeared at a seam when only the face picture wore it; regenerating the body picture
   with it fixed every frame). [M + U: G1 A1 vs A1b, same seed and prompts]
 - **Never name in the prompt a detail that only one reference shows.** [same evidence]
+- **Distant shots (extreme wide; wide when she is not singing to camera) get the BODY picture
+  only, with a partial retention; the look sentence names no props.** [U + frames 2026-10-29,
+  scene 0: a 3-clip extreme wide with the face picture and "fully_preserved ... face" on a 20 px
+  figure had her reference PORTRAIT superimposed over the landscape mid-chain, with lit candles
+  from the look sentence's "candle and lamp interiors"] Hypothesis H1 under test overnight; rule
+  in `is_distant` / `compile_prompt` / `render_scene` and the pass-1 look schema.
 - **Hero singing is medium close-up or close-up, face toward camera; wide shots are B-roll or
   back-to-camera.** Ref2VA distorts faces on wide shots. [C, consistent with our stills]
   Prose rule in `SCENE_SYSTEM`; `check_prompt` enforces readable-mouth framing on sung clips.

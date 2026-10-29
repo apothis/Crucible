@@ -1594,3 +1594,27 @@ has real footage, 3 built in parallel as the fallback.
 - Same regime still queued: 17 (3 clips, extreme wide, ~60 min) and 24 (2 clips, extreme wide,
   ~40 min) at the end of the queue; single-clip extreme wides 6, 15, 21 (sing_away) are cheap
   data points either way.
+
+### 20.32 Fix applied overnight (2026-10-29 01:35) [built; renders queued; verdict in the morning]
+- User: "just fix it, and report back in the morning". Done under H1 (s.20.31), two moves at once
+  because both are parts of the same leak:
+  1. DISTANT SHOTS GET THE BODY PICTURE ONLY, with a partial retention. `mv_writer.is_distant`:
+     extreme wide, or wide when she is not singing to camera (not medium wide). `compile_prompt`
+     then declares her from <Picture 1> (body) with "partially_preserved - silhouette, hair, build,
+     wardrobe; her face is not readable at this distance and is never shown closer; no close
+     view of her is inserted", and the location still becomes <Picture 2>; `render_scene` uploads
+     only the body still for such scenes (`distant` in dry_run and meta). Close shots unchanged.
+  2. THE LOOK SENTENCE NAMES NO PROPS. Pass-1 schema rule (grade, light quality, contrast, colour,
+     camera weight only; never candles, lamps, fires, windows). The final script's `look` patched
+     in place to drop "candle and lamp interiors burn deep amber" (recorded in `rewrites`);
+     interiors keep their amber through their own lighting fields.
+  Frame-0 convergence on ref2va (chapel morph, her fade-in, H3) is NOT addressed tonight.
+- Queue surgery: pulled the pending same-regime jobs 15, 17, 21, 24 and 12 (6 was already
+  running on the old prompt; kept as a data point). Re-queued 0, 12, 15, 17, 21, 24 on the fix
+  behind the batch (free=False). Scene 0's new job checked on the box: two pictures (body +
+  cliff_road), partial retention in the prompt, three clips. Merged manifest (original batch
+  with the six job ids replaced) is what `batch_status.sh` and the morning assemble read:
+  `renders/batch_manifest_path.txt`.
+- Morning: `batch_status.sh`; frames of the new scene 0 vs the old; then assemble. If scene 0
+  still shows the portrait insertion, H1 is wrong and the candidates are the chain itself (H2)
+  and frame-0 anchoring (H3).

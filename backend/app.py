@@ -1184,6 +1184,9 @@ def mv_render_scene(p: dict):
     singer_refs = [] if env_only else [r for r in (p.get("ref_ids") or []) if r]
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
+    distant = (not env_only) and mv_writer_mod.is_distant(scene)
+    if distant and len(singer_refs) >= 2:
+        singer_refs = [singer_refs[1]]          # body picture only (ref_ids order is face, body); s.20.31 H1
     keyframes = (p.get("keyframes") or "").strip() or None
     lane = (p.get("lane") or "").strip() or None
     if lane not in (None, "i2v", "ref2va"):
@@ -1241,6 +1244,7 @@ def mv_render_scene(p: dict):
                 "ref_ids": [] if lane == "i2v" else singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
                 "clips": len(prompts), "keyframes": keyframes, "free_av": free_av, "clock_fps": clock_fps,
+                "distant": distant,
                 "lane": lane, "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                 "first_frame_from": first_frame_from,
                 "prompts": prompts}
@@ -1257,7 +1261,7 @@ def mv_render_scene(p: dict):
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                               "location_ref_from": ref_from, "keyframes": keyframes,
-                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane,
+                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane, "distant": distant,
                               "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None})
 
 
