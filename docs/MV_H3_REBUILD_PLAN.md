@@ -1678,3 +1678,15 @@ has real footage, 3 built in parallel as the fallback.
   answers the convergence. (b) is the direction the user set; (a) is the cheap fallback.
 - Cut: `POST /api/mv/assemble {batch, name: ssbs_first_cut_20261029}` fired 06:30 (full path:
   trim to window, concat, song under, 1.5 s fade). Result recorded below when it lands.
+- Cut landed 06:25: `.mvwork/mv_assembly/20261029_062450/ssbs_first_cut_20261029.mp4`, 252.44 s,
+  25 scenes, 1344x768 24 fps, song under from 0.00 with the 1.5 s fade; whole-cut envelope r vs
+  the song 0.979 at lag 0.00 (the full song-mux path works). Filed copy:
+  `renders/ssbs_FIRST_FULL_CUT_25scenes_252s_1344x768_20261029.mp4`.
+- Three-frame contact sheets of all 25 scenes (`renders/all_scenes_cmp/`), frames only, the user
+  judges motion: suspect artefacts to look at are scene 22 (a large pale hand-like shape across
+  the left of her face for the whole clip), scene 1 (a gold ornament on her head and a brown
+  object in her hands that are in no prompt), scene 0 and 17 as above. The sing_to_camera scenes
+  (2, 5, 7, 10, 11, 14, 16, 18, 20, 23) look like themselves frame to frame; the interiors keep
+  their candles; the people scenes (3, 4, 13, 18, 19) hold their extras.
+- Next (user's direction, s.20.33): the opening-still frame-0 anchor on the reference lane,
+  one-variable on scene 0, then a sing_to_camera check. Nothing fired until the user says so.
