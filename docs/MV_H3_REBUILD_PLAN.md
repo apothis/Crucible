@@ -1943,3 +1943,15 @@ already shows her, the building and her hands, which is the user's direction. No
 - What this tests: the first-line setup rule as ONE variable (silent two seconds, then the first
   verse lines to the lens, single clip, no chain hand-off). Verdict = the user watching: does she
   hold the lens silently before the first word, and does the mouth read on the words.
+- 16:52 landed (13.7 min on the box, 243 frames = 10.125 s). Floor check r = 0.998 at lag 0. Filed
+  `ssbs_scene2_voiceatevening_768p_1clip_mcu_static_singtocamera_FIRSTLINE_SETUP_seed20261027.mp4`;
+  sheets `split_cmp/scene2_4ac3db3d_sheet_halfsec.png`, `split_cmp/scene2_mouth_0_to_3s.png`.
+- Frame reading (user watches for the verdict): static medium close-up holds for the whole clip,
+  same size, hand on the wall, chapel gable soft behind, no second building, no re-invention in
+  10 s. BUT her mouth is open and moving from frame 0: open shapes at 0.00, 0.25, 0.50, 0.75 s
+  and on, through the two seconds the prompt wrote as "silent and watchful, lips closed and
+  relaxed". The silent lead-in did not hold on the picture. Hypothesis, unverified: in a
+  sing_to_camera clip the model starts mouth motion at frame 0 regardless of where the vocal
+  enters (the batch's sing_to_camera scenes all began on a line, so this was never visible);
+  alternative: something vocal-like in the track at 35.22-37.22 (check the vocal stem's energy
+  there before blaming the model).
