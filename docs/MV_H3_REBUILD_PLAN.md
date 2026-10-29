@@ -1747,3 +1747,11 @@ already shows her, the building and her hands, which is the user's direction. No
   prompt, same refs). Expected if the anchor works: she and the chapel present at frame 0 with
   no fade-in and no ghost building in the first seconds. NOT expected to fix the 25-31 s
   mid-chain wander of a 3-clip chain (clips 2 and 3 are unanchored; open item 7).
+- 2026-10-29 07:40 FIRED (user go): scene 0 opening still from the user filed as
+  df88beb822f341d68285109e5e22f4e5 (1672x941; chapel left third, her tiny at the far end of the
+  road, pale evening sky, nothing on her head or in her hands), recorded on the scene. Dry run
+  took it from the scene (anchor_from scene), prompts identical to the overnight compile. Job
+  2a25065c submitted; the running graph on the box carries LoadImage 29 = that still and
+  AddGuide 108 at frame 0 on clip 1 (checked on :8188/queue). One variable against d15c63bd.
+  Handover script `renders/handover_scene0_anchor.sh` (floor check, named copy, 1 s sheet, old
+  vs new first 8 s at 0.5 s steps).
