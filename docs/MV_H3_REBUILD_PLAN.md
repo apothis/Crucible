@@ -1903,3 +1903,28 @@ already shows her, the building and her hands, which is the user's direction. No
   close-up under words flagged; a compliant 35.22-44.76 MCU sing_to_camera scene clean.
 - Not run: a rewrite of the split script under the new rules (scene 1 would end at 35.22 and
   scene 2 become an MCU sing_to_camera setup). Backend restarted so the routes carry the code.
+
+### 20.41 Split script rewritten under the new rules: first-line setup (2026-10-29 15:47) [built; no GPU]
+- New helper `move_cut` + `POST /api/mv/move_cut {script, scene, to, first?, second?}`: moves the
+  boundary between a scene and the next to a cut point (within 1 s, the first-line setup point
+  counts), overrides fields on either side, drops a filed still from a scene whose framing or
+  performance changes, pass 2 on both, saves `<script>_mc<idx>_<stamp>.json`. Offline: boundary
+  1|2 -> 35.22, scene 3 untouched, 30.0 s rejected as off-cut.
+- Run (user go, 42 s): request `rewrite/move_cut_scene1_request.json`. Scene 2 fields are MY
+  proposal (creative, user's to change): title "The voice at evening", medium close-up,
+  sing_to_camera, static camera, keep the drystone wall and her shoulders, one hand on the stones,
+  silent for the two seconds before the first word, then the verse to the lens; opening-still
+  prompt in the scene (`dry/scene2_voice_at_evening_opening_still_prompt.txt`, attach cliff_wall
+  still 88d6056e + face + body).
+- Result `..._sp0_20261029_113024_mc1_20261029_154720.json` (working script pointer moved;
+  previous name in `rewrite/final_script_name_before_move_cut.txt`), 26 scenes, scene problems
+  across the whole script: none. Scene 1 "At the chapel wall" 18.36-35.22 (16.86 s, 2 clips, still
+  18adfe3c kept): same shot, head turn to the lens, no singing; the earlier dissolve at 18.1 s
+  would now fall past the window. Scene 2 35.22-44.76 (9.54 s, ONE clip of 10.12 s): "For the first
+  two seconds she is silent and watchful, lips closed ... Then sings <d>There's a voice that walks
+  at evening</d> ...", static, "her size in frame is the same at the end as at the start".
+- Note for the user: scenes 2 and 3 are now back-to-back medium close-ups, sing_to_camera, same
+  location (static, then push-in); a jump-cut risk. A change of angle on scene 3 is a one-field
+  rewrite if wanted.
+- Not fired. Scene 2 needs its opening still before its first-frame tests; the reference lane
+  render needs nothing new.
