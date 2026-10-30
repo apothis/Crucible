@@ -1913,8 +1913,92 @@ def mv_write(p: dict):
         opt-in - measured to pull another video's places into a song they do not fit);
         "none": invent everything; or a list of library ids to offer),
         locks? ([{job_id, script, scene, start?, end?}]: takes the user passed; kept as they are at
-        their windows, the writer fills only the gaps; see _mv_resolve_locks)}.
+        their windows, the writer fills only the gaps; see _mv_resolve_locks),
+        keep_locks_from? (a saved script name: its locked takes become `locks`, see
+        _mv_locks_from_script), async? (true: run in the background -> {job_id}; poll
+        GET /api/mv/write_job/{id}, the Music Video tab's writer)}.
     Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
+    if p.get("async"):
+        _mv_write_check(p)
+        jid = uuid.uuid4().hex
+        with LOCK:
+            MV_WRITES[jid] = {"status": "writing", "created": time.time(), "log": [], "title": p.get("title")}
+
+        def run():
+            try:
+                script = _mv_write_run(dict(p), on_log=lambda s: MV_WRITES[jid]["log"].append(s))
+                with LOCK:
+                    MV_WRITES[jid].update(status="done", script=os.path.basename(script["files"]["json"]),
+                                          scenes=len(script.get("scenes") or []))
+            except HTTPException as e:
+                with LOCK:
+                    MV_WRITES[jid].update(status="error", error=e.detail if isinstance(e.detail, str) else json.dumps(e.detail))
+            except Exception as e:
+                with LOCK:
+                    MV_WRITES[jid].update(status="error", error=str(e))
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"job_id": jid, "status": "writing"}
+    return _mv_write_run(p)
+
+
+# background writer runs of the Music Video tab; kept out of JOBS so ComfyUI progress events that
+# carry no prompt_id are never attributed to a writer run
+MV_WRITES: Dict[str, dict] = {}
+
+
+@app.get("/api/mv/write_job/{jid}")
+def mv_write_job(jid: str):
+    with LOCK:
+        j = MV_WRITES.get(jid)
+        if not j:
+            raise HTTPException(404, "no such writer run (the backend may have restarted)")
+        return {"id": jid, "status": j["status"], "log": j["log"][-40:], "script": j.get("script"),
+                "scenes": j.get("scenes"), "error": j.get("error"), "title": j.get("title"),
+                "seconds": round(time.time() - j["created"], 1)}
+
+
+def _mv_locks_from_script(name):
+    """A saved script's locked takes as writer locks. scene.locked records the take's frame-0 song
+    time (take_start) and the script it was rendered under; the writer's lock wants a scene of
+    that script whose start is that time, so it is looked up there (a lock may trim the take, so
+    the window is the locking script's scene window)."""
+    script, _ = _mv_load_script(name)
+    out, skipped = [], []
+    for sc in script["scenes"]:
+        L = sc.get("locked")
+        if not L or not L.get("job_id"):
+            continue
+        try:
+            src, src_name = _mv_load_script(L.get("script"))
+        except HTTPException:
+            src, src_name = None, None
+        hit = None
+        for cand, cname in ((src, src_name), (script, name)):
+            if not cand:
+                continue
+            hit = next((x for x in cand["scenes"] if abs(float(x["start"]) - float(L.get("take_start", sc["start"]))) < 0.01), None)
+            if hit:
+                out.append({"job_id": L["job_id"], "script": cname, "scene": hit["index"],
+                            "start": float(sc["start"]), "end": float(sc["end"])})
+                break
+        if not hit:
+            skipped.append(sc["index"])
+    return out, skipped
+
+
+def _mv_write_check(p):
+    for k in ("audio_id", "title", "lyrics", "refs"):
+        if not p.get(k):
+            raise HTTPException(400, f"{k} is required")
+    refs = p["refs"]
+    if not all(refs.get(k) for k in ("face", "body", "shared")):
+        raise HTTPException(400, "refs needs face, body and shared descriptions")
+    if not _lib_source_path(p["audio_id"]):
+        raise HTTPException(400, "audio_id must reference a library track")
+
+
+def _mv_write_run(p, on_log=None):
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
             raise HTTPException(400, f"{k} is required")
@@ -1939,11 +2023,20 @@ def mv_write(p: dict):
     except ValueError as e:
         raise HTTPException(400, str(e))
     known = [r for r in known if not r.get("still_id") or _lib_image_path(r["still_id"])]
-    locks = _mv_resolve_locks(p.get("locks"))
 
     def _log(s):
         print(s)
         log_lines.append(s)
+        if on_log:
+            on_log(s)
+
+    raw_locks = list(p.get("locks") or [])
+    if p.get("keep_locks_from"):
+        kept, skipped = _mv_locks_from_script(p["keep_locks_from"])
+        raw_locks += kept
+        _log(f"keeping {len(kept)} locked takes from {os.path.basename(str(p['keep_locks_from']))}"
+             + (f"; could not place scenes {skipped}" if skipped else ""))
+    locks = _mv_resolve_locks(raw_locks)
 
     try:
         script = mv_writer_mod.write_script(
@@ -2257,6 +2350,35 @@ def mv_scripts(audio_id: str = ""):
     return mv_takes_mod.list_scripts(LIBRARY, audio_id or None)
 
 
+@app.get("/api/mv/song_info")
+def mv_song_info(audio_id: str):
+    """What the tab's writer needs about a library song: its title and style (walked back through
+    params.source to the original take: a naturalized or mastered copy carries neither), length,
+    and whether a vocal stem is cached (lyric alignment prefers it; POST /api/mv/stems makes it)."""
+    aid = os.path.basename(audio_id)
+    if not _lib_source_path(aid):
+        raise HTTPException(404, "no such library track")
+    title, style, chain, cur = "", "", [], aid
+    with db() as conn:
+        while cur and cur not in chain and len(chain) < 12:
+            chain.append(cur)
+            r = conn.execute("SELECT params FROM jobs WHERE id=?", (cur,)).fetchone()
+            if not r:
+                break
+            try:
+                prm = json.loads(r["params"] or "{}")
+            except Exception:
+                break
+            title = title or str(prm.get("title") or "")
+            style = style or str(prm.get("style") or prm.get("tags") or "")
+            src = prm.get("source")
+            cur = src if isinstance(src, str) and re.fullmatch(r"[0-9a-f-]{32,36}", src or "") else None
+    title = re.sub(r"\s*\((naturalized|mastered|master|mixed|remaster(ed)?)\)\s*$", "", title, flags=re.I).strip()
+    return {"audio_id": aid, "title": title, "style": style, "chain": chain,
+            "seconds": musicvideo_mod.audio_duration(_lib_source_path(aid)),
+            "stem": bool(mv_stems_mod.vocal_stem_path(LIBRARY, aid))}
+
+
 @app.get("/api/mv/script/{name}")
 def mv_script_get(name: str):
     script, nm = _mv_load_script(os.path.basename(name))
@@ -2434,9 +2556,17 @@ def _flashvsr_plus_submit(video_id, p=None):
         r = conn.execute("SELECT params FROM jobs WHERE id=?", (video_id,)).fetchone()
     if r:
         try:
-            src_title = str(json.loads(r["params"] or "{}").get("title") or "")
+            sp = json.loads(r["params"] or "{}")
         except Exception:
-            src_title = ""
+            sp = {}
+        src_title = str(sp.get("title") or "")
+        if not src_title and sp.get("scene_index") is not None:
+            # takes rendered before takes carried a title: name it the way render_scene does now
+            try:
+                stitle = _mv_load_script(sp.get("script"))[0].get("title") or ""
+            except Exception:
+                stitle = ""
+            src_title = f"{stitle} / {int(sp['scene_index']):02d} {sp.get('scene_title') or ''}".strip(" /")
     try:
         with open(vid, "rb") as f:
             ref = C.upload_audio(f.read(), os.path.basename(vid))    # <take id>.mp4: unique per clip
@@ -3118,8 +3248,12 @@ def youtube_livecover_prompt(body: dict):
 def youtube_metadata(body: dict):
     """The upload text package for a finished video: title line, description (strong
     keyword-bearing first lines, credits, hashtags at the end) and a short tags list.
-    Body: {title, artist?, song?: {title,tags,sections[{lyrics}]}, notes?, provider?, model?}.
+    Body: {title, artist?, song?: {title,tags,sections[{lyrics}]}, notes?, provider?, model?,
+    kind? ("audio" default; "music_video" = the Music Video tab: an official music video, so the
+    title says (Official Music Video) and the description may speak of the video)}.
     Returns {video_title, description, tags:[...]} - all paste-ready for YouTube Studio."""
+    mv = str(body.get("kind") or "").lower() == "music_video"
+    label = "Official Music Video" if mv else "Official Audio"
     song = body.get("song") or {}
     title = str(body.get("title") or song.get("title") or "").strip()
     if not title:
@@ -3143,9 +3277,10 @@ def youtube_metadata(body: dict):
     hints = [c for c in hints if c and len(c.split()) <= 4 and not any(ch.isdigit() for ch in c)
              and not any(w in c.lower() for w in _spec_words)]
     tags = ", ".join(hints)
-    system = ("You write YouTube upload metadata for a band's official-audio music uploads. "
+    system = ("You write YouTube upload metadata for a band's "
+              + ("official music video uploads (a filmed story set to the song). " if mv else "official-audio music uploads. ") +
               "Output STRICT JSON ONLY (no prose, no markdown fences). You know how YouTube "
-              "search works: the title carries 'Artist - Song (Official Audio)'; the first "
+              f"search works: the title carries 'Artist - Song ({label})'; the first "
               "two description lines are indexed hardest and shown above the fold, so they "
               "carry the genre words, mood words and a 'for fans of X, Y' line naming 2-3 "
               "real bands the song genuinely resembles; hashtags go at the END of the "
@@ -3162,7 +3297,7 @@ Lyrics excerpt (may be empty):
 Extra notes: {str(body.get("notes") or "").strip() or "(none)"}
 
 Return ONLY a JSON object:
-{{"video_title": "<{artist + ' - ' if artist else ''}{title} (Official Audio)> or a better variant, under 100 chars",
+{{"video_title": "<{artist + ' - ' if artist else ''}{title} ({label})> or a better variant, under 100 chars",
   "description": "<the full description: 2 strong opening lines with genre/mood keywords and a 'For fans of ...' line; a blank line; 1-2 short lines about the song's story drawn from the lyrics; a blank line; a credits line naming {artist or 'the band'}; then ONE final line of 4-6 hashtags, genre first (e.g. #symphonicmetal), no spaces inside a tag>",
   "tags": [<8-12 short strings for YouTube's tags field: the artist name, the song title, genre phrases, and 2-3 plausible misspellings of the artist name>]}}"""
     claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
@@ -3172,7 +3307,7 @@ Return ONLY a JSON object:
         parsed = json.loads(m.group(0) if m else text)
     except Exception as e:
         raise HTTPException(500, f"metadata generation failed ({provider}): {e}")
-    return {"video_title": str(parsed.get("video_title") or f"{artist} - {title} (Official Audio)").strip()[:100],
+    return {"video_title": str(parsed.get("video_title") or f"{artist} - {title} ({label})").strip()[:100],
             "description": str(parsed.get("description") or "").strip(),
             "tags": [str(t).strip() for t in (parsed.get("tags") or []) if str(t).strip()][:15],
             "provider": provider}

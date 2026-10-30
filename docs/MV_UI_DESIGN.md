@@ -104,6 +104,15 @@ Stages are not gates: the user can jump, and each shows what it is waiting on.
   concept/look/wardrobe fields (the writer's inputs) and the lead's refs (face/body still pickers,
   defaulting to the last used).
 
+Built 2026-10-30 (evening): the track picker plus "import a song from disk" (POST
+/api/import/upload, a source track), the song's facts (GET /api/mv/song_info: title and style
+walked back through params.source, length, vocal stem cached, "make vocal stem" on the box), and
+"Write a new script for this track" (POST /api/mv/write async: true, polled at GET
+/api/mv/write_job/{id}; lyrics pasted or filled from the open project, refs copied from the open
+script, places mode, keep_locks_from = the open script's locked takes). Section 5 of the tab is
+the YouTube tab's upload text writer with kind "music_video" (title says Official Music Video,
+the script's concept goes in as a note).
+
 ### 3.2 Script
 - The script header: title, concept, look, wardrobe, arc; the writer's design recipe output
   read-only; refresh facts button (/api/mv/refresh_facts).

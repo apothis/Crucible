@@ -120,6 +120,10 @@ export const api = {
   mvIdent: (p: { title: string; sub?: string; edge?: string }) => jpost("/api/mv/ident", p),   // Remotion on the Mac, cached
   mvAssemble: (p: unknown) => jpost("/api/mv/assemble", p),           // async: true -> {job_id}
   mvAssembleResult: (id: string) => jget(`/api/mv/assemble_result/${id}`),
+  mvSongInfo: (audioId: string) => jget(`/api/mv/song_info?audio_id=${encodeURIComponent(audioId)}`),   // title/style via the source chain, length, stem cached
+  mvStems: (p: { audio_id: string; force?: boolean }) => jpost("/api/mv/stems", p),   // vocal stem on the box
+  mvWrite: (p: unknown) => jpost("/api/mv/write", p),                 // async: true -> {job_id}
+  mvWriteJob: (id: string) => jget(`/api/mv/write_job/${id}`),
   mvUpscaleTakes: (p: { jobs: Record<string, string>; scale?: number; force?: boolean }) => jpost("/api/mv/upscale_takes", p),   // FlashVSR+ on the box
   mvAssemblies: (script: string) => jget(`/api/mv/assemblies?script=${encodeURIComponent(script)}`),   // earlier cuts + their take maps       // diffusion upscale of a library clip
   ytWordmarkOptions: () => jget("/api/youtube/wordmark_options"),  // fonts/treatments + saved global choice

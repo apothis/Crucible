@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type Config, type LibItem } from "./api";
-import { useDrafts } from "./drafts";
+import { useDraftCtx, useDrafts } from "./drafts";
 import { Field, GhostButton, PrimaryButton, SectionTitle, inp, type RunCtx } from "./ui";
 import { openLightbox } from "./Lightbox";
 
@@ -18,7 +18,8 @@ type Scene = {
   opening_still?: string; opening_still_id?: string; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[];
 };
-type Script = { title: string; audio_id: string; duration: number; concept?: string; look?: string; wardrobe?: string; arc?: string; scenes: Scene[] };
+type Refs = { face?: string; body?: string; shared?: string };
+type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; scenes: Scene[] };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
@@ -66,7 +67,7 @@ function Row({ k, v }: { k: string; v?: ReactNode }) {
   );
 }
 
-export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; library: LibItem[] } & RunCtx) {
+export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean; library: LibItem[] } & RunCtx) {
   const d = useDrafts("mv");
   const [audioId, setAudioId] = d.use("audioId", "");
   const [scriptName, setScriptName] = d.use("scriptName", "");
@@ -255,8 +256,13 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
           <input type="checkbox" checked={allScripts} onChange={(e) => setAllScripts(e.target.checked)} /> show scripts for every song
         </label>
       </div>
+      <SongPanel audioId={audioId} onImported={(id) => { onDone(); setAudioId(id); setScriptName(""); setSel(null); }} />
+      {audioId && (
+        <WriterPanel audioId={audioId} loaded={script && script.audio_id === audioId ? { name: scriptName, script } : null}
+                     onWritten={async (name) => { await loadScripts(); setScriptName(name); setSel(null); setDry({}); }} />
+      )}
       {scripts.length === 0 ? (
-        <div className="text-xs text-[var(--color-muted)]">No saved scripts{audioId && !allScripts ? " for this track" : ""}. Scripts are written with /api/mv/write (the tab's writer lands in phase 3).</div>
+        <div className="text-xs text-[var(--color-muted)]">No saved scripts{audioId && !allScripts ? " for this track" : ""} yet: write one above.</div>
       ) : (
         <div className="max-h-56 overflow-auto rounded border border-[var(--color-line)]">
           <table className="w-full text-xs">
@@ -519,6 +525,8 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
 
       {script && <AssembleStage script={script} scriptName={scriptName} takes={takes} onUpscaleQueued={refreshTakes} />}
 
+      {script && <UploadText script={script} />}
+
       {err && <div className="rounded border border-red-800 p-2 text-xs text-red-300">{err}</div>}
     </div>
   );
@@ -741,6 +749,246 @@ function AssembleStage({ script, scriptName, takes, onUpscaleQueued }: { script:
           </div>
           {result.media_url ? <video src={result.media_url} controls preload="metadata" className="w-full rounded bg-black" /> : null}
           <div className="font-mono text-[10px] text-[var(--color-muted)]">{result.output}</div>
+        </div>
+      )}
+      {err && <div className="rounded border border-red-800 p-2 text-xs text-red-300">{err}</div>}
+    </div>
+  );
+}
+
+// ---------- 1 Song: pick from the library or import from disk, its facts, the vocal stem ----------
+type SongInfo = { audio_id: string; title: string; style: string; seconds: number | null; stem: boolean };
+
+function SongPanel({ audioId, onImported }: { audioId: string; onImported: (id: string) => void }) {
+  const [info, setInfo] = useState<SongInfo | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [fileTitle, setFileTitle] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    if (!audioId) { setInfo(null); return; }
+    api.mvSongInfo(audioId).then((r) => { if (alive) setInfo(r as SongInfo); }).catch(() => { if (alive) setInfo(null); });
+    return () => { alive = false; };
+  }, [audioId, tick]);
+  const importFile = async () => {
+    if (!file) return;
+    setErr(""); setBusy("importing...");
+    try {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      if (fileTitle.trim()) fd.append("title", fileTitle.trim());
+      const r = await api.importUpload(fd);
+      setFile(null); setFileTitle("");
+      onImported(r.job_id);
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusy(""); }
+  };
+  const makeStem = async () => {
+    if (!window.confirm("Separate the vocal stem on the box now? (BS-RoFormer; frees ComfyUI first, about a minute)")) return;
+    setErr(""); setBusy("separating the vocals on the box...");
+    try { await api.mvStems({ audio_id: audioId }); setTick((n) => n + 1); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusy(""); }
+  };
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
+        <div className="text-xs font-semibold">Or import a song from disk</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="file" accept="audio/*,.wav,.flac,.mp3" className="text-[11px]" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <input className={`${inp} max-w-56`} value={fileTitle} onChange={(e) => setFileTitle(e.target.value)} placeholder="title (defaults to the file name)" />
+          <GhostButton onClick={importFile} disabled={!file || !!busy}>import and use</GhostButton>
+        </div>
+        <div className="text-[10px] text-[var(--color-muted)]">wav, flac and mp3 are kept as they are; other formats become mp3. It lands in the Library as a source track.</div>
+      </div>
+      {info && (
+        <div className="rounded border border-[var(--color-line)] p-3 space-y-1.5 text-xs">
+          <div className="font-semibold">{info.title || "(untitled track)"} <span className="font-normal text-[var(--color-muted)]">{info.seconds ? fmt(info.seconds) : ""}</span></div>
+          {info.style && <div className="line-clamp-2 text-[11px] text-[var(--color-muted)]" title={info.style}>{info.style}</div>}
+          <div className="flex flex-wrap items-center gap-2">
+            {info.stem ? <Pill tone="ok" title="lyric timing is measured on the isolated vocals">vocal stem cached</Pill>
+              : <><Pill tone="warn" title="the writer times the lyrics on the full mix without it">no vocal stem</Pill>
+                  <GhostButton onClick={makeStem} disabled={!!busy}>make vocal stem (box)</GhostButton></>}
+          </div>
+        </div>
+      )}
+      {(busy || err) && <div className={`text-[11px] lg:col-span-2 ${err ? "text-red-400" : "text-[var(--color-muted)]"}`}>{err || busy}</div>}
+    </div>
+  );
+}
+
+// ---------- the writer: Claude writes a whole script for the song (no GPU; the subscription CLI) ----------
+function lyricsFromProject(get: (ns: string, key: string) => unknown): string {
+  const suno = (get("suno", "lyrics") as string) || "";
+  if (suno.trim()) return suno;
+  const m3 = (get("music3", "lyrics") as string) || "";
+  if (m3.trim()) return m3;
+  const blocks = (get("song", "blocks") as { type?: string; lyrics?: string }[] | undefined) || [];
+  return blocks.filter((b) => (b.lyrics || "").trim()).map((b) => `[${b.type || "Section"}]\n${(b.lyrics || "").trim()}`).join("\n\n");
+}
+
+function WriterPanel({ audioId, loaded, onWritten }: { audioId: string; loaded: { name: string; script: Script } | null; onWritten: (name: string) => Promise<void> }) {
+  const d = useDrafts("mv");
+  const drafts = useDraftCtx();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = d.use("wTitle", "");
+  const [style, setStyle] = d.use("wStyle", "");
+  const [lyrics, setLyrics] = d.use("wLyrics", "");
+  const [concept, setConcept] = d.use("wConcept", "");
+  const [face, setFace] = d.use("wFace", "");
+  const [body, setBody] = d.use("wBody", "");
+  const [shared, setShared] = d.use("wShared", "");
+  const [locations, setLocations] = d.use("wLocations", "auto");
+  const [keepLocks, setKeepLocks] = d.use("wKeepLocks", true);
+  const [forTrack, setForTrack] = d.use("wTrack", "");
+  const [job, setJob] = useState<{ id: string; status: string; log: string[]; seconds: number; error?: string | null; script?: string | null } | null>(null);
+  const [err, setErr] = useState("");
+
+  // a different track: start from its own title and style (the refs describe the lead, so they stay)
+  useEffect(() => {
+    if (!audioId || forTrack === audioId) return;
+    let alive = true;
+    api.mvSongInfo(audioId).then((r) => {
+      if (!alive) return;
+      const i = r as SongInfo;
+      setTitle(i.title || ""); setStyle(i.style || ""); setForTrack(audioId);
+    }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioId]);
+  const fromScript = () => {
+    if (!loaded) return;
+    const r = loaded.script.refs || {};
+    setFace(r.face || ""); setBody(r.body || ""); setShared(r.shared || "");
+    if (!concept.trim() && loaded.script.concept) setConcept(loaded.script.concept);
+  };
+  const nLocks = loaded ? loaded.script.scenes.filter((s) => s.locked).length : 0;
+  const ready = title.trim() && lyrics.trim() && face.trim() && body.trim() && shared.trim();
+
+  const write = async () => {
+    if (!ready) { setErr("title, lyrics and the three reference descriptions are needed"); return; }
+    if (!window.confirm(`Write a new script for "${title}"? Claude (the subscription, no GPU) writes the whole video; it takes several minutes.${keepLocks && nLocks ? ` The ${nLocks} locked takes of the open script are kept.` : ""}`)) return;
+    setErr("");
+    try {
+      const r = await api.mvWrite({
+        async: true, audio_id: audioId, title: title.trim(), style: style.trim(), lyrics, concept: concept.trim() || undefined,
+        refs: { face: face.trim(), body: body.trim(), shared: shared.trim() }, locations,
+        keep_locks_from: keepLocks && nLocks && loaded ? loaded.name : undefined,
+      });
+      setJob({ id: r.job_id, status: "writing", log: [], seconds: 0 });
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  useEffect(() => {
+    if (!job || job.status !== "writing") return;
+    const h = window.setInterval(async () => {
+      try {
+        const r = await api.mvWriteJob(job.id);
+        setJob({ id: job.id, status: r.status, log: r.log || [], seconds: r.seconds, error: r.error, script: r.script });
+        if (r.status === "done" && r.script) { window.clearInterval(h); await onWritten(r.script); }
+        if (r.status === "error") window.clearInterval(h);
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => window.clearInterval(h);
+  }, [job?.id, job?.status]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
+      <button className="flex w-full items-center gap-2 text-left text-xs font-semibold" onClick={() => setOpen(!open)}>
+        <span>{open ? "v" : ">"}</span> Write a new script for this track
+        {job?.status === "writing" && <span className="font-normal text-[var(--color-muted)]">writing... {Math.round(job.seconds)} s</span>}
+      </button>
+      {open && (
+        <div className="space-y-2">
+          <div className="grid gap-2 md:grid-cols-2">
+            <Field label="title"><input className={inp} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+            <Field label="style" hint="the song's style line (genre, mood); filled from the track"><input className={inp} value={style} onChange={(e) => setStyle(e.target.value)} /></Field>
+          </div>
+          <Field label="lyrics" hint="section-tagged ([Verse], [Chorus] ...); the writer times them on this take">
+            <textarea className={`${inp} h-40 font-mono text-[11px]`} value={lyrics} onChange={(e) => setLyrics(e.target.value)} placeholder="paste the lyrics, or fill them from the open project" />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <GhostButton onClick={() => { const t = lyricsFromProject(drafts.get); if (t.trim()) setLyrics(t); else setErr("the open project has no lyrics (Suno, Music 3 or Song builder)"); }}>lyrics from the open project</GhostButton>
+            {loaded && <GhostButton onClick={fromScript} title="the lead's reference descriptions (and concept, if empty) of the open script">refs from the open script</GhostButton>}
+          </div>
+          <Field label="concept" hint="optional: your idea for the video; empty = Claude proposes one">
+            <textarea className={`${inp} h-16`} value={concept} onChange={(e) => setConcept(e.target.value)} />
+          </Field>
+          <div className="grid gap-2 md:grid-cols-3">
+            <Field label="face ref" hint="one line: what the face still shows"><textarea className={`${inp} h-20 text-[11px]`} value={face} onChange={(e) => setFace(e.target.value)} /></Field>
+            <Field label="body ref" hint="one line: what the full-length still shows"><textarea className={`${inp} h-20 text-[11px]`} value={body} onChange={(e) => setBody(e.target.value)} /></Field>
+            <Field label="shared" hint="what both stills show (the lead's constants)"><textarea className={`${inp} h-20 text-[11px]`} value={shared} onChange={(e) => setShared(e.target.value)} /></Field>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="places">
+              <select className={inp} value={locations} onChange={(e) => setLocations(e.target.value)}>
+                <option value="auto">this song's places (default)</option>
+                <option value="library">every place with a still</option>
+                <option value="none">invent all</option>
+              </select>
+            </Field>
+            {nLocks > 0 && <label className="flex items-center gap-2 pb-2 text-xs"><input type="checkbox" checked={keepLocks} onChange={(e) => setKeepLocks(e.target.checked)} /> keep the open script's {nLocks} locked takes</label>}
+            <PrimaryButton onClick={write} disabled={!ready || job?.status === "writing"}>{job?.status === "writing" ? "writing..." : "Write the script"}</PrimaryButton>
+          </div>
+          {job && (
+            <div className={`rounded border p-2 text-[11px] ${job.status === "error" ? "border-red-800" : job.status === "done" ? "border-emerald-800" : "border-[var(--color-line)]"}`}>
+              <div>{job.status === "writing" ? `writing, ${Math.round(job.seconds)} s` : job.status === "done" ? `written: ${job.script} (opened below)` : `failed: ${job.error}`}</div>
+              {job.log.length > 0 && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px] text-[var(--color-muted)]">{job.log.slice(-12).join("\n")}</pre>}
+            </div>
+          )}
+          {err && <div className="text-[11px] text-red-400">{err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- 5 YouTube upload text: the YouTube tab's writer, in its music-video form ----------
+function UploadText({ script }: { script: Script }) {
+  const d = useDrafts("mv");
+  const drafts = useDraftCtx();
+  const [notes, setNotes] = d.use("ytNotes", "");
+  const [meta, setMeta] = d.use<{ video_title: string; description: string; tags: string[]; for?: string } | null>("ytMeta", null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const write = async () => {
+    setErr(""); setBusy(true);
+    try {
+      const lyr = ((drafts.get("mv", "wLyrics") as string) || "").trim() || lyricsFromProject(drafts.get);
+      const song = { title: script.title, tags: script.style || "", sections: lyr.trim() ? [{ lyrics: lyr }] : [] };
+      const extra = [script.concept ? `The video: ${script.concept}` : "", notes.trim()].filter(Boolean).join("\n");
+      const r = await api.ytMetadata({ title: script.title, song, notes: extra || undefined, kind: "music_video" }) as { video_title: string; description: string; tags: string[] };
+      setMeta({ ...r, for: script.title });
+    } catch (e) { setErr("Upload text failed: " + (e as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-3">
+      <SectionTitle>5 · YouTube upload text</SectionTitle>
+      <Field label="notes" hint="optional: anything the description should mention">
+        <input className={inp} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+      <GhostButton onClick={write} disabled={busy} title="Claude writes the title line, description (keywords + hashtags) and tags from the song, the lyrics and the video's concept">
+        {busy ? "Writing..." : meta ? "Rewrite upload text" : "Write upload text"}
+      </GhostButton>
+      {meta && (
+        <div className="space-y-2">
+          {meta.for && meta.for !== script.title && <div className="text-[11px] text-amber-400">written for "{meta.for}"; rewrite it for this song</div>}
+          {([["Video title", meta.video_title], ["Description", meta.description], ["Tags (comma-separated)", meta.tags.join(", ")]] as const).map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel2)] p-2">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)]">{label}</span>
+                <button onClick={() => navigator.clipboard?.writeText(value)}
+                  className="ml-auto rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-ink)]">copy</button>
+              </div>
+              <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--color-ink)]">{value}</pre>
+            </div>
+          ))}
+          <p className="text-[10px] text-[var(--color-muted)]">
+            Paste the description straight into YouTube's Description field (the hashtags on its last line are all you need; the first three show above the title).
+            Tags go in the Tags box under "Show more". Remember to tick the altered/synthetic content disclosure.
+          </p>
         </div>
       )}
       {err && <div className="rounded border border-red-800 p-2 text-xs text-red-300">{err}</div>}
