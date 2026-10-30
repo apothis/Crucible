@@ -22,7 +22,7 @@ The filigree option is a placeholder shape only; a real one needs an engraved or
 Render:
 
     cd tools/loosh_remotion && npx remotion render src/index.ts Ident out.mp4 \
-      --props='{"title":"Song Title","sub":"Official Video","audio":"audio/ident_mix_A_whoosh_deep_impact_1143.wav","edge":"none"}'
+      --props='{"title":"Song Title","sub":"Official Video","audio":"audio/ident_sound.wav","edge":"none"}'
 
 ## Sound
 
@@ -54,6 +54,12 @@ Hit candidates measured (mono, 48 k):
 
 Rendered for the user's ears (2026-10-30): .mvwork/ident/apotheon_ident_v2_sound_{A_1143,B_2908,C_1687,D_563}.mp4.
 Picture is identical across the four; the ear decides.
+
+CHOSEN (user 2026-10-30): C, Mixkit 1687 "Dramatic metal explosion impact". The bed built from
+it is public/audio/ident_sound.wav (copy of ident_mix_C_metal_explosion_impact_1687.wav) and
+is the composition's default `audio`. Rebuild it with
+`scripts/build_ident_mix.sh C_metal_explosion_impact_1687 <mixkit_1687.wav> 0.060 -2` and copy over.
+Bed levels (rumble -6, riser -4, embers -20 dB) are first-pass and untouched since the pick.
 
 ## Edge artwork
 

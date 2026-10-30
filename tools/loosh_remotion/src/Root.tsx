@@ -28,7 +28,7 @@ export const Root: React.FC = () => {
         fps={24}
         width={1920}
         height={1080}
-        defaultProps={{title: 'She Sings Before the Storm', sub: 'Official Video', audio: 'audio/ident_hit_placeholder.wav', edge: 'none'}}
+        defaultProps={{title: 'She Sings Before the Storm', sub: 'Official Video', audio: 'audio/ident_sound.wav', edge: 'none'}}
       />
       <Composition
         id="Short"
