@@ -26,6 +26,10 @@ export type IdentProps = {
   title: string;
   sub: string;
   audio: string | null;
+  // artwork round the edge of the frame: none | hairline (inset 1px window with ember
+  // corner brackets, the card plate's window border) | filigree (fine engraved corner
+  // scrolls) | burnt (the frame edges smoulder, no drawn lines)
+  edge: 'none' | 'hairline' | 'filigree' | 'burnt';
 };
 
 const IVORY = 'rgb(236,231,220)';
@@ -107,7 +111,106 @@ const Grain: React.FC<{frame: number; amount: number}> = ({frame, amount}) => (
   </AbsoluteFill>
 );
 
-export const Ident: React.FC<IdentProps> = ({title, sub, audio}) => {
+
+// ---------- edge artwork ----------
+const INSET = 56;
+
+const Hairline: React.FC<{draw: number}> = ({draw}) => {
+  const w = 1920 - INSET * 2;
+  const h = 1080 - INSET * 2;
+  const arm = 44 * draw;
+  const corner = (x: number, y: number, sx: number, sy: number) => (
+    <path
+      key={`${x}${y}`}
+      d={`M ${x + sx * arm} ${y} L ${x} ${y} L ${x} ${y + sy * arm}`}
+      stroke={ACCENT}
+      strokeWidth={2}
+      fill="none"
+      style={{filter: 'drop-shadow(0 0 6px rgba(220,120,60,0.8))'}}
+    />
+  );
+  return (
+    <AbsoluteFill>
+      <svg width={1920} height={1080}>
+        <rect
+          x={INSET}
+          y={INSET}
+          width={w}
+          height={h}
+          fill="none"
+          stroke={IVORY}
+          strokeOpacity={0.22 * draw}
+          strokeWidth={1}
+          pathLength={1}
+          strokeDasharray={1}
+          strokeDashoffset={1 - draw}
+        />
+        {corner(INSET, INSET, 1, 1)}
+        {corner(1920 - INSET, INSET, -1, 1)}
+        {corner(1920 - INSET, 1080 - INSET, -1, -1)}
+        {corner(INSET, 1080 - INSET, 1, -1)}
+      </svg>
+    </AbsoluteFill>
+  );
+};
+
+// one engraved corner scroll, drawn for the top-left and mirrored for the others
+const SCROLL = [
+  // long sweep along the top edge, curling back on itself
+  'M 0 0 C 90 -2 180 -2 300 0',
+  'M 0 0 C 40 10 120 12 190 8 C 240 5 262 -8 250 -22 C 240 -34 218 -30 214 -16 C 211 -4 226 4 240 0',
+  // long sweep down the left edge
+  'M 0 0 C -2 90 -2 180 0 300',
+  'M 0 0 C 10 40 12 120 8 190 C 5 240 -8 262 -22 250 C -34 240 -30 218 -16 214 C -4 211 4 226 0 240',
+  // inner leaf
+  'M 14 14 C 40 20 60 40 66 70 C 50 62 30 50 14 14 Z',
+  'M 14 14 C 20 40 40 60 70 66 C 62 50 50 30 14 14 Z',
+];
+
+const Filigree: React.FC<{draw: number; glow: number}> = ({draw, glow}) => {
+  const place = [
+    {x: INSET, y: INSET, sx: 1, sy: 1},
+    {x: 1920 - INSET, y: INSET, sx: -1, sy: 1},
+    {x: 1920 - INSET, y: 1080 - INSET, sx: -1, sy: -1},
+    {x: INSET, y: 1080 - INSET, sx: 1, sy: -1},
+  ];
+  return (
+    <AbsoluteFill>
+      <svg width={1920} height={1080}>
+        {place.map((p, i) => (
+          <g key={i} transform={`translate(${p.x} ${p.y}) scale(${p.sx} ${p.sy})`}>
+            {SCROLL.map((d, j) => (
+              <path
+                key={j}
+                d={d}
+                fill={j >= 4 ? `rgba(236,231,220,${0.18 * draw})` : 'none'}
+                stroke={IVORY}
+                strokeOpacity={0.42 * draw}
+                strokeWidth={1.4}
+                strokeLinecap="round"
+                pathLength={1}
+                strokeDasharray={1}
+                strokeDashoffset={1 - draw}
+              />
+            ))}
+            <circle cx={0} cy={0} r={3.2} fill={ACCENT} opacity={draw} style={{filter: `drop-shadow(0 0 ${6 + glow * 10}px rgba(220,120,60,0.9))`}} />
+          </g>
+        ))}
+      </svg>
+    </AbsoluteFill>
+  );
+};
+
+const Burnt: React.FC<{heat: number}> = ({heat}) => (
+  <AbsoluteFill
+    style={{
+      boxShadow: `inset 0 0 ${150 + heat * 60}px ${30 + heat * 20}px rgba(190,70,18,${0.28 + heat * 0.25}), inset 0 0 40px 6px rgba(255,150,70,${0.08 + heat * 0.18})`,
+      mixBlendMode: 'screen',
+    }}
+  />
+);
+
+export const Ident: React.FC<IdentProps> = ({title, sub, audio, edge}) => {
   useJosefin();
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
@@ -142,6 +245,8 @@ export const Ident: React.FC<IdentProps> = ({title, sub, audio}) => {
   // the glow behind the word is hot on the hit and settles
   const glow = interpolate(since, [0, 2, 14], [0.0, 0.9, 0.35], clamp);
   const emberBoost = interpolate(since, [0, 2, 12], [0, 1, 0], clamp);
+  const edgeDraw = interpolate(since, [1, 16], [0, 1], {...clamp, easing: (t) => 1 - Math.pow(1 - t, 3)});
+  const edgeHeat = interpolate(since, [0, 2, 16], [0, 1, 0.2], clamp);
 
   const wordStyle: React.CSSProperties = {
     fontFamily: 'Josefin',
@@ -253,6 +358,11 @@ export const Ident: React.FC<IdentProps> = ({title, sub, audio}) => {
           {sub}
         </div>
       </AbsoluteFill>
+
+      {/* edge artwork, outside the shaking stage */}
+      {edge === 'hairline' ? <Hairline draw={edgeDraw} /> : null}
+      {edge === 'filigree' ? <Filigree draw={edgeDraw} glow={edgeHeat} /> : null}
+      {edge === 'burnt' ? <Burnt heat={edgeHeat} /> : null}
 
       {/* vignette, grain, flash */}
       <AbsoluteFill style={{background: 'radial-gradient(ellipse 75% 70% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.75) 100%)'}} />
