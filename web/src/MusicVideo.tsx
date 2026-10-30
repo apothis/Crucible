@@ -21,7 +21,8 @@ type Scene = {
 type Script = { title: string; audio_id: string; duration: number; concept?: string; look?: string; wardrobe?: string; arc?: string; scenes: Scene[] };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
-type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null };
+type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null };
+type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; sig: string };
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
@@ -451,6 +452,7 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
                         {t.seconds !== null ? <span>{t.seconds.toFixed(2)} s{c?.planned_seconds ? ` / ${c.planned_seconds.toFixed(2)} planned` : ""}</span> : null}
                         {t.params.upscale_width ? <span>latent upscale {t.params.upscale_width}x{t.params.upscale_height}</span> : null}
                         <span>{t.created ? ago(t.created) : ""}</span>
+                        {t.from_script ? <Pill tone="muted" title={`rendered under ${t.from_script}; same song window`}>earlier script</Pill> : null}
                       </div>
                       {c ? (
                         <div className="flex flex-wrap items-center gap-2">
@@ -510,13 +512,23 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
   const [job, setJob] = useState<{ id: string; status: string; progress: number; max: number } | null>(null);
   const [result, setResult] = useState<AsmResult | null>(null);
   const [err, setErr] = useState("");
+  const [cuts, setCuts] = useState<Cut[]>([]);
+  const [useCut, setUseCut] = useState<string>("");     // stamp of an earlier cut whose take map is reused
   const title = introTitle.trim() || script.title;
+  useEffect(() => {
+    let alive = true;
+    api.mvAssemblies(scriptName).then((r) => { if (alive) setCuts(r as Cut[]); }).catch(() => { if (alive) setCuts([]); });
+    return () => { alive = false; };
+  }, [scriptName, result?.output]);
+  const cutMap = (cuts.find((c) => c.stamp === useCut)?.jobs) || null;
 
-  // the take per scene: the lock, else (opt-in) the newest finished take, else missing
+  // the take per scene: an earlier cut's map when chosen, else the lock, else (opt-in) the newest
+  // finished take (takes from earlier scripts with the same window count), else missing
   const plan = script.scenes.map((sc) => {
     const done = (takes[String(sc.index)] || []).filter((t) => t.status === "done");
+    if (cutMap && cutMap[String(sc.index)]) return { sc, job: cutMap[String(sc.index)], how: "cut" as const };
     if (sc.locked) return { sc, job: sc.locked.job_id, how: "locked" as const };
-    if (fillNewest && done[0]) return { sc, job: done[0].id, how: "newest" as const };
+    if (fillNewest && done[0]) return { sc, job: done[0].id, how: done[0].from_script ? ("earlier" as const) : ("newest" as const) };
     return { sc, job: null, how: "missing" as const };
   });
   const missing = plan.filter((p) => !p.job);
@@ -535,7 +547,7 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
     if (!window.confirm(`Assemble ${what} at ${size}? This re-encodes on the Mac and can take a few minutes.`)) return;
     setErr(""); setResult(null);
     const jobs: Record<string, string> = {};
-    plan.forEach((p) => { if (p.job && p.how === "newest") jobs[String(p.sc.index)] = p.job; });
+    plan.forEach((p) => { if (p.job && p.how !== "locked") jobs[String(p.sc.index)] = p.job; });
     try {
       const r = await api.mvAssemble({
         script: scriptName, jobs, partial, width: w, height: h, async: true,
@@ -573,12 +585,35 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
                 <td className="px-2 py-1">{p.sc.index}</td>
                 <td className="px-2 py-1">{p.sc.title}</td>
                 <td className="px-2 py-1 text-[var(--color-muted)]">{fmt(p.sc.start)} - {fmt(p.sc.end)}</td>
-                <td className="px-2 py-1">{p.how === "locked" ? <Pill tone="ok">LOCKED {p.job!.slice(0, 8)}</Pill> : p.how === "newest" ? <Pill tone="warn" title="not passed: the newest finished take fills the gap">newest {p.job!.slice(0, 8)}</Pill> : <Pill tone="bad">missing</Pill>}</td>
+                <td className="px-2 py-1">{p.how === "cut" ? <Pill tone="accent" title="the take this earlier cut used">cut {p.job!.slice(0, 8)}</Pill> : p.how === "locked" ? <Pill tone="ok">LOCKED {p.job!.slice(0, 8)}</Pill> : p.how === "newest" ? <Pill tone="warn" title="not passed: the newest finished take fills the gap">newest {p.job!.slice(0, 8)}</Pill> : p.how === "earlier" ? <Pill tone="warn" title="not passed: the newest take of this window, rendered under an earlier script">earlier {p.job!.slice(0, 8)}</Pill> : <Pill tone="bad">missing</Pill>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {cuts.length > 0 && (
+        <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
+          <div className="text-xs font-semibold">Earlier cuts of this song <span className="font-normal text-[var(--color-muted)]">({cuts.length}; a cut's take map can be reused as the starting point)</span></div>
+          <div className="max-h-40 overflow-auto">
+            <table className="w-full text-xs">
+              <tbody>
+                {cuts.map((c) => (
+                  <tr key={c.stamp} className={`border-t border-[var(--color-line)] ${useCut === c.stamp ? "text-[var(--color-accent)]" : ""}`}>
+                    <td className="px-2 py-1 font-mono text-[var(--color-muted)]">{c.stamp}</td>
+                    <td className="px-2 py-1" title={c.path}>{c.file.replace(/\.mp4$/, "").slice(0, 60)}</td>
+                    <td className="px-2 py-1 text-right">{c.seconds ? fmt(c.seconds) : ""}</td>
+                    <td className="px-2 py-1 text-right">{c.scenes ?? "?"} sc{c.partial ? " (partial)" : ""}{c.intro ? " · ident" : ""}{c.end_card ? " · card" : ""}</td>
+                    <td className="px-2 py-1 text-right whitespace-nowrap">
+                      <GhostButton onClick={() => openLightbox(c.media_url || `/api/mv/cut/${c.stamp}/${encodeURIComponent(c.file)}`)}>play</GhostButton>{" "}
+                      {Object.keys(c.jobs).length ? <GhostButton onClick={() => setUseCut(useCut === c.stamp ? "" : c.stamp)}>{useCut === c.stamp ? "using its takes" : "use its takes"}</GhostButton> : <span className="text-[10px] text-[var(--color-muted)]">no take map</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
           <div className="text-xs font-semibold">Cut</div>

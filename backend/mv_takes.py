@@ -7,6 +7,7 @@ show them without re-measuring; a take never changes once rendered.
 """
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -80,19 +81,59 @@ TAKE_PARAM_KEYS = ("seed", "width", "height", "turbo", "lane", "first_frame_id",
                    "context_frames", "location_ref_id", "upscale_width", "upscale_height")
 
 
-def takes_for_script(rows, script_name, library_dir, scene=None):
+def lineage_base(script_name):
+    """Scripts chain by appending suffixes (_rw3_<stamp>, _sp0_<stamp>, _mc1_<stamp>, _facts_<stamp>),
+    so every ancestor's name is a prefix of the current one. The shared root is the part before
+    the first timestamp."""
+    return re.split(r"_\d{8}_\d{6}", script_name, 1)[0]
+
+
+def is_ancestor(name, current):
+    a, c = name[:-5] if name.endswith(".json") else name, current[:-5] if current.endswith(".json") else current
+    return a == c or c.startswith(a + "_")
+
+
+def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
     """Library rows (sqlite dicts with params JSON) -> {scene_index: [take...]} for one script.
-    Running jobs are passed in the same shape with status != done."""
+    Running jobs are passed in the same shape with status != done. With `scenes` (the script's
+    scene list) a take rendered under an ANCESTOR script counts too when its song window equals
+    the scene's (the SSBS cut of 2026-10-30 was assembled from takes across six script
+    generations); such a take carries from_script = the name it was rendered under."""
     out = {}
+    windows, locked_ids = {}, {}
+    if scenes:
+        for sc in scenes:
+            windows[int(sc["index"])] = (round(float(sc["start"]), 2), round(float(sc["end"]), 2))
+            if sc.get("locked") and sc["locked"].get("job_id"):
+                locked_ids[sc["locked"]["job_id"]] = int(sc["index"])
     for r in rows:
         try:
             prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
         except Exception:
             continue
-        if os.path.basename(str(prm.get("script") or "")) != script_name:
-            continue
+        rendered_under = os.path.basename(str(prm.get("script") or ""))
         idx = prm.get("scene_index")
-        if idx is None or (scene is not None and int(idx) != int(scene)):
+        if idx is None:
+            continue
+        from_script = None
+        if r["id"] in locked_ids:
+            # the scene's locked take: listed under its scene whatever it was rendered as (a lock
+            # may trim the take's window, so the window match below would miss it)
+            idx = locked_ids[r["id"]]
+            from_script = rendered_under if rendered_under != script_name else None
+        elif rendered_under != script_name:
+            if not windows or not is_ancestor(rendered_under, script_name):
+                continue
+            # the ancestor's scene index may differ (splits renumber): match by the song window
+            try:
+                win = (round(float(prm.get("scene_start")), 2), round(float(prm.get("scene_end")), 2))
+            except (TypeError, ValueError):
+                continue
+            hits = [i for i, w in windows.items() if w == win]
+            if len(hits) != 1:
+                continue
+            idx, from_script = hits[0], rendered_under
+        if scene is not None and int(idx) != int(scene):
             continue
         jid = r["id"]
         path = os.path.join(library_dir, f"{jid}.mp4")
@@ -102,6 +143,7 @@ def takes_for_script(rows, script_name, library_dir, scene=None):
                 "media_url": f"/api/media/{jid}" if done else None,
                 "seconds": _duration(path) if done else None,
                 "params": {k: prm.get(k) for k in TAKE_PARAM_KEYS if k in prm},
+                "from_script": from_script,
                 "check": cached_check(library_dir, jid) if done else None}
         out.setdefault(int(idx), []).append(take)
     for k in out:
@@ -178,3 +220,58 @@ def run_check(library_dir, job_id, song_path, song_start, planned_seconds=None):
     with open(os.path.join(out_dir, "check.json"), "w") as fh:
         json.dump(check, fh, indent=1)
     return check
+
+
+# ---------- assemblies ----------
+
+def assembly_dir(library_dir):
+    return os.path.join(os.path.dirname(library_dir), ".mvwork", "mv_assembly")
+
+
+def record_assembly(out_dir, body, result):
+    """Sidecar next to a cut: the request (which take per scene) and the result, so the tab can
+    list earlier cuts and reuse their take maps."""
+    safe = {k: v for k, v in (body or {}).items() if k not in ("async",)}
+    with open(os.path.join(out_dir, "assembly.json"), "w") as fh:
+        json.dump({"body": safe, "result": result, "recorded": time.time()}, fh, indent=1)
+
+
+def list_assemblies(library_dir, script_name=None):
+    """Cuts under .mvwork/mv_assembly, newest first: stamp, mp4s, and (when recorded) the script,
+    the take map and the result. script_name narrows to the script's lineage."""
+    d = assembly_dir(library_dir)
+    out = []
+    if not os.path.isdir(d):
+        return out
+    base = lineage_base(script_name) if script_name else None
+    for stamp in sorted(os.listdir(d), reverse=True):
+        sd = os.path.join(d, stamp)
+        if not os.path.isdir(sd):
+            continue
+        rec = None
+        rp = os.path.join(sd, "assembly.json")
+        if os.path.exists(rp):
+            try:
+                with open(rp) as fh:
+                    rec = json.load(fh)
+            except Exception:
+                rec = None
+        mp4s = [f for f in os.listdir(sd) if f.endswith(".mp4") and not f.startswith("scene_") and f != "video_only.mp4"]
+        if not mp4s:
+            continue
+        rec_script = os.path.basename(str(((rec or {}).get("body") or {}).get("script") or ""))
+        if base and rec_script and lineage_base(rec_script) != base:
+            continue
+        if base and not rec_script:
+            continue          # an unrecorded cut cannot be tied to a song
+        final = max(mp4s, key=lambda f: os.path.getsize(os.path.join(sd, f)))
+        res = (rec or {}).get("result") or {}
+        out.append({"stamp": stamp, "dir": sd, "file": final, "path": os.path.join(sd, final),
+                    "seconds": res.get("seconds") or _duration(os.path.join(sd, final)),
+                    "scenes": res.get("scenes"), "partial": bool(res.get("partial")),
+                    "script": rec_script or None,
+                    "jobs": {str(k): v for k, v in (res.get("jobs") or ((rec or {}).get("body") or {}).get("jobs") or {}).items()},
+                    "intro": bool(res.get("intro")), "end_card": res.get("end_card"),
+                    "library_id": res.get("library_id"), "media_url": res.get("media_url"),
+                    "mtime": os.path.getmtime(os.path.join(sd, final))})
+    return out

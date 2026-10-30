@@ -25,6 +25,19 @@
   two scenes with takes (18.4 s, filed). NOT run: a full cut with intro + end card on a complete
   script (needs every scene to have a take; the newest SSBS script has 24 of 36 locked).
   Known: a partial cut is filed in the Library too (delete it there if it is only a check).
+- 2026-10-30 CORRECTION + lineage: the "12 scenes without a take" claim was wrong. The other
+  session had cut the FULL 36-scene video three times today (mv_assembly 091656, 101000, 131538,
+  252.44 s each) from an explicit take map spanning six script generations; the tab only matched
+  takes filed under the exact current script name. Fixed: /api/mv/takes matches takes rendered
+  under any ANCESTOR script (names chain by suffix) whose song window equals the scene's, tagged
+  from_script ("earlier script" pill), and always lists a scene's locked take by id (a lock may
+  trim the window). Every assembly now writes assembly.json (request + result incl. the take map);
+  GET /api/mv/assemblies?script lists a song's earlier cuts, served by GET /api/mv/cut/{stamp}/{file};
+  the Assemble stage shows them with play and "use its takes" (the plan then follows that cut).
+  Sidecars were written for today's three full cuts from the other session's request/result
+  files. Verified in the browser on the newest script: 36 of 36 scenes with takes (52 takes), 21
+  locked, full cut offered; "use its takes" on the 13:15 cut maps all 36. The full assemble with
+  ident + end card was NOT clicked (a few minutes of Mac encoding; the user's call).
 
 
 User ask (2026-10-30): "a UI for this entire video process, including adding the intro, and

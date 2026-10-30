@@ -1700,8 +1700,10 @@ def _mv_assemble_run(p: dict, progress=None):
         slug = re.sub(r"[^a-z0-9]+", "_", (script.get("title") or "cut").lower()).strip("_")
         out = os.path.join(out_dir, f"{p.get('name') or slug + '_partial'}.mp4")
         os.replace(video, out)
-        return {"output": out, "seconds": round(total, 3), "scenes": len(parts), "partial": True,
-                "missing": [m["index"] for m in missing], "dir": out_dir, "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+        res = {"output": out, "seconds": round(total, 3), "scenes": len(parts), "partial": True,
+               "missing": [m["index"] for m in missing], "dir": out_dir, "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+        mv_takes_mod.record_assembly(out_dir, p, res)
+        return res
     fade = float(p.get("fade") if p.get("fade") is not None else 1.5)
     slug = re.sub(r"[^a-z0-9]+", "_", (script.get("title") or "cut").lower()).strip("_")
     out = os.path.join(out_dir, f"{p.get('name') or slug + '_cut'}.mp4")
@@ -1742,7 +1744,23 @@ def _mv_assemble_run(p: dict, progress=None):
                     "endcard_at": fin["endcard_at"]})
     if progress:
         progress(n_steps, n_steps)
+    mv_takes_mod.record_assembly(out_dir, p, res)
     return res
+
+
+@app.get("/api/mv/assemblies")
+def mv_assemblies(script: str = ""):
+    """Earlier cuts (newest first) with their take maps when recorded; script narrows to that
+    song's script lineage."""
+    return mv_takes_mod.list_assemblies(LIBRARY, os.path.basename(script) if script else None)
+
+
+@app.get("/api/mv/cut/{stamp}/{name}")
+def mv_cut_file(stamp: str, name: str):
+    path = os.path.join(mv_takes_mod.assembly_dir(LIBRARY), os.path.basename(stamp), os.path.basename(name))
+    if not os.path.exists(path) or not path.endswith(".mp4"):
+        raise HTTPException(404, "no such cut")
+    return FileResponse(path, media_type="video/mp4")
 
 
 @app.post("/api/mv/ident")
@@ -2230,15 +2248,15 @@ def mv_takes(script: str, scene: Optional[int] = None):
     rows = []
     with db() as conn:
         for r in conn.execute("SELECT id, created, status, params FROM jobs WHERE mode='videoclip' AND status='done' "
-                              "AND params LIKE ? ORDER BY created DESC", (f"%{name}%",)):
+                              "AND params LIKE ? ORDER BY created DESC", (f"%{mv_takes_mod.lineage_base(name)}%",)):
             rows.append({"id": r["id"], "created": r["created"], "status": r["status"], "params": r["params"]})
     with LOCK:
         for pid, j in JOBS.items():
             if j.get("mode") == "videoclip" and j.get("status") in ("pending", "running", "finalizing"):
                 rows.append({"id": pid, "created": j.get("created"), "status": j["status"], "progress": j.get("progress", 0),
                              "max": j.get("max", 0), "params": j.get("params") or {}})
-    takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene)
     script_obj, _ = _mv_load_script(name)
+    takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene, scenes=script_obj["scenes"])
     locks = {str(sc["index"]): sc["locked"] for sc in script_obj["scenes"] if sc.get("locked")}
     return {"script": name, "takes": {str(k): v for k, v in takes.items()}, "locks": locks}
 
