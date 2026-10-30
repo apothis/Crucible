@@ -2,6 +2,7 @@ import React from 'react';
 import {Composition} from 'remotion';
 import {LyricVideo, ShortVideo, type Song} from './LyricVideo';
 import bbbd from '../public/data/bbbd.json';
+import {Ident} from './Ident';
 
 const song = bbbd as Song;
 
@@ -19,6 +20,15 @@ export const Root: React.FC = () => {
         width={1920}
         height={1080}
         defaultProps={{song}}
+      />
+      <Composition
+        id="Ident"
+        component={Ident}
+        durationInFrames={72}
+        fps={24}
+        width={1920}
+        height={1080}
+        defaultProps={{title: 'She Sings Before the Storm', sub: 'Official Video', audio: 'audio/ident_hit_placeholder.wav'}}
       />
       <Composition
         id="Short"
