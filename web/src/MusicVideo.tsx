@@ -484,6 +484,157 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
         </div>
       )}
 
+      {script && <AssembleStage script={script} scriptName={scriptName} takes={takes} />}
+
+      {err && <div className="rounded border border-red-800 p-2 text-xs text-red-300">{err}</div>}
+    </div>
+  );
+}
+
+// ---------- 4 Assemble: locked takes -> the cut, with the ident in front and the end card ----------
+type AsmResult = { output: string; seconds: number; scenes: number; partial?: boolean; missing?: number[]; intro?: { seconds: number; cached: boolean }; end_card?: { secs: number; text: string }; endcard_at?: number | null; library_id?: string; media_url?: string };
+
+function AssembleStage({ script, scriptName, takes }: { script: Script; scriptName: string; takes: Record<string, Take[]> }) {
+  const d = useDrafts("mv");
+  const [size, setSize] = d.use("asmSize", "1344x768");
+  const [fillNewest, setFillNewest] = d.use("asmFillNewest", true);
+  const [introOn, setIntroOn] = d.use("asmIntroOn", true);
+  const [introTitle, setIntroTitle] = d.use("asmIntroTitle", "");
+  const [introSub, setIntroSub] = d.use("asmIntroSub", "Official Video");
+  const [introEdge, setIntroEdge] = d.use("asmIntroEdge", "none");
+  const [ecOn, setEcOn] = d.use("asmEcOn", true);
+  const [ecSecs, setEcSecs] = d.use("asmEcSecs", "15");
+  const [ecText, setEcText] = d.use("asmEcText", "");
+  const [ident, setIdent] = useState<{ url: string; seconds: number; cached: boolean } | null>(null);
+  const [identBusy, setIdentBusy] = useState(false);
+  const [job, setJob] = useState<{ id: string; status: string; progress: number; max: number } | null>(null);
+  const [result, setResult] = useState<AsmResult | null>(null);
+  const [err, setErr] = useState("");
+  const title = introTitle.trim() || script.title;
+
+  // the take per scene: the lock, else (opt-in) the newest finished take, else missing
+  const plan = script.scenes.map((sc) => {
+    const done = (takes[String(sc.index)] || []).filter((t) => t.status === "done");
+    if (sc.locked) return { sc, job: sc.locked.job_id, how: "locked" as const };
+    if (fillNewest && done[0]) return { sc, job: done[0].id, how: "newest" as const };
+    return { sc, job: null, how: "missing" as const };
+  });
+  const missing = plan.filter((p) => !p.job);
+  const partial = missing.length > 0;
+  const [w, h] = size.split("x").map(Number);
+
+  const previewIdent = async () => {
+    setErr(""); setIdentBusy(true);
+    try { const r = await api.mvIdent({ title, sub: introSub, edge: introEdge }); setIdent({ url: r.url + "?t=" + Date.now(), seconds: r.seconds, cached: r.cached }); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setIdentBusy(false); }
+  };
+  const assemble = async () => {
+    if (plan.every((p) => !p.job)) { setErr("no take to cut yet"); return; }
+    const what = partial ? `a PARTIAL cut of ${plan.length - missing.length} of ${plan.length} scenes (no intro or end card on a partial)` : `the full cut of ${plan.length} scenes${introOn ? " with the ident in front" : ""}${ecOn ? ` and a ${ecSecs} s end card` : ""}`;
+    if (!window.confirm(`Assemble ${what} at ${size}? This re-encodes on the Mac and can take a few minutes.`)) return;
+    setErr(""); setResult(null);
+    const jobs: Record<string, string> = {};
+    plan.forEach((p) => { if (p.job && p.how === "newest") jobs[String(p.sc.index)] = p.job; });
+    try {
+      const r = await api.mvAssemble({
+        script: scriptName, jobs, partial, width: w, height: h, async: true,
+        intro: introOn && !partial ? { title, sub: introSub, edge: introEdge } : null,
+        end_card: ecOn && !partial ? { secs: Number(ecSecs), text: ecText.trim() } : null,
+      });
+      setJob({ id: r.job_id, status: "running", progress: 0, max: 1 });
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  useEffect(() => {
+    if (!job || job.status !== "running") return;
+    const h = window.setInterval(async () => {
+      try {
+        const r = await api.mvAssembleResult(job.id);
+        if (r.status === "done") { setJob({ ...job, status: "done", progress: r.max, max: r.max }); setResult(r.result as AsmResult); window.clearInterval(h); }
+        else if (r.status === "error") { setJob({ ...job, status: "error", progress: 0, max: 1 }); setErr(r.error || "assembly failed"); window.clearInterval(h); }
+        else setJob((j) => (j ? { ...j, progress: r.progress, max: r.max } : j));
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => window.clearInterval(h);
+  }, [job?.id, job?.status]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-baseline gap-3">
+        <SectionTitle>4 · Assemble</SectionTitle>
+        <span className="text-xs text-[var(--color-muted)]">{plan.length - missing.length} of {plan.length} scenes have a take{partial ? ` · ${missing.length} missing (partial cut only, no intro or end card)` : " · full cut"}</span>
+      </div>
+      <div className="max-h-48 overflow-auto rounded border border-[var(--color-line)]">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-[var(--color-panel)] text-[var(--color-muted)]"><tr><th className="px-2 py-1 text-left">#</th><th className="px-2 py-1 text-left">scene</th><th className="px-2 py-1 text-left">window</th><th className="px-2 py-1 text-left">take used</th></tr></thead>
+          <tbody>
+            {plan.map((p) => (
+              <tr key={p.sc.index} className="border-t border-[var(--color-line)]">
+                <td className="px-2 py-1">{p.sc.index}</td>
+                <td className="px-2 py-1">{p.sc.title}</td>
+                <td className="px-2 py-1 text-[var(--color-muted)]">{fmt(p.sc.start)} - {fmt(p.sc.end)}</td>
+                <td className="px-2 py-1">{p.how === "locked" ? <Pill tone="ok">LOCKED {p.job!.slice(0, 8)}</Pill> : p.how === "newest" ? <Pill tone="warn" title="not passed: the newest finished take fills the gap">newest {p.job!.slice(0, 8)}</Pill> : <Pill tone="bad">missing</Pill>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
+          <div className="text-xs font-semibold">Cut</div>
+          <Field label="output size">
+            <select className={inp} value={size} onChange={(e) => setSize(e.target.value)}>
+              <option value="1344x768">1344x768 (render size)</option>
+              <option value="1920x1080">1920x1080</option>
+              <option value="3840x2160">3840x2160</option>
+            </select>
+          </Field>
+          <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={fillNewest} onChange={(e) => setFillNewest(e.target.checked)} /> fill unlocked scenes with their newest take</label>
+        </div>
+        <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
+          <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={introOn} onChange={(e) => setIntroOn(e.target.checked)} /> Intro ident (3 s)</label>
+          <Field label="title" hint="defaults to the script title"><input className={inp} value={introTitle} onChange={(e) => setIntroTitle(e.target.value)} placeholder={script.title} /></Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="sub line"><input className={inp} value={introSub} onChange={(e) => setIntroSub(e.target.value)} /></Field>
+            <Field label="edge">
+              <select className={inp} value={introEdge} onChange={(e) => setIntroEdge(e.target.value)}>
+                <option value="none">none</option><option value="hairline">hairline</option><option value="burnt">burnt</option><option value="filigree">filigree (placeholder)</option>
+              </select>
+            </Field>
+          </div>
+          <div className="flex items-center gap-2">
+            <GhostButton onClick={previewIdent} disabled={identBusy}>{identBusy ? "rendering..." : "preview ident"}</GhostButton>
+            {ident && <span className="text-[11px] text-[var(--color-muted)]">{ident.seconds?.toFixed(2)} s{ident.cached ? " (cached)" : ""}</span>}
+          </div>
+          {ident && <video src={ident.url} controls preload="metadata" className="w-full rounded bg-black" />}
+        </div>
+        <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
+          <label className="flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={ecOn} onChange={(e) => setEcOn(e.target.checked)} /> YouTube end card in the final</label>
+          <div className="grid grid-cols-[auto_1fr] gap-2">
+            <Field label="last">
+              <select className={inp} value={ecSecs} onChange={(e) => setEcSecs(e.target.value)}><option value="10">10 s</option><option value="15">15 s</option><option value="20">20 s</option></select>
+            </Field>
+            <Field label="More from"><input className={inp} value={ecText} onChange={(e) => setEcText(e.target.value)} placeholder="More from Apotheon" /></Field>
+          </div>
+          <img src={`/api/youtube/endcard_preview?text=${encodeURIComponent(ecText)}&t=${encodeURIComponent(ecText.length)}`} alt="" className="w-full rounded border border-[var(--color-line)]" />
+          <div className="text-[10px] text-[var(--color-muted)]">the plate dims the last seconds of the video; in Studio pick the "two videos + subscribe" end-screen template over it</div>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <PrimaryButton onClick={assemble} disabled={job?.status === "running" || plan.every((p) => !p.job)}>{partial ? "Assemble partial cut" : "Assemble the video"}</PrimaryButton>
+        {job?.status === "running" && <span className="text-xs text-[var(--color-muted)]">cutting... {job.max ? Math.round((100 * job.progress) / job.max) : 0}%</span>}
+      </div>
+      {result && (
+        <div className="rounded border border-emerald-800 p-3 space-y-2">
+          <div className="text-xs">
+            {result.partial ? "Partial cut" : "Final video"} · {result.seconds?.toFixed(1)} s · {result.scenes} scenes
+            {result.intro ? ` · ident in front (${result.intro.seconds?.toFixed(1)} s)` : ""}{result.end_card ? ` · end card over the last ${result.end_card.secs} s` : ""}
+            {result.library_id ? " · filed in the Library under Music videos" : ""}
+          </div>
+          {result.media_url ? <video src={result.media_url} controls preload="metadata" className="w-full rounded bg-black" /> : null}
+          <div className="font-mono text-[10px] text-[var(--color-muted)]">{result.output}</div>
+        </div>
+      )}
       {err && <div className="rounded border border-red-800 p-2 text-xs text-red-300">{err}</div>}
     </div>
   );

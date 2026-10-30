@@ -116,7 +116,10 @@ export const api = {
   mvTakeCheck: (p: { job_id: string; script: string; scene: number }) => jpost("/api/mv/take_check", p),
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),   // dry_run: true = the gate, nothing queued
-  mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)       // diffusion upscale of a library clip
+  mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)
+  mvIdent: (p: { title: string; sub?: string; edge?: string }) => jpost("/api/mv/ident", p),   // Remotion on the Mac, cached
+  mvAssemble: (p: unknown) => jpost("/api/mv/assemble", p),           // async: true -> {job_id}
+  mvAssembleResult: (id: string) => jget(`/api/mv/assemble_result/${id}`),       // diffusion upscale of a library clip
   ytWordmarkOptions: () => jget("/api/youtube/wordmark_options"),  // fonts/treatments + saved global choice
   ytWordmarkSave: (p: unknown) => jmethod("PUT", "/api/youtube/wordmark", p),
   ytStamp: (p: unknown) => jpost("/api/youtube/stamp", p),         // wordmark onto a cover -> new library still (sync)

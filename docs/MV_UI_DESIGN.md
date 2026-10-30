@@ -12,6 +12,19 @@
   NOT exercised: Render on the box (GPU, user-fired), still paste/upload (no new still to file).
   Bug found and fixed in the check: a loader effect that depended on a useDrafts setter re-ran
   every render (endless /api/mv/script requests until the browser ran out of sockets).
+- 2026-10-30 PHASE 2 BUILT: Assemble stage in the tab (take per scene: lock, else opt-in newest
+  take, else missing; output size; intro ident on/off with title, sub line and edge, preview;
+  end card on/off with 10/15/20 s and the More-from text, live plate preview; async job with
+  progress; result player; filed in the Library under Music videos). Backend: mv_finish.py
+  (ident_render cached by props + Ident.tsx hash, ~5 s warm on the M4; finish_cut = one ffmpeg
+  pass: ident concat + end plate overlay on the last N s), POST /api/mv/ident, GET
+  /api/mv/ident_file/{hash}, /api/mv/assemble gained intro, end_card, file, async (+ GET
+  /api/mv/assemble_result/{id}); the synchronous call and the curl scripts are unchanged.
+  Verified: ident route (render + cache hit), finish_cut on a real take (12.46 s = 3.05 ident +
+  9.42 take; plate over the last 3 s read on a frame tile), and from the tab a partial cut of the
+  two scenes with takes (18.4 s, filed). NOT run: a full cut with intro + end card on a complete
+  script (needs every scene to have a take; the newest SSBS script has 24 of 36 locked).
+  Known: a partial cut is filed in the Library too (delete it there if it is only a check).
 
 
 User ask (2026-10-30): "a UI for this entire video process, including adding the intro, and

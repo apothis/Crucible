@@ -33,6 +33,7 @@ from . import mv_writer as mv_writer_mod
 from . import mv_stems as mv_stems_mod
 from . import mv_locations as mv_locations_mod
 from . import mv_takes as mv_takes_mod
+from . import mv_finish as mv_finish_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1559,7 +1560,72 @@ def mv_assemble(p: dict):
     script order, and the song is laid under from the first scene's start. A missing render is a
     400 that lists the scenes still to come, unless partial: true, which cuts the scenes that exist
     (each keeping its own muxed song window, so sync holds across gaps) for a progress check.
-    Output under .mvwork/mv_assembly/<stamp>/."""
+    Output under .mvwork/mv_assembly/<stamp>/.
+
+    Phase 2 (the Music Video tab, docs/MV_UI_DESIGN.md), all opt-in: intro {title?, sub?, edge?}
+    puts the channel ident in front (mv_finish.ident_render); end_card {secs (5-20), text?}
+    overlays the YouTube end-card plate on the last secs (the song plays out under it, the same
+    plate the YouTube tab uses); file: true files the result in the library as a Music video;
+    async: true runs the whole cut as a background job -> {job_id} (poll /api/job/{id}, then
+    GET /api/mv/assemble_result/{id}). A partial cut ignores intro and end_card."""
+    if p.get("async"):
+        jid = uuid.uuid4().hex
+        script_obj, sname = _mv_load_script(p.get("script")) if p.get("script") else (None, None)
+        params = {"script": sname, "title": (script_obj or {}).get("title"), "partial": bool(p.get("partial")),
+                  "intro": p.get("intro"), "end_card": p.get("end_card"), "width": p.get("width"), "height": p.get("height")}
+        with LOCK:
+            JOBS[jid] = {"created": time.time(), "mode": "musicvideo", "status": "running",
+                         "progress": 0, "max": 1, "params": params}
+
+        def prog(done, total):
+            with LOCK:
+                JOBS[jid].update(progress=int(done), max=max(1, int(total)))
+
+        def run():
+            try:
+                res = _mv_assemble_run(dict(p), prog)
+                out = res["output"]
+                if p.get("file", True):
+                    final = os.path.join(LIBRARY, f"{jid}.mp4")
+                    shutil.copyfile(out, final)
+                    with LOCK:
+                        JOBS[jid]["params"].update({"seconds": res.get("seconds"), "scenes": res.get("scenes"),
+                                                    "source": out, "kind": "video"})
+                        params_now = dict(JOBS[jid]["params"])
+                        JOBS[jid]["audio_file"] = final
+                    save_done_row(jid, "musicvideo", params_now, final)
+                    res["library_id"] = jid
+                    res["media_url"] = f"/api/media/{jid}"
+                with LOCK:
+                    JOBS[jid]["result"] = res
+                    JOBS[jid]["status"] = "done"
+                    if not p.get("file", True):
+                        JOBS[jid]["audio_file"] = out
+            except HTTPException as e:
+                with LOCK:
+                    JOBS[jid]["status"] = "error"
+                    JOBS[jid]["error"] = json.dumps(e.detail) if not isinstance(e.detail, str) else e.detail
+            except Exception as e:
+                with LOCK:
+                    JOBS[jid]["status"] = "error"
+                    JOBS[jid]["error"] = str(e)
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"job_id": jid, "status": "running"}
+    return _mv_assemble_run(p, None)
+
+
+@app.get("/api/mv/assemble_result/{jid}")
+def mv_assemble_result(jid: str):
+    with LOCK:
+        j = JOBS.get(jid)
+        if not j:
+            raise HTTPException(404, "no such assembly job")
+        return {"id": jid, "status": j["status"], "progress": j.get("progress", 0), "max": j.get("max", 0),
+                "error": j.get("error"), "result": j.get("result")}
+
+
+def _mv_assemble_run(p: dict, progress=None):
     work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
     jobs = {}
     if p.get("batch"):
@@ -1603,7 +1669,10 @@ def mv_assemble(p: dict):
     crf = int(p.get("crf") or 18)
     w, h = int(p.get("width") or 1344), int(p.get("height") or 768)
     listing = []
-    for sc, path in parts:
+    n_steps = len(parts) + 3
+    for k, (sc, path) in enumerate(parts):
+        if progress:
+            progress(k, n_steps)
         dur = float(sc["end"]) - float(sc["start"])
         # a locked take may be trimmed: its render starts at take_start, the scene later
         inpt = max(0.0, float(sc["start"]) - float(sc["locked"].get("take_start", sc["start"]))) if sc.get("locked") else 0.0
@@ -1643,8 +1712,61 @@ def mv_assemble(p: dict):
                        capture_output=True, text=True)
     if r.returncode != 0:
         raise HTTPException(500, f"mux failed: {r.stderr[-400:]}")
-    return {"output": out, "seconds": round(total, 3), "scenes": len(parts), "song_start": start, "dir": out_dir,
-            "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+    res = {"output": out, "seconds": round(total, 3), "scenes": len(parts), "song_start": start, "dir": out_dir,
+           "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+    intro, end_card = p.get("intro"), p.get("end_card")
+    if intro or end_card:
+        if progress:
+            progress(n_steps - 1, n_steps)
+        ident_path = None
+        if intro:
+            intro = intro if isinstance(intro, dict) else {}
+            ident = mv_finish_mod.ident_render(work, intro.get("title") or script.get("title") or "",
+                                               intro.get("sub"), intro.get("edge"))
+            ident_path, res["intro"] = ident["path"], ident
+        ec_plate, ec_secs = None, 0.0
+        if end_card:
+            end_card = end_card if isinstance(end_card, dict) else {}
+            ec_secs = min(20.0, max(5.0, float(end_card.get("secs") or 15)))
+            wmc = _yt_wordmark_cfg()
+            more = str(end_card.get("text") or "").strip() or f"More from {wmc.get('text') or ''}".strip()
+            ec_plate = os.path.join(out_dir, "endcard_plate.png")
+            wordmark_mod.endcard_plate(ec_plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
+                                       str(wmc.get("treatment") or "ember"), more, width=w, height=h,
+                                       look=wordmark_mod.look_of(wmc))
+            res["end_card"] = {"secs": ec_secs, "text": more}
+        final = os.path.join(out_dir, f"{p.get('name') or slug + '_final'}.mp4")
+        fin = mv_finish_mod.finish_cut(out, final, w, h, ident_path=ident_path, endcard_plate=ec_plate,
+                                       endcard_secs=ec_secs, crf=crf)
+        res.update({"cut": out, "output": final, "seconds": fin["seconds"], "intro_seconds": fin["intro_seconds"],
+                    "endcard_at": fin["endcard_at"]})
+    if progress:
+        progress(n_steps, n_steps)
+    return res
+
+
+@app.post("/api/mv/ident")
+def mv_ident(p: dict):
+    """Render (or reuse from the cache) the channel ident for a title: p {title, sub?, edge?}.
+    Remotion on the Mac, ~40 s cold; -> {path, hash, cached, seconds, url}."""
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    if not str(p.get("title") or "").strip():
+        raise HTTPException(400, "title is required")
+    try:
+        r = mv_finish_mod.ident_render(work, p["title"], p.get("sub"), p.get("edge"))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    r["url"] = f"/api/mv/ident_file/{r['hash']}"
+    return r
+
+
+@app.get("/api/mv/ident_file/{key}")
+def mv_ident_file(key: str):
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    path = os.path.join(mv_finish_mod.ident_cache_dir(work), os.path.basename(key) + ".mp4")
+    if not os.path.exists(path):
+        raise HTTPException(404, "no such ident render")
+    return FileResponse(path, media_type="video/mp4")
 
 
 # ----------------------------------------------------------------------------- MV location library
