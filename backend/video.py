@@ -491,6 +491,37 @@ def build_flashvsr_upscale(p, video_ref, fps):
                "fps": fps, "kind": "video"}
 
 
+def build_flashvsr_plus_upscale(p, video_ref):
+    """Upscale a finished clip with FlashVSR+ (kkget/ComfyUI-FlashVSR_Plus @ 23fef7c), the author's
+    streaming example graph (example_workflows/streaming_video_api.json): LoadVideo ->
+    FlashVSRPlusLoader -> FlashVSRPlusVideoUpscale -> SaveVideo, the settings of the 2026-10-30 SSBS
+    A/B the user judged best (Turbo, scale 2, tiny decoder, color_fix off, crf 18, audio kept).
+    Output sizes round up to multiples of 128 (1344x768 -> 2688x1536). The stock node encodes a
+    24 fps input at 24.4167 fps (it reads the rate off a temp .mkv); the box copy is patched, and
+    the caller re-checks the rate on the downloaded file anyway (mv_finish.fix_fps).
+    p: {mode? (turbo), scale? (2.0), seed? (1), crf? (18), color_fix? (false)}."""
+    mode = p.get("mode") or "turbo"
+    scale = float(p.get("scale") or 2.0)
+    seed = int(p.get("seed") if p.get("seed") is not None else 1)
+    crf = int(p.get("crf") or 18)
+    color_fix = bool(p.get("color_fix", False))
+    g = {"1": {"class_type": "LoadVideo", "inputs": {"file": video_ref}},
+         "2": {"class_type": "FlashVSRPlusLoader",
+               "inputs": {"mode": mode, "profile": "auto", "attn_backend": "auto", "offload": "auto",
+                          "decoder": "tiny", "auto_download": False, "model_directory": "", "reload_token": 0}},
+         "3": {"class_type": "FlashVSRPlusVideoUpscale",
+               "inputs": {"pipe": ["2", 0], "video": ["1", 0], "scale": scale, "height": 0, "width": 0,
+                          "temporal_compression": 4, "tiled": "auto", "tile_size": 512, "tile_overlap": 128,
+                          "color_fix": color_fix, "color_correction_levels": 5, "seed": seed,
+                          "cache_offload": "auto", "decode_every": 4, "vae_tiled": True, "vae_tile_size": 256,
+                          "vae_tile_overlap": 64, "oom_retry": True, "crf": crf, "keep_audio": True}},
+         "4": {"class_type": "SaveVideo",
+               "inputs": {"video": ["3", 0], "filename_prefix": "videogen/flashvsr_plus",
+                          "format": "auto", "codec": "auto"}}}
+    return g, {"engine": "flashvsr_plus", "mode": mode, "scale": scale, "seed": seed, "crf": crf,
+               "color_fix": color_fix, "kind": "video"}
+
+
 # ================================================================= MiniMax H3 (video + native audio)
 # Ported from the user's reference workflow MINIMAX_H3_ULTRA_WORKFLOW.json (Aitrepreneur). Node
 # signatures + model filenames VERIFIED live on the box /object_info 2026-08-02; the frame-count and

@@ -68,6 +68,51 @@ def _duration(path):
         return None
 
 
+def _video_rate(path):
+    """(avg fps, video packet count, stream seconds) of the first video stream, or Nones."""
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+                              "-show_entries", "stream=avg_frame_rate,nb_read_packets,duration", "-of", "json", path],
+                             capture_output=True, text=True, timeout=60).stdout
+        st = (json.loads(out).get("streams") or [{}])[0]
+        num, den = (str(st.get("avg_frame_rate") or "0/1").split("/") + ["1"])[:2]
+        fps = float(num) / float(den) if float(den) else None
+        n = int(st["nb_read_packets"]) if str(st.get("nb_read_packets") or "").isdigit() else None
+        secs = float(st["duration"]) if st.get("duration") not in (None, "N/A") else None
+        return fps, n, secs
+    except Exception:
+        return None, None, None
+
+
+def fix_fps(path, expect, tol=0.01):
+    """Make an upscaled clip play at the source's rate without touching a frame. The stock
+    FlashVSR+ VIDEO node writes a 24 fps input at 24.4167 fps (it reads the rate off a temp .mkv,
+    which keeps 1 ms timestamps); the box copy is patched, but a node update would bring the bug
+    back, so every downloaded upscale is checked here. A wrong rate is fixed by rescaling the video
+    timestamps (-itsscale, stream copy: all frames kept; a raw .h264 remux with -r dropped two and
+    shifted the picture), with the audio taken unscaled from the same file. Returns
+    {fps_in, fps, frames, fixed}."""
+    fps_in, frames, secs = _video_rate(path)
+    if not fps_in or not expect or abs(fps_in - float(expect)) <= tol:
+        return {"fps_in": fps_in, "fps": fps_in, "frames": frames, "fixed": False}
+    if not frames or not secs:
+        raise RuntimeError(f"fps fix: cannot read the frame count or length of {os.path.basename(path)}")
+    tmp = path + ".fps.mp4"
+    # scale so the video lasts exactly frames / expect seconds
+    factor = frames / (float(expect) * secs)
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-itsscale", f"{factor:.9f}",
+                        "-i", path, "-i", path, "-map", "0:v:0", "-map", "1:a:0?", "-c", "copy",
+                        "-movflags", "+faststart", tmp], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"fps fix failed: {r.stderr[-300:]}")
+    fps_out, frames_out, _ = _video_rate(tmp)
+    if not fps_out or abs(fps_out - float(expect)) > tol or (frames and frames_out != frames):
+        os.remove(tmp)
+        raise RuntimeError(f"fps fix did not hold: {fps_out} fps, {frames_out} of {frames} frames")
+    os.replace(tmp, path)
+    return {"fps_in": round(fps_in, 4), "fps": round(fps_out, 4), "frames": frames_out, "fixed": True}
+
+
 def finish_cut(cut_path, out_path, width, height, ident_path=None, endcard_plate=None, endcard_secs=0.0,
                crf=18, preset="medium"):
     """[ident +] cut [+ end plate over the last endcard_secs] -> out_path (h264 yuv420p, aac 320k,

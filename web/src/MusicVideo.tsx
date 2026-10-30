@@ -21,11 +21,16 @@ type Scene = {
 type Script = { title: string; audio_id: string; duration: number; concept?: string; look?: string; wardrobe?: string; arc?: string; scenes: Scene[] };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
-type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null };
+type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
+type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; sig: string };
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
+// FlashVSR+ Turbo 2x took 301 s for a 6 s take (144 frames) on the box, 2026-10-30, the one
+// timing so far and it includes a model load: only a rough guide for the time shown before a fire
+const UPSCALE_SECS_PER_SEC = 50;
+const upscaleBusy = (u?: Upscale | null) => !!u && u.status !== "done" && u.status !== "error";
 
 function fmt(t: number) {
   const m = Math.floor(t / 60), s = t - m * 60;
@@ -123,7 +128,7 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
   }, [scriptName]);
 
   // poll while any take is still rendering
-  const rendering = useMemo(() => Object.values(takes).some((l) => l.some((t) => t.status !== "done")), [takes]);
+  const rendering = useMemo(() => Object.values(takes).some((l) => l.some((t) => t.status !== "done" || upscaleBusy(t.upscaled))), [takes]);
   useEffect(() => {
     if (!rendering) return;
     const h = window.setInterval(refreshTakes, 5000);
@@ -194,6 +199,17 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
     setErr("");
     try { await api.mvLockTake({ script: scriptName, scene: idx, job_id: jid }); setBumpTick((n) => n + 1); }
     catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  const doUpscale = async (idx: number, t: Take) => {
+    const mins = Math.max(1, Math.round(((t.seconds || 6) * UPSCALE_SECS_PER_SEC) / 60));
+    if (!window.confirm(`Upscale this take 2x with FlashVSR+ on the box now? (${t.params.width}x${t.params.height} -> 2x, roughly ${mins} min)`)) return;
+    setErr(""); setBusyMsg("sending the take to the box...");
+    try {
+      const r = await api.mvUpscaleTakes({ jobs: { [String(idx)]: t.id }, force: t.upscaled?.status === "error" || t.upscaled?.status === "done" });
+      if (!r.queued?.length && r.skipped?.length) setErr(`not queued: ${r.skipped[0].why}`);
+      await refreshTakes();
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
   };
   const fileStill = async (idx: number, file: File) => {
     setErr(""); setBusyMsg("filing the still...");
@@ -470,6 +486,21 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
                           {isLocked && <Pill tone="ok">LOCKED{scene.locked && scene.locked.script !== scriptName ? ` (from ${scene.locked.script.slice(-24)})` : ""}</Pill>}
                         </div>
                       )}
+                      {t.status === "done" && (() => {
+                        const u = t.upscaled;
+                        return (
+                          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                            {u?.status === "done" && u.media_url
+                              ? <><Pill tone="ok" title={`FlashVSR+ upscale${u.fps ? `, ${u.fps} fps` : ""}${u.fps_fixed ? " (rate corrected after download)" : ""}`}>upscaled {u.scale || 2}x</Pill>
+                                  <GhostButton onClick={() => openLightbox(u.media_url!)}>play upscale</GhostButton></>
+                              : upscaleBusy(u)
+                                ? <Pill tone="warn">upscaling {u!.max ? `${Math.round((100 * u!.progress) / u!.max)}%` : u!.status}</Pill>
+                                : <GhostButton onClick={() => doUpscale(scene.index, t)} disabled={!!busyMsg} title="FlashVSR+ Turbo 2x on the box (GPU)">upscale 2x (FlashVSR+)</GhostButton>}
+                            {u?.status === "done" && <GhostButton onClick={() => doUpscale(scene.index, t)} disabled={!!busyMsg} title="queue another upscale of this take">redo</GhostButton>}
+                            {u?.status === "error" && <span className="text-red-400" title={u.error || ""}>upscale failed{u.error ? `: ${u.error.slice(0, 80)}` : ""}</span>}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -486,7 +517,7 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
         </div>
       )}
 
-      {script && <AssembleStage script={script} scriptName={scriptName} takes={takes} />}
+      {script && <AssembleStage script={script} scriptName={scriptName} takes={takes} onUpscaleQueued={refreshTakes} />}
 
       {err && <div className="rounded border border-red-800 p-2 text-xs text-red-300">{err}</div>}
     </div>
@@ -494,11 +525,14 @@ export function MusicVideoForm({ library }: { cfg: Config; busy: boolean; librar
 }
 
 // ---------- 4 Assemble: locked takes -> the cut, with the ident in front and the end card ----------
-type AsmResult = { output: string; seconds: number; scenes: number; partial?: boolean; missing?: number[]; intro?: { seconds: number; cached: boolean }; end_card?: { secs: number; text: string }; endcard_at?: number | null; library_id?: string; media_url?: string };
+type AsmResult = { output: string; seconds: number; scenes: number; partial?: boolean; missing?: number[]; intro?: { seconds: number; cached: boolean }; end_card?: { secs: number; text: string }; endcard_at?: number | null; library_id?: string; media_url?: string; upscaled?: Record<string, string>; not_upscaled?: number[] };
 
-function AssembleStage({ script, scriptName, takes }: { script: Script; scriptName: string; takes: Record<string, Take[]> }) {
+function AssembleStage({ script, scriptName, takes, onUpscaleQueued }: { script: Script; scriptName: string; takes: Record<string, Take[]>; onUpscaleQueued: () => Promise<void> }) {
   const d = useDrafts("mv");
   const [size, setSize] = d.use("asmSize", "1344x768");
+  const [useUpscaled, setUseUpscaled] = d.use("asmUseUpscaled", false);
+  const [upBusy, setUpBusy] = useState(false);
+  const [upMsg, setUpMsg] = useState("");
   const [fillNewest, setFillNewest] = d.use("asmFillNewest", true);
   const [introOn, setIntroOn] = d.use("asmIntroOn", true);
   const [introTitle, setIntroTitle] = d.use("asmIntroTitle", "");
@@ -535,6 +569,33 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
   const partial = missing.length > 0;
   const [w, h] = size.split("x").map(Number);
 
+  // the upscale state of each planned take (every listed take, locked ones from earlier scripts too)
+  const takeById = useMemo(() => {
+    const m: Record<string, Take> = {};
+    Object.values(takes).forEach((l) => l.forEach((t) => { m[t.id] = t; }));
+    return m;
+  }, [takes]);
+  const upOf = (job: string | null) => (job ? takeById[job]?.upscaled || null : null);
+  const planned = plan.filter((p) => p.job);
+  const nUpDone = planned.filter((p) => upOf(p.job)?.status === "done").length;
+  const nUpBusy = planned.filter((p) => upscaleBusy(upOf(p.job))).length;
+  const toUpscale = planned.filter((p) => { const u = upOf(p.job); return !u || u.status === "error"; });
+  const upscaleAll = async () => {
+    if (!toUpscale.length) return;
+    const secs = toUpscale.reduce((a, p) => a + (takeById[p.job!]?.seconds || (p.sc.end - p.sc.start)), 0);
+    const mins = Math.max(1, Math.round((secs * UPSCALE_SECS_PER_SEC) / 60));
+    if (!window.confirm(`Upscale ${toUpscale.length} take${toUpscale.length === 1 ? "" : "s"} 2x with FlashVSR+ on the box? They queue one after another: ${secs.toFixed(0)} s of video, roughly ${mins} min going by the one timing so far. Takes already upscaled or queued are left alone.`)) return;
+    setErr(""); setUpMsg(""); setUpBusy(true);
+    try {
+      const jobs: Record<string, string> = {};
+      toUpscale.forEach((p) => { jobs[String(p.sc.index)] = p.job!; });
+      const r = await api.mvUpscaleTakes({ jobs });
+      setUpMsg(`queued ${r.queued?.length || 0}${r.skipped?.length ? `, skipped ${r.skipped.length} (${r.skipped.map((s: { scene: number; why: string }) => `${s.scene}: ${s.why}`).join("; ")})` : ""}`);
+      await onUpscaleQueued();
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setUpBusy(false); }
+  };
+
   const previewIdent = async () => {
     setErr(""); setIdentBusy(true);
     try { const r = await api.mvIdent({ title, sub: introSub, edge: introEdge }); setIdent({ url: r.url + "?t=" + Date.now(), seconds: r.seconds, cached: r.cached }); }
@@ -544,13 +605,14 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
   const assemble = async () => {
     if (plan.every((p) => !p.job)) { setErr("no take to cut yet"); return; }
     const what = partial ? `a PARTIAL cut of ${plan.length - missing.length} of ${plan.length} scenes (no intro or end card on a partial)` : `the full cut of ${plan.length} scenes${introOn ? " with the ident in front" : ""}${ecOn ? ` and a ${ecSecs} s end card` : ""}`;
-    if (!window.confirm(`Assemble ${what} at ${size}? This re-encodes on the Mac and can take a few minutes.`)) return;
+    const upNote = useUpscaled ? ` from the upscaled takes (${nUpDone} of ${planned.length} have one; the rest stay at render size)` : "";
+    if (!window.confirm(`Assemble ${what} at ${size}${upNote}? This re-encodes on the Mac and can take a few minutes.`)) return;
     setErr(""); setResult(null);
     const jobs: Record<string, string> = {};
     plan.forEach((p) => { if (p.job && p.how !== "locked") jobs[String(p.sc.index)] = p.job; });
     try {
       const r = await api.mvAssemble({
-        script: scriptName, jobs, partial, width: w, height: h, async: true,
+        script: scriptName, jobs, partial, width: w, height: h, async: true, use_upscaled: useUpscaled,
         intro: introOn && !partial ? { title, sub: introSub, edge: introEdge } : null,
         end_card: ecOn && !partial ? { secs: Number(ecSecs), text: ecText.trim() } : null,
       });
@@ -578,7 +640,7 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
       </div>
       <div className="max-h-48 overflow-auto rounded border border-[var(--color-line)]">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-[var(--color-panel)] text-[var(--color-muted)]"><tr><th className="px-2 py-1 text-left">#</th><th className="px-2 py-1 text-left">scene</th><th className="px-2 py-1 text-left">window</th><th className="px-2 py-1 text-left">take used</th></tr></thead>
+          <thead className="sticky top-0 bg-[var(--color-panel)] text-[var(--color-muted)]"><tr><th className="px-2 py-1 text-left">#</th><th className="px-2 py-1 text-left">scene</th><th className="px-2 py-1 text-left">window</th><th className="px-2 py-1 text-left">take used</th><th className="px-2 py-1 text-left">upscale</th></tr></thead>
           <tbody>
             {plan.map((p) => (
               <tr key={p.sc.index} className="border-t border-[var(--color-line)]">
@@ -586,6 +648,7 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
                 <td className="px-2 py-1">{p.sc.title}</td>
                 <td className="px-2 py-1 text-[var(--color-muted)]">{fmt(p.sc.start)} - {fmt(p.sc.end)}</td>
                 <td className="px-2 py-1">{p.how === "cut" ? <Pill tone="accent" title="the take this earlier cut used">cut {p.job!.slice(0, 8)}</Pill> : p.how === "locked" ? <Pill tone="ok">LOCKED {p.job!.slice(0, 8)}</Pill> : p.how === "newest" ? <Pill tone="warn" title="not passed: the newest finished take fills the gap">newest {p.job!.slice(0, 8)}</Pill> : p.how === "earlier" ? <Pill tone="warn" title="not passed: the newest take of this window, rendered under an earlier script">earlier {p.job!.slice(0, 8)}</Pill> : <Pill tone="bad">missing</Pill>}</td>
+                <td className="px-2 py-1">{(() => { const u = upOf(p.job); return !p.job ? null : u?.status === "done" ? <Pill tone="ok">{u.scale || 2}x</Pill> : upscaleBusy(u) ? <Pill tone="warn">{u!.max ? `${Math.round((100 * u!.progress) / u!.max)}%` : u!.status}</Pill> : u?.status === "error" ? <Pill tone="bad" title={u.error || ""}>failed</Pill> : <span className="text-[var(--color-muted)]">-</span>; })()}</td>
               </tr>
             ))}
           </tbody>
@@ -621,9 +684,18 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
             <select className={inp} value={size} onChange={(e) => setSize(e.target.value)}>
               <option value="1344x768">1344x768 (render size)</option>
               <option value="1920x1080">1920x1080</option>
+              <option value="2560x1440">2560x1440</option>
               <option value="3840x2160">3840x2160</option>
             </select>
           </Field>
+          <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={useUpscaled} onChange={(e) => setUseUpscaled(e.target.checked)} /> use the upscaled takes ({nUpDone} of {planned.length})</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <GhostButton onClick={upscaleAll} disabled={upBusy || !toUpscale.length} title="FlashVSR+ Turbo 2x on the box (GPU) for every planned take without an upscale">
+              {upBusy ? "queueing..." : toUpscale.length ? `upscale all ${toUpscale.length} remaining (FlashVSR+ 2x)` : "every planned take is upscaled or queued"}
+            </GhostButton>
+            {nUpBusy > 0 && <span className="text-[11px] text-[var(--color-muted)]">{nUpBusy} upscaling on the box</span>}
+          </div>
+          {upMsg && <div className="text-[11px] text-[var(--color-muted)]">{upMsg}</div>}
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={fillNewest} onChange={(e) => setFillNewest(e.target.checked)} /> fill unlocked scenes with their newest take</label>
         </div>
         <div className="rounded border border-[var(--color-line)] p-3 space-y-2">
@@ -664,6 +736,7 @@ function AssembleStage({ script, scriptName, takes }: { script: Script; scriptNa
           <div className="text-xs">
             {result.partial ? "Partial cut" : "Final video"} · {result.seconds?.toFixed(1)} s · {result.scenes} scenes
             {result.intro ? ` · ident in front (${result.intro.seconds?.toFixed(1)} s)` : ""}{result.end_card ? ` · end card over the last ${result.end_card.secs} s` : ""}
+            {result.upscaled ? ` · ${Object.keys(result.upscaled).length} upscaled takes${result.not_upscaled?.length ? `, ${result.not_upscaled.length} at render size (${result.not_upscaled.join(", ")})` : ""}` : ""}
             {result.library_id ? " · filed in the Library under Music videos" : ""}
           </div>
           {result.media_url ? <video src={result.media_url} controls preload="metadata" className="w-full rounded bg-black" /> : null}

@@ -178,6 +178,11 @@ Selecting a card opens the scene drawer (right side):
 3. Upscale placement: per passed take before assembly (FlashVSR 2x on 1344x768) with assembly
    downsizing to 1080p/4K, or one pass on the assembled master? Recommendation: per take, so a
    re-rendered scene does not force a full re-upscale.
+   DECIDED 2026-10-30 (user): per take, plus an "upscale all" for the Assemble plan's takes.
+   Built: FlashVSR+ Turbo 2x (the A/B winner, not v1.1) via POST /api/mv/upscale_takes
+   {jobs: {scene: take}}; the upscale is a library clip with params.upscale_of = the take, its
+   rate re-checked on download (mv_finish.fix_fps, the stock node writes 24 fps as 24.42); the
+   takes list shows it per take; Assemble gains "use the upscaled takes" and a 2560x1440 size.
 4. Scope of phase 1 (below).
 
 ## 6. Phases (each ends browser-verified on the Mac, GPU only on the user's clicks)

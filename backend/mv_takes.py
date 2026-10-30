@@ -151,6 +151,53 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
     return out
 
 
+def attach_upscales(takes, rows, library_dir):
+    """Link each take to its FlashVSR+ upscale (library or running jobs whose params carry
+    upscale_of = the take id): take["upscaled"] = the newest finished one, else the running or
+    failed one, so the tab can show progress or the error. Mutates and returns takes."""
+    by_take = {}
+    for r in rows:
+        try:
+            prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
+        except Exception:
+            continue
+        src = prm.get("upscale_of")
+        if not src:
+            continue
+        path = os.path.join(library_dir, f"{r['id']}.mp4")
+        done = r.get("status") == "done" and os.path.exists(path)
+        if r.get("status") == "done" and not done:
+            continue
+        by_take.setdefault(src, []).append({
+            "id": r["id"], "created": r.get("created") or 0, "status": r.get("status"),
+            "progress": r.get("progress", 0), "max": r.get("max", 0), "error": r.get("error"),
+            "media_url": f"/api/media/{r['id']}" if done else None,
+            "engine": prm.get("engine"), "scale": prm.get("scale"),
+            "fps": prm.get("fps_out"), "fps_fixed": prm.get("fps_fixed")})
+    for lst in takes.values():
+        for t in lst:
+            ups = sorted(by_take.get(t["id"], []), key=lambda u: -u["created"])
+            pick = next((u for u in ups if u["status"] == "done"), None) or (ups[0] if ups else None)
+            t["upscaled"] = pick
+    return takes
+
+
+def upscale_path(rows, take_id, library_dir):
+    """The newest finished upscale file of a take, or None (rows as for attach_upscales)."""
+    best = None
+    for r in rows:
+        try:
+            prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
+        except Exception:
+            continue
+        if prm.get("upscale_of") != take_id or r.get("status") != "done":
+            continue
+        path = os.path.join(library_dir, f"{r['id']}.mp4")
+        if os.path.exists(path) and os.path.getsize(path) > 0 and (best is None or (r.get("created") or 0) > best[0]):
+            best = (r.get("created") or 0, r["id"], path)
+    return (best[1], best[2]) if best else (None, None)
+
+
 # ---------- the floor check (port of .mvwork/g1_refs/envelope_check.py) ----------
 
 def _pcm(path, start=0.0, dur=None, sr=16000):

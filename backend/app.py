@@ -322,6 +322,12 @@ def on_complete_media(pid):
                     path = os.path.join(LIBRARY, f"{pid}{ext}")
                     with open(path, "wb") as f:
                         f.write(data)
+                    expect = (JOBS.get(pid, {}).get("params") or {}).get("expect_fps")
+                    if expect and ext == ".mp4":
+                        # FlashVSR+ upscales: hold the source rate (mv_finish.fix_fps says why)
+                        fx = mv_finish_mod.fix_fps(path, float(expect))
+                        with LOCK:
+                            JOBS[pid]["params"].update(fps_out=fx["fps"], fps_fixed=fx["fixed"], frames=fx["frames"])
                     with LOCK:
                         JOBS[pid]["audio_file"] = path   # reuse the field; it is just a path
                         JOBS[pid]["status"] = "done"
@@ -1567,12 +1573,15 @@ def mv_assemble(p: dict):
     overlays the YouTube end-card plate on the last secs (the song plays out under it, the same
     plate the YouTube tab uses); file: true files the result in the library as a Music video;
     async: true runs the whole cut as a background job -> {job_id} (poll /api/job/{id}, then
-    GET /api/mv/assemble_result/{id}). A partial cut ignores intro and end_card."""
+    GET /api/mv/assemble_result/{id}). A partial cut ignores intro and end_card. use_upscaled: true
+    cuts each take's newest FlashVSR+ upscale where one exists (POST /api/mv/upscale_takes); the
+    result lists which scenes had one."""
     if p.get("async"):
         jid = uuid.uuid4().hex
         script_obj, sname = _mv_load_script(p.get("script")) if p.get("script") else (None, None)
         params = {"script": sname, "title": (script_obj or {}).get("title"), "partial": bool(p.get("partial")),
-                  "intro": p.get("intro"), "end_card": p.get("end_card"), "width": p.get("width"), "height": p.get("height")}
+                  "intro": p.get("intro"), "end_card": p.get("end_card"), "width": p.get("width"), "height": p.get("height"),
+                  "use_upscaled": bool(p.get("use_upscaled"))}
         with LOCK:
             JOBS[jid] = {"created": time.time(), "mode": "musicvideo", "status": "running",
                          "progress": 0, "max": 1, "params": params}
@@ -1651,12 +1660,22 @@ def _mv_assemble_run(p: dict, progress=None):
     if not src:
         raise HTTPException(400, "the script's song is not in the library")
     missing, parts = [], []
+    # use_upscaled: a take's newest FlashVSR+ upscale stands in for it (same frames and rate, so the
+    # trims below hold); takes without one stay as rendered and are listed in the result
+    up_rows = _mv_upscale_rows() if p.get("use_upscaled") else []
+    upscaled, not_upscaled = {}, []
     for sc in script["scenes"]:
         j = jobs.get(sc["index"])
         path = os.path.join(LIBRARY, f"{j}.mp4") if j else None
         if not j or not os.path.exists(path) or os.path.getsize(path) == 0:
             missing.append({"index": sc["index"], "title": sc.get("title"), "job_id": j})
         else:
+            if p.get("use_upscaled"):
+                uid, upath = mv_takes_mod.upscale_path(up_rows, j, LIBRARY)
+                if upath:
+                    upscaled[sc["index"]], path = uid, upath
+                else:
+                    not_upscaled.append(sc["index"])
             parts.append((sc, path))
     partial = bool(p.get("partial"))
     if missing and not partial:
@@ -1702,6 +1721,8 @@ def _mv_assemble_run(p: dict, progress=None):
         os.replace(video, out)
         res = {"output": out, "seconds": round(total, 3), "scenes": len(parts), "partial": True,
                "missing": [m["index"] for m in missing], "dir": out_dir, "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+        if p.get("use_upscaled"):
+            res.update(upscaled=upscaled, not_upscaled=not_upscaled)
         mv_takes_mod.record_assembly(out_dir, p, res)
         return res
     fade = float(p.get("fade") if p.get("fade") is not None else 1.5)
@@ -1716,6 +1737,8 @@ def _mv_assemble_run(p: dict, progress=None):
         raise HTTPException(500, f"mux failed: {r.stderr[-400:]}")
     res = {"output": out, "seconds": round(total, 3), "scenes": len(parts), "song_start": start, "dir": out_dir,
            "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
+    if p.get("use_upscaled"):
+        res.update(upscaled=upscaled, not_upscaled=not_upscaled)
     intro, end_card = p.get("intro"), p.get("end_card")
     if intro or end_card:
         if progress:
@@ -2257,8 +2280,53 @@ def mv_takes(script: str, scene: Optional[int] = None):
                              "max": j.get("max", 0), "params": j.get("params") or {}})
     script_obj, _ = _mv_load_script(name)
     takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene, scenes=script_obj["scenes"])
+    mv_takes_mod.attach_upscales(takes, _mv_upscale_rows(), LIBRARY)
     locks = {str(sc["index"]): sc["locked"] for sc in script_obj["scenes"] if sc.get("locked")}
     return {"script": name, "takes": {str(k): v for k, v in takes.items()}, "locks": locks}
+
+
+def _mv_upscale_rows():
+    """Every FlashVSR+ upscale job: finished library rows plus the in-memory running/failed ones."""
+    rows = []
+    with db() as conn:
+        for r in conn.execute("SELECT id, created, status, params FROM jobs WHERE mode='videoclip' AND status='done' "
+                              "AND params LIKE '%\"upscale_of\"%'"):
+            rows.append({"id": r["id"], "created": r["created"], "status": r["status"], "params": r["params"]})
+    seen = {r["id"] for r in rows}
+    with LOCK:
+        for pid, j in JOBS.items():
+            if pid in seen or j.get("mode") != "videoclip" or not (j.get("params") or {}).get("upscale_of"):
+                continue
+            rows.append({"id": pid, "created": j.get("created"), "status": j.get("status"), "error": j.get("error"),
+                         "progress": j.get("progress", 0), "max": j.get("max", 0), "params": dict(j["params"])})
+    return rows
+
+
+@app.post("/api/mv/upscale_takes")
+def mv_upscale_takes(p: dict):
+    """FlashVSR+ 2x upscale of takes (GPU on the box; the tab fires it only on a click). p:
+    {jobs: {scene_index: take_id}, scale? (2.0)}: one take = the per-take button, the Assemble
+    plan's map = "upscale all". A take that already has a finished or queued upscale is skipped
+    (force: true queues it again). ComfyUI runs the queued jobs one after another."""
+    jobs = {str(k): os.path.basename(str(v)) for k, v in (p.get("jobs") or {}).items() if v}
+    if not jobs:
+        raise HTTPException(400, "jobs must map scene indexes to take ids")
+    have = {}
+    for r in _mv_upscale_rows():
+        prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
+        if r.get("status") in ("done", "pending", "running", "finalizing"):
+            have.setdefault(prm.get("upscale_of"), r.get("status"))
+    queued, skipped = [], []
+    for idx, take in sorted(jobs.items(), key=lambda kv: int(kv[0])):
+        if take in have and not p.get("force"):
+            skipped.append({"scene": int(idx), "take": take, "why": "already upscaled" if have[take] == "done" else "already queued"})
+            continue
+        if not _lib_video_path(take):
+            skipped.append({"scene": int(idx), "take": take, "why": "no file in the library"})
+            continue
+        r = _flashvsr_plus_submit(take, {"scale": p.get("scale") or 2.0})
+        queued.append({"scene": int(idx), "take": take, "job_id": r["job_id"]})
+    return {"queued": queued, "skipped": skipped}
 
 
 @app.post("/api/mv/take_check")
@@ -2323,6 +2391,8 @@ def video_flashvsr(p: dict):
     vid = _lib_video_path(p.get("video_id"))
     if not vid:
         raise HTTPException(400, "video_id must reference a generated clip/video in the library")
+    if (p.get("engine") or "").lower() in ("plus", "flashvsr_plus"):
+        return _flashvsr_plus_submit(os.path.basename(p["video_id"]), p)
     fps = _probe_fps(vid)
     # AUTO-CHUNK long clips: a whole upscaled clip is accumulated in system RAM before encode, so a
     # ~20s shot (480f @720p) OOMs the box's 32GB RAM in one pass while 6s (145f) clips are fine.
@@ -2348,6 +2418,33 @@ def video_flashvsr(p: dict):
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     resolved["video_id"] = os.path.basename(p.get("video_id"))
+    return _submit_video(graph, resolved, "videoclip")
+
+
+def _flashvsr_plus_submit(video_id, p=None):
+    """Queue a FlashVSR+ upscale of one library clip (video.build_flashvsr_plus_upscale). The job
+    carries upscale_of = the clip's id (the Music Video tab links an upscale to its take by it, and
+    assembly can swap it in) and expect_fps = the clip's rate, which on_complete_media holds."""
+    p = dict(p or {})
+    vid = _lib_video_path(video_id)
+    if not vid:
+        raise HTTPException(400, "video_id must reference a generated clip/video in the library")
+    src_title = ""
+    with db() as conn:
+        r = conn.execute("SELECT params FROM jobs WHERE id=?", (video_id,)).fetchone()
+    if r:
+        try:
+            src_title = str(json.loads(r["params"] or "{}").get("title") or "")
+        except Exception:
+            src_title = ""
+    try:
+        with open(vid, "rb") as f:
+            ref = C.upload_audio(f.read(), os.path.basename(vid))    # <take id>.mp4: unique per clip
+        graph, resolved = video_mod.build_flashvsr_plus_upscale(p, ref)
+    except Exception as e:
+        raise HTTPException(500, f"build failed: {e}")
+    resolved.update(video_id=video_id, upscale_of=video_id, expect_fps=_probe_fps(vid),
+                    title=f"{src_title or video_id[:8]} / FlashVSR+ {resolved['scale']:g}x")
     return _submit_video(graph, resolved, "videoclip")
 
 
