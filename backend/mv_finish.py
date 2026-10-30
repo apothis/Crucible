@@ -113,6 +113,27 @@ def fix_fps(path, expect, tol=0.01):
     return {"fps_in": round(fps_in, 4), "fps": round(fps_out, 4), "frames": frames_out, "fixed": True}
 
 
+def source_audio(path, source):
+    """Put the source clip's own audio back on an upscale, both streams copied. FlashVSR+
+    re-encodes the audio it keeps: on SSBS scene 6 it came back 21 ms longer and its envelope sat
+    +0.02 s late against the song (r 0.975 vs the take's 0.998 at 0). The take's audio is the
+    song-locked one. A source without audio leaves the file as it is. Returns True if replaced."""
+    try:
+        has = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index",
+                              "-of", "csv=p=0", source], capture_output=True, text=True, timeout=30).stdout.strip()
+    except Exception:
+        has = ""
+    if not has:
+        return False
+    tmp = path + ".aud.mp4"
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-i", source, "-map", "0:v:0",
+                        "-map", "1:a:0", "-c", "copy", "-movflags", "+faststart", tmp], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"audio swap failed: {r.stderr[-300:]}")
+    os.replace(tmp, path)
+    return True
+
+
 def finish_cut(cut_path, out_path, width, height, ident_path=None, endcard_plate=None, endcard_secs=0.0,
                crf=18, preset="medium"):
     """[ident +] cut [+ end plate over the last endcard_secs] -> out_path (h264 yuv420p, aac 320k,

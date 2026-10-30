@@ -326,8 +326,11 @@ def on_complete_media(pid):
                     if expect and ext == ".mp4":
                         # FlashVSR+ upscales: hold the source rate (mv_finish.fix_fps says why)
                         fx = mv_finish_mod.fix_fps(path, float(expect))
+                        src = _lib_video_path((JOBS[pid]["params"] or {}).get("upscale_of"))
+                        swapped = mv_finish_mod.source_audio(path, src) if src else False
                         with LOCK:
-                            JOBS[pid]["params"].update(fps_out=fx["fps"], fps_fixed=fx["fixed"], frames=fx["frames"])
+                            JOBS[pid]["params"].update(fps_out=fx["fps"], fps_fixed=fx["fixed"], frames=fx["frames"],
+                                                       source_audio=swapped)
                     with LOCK:
                         JOBS[pid]["audio_file"] = path   # reuse the field; it is just a path
                         JOBS[pid]["status"] = "done"
