@@ -18,7 +18,7 @@ import uuid
 
 import requests
 import websocket  # websocket-client
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +32,7 @@ from . import mv_h3 as mv_h3_mod
 from . import mv_writer as mv_writer_mod
 from . import mv_stems as mv_stems_mod
 from . import mv_locations as mv_locations_mod
+from . import mv_takes as mv_takes_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1304,6 +1305,7 @@ def mv_render_scene(p: dict):
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
     return _h3_chain(q, meta={"script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
+                              "title": f"{script.get('title') or script_name} / {int(scene['index']):02d} {scene.get('title') or ''}".strip(),
                               "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
@@ -2071,6 +2073,105 @@ def _probe_fps(path, default=24.0):
         return round(float(num) / float(den), 3) if float(den) else default
     except Exception:
         return default
+
+
+# ---------- Music Video tab (docs/MV_UI_DESIGN.md, phase 1): scripts, takes, checks, locks ----------
+
+def _mv_song_path(audio_id):
+    """The song file behind a library audio id (same lookup as /api/audio/{id})."""
+    for ext in (".wav", ".mp3", ".flac"):
+        path = os.path.join(LIBRARY, f"{audio_id}{ext}")
+        if os.path.exists(path):
+            return path
+    with db() as conn:
+        row = conn.execute("SELECT audio FROM jobs WHERE id=?", (audio_id,)).fetchone()
+    return row["audio"] if row and row["audio"] and os.path.exists(row["audio"]) else None
+
+
+@app.get("/api/mv/scripts")
+def mv_scripts(audio_id: str = ""):
+    """Saved scripts, newest first, with scene/clip/still/lock counts. audio_id narrows to a song."""
+    return mv_takes_mod.list_scripts(LIBRARY, audio_id or None)
+
+
+@app.get("/api/mv/script/{name}")
+def mv_script_get(name: str):
+    script, nm = _mv_load_script(os.path.basename(name))
+    return {"name": nm, "script": script}
+
+
+@app.get("/api/mv/takes")
+def mv_takes(script: str, scene: Optional[int] = None):
+    """Every render of a script's scenes: done library clips plus running jobs, grouped by scene
+    index, with each take's cached check and the scene's lock. scene narrows to one scene."""
+    name = os.path.basename(script)
+    rows = []
+    with db() as conn:
+        for r in conn.execute("SELECT id, created, status, params FROM jobs WHERE mode='videoclip' AND status='done' "
+                              "AND params LIKE ? ORDER BY created DESC", (f"%{name}%",)):
+            rows.append({"id": r["id"], "created": r["created"], "status": r["status"], "params": r["params"]})
+    with LOCK:
+        for pid, j in JOBS.items():
+            if j.get("mode") == "videoclip" and j.get("status") in ("pending", "running", "finalizing"):
+                rows.append({"id": pid, "created": j.get("created"), "status": j["status"], "progress": j.get("progress", 0),
+                             "max": j.get("max", 0), "params": j.get("params") or {}})
+    takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene)
+    script_obj, _ = _mv_load_script(name)
+    locks = {str(sc["index"]): sc["locked"] for sc in script_obj["scenes"] if sc.get("locked")}
+    return {"script": name, "takes": {str(k): v for k, v in takes.items()}, "locks": locks}
+
+
+@app.post("/api/mv/take_check")
+def mv_take_check_route(p: dict):
+    """Measure one take (Mac, no GPU): song-envelope floor against its scene window (clean takes
+    0.87-1.00), opening_jump (fade-in or morph over the first 2 s) and a contact sheet. Cached
+    per take. p: {job_id, script, scene}."""
+    jid = os.path.basename(str(p.get("job_id") or ""))
+    script, name = _mv_load_script(p.get("script"))
+    try:
+        sc = script["scenes"][int(p.get("scene"))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    song = _mv_song_path(script.get("audio_id"))
+    try:
+        return mv_takes_mod.run_check(LIBRARY, jid, song, float(sc["start"]),
+                                      planned_seconds=round(float(sc["end"]) - float(sc["start"]), 3))
+    except FileNotFoundError:
+        raise HTTPException(404, "no render in the library for that job id")
+
+
+@app.get("/api/mv/take_sheet/{jid}")
+def mv_take_sheet(jid: str):
+    path = os.path.join(mv_takes_mod.checks_dir(LIBRARY), os.path.basename(jid), "sheet.png")
+    if not os.path.exists(path):
+        raise HTTPException(404, "no sheet yet: run the take check")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.post("/api/mv/lock_take")
+def mv_lock_take(p: dict):
+    """Pass a take: p {script, scene, job_id, start?, end?} writes scene.locked (validated by
+    _mv_resolve_locks) into the saved script IN PLACE: a lock is state, not a rewrite, so the
+    script keeps its name and its stills and takes stay attached. job_id empty = unlock."""
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "locks need a saved script")
+    try:
+        sc = script["scenes"][int(p.get("scene"))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    jid = str(p.get("job_id") or "").strip()
+    if jid:
+        L = {"job_id": jid, "script": name, "scene": int(p.get("scene"))}
+        for k in ("start", "end"):
+            if p.get(k) is not None:
+                L[k] = float(p[k])
+        sc["locked"] = _mv_resolve_locks([L])[0]["locked"]
+    else:
+        sc.pop("locked", None)
+    with open(os.path.join(mv_takes_mod.scripts_dir(LIBRARY), name), "w") as f:
+        json.dump(script, f, indent=1)
+    return {"script": name, "scene": sc["index"], "locked": sc.get("locked")}
 
 
 @app.post("/api/video/flashvsr")

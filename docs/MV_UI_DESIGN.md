@@ -1,5 +1,19 @@
 # Music Video tab: UI design (proposal, 2026-10-30)
 
+## Status
+
+- 2026-10-30 PHASE 1 BUILT (web/src/MusicVideo.tsx, backend/mv_takes.py, routes in app.py:
+  GET /api/mv/scripts, GET /api/mv/script/{name}, GET /api/mv/takes, POST /api/mv/take_check,
+  GET /api/mv/take_sheet/{id}, POST /api/mv/lock_take; takes now carry a `title` param so the
+  Library groups them per scene). Browser-verified on the built dist (:8000): script list, the
+  storyboard with stills and status, scene drawer, dry run through the real gate (ref2va, 1 clip,
+  1344x768, seed pinned, no flags; Render enabled only then), take check from the tab (floor
+  1.00, opening 2.1x, contact sheet), lock and unlock round trip written into the script file.
+  NOT exercised: Render on the box (GPU, user-fired), still paste/upload (no new still to file).
+  Bug found and fixed in the check: a loader effect that depended on a useDrafts setter re-ran
+  every render (endless /api/mv/script requests until the browser ran out of sockets).
+
+
 User ask (2026-10-30): "a UI for this entire video process, including adding the intro, and
 adding the YouTube cards feature at the end, same way the YouTube tab does that part. Also
 showing each scene from the video, its still etc, all needs to be user friendly ... including

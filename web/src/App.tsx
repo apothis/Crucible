@@ -9,6 +9,7 @@ import { Music3StudioForm } from "./Music3Studio";
 import { Yue2StudioForm } from "./Yue2Studio";
 import { SunoStudioForm } from "./SunoStudio";
 import { YouTubeForm } from "./YouTube";
+import { MusicVideoForm } from "./MusicVideo";
 import { SettingsModal } from "./Settings";
 import { Assistant } from "./Assistant";
 import { WavePlayer } from "./WavePlayer";
@@ -40,6 +41,7 @@ const MODES = [
   { id: "compare", label: "Compare" },
   { id: "mix", label: "Mix" },
   { id: "aimix", label: "AI Mix" },
+  { id: "mv", label: "Music Video" },
   { id: "youtube", label: "YouTube" },
   { id: "music3", label: "Music 3" },
   { id: "yue2", label: "YuE2" },
@@ -53,7 +55,7 @@ const GROUPS: { name: string; modes: string[] }[] = [
   { name: "Guitar", modes: ["backing", "guitar", "solo", "tone"] },
   { name: "Vocals", modes: ["vocalbuilder", "vocals", "swap", "import"] },
   { name: "Finish", modes: ["stems", "mix", "aimix", "master", "shape", "naturalize", "deglitch", "compare"] },
-  { name: "Video", modes: ["youtube"] },
+  { name: "Video", modes: ["mv", "youtube"] },
   { name: "Lab", modes: ["loratrain"] },
 ];
 const LABELS: Record<string, string> = Object.fromEntries(MODES.map((m) => [m.id, m.label]));
@@ -274,6 +276,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} goTo={goTo} />;
     case "yue2": return <Yue2StudioForm {...p} song={song} projectName={projectName} library={library} goTo={goTo} />;
     case "suno": return <SunoStudioForm {...p} goTo={goTo} />;
+    case "mv": return <MusicVideoForm {...p} library={library} />;
     case "youtube": return <YouTubeForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} refresh={ctx.onDone} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;

@@ -108,7 +108,15 @@ export const api = {
   ytBackgroundsSave: (p: unknown) => jpost("/api/youtube/backgrounds", p),
   h3i2v: (p: unknown) => jpost("/api/video/h3_i2v", p),            // H3 image/FLF-to-video (hunt/finish)
   h3t2v: (p: unknown) => jpost("/api/video/h3_t2v", p),            // H3 text-to-video
-  flashvsr: (p: unknown) => jpost("/api/video/flashvsr", p),       // diffusion upscale of a library clip
+  flashvsr: (p: unknown) => jpost("/api/video/flashvsr", p),
+  // Music Video tab (docs/MV_UI_DESIGN.md): scripts, scenes, takes, checks, locks, the gated render
+  mvScripts: (audioId?: string) => jget(`/api/mv/scripts${audioId ? `?audio_id=${encodeURIComponent(audioId)}` : ""}`),
+  mvScript: (name: string) => jget(`/api/mv/script/${encodeURIComponent(name)}`),
+  mvTakes: (script: string) => jget(`/api/mv/takes?script=${encodeURIComponent(script)}`),
+  mvTakeCheck: (p: { job_id: string; script: string; scene: number }) => jpost("/api/mv/take_check", p),
+  mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
+  mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),   // dry_run: true = the gate, nothing queued
+  mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)       // diffusion upscale of a library clip
   ytWordmarkOptions: () => jget("/api/youtube/wordmark_options"),  // fonts/treatments + saved global choice
   ytWordmarkSave: (p: unknown) => jmethod("PUT", "/api/youtube/wordmark", p),
   ytStamp: (p: unknown) => jpost("/api/youtube/stamp", p),         // wordmark onto a cover -> new library still (sync)
