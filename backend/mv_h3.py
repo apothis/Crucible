@@ -58,6 +58,17 @@ MAX_CLIPS = 20                      # the streamer's clip_1 .. clip_20 sockets
 # 2026-10-28/29): the turbo recipe at 1344x768. A batch dry run flags any scene that would render
 # on something else (s.20.48: a fire that dropped them ran base 20-step 960x544 on every scene).
 PROVEN = {"turbo": True, "width": 1344, "height": 768}
+# Latent upscale second pass (opt-in, s.20.50), a port of LBH-123-AI's own example graphs
+# (Comfyui_Minimax_h3_latent_Upscaler/workflow_templates, i2v "workflow2" and r2v "workflow3"):
+# the finished take's AV latent -> LTXVSeparateAVLatent -> MinimaxH3LatentUpscaler3D (video only,
+# target dimensions, align 32) -> LTXVConcatAVLatent -> a short re-sample on the example's manual
+# sigmas with the euler sampler. The r2v example reuses the first pass's conditioning; the i2v
+# example builds a second MiniMaxH3ImageToVideo at the target size. One addition of ours: the song
+# is written back into the upscaled latent (MiniMaxH3SongMaskedAVContext) so the second pass keeps
+# it locked like the first; the example has no song lock.
+UPSCALE_MODEL = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+UPSCALE_SIGMAS = "0.9035, 0.6316, 0.3158, 0.0000"
+UPSCALE_SAMPLER = "euler"
 
 
 def chain_settings(p, lane="ref2va"):
@@ -67,8 +78,11 @@ def chain_settings(p, lane="ref2va"):
     q.setdefault("megapixels", CHAIN_MP)
     w, h = _h3_size(q)
     rec = chain_recipe(p, lane)
-    return {"turbo": bool(p.get("turbo")), "steps": rec["steps"], "shift_video": rec["shift_video"],
-            "lora": rec["lora"], "width": w, "height": h, "seed": _seed(p)}
+    out = {"turbo": bool(p.get("turbo")), "steps": rec["steps"], "shift_video": rec["shift_video"],
+           "lora": rec["lora"], "width": w, "height": h, "seed": _seed(p)}
+    if p.get("upscale_width") or p.get("upscale_height"):
+        out["upscale"] = [int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)]
+    return out
 
 
 def settings_flags(s):
@@ -168,7 +182,9 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         lane? (None [default] = ref2va when any picture, else fl2va text-to-video; "i2v" = the
         image-to-video lane: FL2VA weights + their turbo LoRA, `first_frame_name` fed raw as the
         node's first_frame (the place arrives as pixels to continue, not as a subject to retain),
-        NO reference pictures, prompts in the three-section FL2VA format; s.20.18)}
+        NO reference pictures, prompts in the three-section FL2VA format; s.20.18),
+        upscale_width? / upscale_height? (None [default] = off; both set = the latent upscale second
+        pass at that size, multiples of 32, see UPSCALE_MODEL; single-clip chains only, s.20.50)}
     first_frame_name: upload name of the first-frame still for lane "i2v" (the location still).
     anchor_name: optional upload of the scene's OPENING still (her already in place) anchored at
         frame 0 of the FIRST clip only, through MiniMaxH3AddGuide, on the reference lane (opt-in,
@@ -232,6 +248,15 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         raise ValueError("the frame-0 anchor is a reference-lane guide; lane i2v pins the first frame by itself")
     if anchor_name and keyframes in ("still_first", "still_first_last"):
         raise ValueError("anchor and keyframes still_first both guide frame 0; choose one")
+    up_w, up_h = int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)
+    upscale = bool(up_w or up_h)
+    if upscale:
+        if not (up_w and up_h) or up_w % 32 or up_h % 32:
+            raise ValueError("upscale_width and upscale_height must both be set, multiples of 32")
+        if len(clips) > 1:
+            raise ValueError("the latent upscale pass is for single-clip chains")
+        if free_av or clock_fps is not None:
+            raise ValueError("the latent upscale pass keeps the song locked; it does not take free_av or clock_fps")
 
     g = {}
     # --- shared loaders and the patched model (ids follow the example's roles)
@@ -344,6 +369,32 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         g[sampler] = {"class_type": "SamplerCustomAdvanced",
                       "inputs": {"noise": [noise, 0], "guider": [guider, 0], "sampler": ["12", 0],
                                  "sigmas": ["11", 0], "latent_image": latent}}
+        if upscale:
+            # second pass (UPSCALE_MODEL comment): ids 80-89, one clip only
+            g["80"] = {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": [sampler, 0]}}
+            g["81"] = {"class_type": "MinimaxH3LatentUpscaler3D",
+                       "inputs": {"latent": ["80", 0], "model_name": UPSCALE_MODEL, "mode": "target dimensions",
+                                  "mode.width": up_w, "mode.height": up_h, "align": 32,
+                                  "enable_temporal_chunking": True, "force_unload": True, "device": "cuda",
+                                  "precision": "fp16"}}
+            g["82"] = {"class_type": "LTXVConcatAVLatent", "inputs": {"video_latent": ["81", 0], "audio_latent": ["80", 1]}}
+            g["83"] = {"class_type": "MiniMaxH3SongMaskedAVContext",
+                       "inputs": {"latent": ["82", 0], "audio_vae": ["9", 0], "master_audio": lock_audio,
+                                  "clip_start_seconds": float(win["clip_start"]),
+                                  "context_length": int(plan["context_frames"]), "source_fps": float(fps),
+                                  "crop": "disabled"}}
+            up_positive = positive
+            if i2v:
+                g["84"] = {"class_type": "MiniMaxH3ImageToVideo",
+                           "inputs": dict(g[r2v]["inputs"], width=up_w, height=up_h)}
+                up_positive = ["84", 0]
+            g["85"] = {"class_type": "BasicGuider", "inputs": {"model": clip_model, "conditioning": up_positive}}
+            g["86"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": UPSCALE_SAMPLER}}
+            g["87"] = {"class_type": "ManualSigmas", "inputs": {"sigmas": UPSCALE_SIGMAS}}
+            g["88"] = {"class_type": "SamplerCustomAdvanced",
+                       "inputs": {"noise": [noise, 0], "guider": ["85", 0], "sampler": ["86", 0],
+                                  "sigmas": ["87", 0], "latent_image": ["83", 0]}}
+            sampler = "88"
         prev_sampler = sampler
         samplers.append(sampler)
         seeds.append(clip_seed)
@@ -374,6 +425,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "keyframes": keyframes if (keyframes and ref_names) else None,
                 "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
                 "anchor_first": bool(anchor_name),
+                "upscale": [up_w, up_h] if upscale else None,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved
