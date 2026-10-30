@@ -77,7 +77,11 @@ function AppInner() {
   const [results, setResults] = useState<Result[]>([]);
   const [song, setSong] = useState<SongDraft | null>(null);
   const [handoff, setHandoff] = useState<{ tags?: string; lyrics?: string } | null>(null);
-  const [libOpen, setLibOpen] = useState(true);
+  const [libOpenMain, setLibOpenMain] = useState(true);
+  // the Music Video tab needs the whole width: the Library starts closed there (its own toggle)
+  const [libOpenMv, setLibOpenMv] = useState(false);
+  const libOpen = mode === "mv" ? libOpenMv : libOpenMain;
+  const setLibOpen = mode === "mv" ? setLibOpenMv : setLibOpenMain;
   const [compare, setCompare] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<string[]>(GROUPS.map((g) => g.name));
@@ -195,7 +199,7 @@ function AppInner() {
 
         <section className="min-h-0 flex-1 overflow-y-auto p-6">
           <HowItWorks goTo={setMode} />
-          <div className={mode === "compare" || mode === "music3" || mode === "yue2" || mode === "aimix" ? "w-full" : "max-w-2xl"}>
+          <div className={mode === "compare" || mode === "music3" || mode === "yue2" || mode === "aimix" || mode === "mv" ? "w-full" : "max-w-2xl"}>
             {cfg ? <Controls mode={mode} cfg={cfg} busy={busy} song={song} setSong={setSong} goTo={setMode} handoff={handoff} setHandoff={setHandoff} library={library} compare={compare} setCompare={setCompare} projectName={current?.name} {...ctx} />
                  : <p className="mt-6 text-sm text-[var(--color-muted)]">Connecting to backend…</p>}
           </div>

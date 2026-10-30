@@ -26,11 +26,25 @@ def checks_dir(library_dir):
 
 def list_scripts(library_dir, audio_id=None):
     """Saved scripts (newest first) with the counts the tab shows: scenes, clips, stills filed,
-    takes locked. `audio_id` narrows to one song."""
+    takes locked, and the full videos cut from each (videos, last_video = the newest cut's stamp;
+    revisions of one song share a title, so this is what tells the working script apart).
+    `audio_id` narrows to one song."""
     d = scripts_dir(library_dir)
     out = []
     if not os.path.isdir(d):
         return out
+    cuts = {}
+    ad = assembly_dir(library_dir)
+    for stamp in (os.listdir(ad) if os.path.isdir(ad) else []):
+        rp = os.path.join(ad, stamp, "assembly.json")
+        try:
+            with open(rp) as fh:
+                rec = json.load(fh)
+        except Exception:
+            continue
+        name = os.path.basename(str((rec.get("body") or {}).get("script") or ""))
+        if name and not (rec.get("result") or {}).get("partial") and not (rec.get("body") or {}).get("partial"):
+            cuts.setdefault(name, []).append(stamp)
     for fn in os.listdir(d):
         if not fn.endswith(".json"):
             continue
@@ -51,7 +65,8 @@ def list_scripts(library_dir, audio_id=None):
                     "clips": sum(len(sc.get("clips") or []) for sc in scenes),
                     "stills": sum(1 for sc in scenes if sc.get("opening_still_id")),
                     "locks": sum(1 for sc in scenes if sc.get("locked")),
-                    "problems": sum(len(sc.get("scene_problems") or []) for sc in scenes)})
+                    "problems": sum(len(sc.get("scene_problems") or []) for sc in scenes),
+                    "videos": len(cuts.get(fn, [])), "last_video": max(cuts[fn]) if cuts.get(fn) else None})
     out.sort(key=lambda x: -x["mtime"])
     return out
 
@@ -311,7 +326,10 @@ def list_assemblies(library_dir, script_name=None):
             continue
         if base and not rec_script:
             continue          # an unrecorded cut cannot be tied to a song
-        final = max(mp4s, key=lambda f: os.path.getsize(os.path.join(sd, f)))
+        # the finished file (ident + end card) when there is one: at 1440p the plain cut beside it
+        # is the bigger file, so size alone picked the wrong one
+        finals = [f for f in mp4s if f.endswith("_final.mp4")]
+        final = finals[0] if finals else max(mp4s, key=lambda f: os.path.getsize(os.path.join(sd, f)))
         res = (rec or {}).get("result") or {}
         out.append({"stamp": stamp, "dir": sd, "file": final, "path": os.path.join(sd, final),
                     "seconds": res.get("seconds") or _duration(os.path.join(sd, final)),

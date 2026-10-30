@@ -2430,12 +2430,15 @@ def _mv_upscale_rows():
 @app.post("/api/mv/upscale_takes")
 def mv_upscale_takes(p: dict):
     """FlashVSR+ 2x upscale of takes (GPU on the box; the tab fires it only on a click). p:
-    {jobs: {scene_index: take_id}, scale? (2.0)}: one take = the per-take button, the Assemble
-    plan's map = "upscale all". A take that already has a finished or queued upscale is skipped
-    (force: true queues it again). ComfyUI runs the queued jobs one after another."""
+    {jobs: {scene_index: take_id}, scale? (2.0), script?}: one take = the per-take button, the
+    Assemble plan's map = "upscale all". A take that already has a finished or queued upscale is
+    skipped (force: true queues it again). ComfyUI runs the queued jobs one after another. With
+    script, each upscale is named after its scene in THAT script (a take rendered under an earlier
+    script carries that script's scene number in its own title)."""
     jobs = {str(k): os.path.basename(str(v)) for k, v in (p.get("jobs") or {}).items() if v}
     if not jobs:
         raise HTTPException(400, "jobs must map scene indexes to take ids")
+    scr = _mv_load_script(p["script"])[0] if p.get("script") else None
     have = {}
     for r in _mv_upscale_rows():
         prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
@@ -2449,7 +2452,13 @@ def mv_upscale_takes(p: dict):
         if not _lib_video_path(take):
             skipped.append({"scene": int(idx), "take": take, "why": "no file in the library"})
             continue
-        r = _flashvsr_plus_submit(take, {"scale": p.get("scale") or 2.0})
+        sub = {"scale": p.get("scale") or 2.0}
+        if scr:
+            try:
+                sub["title"] = f"{scr.get('title') or ''} / {int(idx):02d} {scr['scenes'][int(idx)].get('title') or ''}".strip(" /")
+            except Exception:
+                pass
+        r = _flashvsr_plus_submit(take, sub)
         queued.append({"scene": int(idx), "take": take, "job_id": r["job_id"]})
     return {"queued": queued, "skipped": skipped}
 
@@ -2554,10 +2563,10 @@ def _flashvsr_plus_submit(video_id, p=None):
     vid = _lib_video_path(video_id)
     if not vid:
         raise HTTPException(400, "video_id must reference a generated clip/video in the library")
-    src_title = ""
+    src_title = str(p.pop("title", "") or "")
     with db() as conn:
         r = conn.execute("SELECT params FROM jobs WHERE id=?", (video_id,)).fetchone()
-    if r:
+    if r and not src_title:
         try:
             sp = json.loads(r["params"] or "{}")
         except Exception:
