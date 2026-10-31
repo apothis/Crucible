@@ -156,7 +156,9 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   // render settings: the proven recipe as defaults (turbo 1344x768, two reference stills)
   const [faceId, setFaceId] = d.use("faceId", "2c1c49e7c1a34a47878c4d416d6fb009");
   const [bodyId, setBodyId] = d.use("bodyId", "cd98a0e41c1a4579944e5aff23239e25");
-  const [seed, setSeed] = d.use("seed", "20261027");
+  // blank = every check draws a new seed (pinned for the render it gates); the old "seed" draft
+  // defaulted to 20261027, so every take of a scene repeated one seed
+  const [seed, setSeed] = d.use("seedPin", "");
   const [turbo, setTurbo] = d.use("turbo", true);
   const [width, setWidth] = d.use("width", 1344);
   const [height, setHeight] = d.use("height", 768);
@@ -684,16 +686,22 @@ function TakesStep(p: {
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
   };
+  // a seed that already made a take of this scene would most likely make the same take again
+  const seedUsed = (idx: number, sd: unknown) => sd != null && list(idx).some((t) => String(t.params?.seed) === String(sd));
   const canRender = (idx: number) => {
     const dr = dry[idx];
-    return !!dr && dr.sig === sig() && (dr.flags.length === 0 || p.acceptFlags);
+    return !!dr && dr.sig === sig() && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed);
   };
   const doRender = async (idx: number) => {
     const dr = dry[idx];
     if (!dr || !canRender(idx)) return;
     if (!window.confirm(`Render scene ${idx} on the box now? (${dr.clips} clip${dr.clips === 1 ? "" : "s"}, ${dr.settings?.width}x${dr.settings?.height}, seed ${dr.settings?.seed})`)) return;
     setErr(""); setBusyMsg("sending the scene to the box (30-60 s)...");
-    try { await api.mvRenderScene(renderBody(idx, false, Number(dr.settings?.seed))); await p.refreshTakes(); }
+    try {
+      await api.mvRenderScene(renderBody(idx, false, Number(dr.settings?.seed)));
+      p.setDry((d) => { const n = { ...d }; delete n[idx]; return n; });     // the next render checks again: a new seed
+      await p.refreshTakes();
+    }
     catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
   };
@@ -919,13 +927,14 @@ function TakesStep(p: {
                     <span>{dr.settings?.turbo ? "turbo" : "base"}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
                     {dr.sig !== sig() ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
                   </div>
+                  {seedUsed(scene.index, dr.settings?.seed) && <div className="mt-1 text-amber-300">seed {dr.settings?.seed} already made a take of this scene, so it would most likely come out the same. Clear the seed in the render settings and check again for a new one.</div>}
                   {dr.flags.length ? <ul className="mt-1 list-disc pl-4 text-amber-300">{dr.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : <div className="mt-1 text-emerald-500">no warnings: ready to render</div>}
                 </div>
               )}
               <details className="text-xs">
                 <summary className="cursor-pointer text-[var(--color-muted)]">render settings (the proven defaults; the singer's pictures are set in step 3)</summary>
                 <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-                  <Field label="seed" hint="blank = random"><input className={inp} value={p.seed} onChange={(e) => p.setSeed(e.target.value)} /></Field>
+                  <Field label="seed" hint="blank = a new random seed on every check"><input className={inp} value={p.seed} onChange={(e) => p.setSeed(e.target.value)} /></Field>
                   <Field label="width"><input className={inp} type="number" step={32} value={p.width} onChange={(e) => p.setWidth(Number(e.target.value))} /></Field>
                   <Field label="height"><input className={inp} type="number" step={32} value={p.height} onChange={(e) => p.setHeight(Number(e.target.value))} /></Field>
                   <label className="flex items-end gap-2 pb-2 text-xs"><input type="checkbox" checked={p.turbo} onChange={(e) => p.setTurbo(e.target.checked)} /> turbo</label>
