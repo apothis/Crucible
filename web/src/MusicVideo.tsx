@@ -88,6 +88,16 @@ function Action({ onClick, disabled, children, title, big }: { onClick: () => vo
   );
 }
 
+function Bar({ label, frac }: { label: ReactNode; frac: number }) {
+  const w = Math.max(0, Math.min(1, frac)) * 100;
+  return (
+    <div>
+      <div className="mb-0.5 flex justify-between text-[11px] text-[var(--color-muted)]"><span>{label}</span><span>{Math.round(w)}%</span></div>
+      <div className="h-2 overflow-hidden rounded bg-[var(--color-line)]"><div className="h-full rounded bg-[var(--color-accent)] transition-all" style={{ width: `${w}%` }} /></div>
+    </div>
+  );
+}
+
 function Card({ title, sub, children, className = "" }: { title?: ReactNode; sub?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4 space-y-3 ${className}`}>
@@ -719,6 +729,72 @@ function TakesStep(p: {
     if (n) return { tone: "warn" as const, text: `${n} take${n === 1 ? "" : "s"}, none chosen`, todo: true };
     return { tone: "muted" as const, text: "not rendered", todo: true };
   };
+  // the batch: every scene with no take yet and none chosen, checked together then sent in the background
+  type BatchRow = { index: number; title?: string; status: string; error?: unknown; flags?: string[]; job_id?: string | null };
+  type BatchDry = { manifest: string; counts: Record<string, number>; flagged: number[]; scenes: BatchRow[]; sig: string; only: number[] };
+  type BatchJob = { id: string; status: string; error?: string; counts?: Record<string, number>; rows: BatchRow[]; total?: number };
+  const [bDry, setBDry] = useState<BatchDry | null>(null);
+  const [bAccept, setBAccept] = useState(false);
+  const [bJob, setBJob] = useState<BatchJob | null>(null);
+  const unrendered = script.scenes.filter((sc) => !sc.locked && list(sc.index).length === 0).map((sc) => sc.index);
+  const bSig = () => `${sig()}|${unrendered.join(",")}`;
+  const batchCommon = () => {
+    const b: Record<string, unknown> = {
+      script: scriptName, ref_ids: [p.faceId, p.bodyId].map((x) => x.trim()).filter(Boolean),
+      turbo: p.turbo, attention: ATTENTION, width: Number(p.width), height: Number(p.height),
+    };
+    const sd = p.seed.trim() ? Number(p.seed) : undefined;
+    if (sd !== undefined && !Number.isNaN(sd)) b.seed = sd;
+    return b;
+  };
+  const doBatchDry = async () => {
+    setErr(""); setBusyMsg(`checking the settings of ${unrendered.length} scenes (no GPU)...`);
+    try {
+      const r = await api.mvRenderScript({ ...batchCommon(), only: unrendered, dry_run: true });
+      setBDry({ ...(r as Omit<BatchDry, "sig" | "only">), sig: bSig(), only: unrendered }); setBJob(null);
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
+  };
+  const bReady = bDry ? bDry.scenes.filter((r) => r.status === "dry") : [];
+  const bFlagged = bReady.filter((r) => (r.flags || []).length);
+  const bSendable = bReady.length - (bAccept ? 0 : bFlagged.length);
+  const bFresh = !!bDry && bDry.sig === bSig();
+  const bSending = bJob?.status === "sending";
+  const doBatchFire = async () => {
+    if (!bDry || !bFresh || bSendable === 0) return;
+    if (!window.confirm(`Render ${bSendable} scene${bSendable === 1 ? "" : "s"} on the box now? They are sent one after another (30-60 s each) and render in the box queue.`)) return;
+    setErr("");
+    try {
+      const r = await api.mvRenderScript({ from_dry: bDry.manifest, accept_flags: bAccept ? bFlagged.map((x) => x.index) : [], async: true });
+      setBJob({ id: (r as { job_id: string }).job_id, status: "sending", rows: [], total: bSendable });
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  useEffect(() => {
+    if (!bJob || bJob.status !== "sending") return;
+    const t = window.setInterval(async () => {
+      try {
+        const j = (await api.mvRenderScriptJob(bJob.id)) as BatchJob;
+        setBJob((b) => ({ ...j, total: b?.total }));
+        await p.refreshTakes();
+        if (j.status !== "sending") setBDry(null);
+      } catch (e) { setErr(String((e as Error).message || e)); setBJob((b) => (b ? { ...b, status: "error" } : b)); }
+    }, 4000);
+    return () => window.clearInterval(t);
+  }, [bJob?.id, bJob?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // progress: scenes sent (rows past the ones that skip straight through) and the box's renders of them
+  const bTodo = (bJob?.rows || []).filter((r) => r.status !== "existing" && r.status !== "skipped");
+  const bQueued = bTodo.filter((r) => r.status === "queued" && r.job_id);
+  const sentFrac = bJob?.total ? Math.min(1, bTodo.length / bJob.total) : 0;
+  const takeFrac = (r: BatchRow) => {
+    const t = list(r.index).find((x) => x.id === r.job_id);
+    if (!t) return 0;
+    return t.status === "done" || t.status === "error" ? 1 : t.max ? Math.min(0.99, (t.progress || 0) / t.max) : 0;
+  };
+  const renderDone = bQueued.filter((r) => takeFrac(r) === 1).length;
+  const renderFrac = bQueued.length ? bQueued.reduce((a, r) => a + takeFrac(r), 0) / bQueued.length : 0;
+  const renderNow = bQueued.find((r) => { const f = takeFrac(r); return f > 0 && f < 1; });
+  const errText = (e: unknown) => (typeof e === "string" ? e : JSON.stringify(e));
+
   const shown = script.scenes.filter((s) => filter === "all" || stateOf(s).todo);
   const tl = list(scene.index);
   const lockedElsewhere = scene.locked && !tl.some((t) => t.id === scene.locked!.job_id);
@@ -726,6 +802,37 @@ function TakesStep(p: {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+      {/* top: render every scene that has no take yet, in one go */}
+      <Card className="lg:col-span-2" title={`Render the rest: ${unrendered.length} scene${unrendered.length === 1 ? "" : "s"} with no take yet`}
+        sub="one settings check for all of them (no GPU), then one button sends them all to the box. Scenes that already have a take are left alone; render those one at a time below.">
+        <div className="flex flex-wrap items-center gap-2">
+          <GhostButton onClick={doBatchDry} disabled={!!busyMsg || bSending || unrendered.length === 0}>1 · Check all {unrendered.length}</GhostButton>
+          <Action onClick={doBatchFire} disabled={!!busyMsg || bSending || !bFresh || bSendable === 0}
+            title={bFresh ? "send them to the box" : "check them first"}>2 · Render {bFresh ? bSendable : unrendered.length} on the box</Action>
+          {bFresh && bFlagged.length > 0 && <label className="flex items-center gap-1 text-xs text-amber-400"><input type="checkbox" checked={bAccept} onChange={(e) => setBAccept(e.target.checked)} /> also render the {bFlagged.length} with warnings</label>}
+        </div>
+        {bDry && !bFresh && !bJob && <div className="text-xs text-amber-400">the settings or the scenes changed since the check: check again</div>}
+        {bDry && bFresh && !bJob && (
+          <div className={`rounded border p-2 text-[11px] ${bFlagged.length || bDry.scenes.some((r) => r.status === "error") ? "border-amber-700" : "border-emerald-800"}`}>
+            <div className="text-[var(--color-muted)]">{bReady.length} ready{bFlagged.length ? `, ${bFlagged.length} with warnings` : ""}{bDry.counts?.error ? `, ${bDry.counts.error} cannot render` : ""} · {p.width}x{p.height} · {p.turbo ? "turbo" : "base"} · {p.seed.trim() ? `seed ${p.seed}` : "a random seed per scene (kept from this check)"}</div>
+            {bDry.scenes.filter((r) => r.status === "error").map((r) => <div key={r.index} className="mt-1 text-red-300">scene {r.index} {r.title}: {errText(r.error)}</div>)}
+            {bFlagged.map((r) => <div key={r.index} className="mt-1 text-amber-300">scene {r.index} {r.title}: {(r.flags || []).join("; ")}</div>)}
+            {!bFlagged.length && !bDry.counts?.error && <div className="mt-1 text-emerald-500">no warnings: all ready to render</div>}
+          </div>
+        )}
+        {bJob && (
+          <div className="space-y-2 rounded border border-[var(--color-line)] p-2 text-[11px]">
+            <Bar label={`sent to the box: ${bTodo.length} of ${bJob.total ?? "?"}`} frac={bJob.status === "done" ? 1 : sentFrac} />
+            {bQueued.length > 0 && <Bar label={`rendered: ${renderDone} of ${bQueued.length}${renderNow ? ` · now scene ${renderNow.index} ${pct(Math.round(takeFrac(renderNow) * 100), 100)}` : ""}`} frac={renderFrac} />}
+            <div className={bJob.status === "error" ? "text-red-300" : "text-[var(--color-muted)]"}>
+              {bJob.status === "sending" ? `sending to the box: ${bJob.rows.filter((r) => r.status === "queued").length} sent so far (the box renders them in order; takes appear below as they finish)`
+                : bJob.status === "done" ? `done: ${bJob.counts?.queued || 0} scenes queued on the box${bJob.counts?.blocked ? `, ${bJob.counts.blocked} held back` : ""}${bJob.counts?.error ? `, ${bJob.counts.error} failed` : ""}`
+                : `stopped: ${bJob.error || "error"}`}
+            </div>
+            {bJob.rows.filter((r) => r.status === "blocked" || r.status === "error").map((r) => <div key={r.index} className="mt-1 text-amber-300">scene {r.index} {r.title}: {errText(r.error)}</div>)}
+          </div>
+        )}
+      </Card>
       {/* left: every scene */}
       <div className="space-y-2">
         <div className="flex gap-2">
@@ -844,7 +951,7 @@ function TakesStep(p: {
                     <div key={t.id} className={`space-y-2 rounded-lg p-2 ${chosen ? "border-2 border-emerald-600" : "border border-[var(--color-line)]"}`}>
                       {t.status === "done" && t.media_url
                         ? <video src={t.media_url} controls muted preload="metadata" className="w-full rounded bg-black" />
-                        : <div className="rounded bg-black/40 p-4 text-sm text-[var(--color-muted)]">{t.status} {pct(t.progress, t.max)} on the box...</div>}
+                        : <div className="rounded bg-black/40 p-4"><Bar label={`${t.status} on the box`} frac={t.max ? (t.progress || 0) / t.max : 0} /></div>}
                       <div className="flex flex-wrap items-center gap-2">
                         {t.status === "done" && (chosen
                           ? <><Pill tone="ok">in the video</Pill><GhostButton onClick={() => choose(scene.index, null)}>remove</GhostButton></>

@@ -1448,8 +1448,54 @@ def mv_scene_still_set(p: dict):
     return {"scene": sc["index"], "title": sc.get("title"), "opening_still_id": os.path.basename(str(p["still_id"]))}
 
 
+# background batch fires of the Music Video tab (render_script async): the rows list fills as each
+# scene is sent, so the tab can show progress while the box queue builds
+MV_BATCHES: Dict[str, dict] = {}
+
+
 @app.post("/api/mv/render_script")
 def mv_render_script(p: dict):
+    """async: true (a live fire only) sends the scenes in the background -> {job_id}; poll
+    GET /api/mv/render_script_job/{id}. Otherwise see _mv_render_script_run."""
+    if p.get("async") and not p.get("dry_run"):
+        q = {k: v for k, v in p.items() if k != "async"}
+        if not q.get("from_dry"):
+            raise HTTPException(400, "a live batch fires from a dry run: send {from_dry: <the dry manifest>}")
+        jid = uuid.uuid4().hex
+        rows = []
+        with LOCK:
+            MV_BATCHES[jid] = {"status": "sending", "created": time.time(), "rows": rows}
+
+        def run():
+            try:
+                res = _mv_render_script_run(q, rows_out=rows)
+                with LOCK:
+                    MV_BATCHES[jid].update(status="done", counts=res.get("counts"), manifest=res.get("manifest"))
+            except HTTPException as e:
+                with LOCK:
+                    MV_BATCHES[jid].update(status="error", error=e.detail if isinstance(e.detail, str) else json.dumps(e.detail))
+            except Exception as e:
+                with LOCK:
+                    MV_BATCHES[jid].update(status="error", error=str(e))
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"job_id": jid, "status": "sending"}
+    return _mv_render_script_run(p)
+
+
+@app.get("/api/mv/render_script_job/{jid}")
+def mv_render_script_job(jid: str):
+    with LOCK:
+        j = MV_BATCHES.get(jid)
+        if not j:
+            raise HTTPException(404, "no such batch (the backend may have restarted)")
+        rows = list(j["rows"])
+    return {"id": jid, "status": j["status"], "error": j.get("error"), "counts": j.get("counts"),
+            "manifest": j.get("manifest"), "seconds": round(time.time() - j["created"], 1),
+            "rows": [{k: r.get(k) for k in ("index", "title", "status", "error", "job_id")} for r in rows]}
+
+
+def _mv_render_script_run(p: dict, rows_out=None):
     """Render EVERY scene of a saved script through render_scene (the normal path: default lanes,
     each scene's recorded opening still, the location stills from the library), queued on the box
     one after another. p: {script, ref_ids: [face, body], skip?: [scene indexes], only?: [indexes],
@@ -1496,7 +1542,7 @@ def mv_render_script(p: dict):
     existing = {int(k): v for k, v in (p.get("existing") or {}).items()}
     common = {k: v for k, v in p.items() if k not in ("script", "scene", "skip", "only", "existing", "dry_run",
                                                      "from_dry", "accept_flags")}
-    rows = []
+    rows = rows_out if rows_out is not None else []
     first_live = True
     for sc in script["scenes"]:
         idx = sc["index"]

@@ -116,7 +116,9 @@ export const api = {
   mvTakeCheck: (p: { job_id: string; script: string; scene: number }) => jpost("/api/mv/take_check", p),
   mvScriptRefStills: (p: { script: string; face_id?: string; body_id?: string }) => jpost("/api/mv/script_ref_stills", p), // the singer's two pictures for one script
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
-  mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),   // dry_run: true = the gate, nothing queued
+  mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),
+  mvRenderScript: (p: unknown) => jpost("/api/mv/render_script", p),   // dry_run first; a fire = {from_dry, accept_flags, async}
+  mvRenderScriptJob: (id: string) => jget(`/api/mv/render_script_job/${id}`),   // dry_run: true = the gate, nothing queued
   mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)
   mvLocations: () => jget("/api/mv/locations"),                       // the place library: {locations: [{id, still_id, still_present, ...}]}
   mvLocationImport: (p: { script: string; location_id: string; still_id: string }) => jpost("/api/mv/locations/import", p), // link a library picture to a script's place
