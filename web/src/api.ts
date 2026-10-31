@@ -117,6 +117,9 @@ export const api = {
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),   // dry_run: true = the gate, nothing queued
   mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)
+  mvLocations: () => jget("/api/mv/locations"),                       // the place library: {locations: [{id, still_id, still_present, ...}]}
+  mvLocationImport: (p: { script: string; location_id: string; still_id: string }) => jpost("/api/mv/locations/import", p), // link a library picture to a script's place
+  mvLocationImportStill: (fd: FormData) => jform("/api/mv/locations/import_still", fd),  // file + script + location_id: file a new place picture
   mvIdent: (p: { title: string; sub?: string; edge?: string }) => jpost("/api/mv/ident", p),   // Remotion on the Mac, cached
   mvAssemble: (p: unknown) => jpost("/api/mv/assemble", p),           // async: true -> {job_id}
   mvAssembleResult: (id: string) => jget(`/api/mv/assemble_result/${id}`),

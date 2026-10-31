@@ -20,14 +20,16 @@ type Scene = {
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[]; matches_location_still?: boolean;
 };
 type Refs = { face?: string; body?: string; shared?: string };
-type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; scenes: Scene[] };
+type Place = { id: string; name?: string; description?: string; still_prompt?: string; still_id?: string };
+type PlaceRow = Place & { still_present?: boolean };
+type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; locations?: Place[]; scenes: Scene[] };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; sig: string };
-type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | null;
+type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
 // FlashVSR+ Turbo 2x: 554 s for the 15 s scene 6 take, 2026-10-30 (the whole SSBS batch ran at
@@ -159,6 +161,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   const [err, setErr] = useState("");
   const [bumpTick, setBumpTick] = useState(0);
   const [target, setTarget] = useState<Target>(null);
+  const [placeRows, setPlaceRows] = useState<PlaceRow[]>([]);
 
   const audios = library.filter((i) => i.audio_url);
 
@@ -196,6 +199,10 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
     try { const t = await api.mvTakes(scriptName); setTakes(t.takes || {}); } catch { /* keep the last list */ }
   }, [scriptName]);
   const reloadScript = () => setBumpTick((n) => n + 1);
+  const loadPlaces = useCallback(async () => {
+    try { setPlaceRows(((await api.mvLocations()) as { locations: PlaceRow[] }).locations || []); } catch { /* keep the last list */ }
+  }, []);
+  useEffect(() => { loadPlaces(); }, [loadPlaces, scriptName]);
 
   // poll while any take or upscale is still running
   const rendering = useMemo(() => Object.values(takes).some((l) => l.some((t) => t.status !== "done" || upscaleBusy(t.upscaled))), [takes]);
@@ -232,24 +239,48 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
   };
+  const filePlace = async (id: string, file: File) => {
+    setErr(""); setBusyMsg("filing the place picture...");
+    try {
+      const fd = new FormData();
+      fd.append("file", file, file.name || `${id}.png`);
+      fd.append("script", scriptName);
+      fd.append("location_id", id);
+      await api.mvLocationImportStill(fd);
+      await loadPlaces();
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
+  };
+  const linkPlace = async (id: string, stillId: string) => {
+    setErr("");
+    try { await api.mvLocationImport({ script: scriptName, location_id: id, still_id: stillId }); await loadPlaces(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+  };
   const onPaste = (e: React.ClipboardEvent) => {
     if (!target || (e.target as HTMLElement).closest("input,textarea")) return;
     const item = Array.from(e.clipboardData.items).find((it) => it.type.startsWith("image/"));
     const f = item?.getAsFile();
     if (!f) return;
     e.preventDefault();
-    if (target.kind === "scene") fileStill(target.idx, f); else fileRef(target.kind, f);
+    if (target.kind === "scene") fileStill(target.idx, f);
+    else if (target.kind === "place") filePlace(target.id, f);
+    else fileRef(target.kind, f);
   };
 
   // ---------- what is left ----------
   const scenes = script?.scenes || [];
   const nStills = scenes.filter((s) => s.opening_still_id).length;
+  // a place's picture, the way render_scene finds it: the script's own still_id, else the place library's
+  const placePic = (pl: Place) => pl.still_id || placeRows.find((r) => r.id === pl.id && r.still_present)?.still_id || null;
+  const places = (script?.locations || []).filter((pl) => scenes.some((sc) => sc.location === pl.id));
+  const placesBare = places.filter((pl) => !placePic(pl));
   const nChosen = scenes.filter((s) => s.locked).length;
   const nRunning = scenes.filter((s) => sceneTakes(s.index).some((t) => t.status !== "done")).length;
   const notRendered = scenes.filter((s) => !s.locked && !doneTakes(s.index).length && !sceneTakes(s.index).some((t) => t.status !== "done"));
   const next: { step: number; text: string } = !audioId ? { step: 1, text: "Pick the song this video is for." }
     : !script ? { step: 2, text: scripts.length ? "Open one of this song's scripts, or write a new one." : "Write the script: Claude plans every scene of the video from the song." }
     : !faceId.trim() || !bodyId.trim() ? { step: 3, text: "Add the singer's two reference pictures (face and full body): every scene is rendered with them." }
+    : placesBare.length && notRendered.length ? { step: 3, text: `${placesBare.length} place${placesBare.length === 1 ? " has" : "s have"} no picture yet (${placesBare.map((pl) => pl.name || pl.id).join(", ")}). Every scene in a place renders against its picture.` }
     : scenes.some(needsPicture) ? { step: 3, text: `${scenes.filter(needsPicture).length} scene${scenes.filter(needsPicture).length === 1 ? " needs its" : "s need their"} own opening picture before rendering. Copy the scene's prompt, make the image in ChatGPT, drop it on the scene's card.` }
     : notRendered.length ? { step: 4, text: `${notRendered.length} scene${notRendered.length === 1 ? " is" : "s are"} not rendered yet.` }
     : nChosen < scenes.length ? { step: 4, text: `Choose the take that plays in ${scenes.length - nChosen} scene${scenes.length - nChosen === 1 ? "" : "s"} ("Use in the video"), or copy the choices of an earlier video in step 5.` }
@@ -258,7 +289,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   const stepNote = (i: number): string => {
     if (i === 1) return audioId ? (audios.find((a) => a.id === audioId) ? audioLabel(audios.find((a) => a.id === audioId)!).slice(0, 34) : "picked") : "pick one";
     if (i === 2) return script ? `${scenes.length} scenes` : "none open";
-    if (i === 3) return script ? `${nStills} of ${scenes.length} pictures` : "";
+    if (i === 3) return script ? `${places.length - placesBare.length} of ${places.length} places · ${nStills} of ${scenes.length} scenes` : "";
     if (i === 4) return script ? `${nChosen} of ${scenes.length} chosen${nRunning ? ` · ${nRunning} rendering` : ""}` : "";
     if (i === 5) return script ? "make the video" : "";
     return "";
@@ -311,7 +342,8 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
 
       {step === 3 && script && (
         <PicturesStep script={script} library={library} faceId={faceId} bodyId={bodyId} setFaceId={setFaceId} setBodyId={setBodyId}
-          target={target} setTarget={setTarget} fileStill={fileStill} fileRef={fileRef} setErr={setErr} />
+          target={target} setTarget={setTarget} fileStill={fileStill} fileRef={fileRef} setErr={setErr}
+          places={places} placeRows={placeRows} placePic={placePic} filePlace={filePlace} linkPlace={linkPlace} />
       )}
 
       {step === 4 && script && (
@@ -448,7 +480,7 @@ function ScriptStep({ audioId, scripts, scriptName, script, allScripts, setAllSc
 }
 
 // ---------- 3 Pictures: the singer's references and one opening picture per scene ----------
-function StillPicker({ library, onPick, onClose }: { library: LibItem[]; onPick: (id: string) => void; onClose: () => void }) {
+function StillPicker({ library, onPick, onClose, places }: { library: LibItem[]; onPick: (id: string) => void; onClose: () => void; places?: PlaceRow[] }) {
   const [q, setQ] = useState("");
   const stills = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -462,6 +494,20 @@ function StillPicker({ library, onPick, onClose }: { library: LibItem[]; onPick:
         <input className={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder="search the Library's pictures" />
         <GhostButton onClick={onClose}>close</GhostButton>
       </div>
+      {places && places.length > 0 && (
+        <>
+          <div className="text-[11px] text-[var(--color-muted)]">pictures of places from earlier videos</div>
+          <div className="grid max-h-56 grid-cols-3 gap-2 overflow-auto md:grid-cols-5">
+            {places.map((r) => (
+              <button key={r.id} onClick={() => onPick(r.still_id!)} title={r.description || ""} className="text-left">
+                <img src={`/api/media/${r.still_id}`} alt="" className="aspect-video w-full rounded object-cover hover:ring-2 hover:ring-[var(--color-accent)]" loading="lazy" />
+                <div className="truncate text-[10px] text-[var(--color-muted)]">{r.name || r.id}</div>
+              </button>
+            ))}
+          </div>
+          <div className="text-[11px] text-[var(--color-muted)]">every picture in the Library</div>
+        </>
+      )}
       <div className="grid max-h-80 grid-cols-4 gap-2 overflow-auto md:grid-cols-6">
         {stills.map((s) => (
           <button key={s.id} onClick={() => onPick(s.id)} title={String(s.params?.label || s.params?.prompt || "").slice(0, 200)}>
@@ -473,11 +519,19 @@ function StillPicker({ library, onPick, onClose }: { library: LibItem[]; onPick:
   );
 }
 
-function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, target, setTarget, fileStill, fileRef, setErr }: {
+function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, target, setTarget, fileStill, fileRef, setErr, places, placeRows, placePic, filePlace, linkPlace }: {
   script: Script; library: LibItem[]; faceId: string; bodyId: string; setFaceId: (v: string) => void; setBodyId: (v: string) => void;
   target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File) => void; fileRef: (k: "face" | "body", f: File) => void; setErr: (s: string) => void;
+  places: Place[]; placeRows: PlaceRow[]; placePic: (pl: Place) => string | null; filePlace: (id: string, f: File) => void; linkPlace: (id: string, stillId: string) => void;
 }) {
   const [picker, setPicker] = useState<"face" | "body" | null>(null);
+  const [placePicker, setPlacePicker] = useState<string | null>(null);
+  const [copiedPlace, setCopiedPlace] = useState<string | null>(null);
+  const copyPlace = async (pl: Place) => {
+    try { await navigator.clipboard.writeText(pl.still_prompt || ""); setCopiedPlace(pl.id); window.setTimeout(() => setCopiedPlace(null), 1500); }
+    catch { setErr("the browser blocked the clipboard: open the prompt and copy it by hand"); }
+  };
+  const otherPlaces = placeRows.filter((r) => r.still_present && r.still_id && !places.some((pl) => pl.id === r.id));
   const [onlyMissing, setOnlyMissing] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
   const copy = async (sc: Scene) => {
@@ -510,6 +564,45 @@ function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, t
         </div>
         {picker && <StillPicker library={library} onClose={() => setPicker(null)} onPick={(id) => { (picker === "face" ? setFaceId : setBodyId)(id); setPicker(null); }} />}
       </Card>
+
+      {places.length > 0 && (
+        <Card title={`The places (${places.filter((pl) => placePic(pl)).length} of ${places.length})`}
+          sub="one picture per place, with NO people in it: every scene set there renders against it (scenes without the singer start on it). Copy the prompt, make the image in ChatGPT, then click the box and paste, or drop it. A place from an earlier video can be reused from the Library.">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {places.map((pl) => {
+              const pic = placePic(pl);
+              const n = script.scenes.filter((sc) => sc.location === pl.id).length;
+              return (
+                <div key={pl.id} className="space-y-1.5">
+                  <div className="flex items-baseline gap-2 text-xs">
+                    <span className="font-semibold">{pl.name || pl.id}</span>
+                    <span className="ml-auto text-[var(--color-muted)]">{n} scene{n === 1 ? "" : "s"}</span>
+                  </div>
+                  <ImageSlot src={pic ? `/api/media/${pic}` : null} armed={isT({ kind: "place", id: pl.id })}
+                    onArm={() => setTarget({ kind: "place", id: pl.id })} onFile={(f) => filePlace(pl.id, f)}
+                    empty={<><div className="font-semibold">no picture of this place yet</div><div>1. copy the prompt  2. make it in ChatGPT  3. click here + Cmd+V, or drop it</div></>}>
+                    <GhostButton onClick={() => copyPlace(pl)} disabled={!pl.still_prompt}>{copiedPlace === pl.id ? "copied" : "copy prompt"}</GhostButton>
+                    <GhostButton onClick={() => setPlacePicker(placePicker === pl.id ? null : pl.id)}>from the Library</GhostButton>
+                  </ImageSlot>
+                  {pl.still_prompt && (
+                    <details className="text-[11px]">
+                      <summary className="cursor-pointer text-[var(--color-muted)]">show the prompt</summary>
+                      <div className="mt-1 whitespace-pre-wrap rounded border border-[var(--color-line)] p-2">{pl.still_prompt}</div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {placePicker && (
+            <div className="space-y-1">
+              <div className="text-xs font-semibold">Pick the picture for {places.find((pl) => pl.id === placePicker)?.name || placePicker}</div>
+              <StillPicker library={library} places={otherPlaces} onClose={() => setPlacePicker(null)}
+                onPick={(id) => { linkPlace(placePicker, id); setPlacePicker(null); }} />
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card title={`Opening picture for each scene (${script.scenes.length - missing} of ${script.scenes.length})`}
         sub="scenes without the singer start on their picture; scenes with her render from her two pictures above. To add one: copy the prompt, make the image in ChatGPT, then click the scene's box and paste, or drop the image on it.">
