@@ -114,6 +114,7 @@ export const api = {
   mvScript: (name: string) => jget(`/api/mv/script/${encodeURIComponent(name)}`),
   mvTakes: (script: string) => jget(`/api/mv/takes?script=${encodeURIComponent(script)}`),
   mvTakeCheck: (p: { job_id: string; script: string; scene: number }) => jpost("/api/mv/take_check", p),
+  mvScriptRefStills: (p: { script: string; face_id?: string; body_id?: string }) => jpost("/api/mv/script_ref_stills", p), // the singer's two pictures for one script
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),   // dry_run: true = the gate, nothing queued
   mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)

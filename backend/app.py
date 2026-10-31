@@ -2490,6 +2490,32 @@ def mv_take_sheet(jid: str):
     return FileResponse(path, media_type="image/png")
 
 
+@app.post("/api/mv/script_ref_stills")
+def mv_script_ref_stills(p: dict):
+    """The singer's two reference pictures for ONE script: p {script, face_id?, body_id?} writes
+    script.ref_stills {face, body} in place (state, like a lock). The tab renders with them, so
+    each song keeps its own look; an empty id clears that side."""
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "reference pictures need a saved script")
+    rs = dict(script.get("ref_stills") or {})
+    for side in ("face", "body"):
+        key = f"{side}_id"
+        if key not in p:
+            continue
+        sid = os.path.basename(str(p.get(key) or "").strip())
+        if sid and not _lib_image_path(sid):
+            raise HTTPException(400, f"{key} must be a picture in the library")
+        if sid:
+            rs[side] = sid
+        else:
+            rs.pop(side, None)
+    script["ref_stills"] = rs
+    with open(os.path.join(mv_takes_mod.scripts_dir(LIBRARY), name), "w") as f:
+        json.dump(script, f, indent=1)
+    return {"script": name, "ref_stills": rs}
+
+
 @app.post("/api/mv/lock_take")
 def mv_lock_take(p: dict):
     """Pass a take: p {script, scene, job_id, start?, end?} writes scene.locked (validated by

@@ -22,7 +22,7 @@ type Scene = {
 type Refs = { face?: string; body?: string; shared?: string };
 type Place = { id: string; name?: string; description?: string; still_prompt?: string; still_id?: string };
 type PlaceRow = Place & { still_present?: boolean };
-type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; locations?: Place[]; scenes: Scene[] };
+type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; ref_stills?: { face?: string; body?: string }; locations?: Place[]; scenes: Scene[] };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
@@ -199,6 +199,15 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
     try { const t = await api.mvTakes(scriptName); setTakes(t.takes || {}); } catch { /* keep the last list */ }
   }, [scriptName]);
   const reloadScript = () => setBumpTick((n) => n + 1);
+  // the singer's pictures: the open script's own (each song keeps its look), else the shared setting
+  const face = script?.ref_stills?.face || faceId;
+  const body = script?.ref_stills?.body || bodyId;
+  const setRef = async (kind: "face" | "body", id: string) => {
+    if (!scriptName) { (kind === "face" ? setFaceId : setBodyId)(id); return; }
+    setErr("");
+    try { await api.mvScriptRefStills({ script: scriptName, [`${kind}_id`]: id }); reloadScript(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+  };
   const loadPlaces = useCallback(async () => {
     try { setPlaceRows(((await api.mvLocations()) as { locations: PlaceRow[] }).locations || []); } catch { /* keep the last list */ }
   }, []);
@@ -235,7 +244,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
       fd.append("file", file, file.name || `${kind}.png`);
       fd.append("label", `${script?.title || "music video"} - lead ${kind} reference`);
       const r = await api.ytImportStill(fd) as { still_id: string };
-      (kind === "face" ? setFaceId : setBodyId)(r.still_id);
+      await setRef(kind, r.still_id);
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
   };
@@ -279,7 +288,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   const notRendered = scenes.filter((s) => !s.locked && !doneTakes(s.index).length && !sceneTakes(s.index).some((t) => t.status !== "done"));
   const next: { step: number; text: string } = !audioId ? { step: 1, text: "Pick the song this video is for." }
     : !script ? { step: 2, text: scripts.length ? "Open one of this song's scripts, or write a new one." : "Write the script: Claude plans every scene of the video from the song." }
-    : !faceId.trim() || !bodyId.trim() ? { step: 3, text: "Add the singer's two reference pictures (face and full body): every scene is rendered with them." }
+    : !face.trim() || !body.trim() ? { step: 3, text: "Add the singer's two reference pictures (face and full body): every scene is rendered with them." }
     : placesBare.length && notRendered.length ? { step: 3, text: `${placesBare.length} place${placesBare.length === 1 ? " has" : "s have"} no picture yet (${placesBare.map((pl) => pl.name || pl.id).join(", ")}). Every scene in a place renders against its picture.` }
     : scenes.some(needsPicture) ? { step: 3, text: `${scenes.filter(needsPicture).length} scene${scenes.filter(needsPicture).length === 1 ? " needs its" : "s need their"} own opening picture before rendering. Copy the scene's prompt, make the image in ChatGPT, drop it on the scene's card.` }
     : notRendered.length ? { step: 4, text: `${notRendered.length} scene${notRendered.length === 1 ? " is" : "s are"} not rendered yet.` }
@@ -341,14 +350,14 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
       )}
 
       {step === 3 && script && (
-        <PicturesStep script={script} library={library} faceId={faceId} bodyId={bodyId} setFaceId={setFaceId} setBodyId={setBodyId}
+        <PicturesStep script={script} library={library} faceId={face} bodyId={body} setFaceId={(id) => setRef("face", id)} setBodyId={(id) => setRef("body", id)}
           target={target} setTarget={setTarget} fileStill={fileStill} fileRef={fileRef} setErr={setErr}
           places={places} placeRows={placeRows} placePic={placePic} filePlace={filePlace} linkPlace={linkPlace} />
       )}
 
       {step === 4 && script && (
         <TakesStep script={script} scriptName={scriptName} takes={takes} sel={sel} setSel={setSel}
-          faceId={faceId} bodyId={bodyId} seed={seed} setSeed={setSeed} turbo={turbo} setTurbo={setTurbo}
+          faceId={face} bodyId={body} seed={seed} setSeed={setSeed} turbo={turbo} setTurbo={setTurbo}
           width={width} setWidth={setWidth} height={height} setHeight={setHeight} acceptFlags={acceptFlags} setAcceptFlags={setAcceptFlags}
           dry={dry} setDry={setDry} busyMsg={busyMsg} setBusyMsg={setBusyMsg} setErr={setErr}
           refreshTakes={refreshTakes} reloadScript={reloadScript} target={target} setTarget={setTarget} fileStill={fileStill}
