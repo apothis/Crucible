@@ -2162,7 +2162,7 @@ already shows her, the building and her hands, which is the user's direction. No
   2-4 s the hall becomes a longer darker corridor with a ceiling lamp, then returns; streaky wall
   texture 5-7 s. [H] the prompt drives harder than the bounded distance, so the middle is free.
 
-### 20.53 The rail: in-between views pinned along the move (2026-11-01) [built; checked; not rendered]
+### 20.53 The rail: in-between views pinned along the move (2026-11-01) [built; one take, awaiting the user's eyes]
 - Source facts [V, ComfyUI comfy_extras/nodes_minimax_h3.py + comfy/ldm/minimax/model.py]:
   MiniMaxH3AddGuide takes any pixel frame; each guide is extra conditioning tokens placed at
   time cursor + 5/3 * frame (the same list first_frame/last_frame use), cover-cropped to the
@@ -2179,3 +2179,9 @@ already shows her, the building and her hands, which is the user's direction. No
   end picture equals the old one (max pixel diff 6). Tab check: seed 273520885, pinned at
   1.5/3.0/4.5/6.0 s, no warnings. Render waiting on the box (ComfyUI :8188 and :5080 refused
   connections 2026-11-01 10:40-11:00). One variable vs the 20.52 take: the rail.
+- Rendered 11:09 (user go; graph verified on :8188: AddGuide 950-953 at 36/72/108/144, last_frame
+  = end picture, seed 273520885). Take check: floor_r 0.997, lag 0, opening jump 0.91, no flag.
+  Frames vs the 20.52 take at 0-7.9 s: the hallway stays the same room at every sampled time
+  (no invented corridor or ceiling lamp at 2-4 s, no wall streaks at 5-7 s), scale grows
+  steadily to the end picture. Motion (smoothness, any stepping at the pins) not judged: user
+  watches. A/B copies: .mvwork/rail_s14/s14_A_end_picture_only_*.mp4, s14_B_rail_pins_*.mp4.
