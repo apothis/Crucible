@@ -2287,3 +2287,15 @@ already shows her, the building and her hands, which is the user's direction. No
   = smaller overall lag, end window back in time, the 4-6.7 s window weaker. Not a clear fix by
   the numbers; the user's eyes decide. File: .mvwork/booth/s10/s10_D_meridian_arc10_songlock.mp4,
   compare s10_compare_C_left_no_song_D_right_song_locked.mp4.
+- User: lips on the song-locked take good enough; white specks worse, neon change not liked.
+  Specks [M]: they sit on the booth leather, where the guide is solid, not in its big grey holes;
+  the guide's dotted/striped hole patterns (2 px splats at full 1344 shrunk to 832x480, a zebra
+  band at the right edge) are the likely source [H]. Two runs queued, one change each, seed 20261027:
+  E = song-locked + warp_long_side 832 (the node's tooltip: warp at the size the model receives);
+  F = E + extra_reference = source frame 0 (the author's Quality workflow wires one).
+  Results [M, crops of the lower right at 4/7 s]: D many bokeh specks; E almost none at 4 s, 2-3
+  small at 7 s; F a few more than E. Crude bright-blob count 5-8.6 s (source 148 = leather
+  highlights): D 236, E 209, F 212. Neon: the guide keeps the source squiggle at every frame, but
+  D, E and F all redraw it as loops; the reference picture (F) did not hold it. So the neon is
+  Meridian redrawing, not disocclusion. warp_long_side 832 = keep. Files: s10_E_warp832_songlock.mp4,
+  s10_F_warp832_ref_songlock.mp4, s10_compare_D_left_E_right_warp832.mp4.
