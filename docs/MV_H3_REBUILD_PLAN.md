@@ -2452,3 +2452,5 @@ already shows her, the building and her hands, which is the user's direction. No
   Lips: H3's own song-locked lip-sync, as in every normal take; nothing to measure against.
   Files: .mvwork/booth/s24/s24_G_room_pinned_her_drawn.mp4,
   s24_compare_2dmove_left_roomplate_right.mp4.
+- User: "Looks good". Filed as a take of scene 24 (b680a3c0, engine roomplate, room_plate_of the
+  still take): sync 0.996, lag 0, opening 0.66. Next: build into the tab (proposed, not started).
