@@ -2454,3 +2454,29 @@ already shows her, the building and her hands, which is the user's direction. No
   s24_compare_2dmove_left_roomplate_right.mp4.
 - User: "Looks good". Filed as a take of scene 24 (b680a3c0, engine roomplate, room_plate_of the
   still take): sync 0.996, lag 0, opening 0.66. Next: build into the tab (proposed, not started).
+
+### 20.61 One "Add a camera move" panel: 2D move, room pinned, Meridian (2026-11-01) [built; room pinned run through the tab]
+- User: build the room-pinned move into the tab, keep Meridian as an option, make the flow clear.
+- Flow (Scenes and takes):
+  0. A scene whose move broke the room: tick "still version, to add the move afterwards" in the
+     render card, render (still text written first, no GPU).
+  1. On the still take: "add a camera move" opens one panel: the move (arc left/right, push in, pull
+     out, sideways left/right, rise, lower; small or large; the scene's camera line shown, an assumed
+     side kept as a warning until changed) and HOW, three radio cards with what each does and costs:
+     2D move (seconds, no GPU; lips and room exact; no depth), Room pinned (best for singing; real
+     depth; the room is the empty-room picture held still, H3 draws the people with the song; ~12 min;
+     needs one picture), Meridian (real depth, no picture; lips can lag on lively singing, windows and
+     signs repainted; ~13 min). A take that already moves gets an amber note pointing to step 0.
+  2. Room pinned shows its picture steps in place: download this take's first frame
+     (GET /api/mv/take_frame/{id}), copy the generic ChatGPT prompt (mv_roomplate.EMPTY_ROOM_PROMPT,
+     shown in full), paste or drop the result (scene_still slot "empty" -> scene.empty_room_id +
+     empty_room_of = the take; a picture from another take is flagged).
+  3. One button; the room-pinned job shows its stages live; every result is a labelled new take.
+- Backend: backend/mv_roomplate.py (room move graph: Freeze Frame CrossView, orbit centre read from the
+  camera node's info; people pass: the take moved around the same centre + SAM3 "person", max 4; plate
+  and mask on the Mac), POST /api/mv/roomplate_take (dry run; live = background thread: upload, room
+  move, people pass, mask, then render_scene with room_plate=[plate, mask] -> a normal take with
+  engine roomplate), GET /api/mv/roomplate_job/{id}. render_scene: room_plate switches off the end
+  picture and rail (whole-frame pins). mv_h3.build_h3_chain(room_plate=): the plate and mask nodes
+  (offline: byte-identical to the hand-run scene 24 graph the user passed; without it unchanged).
+- Take labels: still version / 2D move / room pinned / Meridian, each with the move and size.

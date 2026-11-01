@@ -221,7 +221,13 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   room; sync 0.995-0.997. Motion judged by the user, pending.] An end picture alone (no pins)
   still let the hall stretch mid-move. [M: 14] Code: `push_end_still {rail, rail_after}`,
   `build_h3_chain(guide_frames=)`, docs/MV_H3_REBUILD_PLAN.md s.20.52-20.54.
-- **Singing scene whose move rebuilt the room: render its still version, then a 2D move on that
+- **Singing scene whose move rebuilt the room: render its still version, then "add a camera move"
+  on that take, Room pinned.** The room is an empty-room picture (ChatGPT edit of the still take's
+  first frame) moved by the depth warp and pinned in the H3 latent (per-token noise mask 0); H3 draws
+  only the people (SAM3 mask) with the song lock. [U: scene 24 "Looks good"; M: real arc, room
+  unchanged, no visible seam; s.20.60-20.61] The 2D move is the no-GPU fallback, Meridian the
+  no-picture option for still faces.
+- **(earlier) Singing scene whose move rebuilt the room: render its still version, then a 2D move on that
   take.** (Scenes and takes: tick "still version, to add the move afterwards", render, then "2D
   move" on the take.) Nothing is redrawn, so lips, room and song are exact; no parallax. Measured
   alternatives on the booth [M, s.20.55-20.57]: Meridian re-camera keeps the room but redraws the

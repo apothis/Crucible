@@ -36,6 +36,7 @@ from . import mv_takes as mv_takes_mod
 from . import mv_finish as mv_finish_mod
 from . import mv_meridian as mv_meridian_mod
 from . import mv_move2d as mv_move2d_mod
+from . import mv_roomplate as mv_roomplate_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -1154,7 +1155,8 @@ def _h3_chain(p: dict, meta=None):
     def _build(q):
         graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos,
                                                    first_frame_name=first_frame, anchor_name=anchor,
-                                                   end_frame_name=end_frame, guide_frames=rail)
+                                                   end_frame_name=end_frame, guide_frames=rail,
+                                                   room_plate=tuple(q["room_plate"]) if q.get("room_plate") else None)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
         resolved["first_frame_id"] = os.path.basename(str(p["first_frame_id"])) if p.get("first_frame_id") else None
         resolved["anchor_still_id"] = os.path.basename(str(p["anchor_still_id"])) if p.get("anchor_still_id") else None
@@ -1347,6 +1349,11 @@ def mv_render_scene(p: dict):
     for r in rail:
         if not _lib_image_path(r["still_id"]):
             raise HTTPException(400, f"rail picture {r['still_id']} is not a still in the library; make the end picture again")
+    room_plate = p.get("room_plate")
+    if room_plate and (len(prompts) > 1 or free_av or variant == "still"):
+        raise HTTPException(400, "a room plate is for single-clip scenes on their own move (not the still version)")
+    if room_plate:
+        end_still, rail = None, []      # the plate pins the room; whole-frame pins would also pin the people
     if p.get("dry_run"):
         # the gate before the GPU: what WOULD be submitted, nothing queued. settings = the exact
         # recipe/size/seed the chain would run (seed drawn now when none was sent, so a fire from
@@ -1371,7 +1378,7 @@ def mv_render_scene(p: dict):
                 "rail_frames": [r["frame"] for r in rail] or None, "variant": variant,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
-                                                 "use_location_library", "dry_run", "anchor_first")}
+                                                 "use_location_library", "dry_run", "anchor_first", "room_plate_meta")}
     chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
     q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs, "lane": lane,
               "first_frame_id": first_frame, "anchor_still_id": anchor_still if anchor_first else None,
@@ -1390,7 +1397,8 @@ def mv_render_scene(p: dict):
                               "anchor_first": anchor_first, "anchor_from": anchor_from,
                               "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
                               "end_still_id": end_still,
-                              "rail_frames": [r["frame"] for r in rail] or None, "variant": variant})
+                              "rail_frames": [r["frame"] for r in rail] or None, "variant": variant,
+                              **(p.get("room_plate_meta") or {})})
 
 
 def _mv_resolve_locks(raw):
@@ -1463,7 +1471,7 @@ def mv_opening_still(p: dict):
 
 @app.post("/api/mv/scene_still")
 async def mv_scene_still(file: UploadFile = File(...), script: str = Form(...), scene: int = Form(...), label: str = Form(None),
-                         slot: str = Form("opening")):
+                         slot: str = Form("opening"), of_take: str = Form(None)):
     """File a scene's OPENING still (generated from /api/mv/opening_still's prompt) in the library;
     returns its still_id for render_scene's first_frame_id. No location row is touched.
     slot "after": the scene's AFTER-THE-ACTION picture instead (s.20.54, used by push_end_still)."""
@@ -1480,8 +1488,16 @@ async def mv_scene_still(file: UploadFile = File(...), script: str = Form(...), 
                                      kind="after_still", extra={"scene": sc["index"], "script": name})
         _mv_set_scene_field(name, sc["index"], "after_still_id", filed["still_id"])
         return {"still": filed, "scene": sc["index"], "title": sc.get("title"), "slot": "after"}
+    if slot == "empty":
+        if not name or name == "(inline)":
+            raise HTTPException(400, "empty-room pictures need a saved script")
+        filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - scene {sc['index']} empty room",
+                                     kind="empty_room", extra={"scene": sc["index"], "script": name, "of_take": of_take})
+        _mv_set_scene_field(name, sc["index"], "empty_room_id", filed["still_id"])
+        _mv_set_scene_field(name, sc["index"], "empty_room_of", os.path.basename(of_take or "") or None)
+        return {"still": filed, "scene": sc["index"], "title": sc.get("title"), "slot": "empty"}
     if slot != "opening":
-        raise HTTPException(400, "slot must be opening or after")
+        raise HTTPException(400, "slot must be opening, after or empty")
     filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - scene {sc['index']} opening still",
                                  kind="opening_still", extra={"scene": sc["index"], "script": name})
     recorded = _mv_record_opening_still(name, sc["index"], filed["still_id"])
@@ -2453,6 +2469,150 @@ def mv_move2d_take(p: dict):
         JOBS[pid]["audio_file"] = dst
     save_job(pid)
     return dict(summary, job_id=pid, media_url=f"/api/media/{pid}", frames=info["frames"])
+
+
+@app.get("/api/mv/take_frame/{job_id}")
+def mv_take_frame(job_id: str):
+    """The first frame of a take as a PNG (to download and edit, e.g. into the empty room)."""
+    path = _lib_video_path(job_id)
+    if not path:
+        raise HTTPException(404, "no such take")
+    out = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-frames:v", "1", "-f", "image2pipe",
+                          "-vcodec", "png", "-"], capture_output=True, timeout=60)
+    if out.returncode != 0 or not out.stdout:
+        raise HTTPException(500, "could not read the first frame")
+    return Response(out.stdout, media_type="image/png",
+                    headers={"Content-Disposition": f'attachment; filename="take_{os.path.basename(job_id)[:8]}_frame0.png"'})
+
+
+# room-pinned moves running in the background (s.20.61): {id: {stage, status, error, take_job_id}}
+MV_ROOMPLATE: Dict[str, dict] = {}
+
+
+def _comfy_wait(pid, timeout=1800):
+    """Wait for a helper ComfyUI job (not a library job); returns its history entry or raises."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        h = C.history(pid).get(pid)
+        if h and h.get("status", {}).get("completed") is not None:
+            st = h["status"]
+            if st.get("status_str") == "error":
+                msgs = [m[1].get("exception_message", "") for m in st.get("messages", []) if m[0] == "execution_error"]
+                raise RuntimeError("box job failed: " + "; ".join(msgs)[:400])
+            return h
+        time.sleep(3)
+    raise RuntimeError("box job timed out")
+
+
+def _comfy_output(h, prefix_part):
+    for out in h.get("outputs", {}).values():
+        for items in out.values():
+            for it in items if isinstance(items, list) else []:
+                if isinstance(it, dict) and it.get("type") == "output" and prefix_part in it.get("filename", ""):
+                    return C.view_bytes(it["filename"], it.get("subfolder", ""), "output")
+    raise RuntimeError(f"no output named *{prefix_part}* from the box")
+
+
+@app.post("/api/mv/roomplate_take")
+def mv_roomplate_take(p: dict):
+    """Room-pinned camera move (opt-in, s.20.61): the scene renders again with its move, but the room
+    is the scene's EMPTY-ROOM picture (filed with /api/mv/scene_still slot "empty": the user's edit of
+    the still take's first frame with the people removed) moved along the path and pinned in the
+    latent; H3 draws only the people (SAM3 mask), lip-synced by the song lock. Background job: the
+    room move and the people pass on the box (~2 min), the mask on the Mac, then a normal render
+    (~10 min) that lands as a take. p: {script, scene, job_id (the still take), move?, amount?, seed?,
+    and the tab's render settings (ref_ids, turbo, attention, width, height), dry_run?}. Live -> {job}."""
+    script, name, scene, jid, src_path, sp = _mv_take_of_scene(p)
+    camera = scene.get("still_of_camera") or scene.get("camera")
+    guess, guess_amount, guessed = mv_meridian_mod.move_from_camera(camera)
+    move = (p.get("move") or "").strip() or guess
+    amount = (p.get("amount") or "").strip() or guess_amount
+    if not move:
+        raise HTTPException(400, "the scene's camera line names no move: choose one (move)")
+    if move not in mv_meridian_mod.MOVES or amount not in ("small", "large"):
+        raise HTTPException(400, f"move must be one of {', '.join(mv_meridian_mod.MOVES)}; amount small or large")
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
+                          "stream=nb_read_packets", "-of", "csv=p=0", src_path], capture_output=True, text=True)
+    frames = int((out.stdout or "0").strip() or 0)
+    if frames != int((scene.get("plan") or {}).get("frames") or frames):
+        raise HTTPException(400, "that take's length does not match the scene's plan")
+    empty = scene.get("empty_room_id")
+    flags = []
+    if sp.get("variant") != "still" and (scene.get("camera") or "static").strip() != "static":
+        flags.append("this take already moves: use the scene's still version (the room and people are read from it)")
+    if guessed and not p.get("move"):
+        flags.append(f"the camera line gives no side; assumed {mv_meridian_mod.MOVE_LABELS[move]}")
+    if empty and scene.get("empty_room_of") and scene["empty_room_of"] != jid:
+        flags.append("the empty-room picture was made from a different take of this scene: make it from this one")
+    summary = {"scene": scene["index"], "source_job_id": jid, "move": move, "move_label": mv_meridian_mod.MOVE_LABELS[move],
+               "amount": amount, "camera": camera, "frames": frames, "empty_room_id": empty, "flags": flags,
+               "empty_prompt": mv_roomplate_mod.EMPTY_ROOM_PROMPT, "minutes": round(2 + frames / 24 * 1.25, 0)}
+    if p.get("dry_run"):
+        return dict(summary, dry_run=True)
+    if not empty or not _lib_image_path(empty):
+        raise HTTPException(400, "add the empty-room picture first (step 2 of the panel)")
+    if sp.get("variant") != "still" and (scene.get("camera") or "static").strip() != "static":
+        raise HTTPException(400, "use the scene's still version as the source")
+    rid = uuid.uuid4().hex[:12]
+    MV_ROOMPLATE[rid] = {"stage": "starting", "status": "running", "error": None, "take_job_id": None,
+                         "scene": scene["index"], "source_job_id": jid, "move": move, "amount": amount}
+    render_body = {k: p.get(k) for k in ("ref_ids", "turbo", "attention", "width", "height", "seed") if p.get(k) is not None}
+
+    def run():
+        job = MV_ROOMPLATE[rid]
+        work = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "roomplate", rid)
+        os.makedirs(work, exist_ok=True)
+        try:
+            job["stage"] = "uploading the empty room and the take"
+            canvas = mv_roomplate_mod.canvas_picture(_lib_image_path(empty), os.path.join(work, "empty.png"),
+                                                     int(p.get("width") or 1344), int(p.get("height") or 768))
+            with open(canvas, "rb") as f:
+                empty_name = C.upload_audio(f.read(), f"roomplate_{rid}_empty.png")
+            with open(src_path, "rb") as f:
+                take_name = C.upload_audio(f.read(), f"roomplate_{rid}_take.mp4")
+            job["stage"] = "moving the empty room along the path (box, ~1 min)"
+            res = submit_comfy(mv_roomplate_mod.plate_warp_graph(empty_name, frames, move, amount, f"roomplate/{rid}_room"))
+            h = _comfy_wait(res["prompt_id"])
+            info = " ".join(s for out in h.get("outputs", {}).values() for v in out.values()
+                            for s in (v if isinstance(v, list) else []) if isinstance(s, str))
+            pivot = mv_roomplate_mod.pivot_from_info(info)
+            with open(os.path.join(work, "room_moved.mp4"), "wb") as f:
+                f.write(_comfy_output(h, f"{rid}_room"))
+            job["stage"] = "moving the take and finding the people (box, ~1-2 min)"
+            res = submit_comfy(mv_roomplate_mod.people_warp_graph(take_name, frames, move, amount, pivot, f"roomplate/{rid}"))
+            h = _comfy_wait(res["prompt_id"])
+            with open(os.path.join(work, "people.mp4"), "wb") as f:
+                f.write(_comfy_output(h, f"{rid}_people"))
+            job["stage"] = "building the room plate and the mask (Mac)"
+            stats = mv_roomplate_mod.plate_and_mask(os.path.join(work, "room_moved.mp4"), os.path.join(work, "people.mp4"),
+                                                    os.path.join(work, "plate.mp4"), os.path.join(work, "mask.mp4"), frames)
+            job["mask"] = stats
+            with open(os.path.join(work, "plate.mp4"), "rb") as f:
+                plate_name = C.upload_audio(f.read(), f"roomplate_{rid}_plate.mp4")
+            with open(os.path.join(work, "mask.mp4"), "rb") as f:
+                mask_name = C.upload_audio(f.read(), f"roomplate_{rid}_mask.mp4")
+            job["stage"] = "rendering with the room pinned (box, ~10 min; the take shows below)"
+            body = dict(render_body, script=name, scene=scene["index"], room_plate=[plate_name, mask_name],
+                        room_plate_meta={"engine": "roomplate", "room_plate_of": jid, "move": move, "amount": amount,
+                                         "empty_room_id": empty, "room_pivot": pivot, "room_generated_mean": stats["generated_mean"]})
+            r = mv_render_scene(body)
+            job["take_job_id"] = r.get("job_id")
+            job["stage"] = "sent: the take renders below"
+            job["status"] = "done"
+        except Exception as e:
+            job["status"] = "error"
+            job["error"] = str(getattr(e, "detail", e))[:500]
+
+    threading.Thread(target=run, daemon=True).start()
+    return dict(summary, job=rid)
+
+
+@app.get("/api/mv/roomplate_job/{rid}")
+def mv_roomplate_job(rid: str):
+    j = MV_ROOMPLATE.get(rid)
+    if not j:
+        raise HTTPException(404, "no such room-pinned job (the backend restarted?)")
+    return j
 
 
 @app.post("/api/mv/meridian_take")

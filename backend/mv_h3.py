@@ -159,7 +159,7 @@ def chain_recipe(p, lane="ref2va"):
 
 
 def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None, first_frame_name=None,
-                   anchor_name=None, end_frame_name=None, guide_frames=None):
+                   anchor_name=None, end_frame_name=None, guide_frames=None, room_plate=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -202,6 +202,11 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         crops of the first frame along a push-in, so the path is held at every pin and not only at
         its two ends. Single-clip chains only (the frames count from the clip's frame 0); a pin
         must sit strictly between the first and last frame.
+    room_plate: optional (plate upload, mask upload) (opt-in, s.20.61): two mp4s in the input folder,
+        the moving empty-room plate and its mask (white = generate). The plate is written into the
+        video latent (box node MusicGenH3RoomPlateLatent) and the mask set on it (MultiRef pack's
+        MiniMaxH3SetAVNoiseMask, which keeps the song lock's audio mask), so the room is the plate and
+        H3 draws only the masked people. Single-clip chains only; needs the song lock.
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -267,6 +272,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         for _, f in guide_frames:
             if not (0 < f < frames - 1):
                 raise ValueError(f"a rail picture at frame {f} is outside frames 1..{frames - 2}")
+    if room_plate and (len(clips) > 1 or free_av):
+        raise ValueError("a room plate is for single-clip chains with the song lock")
     up_w, up_h = int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)
     upscale = bool(up_w or up_h)
     if upscale:
@@ -355,6 +362,16 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 song_in["source_latent"] = [prev_sampler, 0]
             g[song] = {"class_type": "MiniMaxH3SongMaskedAVContext", "inputs": song_in}
             latent = [song, 0]
+        if room_plate and i == 0:
+            # the room pinned (s.20.61): plate into the video latent, then the generate mask
+            g["70"] = {"class_type": "LoadVideo", "inputs": {"file": room_plate[0]}}
+            g["71"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["70", 0]}}
+            g["72"] = {"class_type": "MusicGenH3RoomPlateLatent", "inputs": {"latent": latent, "vae": ["6", 0], "plate": ["71", 0]}}
+            g["73"] = {"class_type": "LoadVideo", "inputs": {"file": room_plate[1]}}
+            g["74"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["73", 0]}}
+            g["75"] = {"class_type": "ImageToMask", "inputs": {"image": ["74", 0], "channel": "red"}}
+            g["76"] = {"class_type": "MiniMaxH3SetAVNoiseMask", "inputs": {"latent": ["72", 0], "video_mask": ["75", 0]}}
+            latent = ["76", 0]
         positive = [r2v, 0]
         if keyframes and ref_names:
             # Keyframe-bounded plate (opt-in, environment B-roll): anchor the LAST reference
@@ -466,7 +483,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "keyframes": keyframes if (keyframes and ref_names) else None,
                 "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
                 "anchor_first": bool(anchor_name), "end_frame": bool(end_frame_name),
-                "rail_frames": [f for _, f in guide_frames] or None,
+                "rail_frames": [f for _, f in guide_frames] or None, "room_plate": bool(room_plate),
                 "upscale": [up_w, up_h] if upscale else None,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}
