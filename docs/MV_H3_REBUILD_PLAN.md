@@ -2426,3 +2426,29 @@ already shows her, the building and her hands, which is the user's direction. No
   fully preserved rows" block (local copy .mvwork/comfy_src/minimax_model.py 77-85, 683-697):
   per-2x2-patch-row (32 px, 4-frame) denoise mask with its own timestep, amax-pooled.
   MiniMaxH3AddGuide has no mask input.
+
+### 20.60 Room pinned to a moving plate, H3 draws her (option 1) - scene 24 (2026-11-01) [one take, user to watch]
+- Plate: user's ChatGPT edit of scene 24 still frame 0 with her removed (1659x948, 1.75; 50/50 overlay
+  with the frame: window, lamp, panelling, booth edges line up; rain and neon redrawn). Moved by the
+  Camera H3 warp in CrossView format (full res, Freeze Frame, az 0 -> -10, 192 frames): pivot auto
+  = 1.28 m (metric centre), average gaps 7.8 %. The still take moved along the same path with
+  warp_pivot_depth 1.28.
+- Her area: a difference against the ChatGPT plate caught redrawn rain/neon (52-56 % of the frame)
+  -> replaced by SAM3 (core SAM3_VideoTrack, sam3.1_multiplex_fp16, text "woman", max 1 object) on the
+  moved still take; held +-3 frames (H3's 4-frame latent steps), dilated ~30 px, + plate gaps,
+  feathered outward. Generated share: mean 38 %, 24-48 %. Scripts: .mvwork/booth/s24/plate/
+  (make_mask.py, sam3_graph.json, build_option1.py).
+- New box node tools/box/comfyui_musicgen_h3plate (MusicGenH3RoomPlateLatent: VAE-encodes the plate
+  into the VIDEO stream of the H3 AV latent, audio stream and noise mask kept), installed via
+  fs/write, pycompiled, ComfyUI restarted (queue empty), visible in /object_info. Mask through the
+  MultiRef pack's MiniMaxH3SetAVNoiseMask (keeps the song lock's audio mask).
+- Graph = the app's own scene 24 chain (render_scene dry run: scene prompt with the arc, refs face/
+  body/location, seed 1175338985, turbo, 1344x768, song lock) + plate node + mask node before the
+  sampler. Accepted with no node errors; ran ~10 min; 192 frames + audio.
+- Frames [M]: the camera visibly arcs toward the lamp (window narrows at left, lamp moves in) and
+  the room is the plate throughout (no bottle, car or new sign, unlike the old direct arc); she sits
+  in the booth and performs (hand to hair at 4 s); no visible seam around her at 3 and 6 s at full
+  res. The table front at the bottom right goes soft late in the clip (the arc's gap area, generated).
+  Lips: H3's own song-locked lip-sync, as in every normal take; nothing to measure against.
+  Files: .mvwork/booth/s24/s24_G_room_pinned_her_drawn.mp4,
+  s24_compare_2dmove_left_roomplate_right.mp4.
