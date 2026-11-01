@@ -2342,3 +2342,19 @@ already shows her, the building and her hands, which is the user's direction. No
 - Signs [M]: azimuth + = toward frame left. lateral / height signs unmeasured [H].
 - Not yet run through the app: still_variant (writer) + a variant still render, and a Meridian
   fire's download/trim/audio as a job.
+- End-to-end through the tab, scene 24 (user go; the failed booth arc "toward the sconce side"):
+  1. "still version" ticked -> check ran still_variant (writer, stored scene.still_clips on the
+     working script; text "static, locked off"; scene.camera untouched) -> render variant still,
+     seed 1175338985, job 80c19e62: floor_r 0.996, room the same 0-7.8 s.
+  2. "re-shoot the move" on that take: guess arc_left with the assumed-side flag (camera line names
+     no side); set arc_right in the panel (the sconce is frame right). Graph on the box verified:
+     azimuth -10, warp_long_side 832, length 243, text_cond 243, SongMaskedAVContext, one SaveVideo.
+     Job 89feb197 came back done as a take: 192 frames (trimmed from 243), aac audio, labelled
+     Meridian; take check floor_r 0.996 (source audio), opening 0.91.
+  Frames [M]: old direct arc rebuilds the room (a blue bottle appears, a car and a lit sign in the
+  window, the panelling changes); Meridian keeps the booth, lamp and panelling while the camera
+  swings toward the lamp and the window leaves frame left. New: a rippled, metallic-looking strip
+  at the far right edge from ~6 s, where the arc reveals area beyond the source frame [H].
+  Lip-timing proxy unusable on this take (her hand-to-hair moves dominate the face box: lags
+  jump -20..+20, r 0.24-0.56); the user's eyes decide. Files: .mvwork/booth/s24/
+  s24_compare_old_left_meridian_right.mp4 (+ A old, B still, C Meridian).
