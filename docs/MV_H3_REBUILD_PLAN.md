@@ -2195,3 +2195,12 @@ already shows her, the building and her hands, which is the user's direction. No
   scripted reach to the keys in the first 4 s is not visible in any sampled frame [H: the pins
   at 1.5/3.0 s hold the opening pose]. Motion and identity are the user's to judge.
   A/B: .mvwork/rail_bar/s{21,39}_A_free_move_*.mp4 vs s{21,39}_B_rail_*.mp4.
+- Scene 39 again with rail_after 4 (pins 108/144 only, same seed; graph verified on :8188):
+  floor_r 0.995, lag 0, no flag. Her pose is nearly identical to the every-1.5-s take at every
+  sampled time, and neither shows the reach. The old free-move take does reach (0-2 s). So the
+  early pins were NOT what held her [measured]. [H] the late pins and the end picture are crops
+  of the opening still, so they assert the PRE-action state (hand in lap, no keys on the table:
+  the GPT prompt never put the keys in) at the end, which contradicts the scripted end state.
+  A rail cut from one still fits scenes whose people end where they started (21: a head turn);
+  a state change needs the late pins and the end cut from a still of the END state (an edit of
+  the opening still, same framing). Not built. A/B: .mvwork/rail_bar/s39_C_rail_pins_from_4s_*.mp4.
