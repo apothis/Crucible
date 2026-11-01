@@ -39,12 +39,15 @@ const upscaleBusy = (u?: Upscale | null) => !!u && u.status !== "done" && u.stat
 // how a scene's opening picture is used (backend render_scene): a scene WITHOUT the singer renders
 // image-to-video and starts on it (else on its place's picture; a scene the writer marked as
 // differing from the place's picture must have its own); a scene WITH her renders from her two
-// pictures and the place's picture, and its opening picture is not sent
+// pictures and the place's picture, and its opening picture is not sent unless the scene has a
+// rail (s.20.53), which pins frame 0 to it
 const envOnly = (sc: Scene) => sc.performance === "no_singing_environment";
 const needsPicture = (sc: Scene) => envOnly(sc) && sc.matches_location_still === false && !sc.opening_still_id;
 const pictureUse = (sc: Scene) => envOnly(sc)
   ? (sc.matches_location_still === false ? "no singer: the render starts on this picture (required)" : "no singer: the render starts on this picture (else on the place's picture)")
-  : "with the singer: she renders from her two pictures and the place's picture; this one is not used";
+  : sc.rail && sc.rail.end_still_id === sc.end_still_id
+    ? "with the singer: she renders from her two pictures and the place's picture; the move's rail pins the first frame to this one"
+    : "with the singer: she renders from her two pictures and the place's picture; this one is not used";
 
 function fmt(t: number) {
   const m = Math.floor(t / 60), s = t - m * 60;
