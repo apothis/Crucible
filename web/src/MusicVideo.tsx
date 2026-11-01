@@ -661,7 +661,8 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
   scene: Scene; startPic: string | null; scriptName: string; width: number; height: number; busy: boolean;
   setErr: (s: string) => void; reload: () => void;
 }) {
-  const [zoom, setZoom] = useState(1.5);
+  const [zoomText, setZoomText] = useState("1.5");      // typed freely, clamped where it is used
+  const zoom = Math.min(4, Math.max(1.05, Number(zoomText) || 1.5));
   const [c, setC] = useState({ x: 0.5, y: 0.5 });
   const [working, setWorking] = useState(false);
   useEffect(() => { setC({ x: 0.5, y: 0.5 }); }, [scene.index]);
@@ -695,8 +696,8 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
                 style={{ left: `${x0 * 100}%`, top: `${y0 * 100}%`, width: `${fw * 100}%`, height: `${fh * 100}%` }} />
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <label className="flex items-center gap-1">push to <input type="number" min={1.05} max={4} step={0.05} value={zoom} className={`${inp} w-20`}
-                onChange={(e) => setZoom(Math.min(4, Math.max(1.05, Number(e.target.value) || 1.5)))} />x closer</label>
+              <label className="flex items-center gap-1">push to <input type="number" min={1.05} max={4} step={0.05} value={zoomText} className={`${inp} w-20`}
+                onChange={(e) => setZoomText(e.target.value)} />x closer</label>
               <GhostButton onClick={make} disabled={busy || working}>{working ? "making..." : scene.end_still_id ? "make it again" : "make the end picture"}</GhostButton>
             </div>
           </div>
