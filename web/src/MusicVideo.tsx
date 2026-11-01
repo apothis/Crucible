@@ -931,7 +931,10 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
           {way === "move2d" ? "make the 2D move" : way === "meridian" ? "re-shoot with Meridian" : "render with the room pinned"}
         </Action>
         <GhostButton onClick={onClose}>close</GhostButton>
-        {needPicture && <span className="text-[var(--color-muted)]">add the empty-room picture first</span>}
+        {!fromStill
+          ? <span className="text-amber-300">not on this take: open this panel on the scene's "still version" take (see the note at the top)</span>
+          : needPicture ? <span className="text-amber-300">add the empty-room picture first (step 3)</span>
+          : !dry ? <span className="text-[var(--color-muted)]">checking...</span> : null}
       </div>
       {job && (
         <div className={job.status === "error" ? "text-red-400" : "text-[var(--color-muted)]"}>
