@@ -78,19 +78,28 @@ def chain_settings(p, lane="ref2va"):
     q.setdefault("megapixels", CHAIN_MP)
     w, h = _h3_size(q)
     rec = chain_recipe(p, lane)
-    out = {"turbo": bool(p.get("turbo")), "steps": rec["steps"], "shift_video": rec["shift_video"],
-           "lora": rec["lora"], "width": w, "height": h, "seed": _seed(p)}
+    out = {"turbo": bool(p.get("turbo")), "steps": rec["steps"], "sampler": rec["sampler"], "scheduler": rec["scheduler"],
+           "shift_video": rec["shift_video"], "lora": rec["lora"], "width": w, "height": h, "seed": _seed(p)}
     if p.get("upscale_width") or p.get("upscale_height"):
         out["upscale"] = [int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)]
     return out
 
 
-def settings_flags(s):
-    """How settings `s` (chain_settings) differ from PROVEN, as readable flags; empty = proven."""
+def scene_default_turbo(scene):
+    """The scene's default recipe (user 2026-11-01): base for a camera move (turbo warped the room
+    on the Never Yours booth scenes, base cleared every one first try), turbo for a static scene."""
+    return (scene.get("camera") or "static").strip() == "static"
+
+
+def settings_flags(s, scene=None):
+    """How settings `s` (chain_settings) differ from PROVEN, as readable flags; empty = proven.
+    With `scene`, turbo is checked against that scene's default (scene_default_turbo) instead."""
     out = []
-    if bool(s.get("turbo")) != PROVEN["turbo"]:
-        out.append(f"turbo {'on' if s.get('turbo') else 'off'} ({s.get('steps')} steps, shift {s.get('shift_video')}); "
-                   f"passed takes used the turbo recipe")
+    want = PROVEN["turbo"] if scene is None else scene_default_turbo(scene)
+    if bool(s.get("turbo")) != want:
+        why = ("passed takes used the turbo recipe" if scene is None else
+               "this scene's default is " + ("turbo (static camera)" if want else "base (camera move: turbo warped the room)"))
+        out.append(f"turbo {'on' if s.get('turbo') else 'off'} ({s.get('steps')} steps, shift {s.get('shift_video')}); {why}")
     if (s.get("width"), s.get("height")) != (PROVEN["width"], PROVEN["height"]):
         out.append(f"{s.get('width')}x{s.get('height')}, not the proven {PROVEN['width']}x{PROVEN['height']}")
     return out

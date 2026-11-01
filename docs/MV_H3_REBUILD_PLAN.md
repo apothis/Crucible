@@ -2535,3 +2535,24 @@ already shows her, the building and her hands, which is the user's direction. No
 - **Testable next (nothing fired):** (1) base 20 vs 25 steps, simple vs beta, on another warped booth
   scene, 2-3 seeds; (2) turbo on the authors' euler/simple, to see whether res_multistep is part of the
   warping; (3) two-stage: base at low size + latent upscale + short refine (UNVERIFIED pattern).
+
+### 20.63 Render recipe per scene; camera moves default to base (2026-11-01) [user's renders; built, batch path unverified until restart]
+
+- **Observation (user):** after scene 34, the user rendered several other warped scenes without
+  turbo and every one came out clean first try. Their call: a camera move (or complex movement)
+  renders on base by default, turbo only for simple scenes; render settings become per scene.
+- **Rule built:** a scene whose `camera` is not "static" defaults to base (20 steps), a static
+  scene to turbo (8 steps). Same rule in the tab (`sceneDefaultRecipe`) and the backend
+  (`mv_h3.scene_default_turbo`). "Complex movement" on a static camera is not detected; switch
+  such a scene to base by hand (it then shows "(changed)").
+- **Tab:** turbo, steps, sampler and scheduler are per scene (drafts `sceneRecipes`, keyed
+  script#scene, only changed scenes stored); seed, width and height stay shared. "back to this
+  scene's default" clears a scene's change.
+- **Backend (live after the next restart):** `/api/mv/render_script` takes
+  `per_scene: {index: {turbo, steps, sampler, scheduler}}` over the common knobs;
+  `chain_settings` reports sampler and scheduler; `settings_flags(s, scene)` flags turbo only
+  when it differs from the scene's default. Until the restart, the batch check refuses to send
+  when a scene's checked settings are not its own recipe (old backend ignores per_scene).
+- **Verified:** tab defaults (scene 12 move = base, scene 04 static = turbo), per-scene change
+  and reset, a single-scene dry check carrying the per-scene turbo; helpers tested offline.
+  Not verified: a batch dry run with per_scene (needs the restart).

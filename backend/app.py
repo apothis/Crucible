@@ -1362,7 +1362,7 @@ def mv_render_scene(p: dict):
         settings = mv_h3_mod.chain_settings(p, model_lane)
         pace = [pr for x in prompts for pr in mv_writer_mod.pace_problems(x, scene.get("performance"))]
         return {"dry_run": True, "settings": settings,
-                "flags": mv_h3_mod.settings_flags(settings) + list(dict.fromkeys(pace)),
+                "flags": mv_h3_mod.settings_flags(settings, scene) + list(dict.fromkeys(pace)),
                 "prompt_hash": hashlib.sha1("\n\x00".join(prompts).encode()).hexdigest()[:16], "script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
                 "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
                 "location": loc["id"] if loc else None, "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
@@ -1780,13 +1780,17 @@ def mv_render_script_job(jid: str):
             "rows": [{k: r.get(k) for k in ("index", "title", "status", "error", "job_id")} for r in rows]}
 
 
+SCENE_RECIPE_KEYS = ("turbo", "steps", "sampler", "scheduler")
+
+
 def _mv_render_script_run(p: dict, rows_out=None):
     """Render EVERY scene of a saved script through render_scene (the normal path: default lanes,
     each scene's recorded opening still, the location stills from the library), queued on the box
     one after another. p: {script, ref_ids: [face, body], skip?: [scene indexes], only?: [indexes],
         existing?: {index: job_id} (scenes already rendered on this text, carried into the manifest
         for assembly), dry_run?, plus the common render_scene knobs (seed, turbo, width, height,
-        attention, crf ...)}.
+        attention, crf ...), per_scene?: {index: {turbo?, steps?, sampler?, scheduler?}} (the tab's
+        per-scene recipe, laid over the common knobs for that scene)}.
     Scenes are submitted with free=False so the box is never freed under a running job; ComfyUI
     swaps the fl2va/ref2va weights itself between jobs. Writes a batch manifest under
     .mvwork/mv_batches/ (scene -> job_id) that /api/mv/assemble reads. Errors on one scene are
@@ -1839,7 +1843,10 @@ def _mv_render_script_run(p: dict, rows_out=None):
             row.update({"job_id": existing[idx], "status": "existing"}); rows.append(row); continue
         if idx in skip or (only is not None and idx not in only):
             row.update({"job_id": None, "status": "skipped"}); rows.append(row); continue
-        req = dict(common); req.update({"script": name if name != "(inline)" else script, "scene": idx, "dry_run": dry})
+        req = {k: v for k, v in common.items() if k != "per_scene"}
+        ov = (common.get("per_scene") or {}).get(str(idx)) or {}
+        req.update({k: ov[k] for k in SCENE_RECIPE_KEYS if k in ov})
+        req.update({"script": name if name != "(inline)" else script, "scene": idx, "dry_run": dry})
         if not dry:
             d = dry_rows.get(idx) or {}
             if d.get("status") != "dry":
