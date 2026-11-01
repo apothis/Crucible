@@ -31,6 +31,11 @@ type Cut = { stamp: string; file: string; path: string; seconds: number | null; 
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
 // a Meridian re-shoot (s.20.56): what the dry run of /api/mv/meridian_take returns
 type MeridianDry = { frames: number; length: number; move: string; move_label: string; amount: string; seed: number; camera?: string; flags: string[]; minutes: number };
+// a 2D move (s.20.58): a moving crop of the take's own frames, nothing redrawn
+type Move2dDry = { move: string; move_label: string; amount: string; camera?: string; flags: string[] };
+const MOVE2D_MOVES: [string, string][] = [["arc_left", "arc toward frame left"], ["arc_right", "arc toward frame right"],
+  ["push_in", "push in"], ["pull_out", "pull out"], ["pan_left", "pan toward frame left"], ["pan_right", "pan toward frame right"],
+  ["tilt_up", "tilt up"], ["tilt_down", "tilt down"]];
 const MERIDIAN_MOVES: [string, string][] = [["arc_left", "arc toward frame left"], ["arc_right", "arc toward frame right"],
   ["push_in", "push in"], ["pull_out", "pull out"], ["truck_left", "truck left"], ["truck_right", "truck right"],
   ["pedestal_up", "pedestal up"], ["pedestal_down", "pedestal down"]];
@@ -800,6 +805,8 @@ function TakesStep(p: {
   // the Meridian panel open on one take: its dry run and the chosen move
   const [mer, setMer] = useState<{ take: string; move: string; amount: string; dry: MeridianDry | null } | null>(null);
   useEffect(() => { setMer(null); }, [scene.index]);
+  const [m2d, setM2d] = useState<{ take: string; move: string; amount: string; dry: Move2dDry | null } | null>(null);
+  useEffect(() => { setM2d(null); }, [scene.index]);
 
   const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}|${stillMode ? "still" : ""}`;
   const renderBody = (idx: number, dryRun: boolean, pinSeed?: number) => {
@@ -857,7 +864,25 @@ function TakesStep(p: {
       setMer({ take: jid, move: r.move, amount: r.amount, dry: r });
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
-  const openMeridian = (jid: string) => { setMer({ take: jid, move: "", amount: "small", dry: null }); checkMeridian(jid); };
+  const checkMove2d = async (jid: string, move?: string, amount?: string) => {
+    setErr("");
+    try {
+      const r = await api.mvMove2dTake({ script: scriptName, scene: scene.index, job_id: jid, move, amount, dry_run: true }) as Move2dDry;
+      setM2d({ take: jid, move: r.move, amount: r.amount, dry: r });
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  const openMove2d = (jid: string) => { setMer(null); setM2d({ take: jid, move: "", amount: "small", dry: null }); checkMove2d(jid); };
+  const fireMove2d = async (jid: string) => {
+    if (!m2d?.dry) return;
+    setErr(""); setBusyMsg("making the 2D move (Mac, seconds)...");
+    try {
+      await api.mvMove2dTake({ script: scriptName, scene: scene.index, job_id: jid, move: m2d.move, amount: m2d.amount });
+      setM2d(null);
+      await p.refreshTakes();
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
+  };
+  const openMeridian = (jid: string) => { setM2d(null); setMer({ take: jid, move: "", amount: "small", dry: null }); checkMeridian(jid); };
   const fireMeridian = async (jid: string) => {
     if (!mer?.dry) return;
     if (!window.confirm(`Re-shoot this take on the box with Meridian now? (${mer.dry.move_label}, ${mer.dry.amount}, about ${Math.round(mer.dry.minutes)} min)`)) return;
@@ -1089,9 +1114,9 @@ function TakesStep(p: {
                 {dr && dr.flags.length > 0 && <label className="flex items-center gap-1 text-xs text-amber-400"><input type="checkbox" checked={p.acceptFlags} onChange={(e) => p.setAcceptFlags(e.target.checked)} /> render despite the warnings</label>}
               </div>
               {moving && (
-                <label className="flex items-center gap-2 text-xs" title="for a move that rebuilt the room: render the scene still, then use 're-shoot the move' on that take (Meridian keeps the room it was given)">
+                <label className="flex items-center gap-2 text-xs" title="for a move that rebuilt the room: render the scene still, then add the move on that take ('2D move', or 're-shoot the move' with Meridian)">
                   <input type="checkbox" checked={stillMode} onChange={(e) => setStillMode(e.target.checked)} />
-                  still version, for a Meridian re-shoot of the move{scene.still_clips?.length ? "" : " (the check writes its still text first, no GPU)"}
+                  still version, to add the move afterwards{scene.still_clips?.length ? "" : " (the check writes its still text first, no GPU)"}
                 </label>
               )}
               {dr && (
@@ -1144,6 +1169,7 @@ function TakesStep(p: {
                           : <Action onClick={() => choose(scene.index, t.id)} title="this take plays in the scene; it replaces the scene's current choice">Use in the video</Action>)}
                         <span className="text-[11px] text-[var(--color-muted)]">{when(t.created)} · seed {t.params.seed}{t.seconds !== null ? ` · ${t.seconds.toFixed(1)} s` : ""}{t.from_script ? " · earlier script" : ""}</span>
                         {t.params.variant === "still" && <Pill tone="muted" title="rendered with a still camera, the source for a Meridian re-shoot">still version</Pill>}
+                        {t.params.engine === "move2d" && <Pill tone="muted" title="a moving crop of another take of this scene: nothing redrawn">2D move: {(MOVE2D_MOVES.find((m) => m[0] === t.params.move) || ["", t.params.move])[1]}, {t.params.amount}</Pill>}
                         {t.params.engine === "meridian" && <Pill tone="muted" title="re-shot with Meridian from another take of this scene">Meridian: {(MERIDIAN_MOVES.find((m) => m[0] === t.params.move) || ["", t.params.move])[1]}, {t.params.amount}</Pill>}
                       </div>
                       {t.status === "done" && (
@@ -1158,10 +1184,32 @@ function TakesStep(p: {
                             : upscaleBusy(u) ? <Pill tone="warn">upscaling {pct(u!.progress, u!.max) || u!.status}</Pill>
                             : <GhostButton onClick={() => doUpscale(scene.index, t)} disabled={!!busyMsg} title="FlashVSR+ Turbo 2x on the box (GPU); step 5 can upscale every chosen take at once">upscale 2x</GhostButton>}
                           {u?.status === "error" && <span className="text-red-400" title={u.error || ""}>upscale failed</span>}
-                          {t.params.engine !== "meridian" && (
+                          {t.params.engine !== "move2d" && t.params.engine !== "meridian" && (
+                            <GhostButton onClick={() => openMove2d(t.id)} disabled={!!busyMsg}
+                              title="add a camera move as a moving crop of this take: nothing is redrawn, so lips and room stay exact (no parallax); seconds, no GPU">2D move</GhostButton>
+                          )}
+                          {t.params.engine !== "meridian" && t.params.engine !== "move2d" && (
                             <GhostButton onClick={() => openMeridian(t.id)} disabled={!!busyMsg}
                               title="redraw this take along a camera move through its own depth (Meridian, opt-in, about 13 min for an 8 s take); best on a still take">re-shoot the move</GhostButton>
                           )}
+                        </div>
+                      )}
+                      {m2d?.take === t.id && (
+                        <div className="space-y-2 rounded border border-[var(--color-line)] p-2 text-[11px]">
+                          <div className="font-semibold">2D move</div>
+                          <div className="text-[var(--color-muted)]">a moving crop of this take: her lips, the room and the song stay exactly as rendered; the background moves with her (no parallax). The result is a new take of this scene.</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select className={`${inp} w-auto`} value={m2d.move} onChange={(e) => checkMove2d(t.id, e.target.value, m2d.amount)}>
+                              {MOVE2D_MOVES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                            </select>
+                            <select className={`${inp} w-auto`} value={m2d.amount} onChange={(e) => checkMove2d(t.id, m2d.move, e.target.value)}>
+                              <option value="small">small (8 %)</option><option value="large">large (16 %)</option>
+                            </select>
+                            <Action onClick={() => fireMove2d(t.id)} disabled={!!busyMsg || !m2d.dry}>make it (seconds, no GPU)</Action>
+                            <GhostButton onClick={() => setM2d(null)}>close</GhostButton>
+                          </div>
+                          {m2d.dry?.camera && <div className="text-[var(--color-muted)]">the scene asks: {m2d.dry.camera}</div>}
+                          {m2d.dry?.flags.length ? <ul className="list-disc pl-4 text-amber-300">{m2d.dry.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : null}
                         </div>
                       )}
                       {mer?.take === t.id && (

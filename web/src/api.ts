@@ -118,6 +118,7 @@ export const api = {
   mvSceneEndStill: (p: { script: string; scene: number; still_id: string | null }) => jpost("/api/mv/scene_end_still", p),
   mvSceneAfterStill: (p: { script: string; scene: number; still_id: string | null }) => jpost("/api/mv/scene_after_still", p), // the state the action ends in
   mvStillVariant: (p: { script: string; scene: number }) => jpost("/api/mv/still_variant", p),  // the scene rewritten with a still camera (writer, no GPU)
+  mvMove2dTake: (p: { script: string; scene: number; job_id: string; move?: string; amount?: string; dry_run?: boolean }) => jpost("/api/mv/move2d_take", p), // a moving crop of the take, no GPU
   mvMeridianTake: (p: { script: string; scene: number; job_id: string; move?: string; amount?: string; seed?: number; dry_run?: boolean }) => jpost("/api/mv/meridian_take", p),
   mvScriptRefStills: (p: { script: string; face_id?: string; body_id?: string }) => jpost("/api/mv/script_ref_stills", p), // the singer's two pictures for one script
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),

@@ -35,6 +35,7 @@ from . import mv_locations as mv_locations_mod
 from . import mv_takes as mv_takes_mod
 from . import mv_finish as mv_finish_mod
 from . import mv_meridian as mv_meridian_mod
+from . import mv_move2d as mv_move2d_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -2380,18 +2381,12 @@ def _mv_write_run(p, on_log=None):
     return script
 
 
-@app.post("/api/mv/meridian_take")
-def mv_meridian_take(p: dict):
-    """Re-shoot a take's camera move with Meridian (opt-in, s.20.56): the scene's take (best a
-    STILL take: its still version, or a scene written static) is redrawn along a camera path
-    through its own depth, with the song locked in the latent, and lands as a new take of the
-    same scene, trimmed to the source and with the source's audio. Slow: about 13 min for an
-    8.7 s take on the 3090. p: {script, scene, job_id (a finished take of that scene), move?
-    (mv_meridian.MOVES; default guessed from the scene's camera line), amount? (small|large),
-    seed?, dry_run?}. The dry run says what would be sent, nothing is queued."""
+def _mv_take_of_scene(p):
+    """{script, scene, job_id} -> (script, name, scene, job_id, path, the take's params), refusing
+    anything that is not a finished take of that scene of a saved script."""
     script, name = _mv_load_script(p.get("script"))
     if name == "(inline)":
-        raise HTTPException(400, "a re-shoot needs a saved script")
+        raise HTTPException(400, "this needs a saved script")
     try:
         scene = script["scenes"][int(p.get("scene", -1))]
     except Exception:
@@ -2409,6 +2404,67 @@ def mv_meridian_take(p: dict):
     rows = [{"id": jid, "params": sp, "status": "done"}]
     if not mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene=scene["index"], scenes=script["scenes"]):
         raise HTTPException(400, "that take is not a take of this scene")
+    return script, name, scene, jid, src_path, sp
+
+
+@app.post("/api/mv/move2d_take")
+def mv_move2d_take(p: dict):
+    """A 2D camera move on a take (opt-in, s.20.58): a moving crop of the take's own frames, so
+    nothing is redrawn (lips, room and song exactly as rendered; no parallax). The user's choice
+    for singing scenes whose direct move rebuilt the room. Runs on the Mac in seconds and files
+    the result as a new take of the scene. p: {script, scene, job_id, move? (mv_move2d.MOVES;
+    default guessed from the scene's camera line), amount? (small|large), dry_run?}."""
+    script, name, scene, jid, src_path, sp = _mv_take_of_scene(p)
+    camera = scene.get("still_of_camera") or scene.get("camera")
+    guess, guess_amount, guessed = mv_move2d_mod.move_from_camera(camera)
+    move = (p.get("move") or "").strip() or guess
+    amount = (p.get("amount") or "").strip() or guess_amount
+    if not move:
+        raise HTTPException(400, "the scene's camera line names no move: choose one (move)")
+    if move not in mv_move2d_mod.MOVES or amount not in mv_move2d_mod.AMOUNTS:
+        raise HTTPException(400, f"move must be one of {', '.join(mv_move2d_mod.MOVES)}; amount small or large")
+    flags = []
+    if sp.get("variant") != "still" and (scene.get("camera") or "static").strip() != "static":
+        flags.append("this take was rendered with the scene's own move: the 2D move adds to it and keeps any warping; "
+                     "the still version of the scene is the clean source")
+    if guessed and not p.get("move"):
+        flags.append(f"the camera line gives no side; assumed {mv_move2d_mod.MOVE_LABELS[move]}")
+    summary = {"scene": scene["index"], "source_job_id": jid, "move": move, "move_label": mv_move2d_mod.MOVE_LABELS[move],
+               "amount": amount, "camera": camera, "flags": flags}
+    if p.get("dry_run"):
+        return dict(summary, dry_run=True)
+    pid = str(uuid.uuid4())
+    dst = os.path.join(LIBRARY, f"{pid}.mp4")
+    try:
+        info = mv_move2d_mod.render(src_path, dst, move, amount)
+    except Exception as e:
+        if os.path.exists(dst):
+            os.remove(dst)
+        raise HTTPException(500, f"2D move failed: {e}")
+    resolved = {"script": name, "scene_index": scene["index"], "scene_title": scene.get("title"),
+                "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
+                "title": f"{script.get('title') or name} / {int(scene['index']):02d} {scene.get('title') or ''} (2D move)".strip(),
+                "engine": "move2d", "lane": "move2d", "kind": "video", "move": move, "amount": amount,
+                "move2d_of": jid, "seed": sp.get("seed"), "frames": info["frames"], "width": info["width"],
+                "height": info["height"]}
+    with LOCK:
+        JOBS[pid] = _new_job(resolved, "videoclip")
+        JOBS[pid]["status"] = "done"
+        JOBS[pid]["audio_file"] = dst
+    save_job(pid)
+    return dict(summary, job_id=pid, media_url=f"/api/media/{pid}", frames=info["frames"])
+
+
+@app.post("/api/mv/meridian_take")
+def mv_meridian_take(p: dict):
+    """Re-shoot a take's camera move with Meridian (opt-in, s.20.56): the scene's take (best a
+    STILL take: its still version, or a scene written static) is redrawn along a camera path
+    through its own depth, with the song locked in the latent, and lands as a new take of the
+    same scene, trimmed to the source and with the source's audio. Slow: about 13 min for an
+    8.7 s take on the 3090. p: {script, scene, job_id (a finished take of that scene), move?
+    (mv_meridian.MOVES; default guessed from the scene's camera line), amount? (small|large),
+    seed?, dry_run?}. The dry run says what would be sent, nothing is queued."""
+    script, name, scene, jid, src_path, sp = _mv_take_of_scene(p)
     out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
                           "stream=nb_read_packets", "-of", "csv=p=0", src_path], capture_output=True, text=True)
     frames = int((out.stdout or "0").strip() or 0)
@@ -2430,7 +2486,7 @@ def mv_meridian_take(p: dict):
                      "the still version of the scene is the clean source")
     if guessed and not p.get("move"):
         flags.append(f"the camera line gives no side; assumed {mv_meridian_mod.MOVE_LABELS[move]}")
-    summary = {"scene": scene["index"], "job_id": jid, "frames": frames, "length": length, "move": move,
+    summary = {"scene": scene["index"], "source_job_id": jid, "frames": frames, "length": length, "move": move,
                "move_label": mv_meridian_mod.MOVE_LABELS[move], "amount": amount, "seed": seed,
                "camera": scene.get("still_of_camera") or scene.get("camera"), "flags": flags,
                # measured on the 3090: 318 s for 124 frames, 799 s for 243 (about 3.3 s a frame)

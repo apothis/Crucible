@@ -221,6 +221,13 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   room; sync 0.995-0.997. Motion judged by the user, pending.] An end picture alone (no pins)
   still let the hall stretch mid-move. [M: 14] Code: `push_end_still {rail, rail_after}`,
   `build_h3_chain(guide_frames=)`, docs/MV_H3_REBUILD_PLAN.md s.20.52-20.54.
+- **Singing scene whose move rebuilt the room: render its still version, then a 2D move on that
+  take.** (Scenes and takes: tick "still version, to add the move afterwards", render, then "2D
+  move" on the take.) Nothing is redrawn, so lips, room and song are exact; no parallax. Measured
+  alternatives on the booth [M, s.20.55-20.57]: Meridian re-camera keeps the room but redraws the
+  mouth (mouth match 0.86 on a steady face, 0.17 and ~8 frames late on fast performance) and
+  repaints windows/neon; depth parallax without generation tears the face and needs a 1.35x crop.
+  Meridian stays available ("re-shoot the move") for scenes without singing or with a still face.
 - **Every pin asserts the people's pose at that moment, so a rail cut from the opening still
   only fits scenes whose people end where they started.** [M: 39, a scripted reach: absent with
   pins every 1.5 s AND with pins from 4 s only (near-identical takes); present in the free take.

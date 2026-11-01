@@ -2386,3 +2386,21 @@ already shows her, the building and her hands, which is the user's direction. No
   [H] Meridian redraws the mouth from a 480-class copy plus the song; a steady frontal face
   (scene 10) survives that, big fast performance (scene 24) does not. Not reliable for singing.
   opencv-python-headless pinned <5 in the venv (5.0 dropped CascadeClassifier).
+
+### 20.58 2D move on a take, in the app (2026-11-01) [built; run through the tab on scene 24]
+- User: "The 2d will have to do" for singing scenes whose direct move rebuilt the room.
+- backend/mv_move2d.py: a moving crop of the take's own frames (cv2.warpAffine LANCZOS, cosine
+  ease over the whole take, source audio copied, same size/frames/fps). Moves: push in, pull out,
+  pan left/right, arc left/right (pan + push from 1+a/2 to 1+a), tilt up/down; amount = margin
+  scaled in (small 8 %, large 16 %). Offline: no frame of any move/amount at 41 steps shows an
+  edge. Guess from the camera line (trucks read as pans, pedestals as tilts; side assumed and
+  flagged when the line names none). An 8 s take renders in ~4.5 s on the Mac.
+- POST /api/mv/move2d_take {script, scene, job_id, move?, amount?, dry_run?} (shared take check
+  _mv_take_of_scene with meridian_take) files the result as a done take (engine move2d,
+  move2d_of = the source). Tab: "2D move" on each take -> panel (move, amount, make it); label
+  "2D move: <move>, <amount>". The still-version toggle now reads "to add the move afterwards".
+- Fixed: meridian_take's reply put the SOURCE id under job_id (overwrote the new job's id); both
+  routes now return it as source_job_id.
+- Through the tab, scene 24: panel guessed arc toward frame left (flagged), set to frame right;
+  take 5950eac5 in seconds: 192 frames, audio, sync 0.996 lag 0, opening 0.55.
+  Copy: .mvwork/booth/s24/s24_F_2d_arc_right_from_app.mp4.
