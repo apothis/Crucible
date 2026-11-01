@@ -2500,3 +2500,38 @@ already shows her, the building and her hands, which is the user's direction. No
   5: <stage>", then "sent: the new take is rendering below") shows in the panel, in the guided card
   and above the takes; the job id is remembered per scene in the browser (localStorage), so a reload
   or a closed panel keeps the bar; it clears once the take is in the list (its own bar takes over).
+
+### 20.62 Base beats turbo on a warped booth scene; steps, sampler and scheduler in the tab (2026-11-01) [user's render; settings built]
+- **Observation (user, ground truth, one take):** scene 34 rendered on the base recipe (no turbo LoRA,
+  20 steps, res_multistep/simple, shift 12/3; take 19c84b0a) came out with no background warping, where
+  the turbo takes (8 steps, shift 6/3, ref2v 8-step LoRA) of the same scene warped. One seed: a seed
+  sweep on another booth scene is the test before calling it the cause.
+- **Also fixed on scene 34:** the still version showed a reflected ghost face and drop strings on glass
+  (take 270fa637; the model put a wet window in front of the camera). The drops/glass lines were
+  removed from scene 34's still and moving text (soundscape drips too); take 17127e16 came out clean.
+  Meridian refused the scene silently (13.7 s > its 243-frame / 10.1 s maximum): the panel now shows
+  the reason and greys Meridian out on long takes.
+- **Research (agent, sources spot-checked):**
+  - OFFICIAL: H3 checkpoints are CFG-distilled (model card); Comfy-Org's r2v template = res_multistep,
+    simple, 20 steps, BasicGuider, no negative; its note: "beta or normal scheduler tends to outperform
+    simple for reference-heavy prompts" (verified in the template JSON). Comfy docs: 20 default, ~25 for
+    motion, 20-25 for R2V when references must hold.
+  - OFFICIAL: ModelTC (turbo LoRA authors) ComfyUI guide: "Sampler defaults to euler" (verified); their
+    table pairs the 768p 8-step LoRAs with shift 6/3. Our turbo lane runs res_multistep, not euler.
+  - COMMUNITY: Kijai (er_sde / sa_solver with the turbo LoRA, strength 0.75 at 4 steps); larryvrh
+    LoRA discussion #20: base 20 steps clean vs turbo drift/texture at 8, banding at 6, ghosting at 4,
+    strength 0.8 did not help. ModelTC's roadmap lists Ref2VA/FL2VA turbo quality as open work.
+  - "8 low-res + 4 high-res + 1 finishing step": LTX-2 two-stage advice (diffusers LTX-2: 8 distilled
+    steps at half size, x2 latent upsampler, 3 refine steps; RuneXX LTX-2.3: 8 + 4 manual sigmas). The
+    "+1 finishing" and the drift claim: UNVERIFIED, no source. For H3 there is no official two-stage
+    graph; LBH-123's own examples (COMMUNITY) = turbo LoRA both stages, euler, first 4 of 8 steps at
+    0.2 MP, MinimaxH3LatentUpscaler3D, 3 steps on 0.9035/0.6316/0.3158/0 (our s.20.50 upscale pass is
+    this graph's second stage). Base-low-res + turbo-refine (the LTX-2 pattern) = UNVERIFIED for H3.
+- **Built:** render settings gain steps (blank = recipe: 8 turbo, 20 base), sampler (res_multistep
+  default; euler, er_sde, sa_solver) and scheduler (simple default; beta, normal). Sent only when they
+  differ from the recipe, so a default render is unchanged; batch renders and room-pinned moves carry
+  them too. The settings line of a check shows them; take cards show base/turbo + steps (steps,
+  sampler, scheduler pass through /api/mv/takes after the next backend restart).
+- **Testable next (nothing fired):** (1) base 20 vs 25 steps, simple vs beta, on another warped booth
+  scene, 2-3 seeds; (2) turbo on the authors' euler/simple, to see whether res_multistep is part of the
+  warping; (3) two-stage: base at low size + latent upscale + short refine (UNVERIFIED pattern).

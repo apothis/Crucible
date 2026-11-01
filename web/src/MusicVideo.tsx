@@ -163,6 +163,10 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   // defaulted to 20261027, so every take of a scene repeated one seed
   const [seed, setSeed] = d.use("seedPin", "");
   const [turbo, setTurbo] = d.use("turbo", true);
+  // steps blank = the recipe's own (8 turbo, 20 base); sampler = res_multistep, the recipe's own
+  const [steps, setSteps] = d.use("steps", "");
+  const [sampler, setSampler] = d.use("sampler", DEFAULT_SAMPLER);
+  const [scheduler, setScheduler] = d.use("scheduler", DEFAULT_SCHEDULER);
   const [width, setWidth] = d.use("width", 1344);
   const [height, setHeight] = d.use("height", 768);
   const [acceptFlags, setAcceptFlags] = d.use("acceptFlags", false);
@@ -377,6 +381,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
       {step === 4 && script && (
         <TakesStep script={script} scriptName={scriptName} takes={takes} sel={sel} setSel={setSel}
           faceId={face} bodyId={body} seed={seed} setSeed={setSeed} turbo={turbo} setTurbo={setTurbo}
+          steps={steps} setSteps={setSteps} sampler={sampler} setSampler={setSampler} scheduler={scheduler} setScheduler={setScheduler}
           width={width} setWidth={setWidth} height={height} setHeight={setHeight} acceptFlags={acceptFlags} setAcceptFlags={setAcceptFlags}
           dry={dry} setDry={setDry} busyMsg={busyMsg} setBusyMsg={setBusyMsg} setErr={setErr}
           refreshTakes={refreshTakes} reloadScript={reloadScript} target={target} setTarget={setTarget} fileStill={fileStill}
@@ -811,6 +816,21 @@ function RoomPinnedProgress({ job }: { job: RpJob | null | undefined }) {
   );
 }
 
+// the render sampler: the recipe's own first, then the alternatives the research supports for H3
+// (docs/MV_H3_REBUILD_PLAN.md s.20.62); [value, label, what it does]
+const DEFAULT_SAMPLER = "res_multistep";
+const SAMPLERS: [string, string, string][] = [
+  ["res_multistep", "res_multistep (current default)", "Comfy's official H3 template and our recipe, turbo and base"],
+  ["euler", "euler", "the turbo LoRA authors' own sampler (ModelTC); try it with turbo on"],
+  ["er_sde", "er_sde", "community pick for the turbo LoRA (Kijai); adds fresh noise each step"],
+  ["sa_solver", "sa_solver", "community pick for the turbo LoRA (Kijai)"],
+];
+const DEFAULT_SCHEDULER = "simple";
+const SCHEDULERS: [string, string][] = [
+  ["simple", "simple (current default)"], ["beta", "beta"], ["normal", "normal"],
+];
+const stepsLabel = (turbo: boolean, steps: string) => steps.trim() || (turbo ? "8" : "20");
+
 const MERIDIAN_MAX_FRAMES = 243;   // backend/mv_meridian.py MERIDIAN_LENGTHS[-1]
 
 function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, refreshTakes, onClose, render, armed, onArm, onFile, roomJob, onRoomJob }: {
@@ -964,6 +984,8 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
 function TakesStep(p: {
   script: Script; scriptName: string; takes: Record<string, Take[]>; sel: number | null; setSel: (n: number | null) => void;
   faceId: string; bodyId: string; seed: string; setSeed: (v: string) => void; turbo: boolean; setTurbo: (v: boolean) => void;
+  steps: string; setSteps: (v: string) => void; sampler: string; setSampler: (v: string) => void;
+  scheduler: string; setScheduler: (v: string) => void;
   width: number; setWidth: (v: number) => void; height: number; setHeight: (v: number) => void; acceptFlags: boolean; setAcceptFlags: (v: boolean) => void;
   dry: Record<number, Dry>; setDry: (f: (d: Record<number, Dry>) => Record<number, Dry>) => void; busyMsg: string; setBusyMsg: (s: string) => void; setErr: (s: string) => void;
   refreshTakes: () => Promise<void>; reloadScript: () => void; target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File, slot?: "opening" | "after" | "empty", ofTake?: string) => void; goPictures: () => void;
@@ -1014,12 +1036,21 @@ function TakesStep(p: {
     }
   }, [takes, rpJob?.status, rpJob?.take_job_id]);
 
-  const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}`;
+  const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}|${p.steps}|${p.sampler}|${p.scheduler}`;
+  // steps and sampler go out only when they differ from the recipe, so a default render sends what it always did
+  const recipeKnobs = (b: Record<string, unknown>) => {
+    const n = Number(p.steps);
+    if (p.steps.trim() && Number.isInteger(n) && n > 0) b.steps = n;
+    if (p.sampler && p.sampler !== DEFAULT_SAMPLER) b.sampler = p.sampler;
+    if (p.scheduler && p.scheduler !== DEFAULT_SCHEDULER) b.scheduler = p.scheduler;
+    return b;
+  };
   const renderBody = (idx: number, dryRun: boolean, pinSeed?: number) => {
     const body: Record<string, unknown> = {
       script: scriptName, scene: idx, ref_ids: [p.faceId, p.bodyId].map((x) => x.trim()).filter(Boolean),
       turbo: p.turbo, attention: ATTENTION, width: Number(p.width), height: Number(p.height), dry_run: dryRun,
     };
+    recipeKnobs(body);
     const s = pinSeed ?? (p.seed.trim() ? Number(p.seed) : undefined);
     if (s !== undefined && !Number.isNaN(s)) body.seed = s;
     return body;
@@ -1127,6 +1158,7 @@ function TakesStep(p: {
       script: scriptName, ref_ids: [p.faceId, p.bodyId].map((x) => x.trim()).filter(Boolean),
       turbo: p.turbo, attention: ATTENTION, width: Number(p.width), height: Number(p.height),
     };
+    recipeKnobs(b);
     const sd = p.seed.trim() ? Number(p.seed) : undefined;
     if (sd !== undefined && !Number.isNaN(sd)) b.seed = sd;
     return b;
@@ -1198,7 +1230,7 @@ function TakesStep(p: {
         {bDry && !bFresh && !bJob && <div className="text-xs text-amber-400">the settings or the scenes changed since the check: check again</div>}
         {bDry && bFresh && !bJob && (
           <div className={`rounded border p-2 text-[11px] ${bFlagged.length || bDry.scenes.some((r) => r.status === "error") ? "border-amber-700" : "border-emerald-800"}`}>
-            <div className="text-[var(--color-muted)]">{bReady.length} ready{bFlagged.length ? `, ${bFlagged.length} with warnings` : ""}{bDry.counts?.error ? `, ${bDry.counts.error} cannot render` : ""} · {p.width}x{p.height} · {p.turbo ? "turbo" : "base"} · {p.seed.trim() ? `seed ${p.seed}` : "a random seed per scene (kept from this check)"}</div>
+            <div className="text-[var(--color-muted)]">{bReady.length} ready{bFlagged.length ? `, ${bFlagged.length} with warnings` : ""}{bDry.counts?.error ? `, ${bDry.counts.error} cannot render` : ""} · {p.width}x{p.height} · {p.turbo ? "turbo" : "base"}, {stepsLabel(p.turbo, p.steps)} steps, {p.sampler}/{p.scheduler} · {p.seed.trim() ? `seed ${p.seed}` : "a random seed per scene (kept from this check)"}</div>
             {bDry.scenes.filter((r) => r.status === "error").map((r) => <div key={r.index} className="mt-1 text-red-300">scene {r.index} {r.title}: {errText(r.error)}</div>)}
             {bFlagged.map((r) => <div key={r.index} className="mt-1 text-amber-300">scene {r.index} {r.title}: {(r.flags || []).join("; ")}</div>)}
             {!bFlagged.length && !bDry.counts?.error && <div className="mt-1 text-emerald-500">no warnings: all ready to render</div>}
@@ -1355,7 +1387,7 @@ function TakesStep(p: {
                 <div className={`rounded border p-2 text-[11px] ${dr.sig !== sig() || dr.flags.length ? "border-amber-700" : "border-emerald-800"}`}>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[var(--color-muted)]">
                     <span>{dr.clips} clip{dr.clips === 1 ? "" : "s"}</span><span>{dr.settings?.width}x{dr.settings?.height}</span><span>seed {dr.settings?.seed}</span>
-                    <span>{dr.settings?.turbo ? "turbo" : "base"}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
+                    <span>{dr.settings?.turbo ? "turbo" : "base"}, {dr.settings?.steps} steps, {p.sampler}/{p.scheduler}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
                     {dr.variant === "still" ? <span>still version (camera static)</span> : null}
                     {dr.end_still_id ? <span>ends on the end picture</span> : null}
                     {dr.rail_frames?.length ? <span>pinned on the way at {dr.rail_frames.map((f) => (f / 24).toFixed(1)).join(", ")} s</span> : null}
@@ -1372,6 +1404,16 @@ function TakesStep(p: {
                   <Field label="width"><input className={inp} type="number" step={32} value={p.width} onChange={(e) => p.setWidth(Number(e.target.value))} /></Field>
                   <Field label="height"><input className={inp} type="number" step={32} value={p.height} onChange={(e) => p.setHeight(Number(e.target.value))} /></Field>
                   <label className="flex items-end gap-2 pb-2 text-xs"><input type="checkbox" checked={p.turbo} onChange={(e) => p.setTurbo(e.target.checked)} /> turbo</label>
+                  <Field label="steps" hint={`blank = ${p.turbo ? "8 (the turbo recipe)" : "20 (the base recipe)"}`}>
+                    <input className={inp} type="number" min={1} max={60} placeholder={p.turbo ? "8" : "20"} value={p.steps} onChange={(e) => p.setSteps(e.target.value)} /></Field>
+                  <Field label="sampler" hint={SAMPLERS.find(([v]) => v === p.sampler)?.[2] || ""}>
+                    <select className={inp} value={p.sampler} onChange={(e) => p.setSampler(e.target.value)}>
+                      {SAMPLERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select></Field>
+                  <Field label="scheduler" hint="Comfy's H3 template: beta or normal tends to beat simple when the pictures need to hold">
+                    <select className={inp} value={p.scheduler} onChange={(e) => p.setScheduler(e.target.value)}>
+                      {SCHEDULERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select></Field>
                 </div>
               </details>
             </Card>
@@ -1400,7 +1442,7 @@ function TakesStep(p: {
                         {t.status === "done" && (chosen
                           ? <><Pill tone="ok">in the video</Pill><GhostButton onClick={() => choose(scene.index, null)}>remove</GhostButton></>
                           : <Action onClick={() => choose(scene.index, t.id)} title="this take plays in the scene; it replaces the scene's current choice">Use in the video</Action>)}
-                        <span className="text-[11px] text-[var(--color-muted)]">{when(t.created)} · seed {t.params.seed}{t.seconds !== null ? ` · ${t.seconds.toFixed(1)} s` : ""}{t.from_script ? " · earlier script" : ""}</span>
+                        <span className="text-[11px] text-[var(--color-muted)]">{when(t.created)} · seed {t.params.seed} · {t.params.turbo ? "turbo" : "base"}{t.params.steps ? ` ${t.params.steps} steps` : ""}{t.params.sampler && t.params.sampler !== DEFAULT_SAMPLER ? ` ${t.params.sampler}` : ""}{t.params.scheduler && t.params.scheduler !== DEFAULT_SCHEDULER ? `/${t.params.scheduler}` : ""}{t.seconds !== null ? ` · ${t.seconds.toFixed(1)} s` : ""}{t.from_script ? " · earlier script" : ""}</span>
                         {t.params.variant === "still" && <Pill tone="muted" title="rendered with a still camera: add the camera move on this take">still version</Pill>}
                         {t.params.engine === "roomplate" && <Pill tone="muted" title="rendered again with the room pinned to the empty-room picture; H3 drew the people">room pinned: {moveLabel(t.params.move)}, {t.params.amount}</Pill>}
                         {t.params.engine === "move2d" && <Pill tone="muted" title="a moving crop of another take of this scene: nothing redrawn">2D move: {moveLabel(t.params.move)}, {t.params.amount}</Pill>}
