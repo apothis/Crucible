@@ -2480,3 +2480,8 @@ already shows her, the building and her hands, which is the user's direction. No
   picture and rail (whole-frame pins). mv_h3.build_h3_chain(room_plate=): the plate and mask nodes
   (offline: byte-identical to the hand-run scene 24 graph the user passed; without it unchanged).
 - Take labels: still version / 2D move / room pinned / Meridian, each with the move and size.
+- Run through the tab (scene 24 still take, push in, small): panel -> "render with the room pinned"
+  (confirm) -> stages shown live -> take 2acf95de, engine roomplate, pivot 1.28, generated share
+  mean 0.338, no end picture/rail, seed 683798812 (random); 192 frames + audio; sync 0.996 lag 0,
+  opening 0.67. Frames [M]: a steady push in, the window, lamp, panelling and booth unchanged 0-7.8 s,
+  she performs (hand to neck/hair). Copy: .mvwork/booth/s24/s24_H_room_pinned_push_in_from_app.mp4.
