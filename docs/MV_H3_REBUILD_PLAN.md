@@ -2278,3 +2278,12 @@ already shows her, the building and her hands, which is the user's direction. No
   <Video 1> with no song in the latent (our chains lip-lock through MiniMaxH3SongMaskedAVContext).
   Next test proposed: the song window in the Meridian latent via SongMaskedAVContext, all else equal.
   Fallback: InfiniteTalk v2v (redrives lips from audio, keeps camera) on the Meridian output.
+- Song lock test (user go): same graph + LoadAudio(song window 74.12 s, 11.125 s, mix, as the
+  take's lock) -> MiniMaxH3SongMaskedAVContext(clip_start 0, context 39, fps 24) on the Meridian
+  latent, seed 20261027. Ran clean (Meridian accepts the song-masked latent). Face-motion lag vs
+  the still source, 64-frame windows [M, crude proxy: the box also sees the camera move]:
+  no song  0/0.86, 3/0.73, -19/0.76, 9/0.57, 5/0.31 (whole 4 frames, r 0.66)
+  song     1/0.84, 1/0.78, -17/0.68, 6/0.35, 0/0.51 (whole 1 frame, r 0.72)
+  = smaller overall lag, end window back in time, the 4-6.7 s window weaker. Not a clear fix by
+  the numbers; the user's eyes decide. File: .mvwork/booth/s10/s10_D_meridian_arc10_songlock.mp4,
+  compare s10_compare_C_left_no_song_D_right_song_locked.mp4.
