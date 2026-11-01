@@ -2225,3 +2225,31 @@ already shows her, the building and her hands, which is the user's direction. No
   is hidden unless a scene already has one. Not built: the writer marks scenes whose people end in
   a different state (a schema flag + its edit prompt, like opening_still), and step 3 shows the
   after slot for those scenes only. Backend unchanged.
+
+### 20.55 Meridian re-shoot of a still singing take (2026-11-01) [one test, awaiting the user's eyes]
+- Why: booth moves on her singing scenes rebuild the room (arcs 10/24/35 never chosen: the
+  window, neon lettering, outside street and sconce change as the camera turns; pushes 34/37/31
+  drift less). Still booth takes were all chosen. Route: render still, then re-camera the take.
+- Box: Camera H3 node (NyckM/3d-Camera-control-H3-Minimax @36c4218, 36 runtime files via fs/write,
+  sizes matched, pycompiled), Meridian INT8 pruned 21.06 GB, meridian_dmd_lora, Kijai taomate
+  3-step LoRA, MoGe-2 ViT-L normal fp16, text_cond 124 (.safetensors) + fixed_embed_{73..243}.pt.
+  ComfyUI restarted (queue empty); nodes and model dropdowns verified via /object_info.
+- Graph = the author's v3 Quality workflow (Workflow/Minimax_bruxosdovfx_CameraMeridian_v3_Quality.json)
+  with core LoadVideo+GetVideoComponents+ImageFromBatch(124) for their loader, no extra_reference
+  (marked experimental by the node), no compare node: MoGeInference 3/0/4/true/true ->
+  BruxosH3Camera (Motion Frame, Depth Warp, source aim, panel geometric, Meridian (H3)) ->
+  BruxosMeridianReference(124, text_cond 124) -> UNET Meridian int8 + DMD LoRA 1 + taomate 1 +
+  comfy kitchen attention x2 + SigmaShift 3/3, euler, ManualSigmas 1.0/0.857/0.6/0.0, seed
+  20261027, VAEDecodeTiled 512/64/252/8, author's int8 VAE. File: .mvwork/booth/meridian_s20_arc_graph.json.
+- Test: scene 20's chosen still take (first 124 frames), path azimuth 0 -> +8 deg, distance 1.
+  318 s on the 3090, no OOM. Output video only; the take's audio muxed back.
+  Frames [M]: the camera turns (window grows at left, lamp slides right), the booth, window frame,
+  lamp and booth back stay the same room throughout; grey disocclusion behind her right side is
+  filled plausibly. Mouth shapes match the source at 1/3/5 s (3 s a little less open). The neon
+  lettering and the street outside the window are redrawn (loops, brighter street lights) though
+  the warp shows the original sign [H: the window is a far, low-texture area the model re-renders].
+  Face close to the source, small differences. Motion and lips are the user's to judge.
+  Files: .mvwork/booth/s20_compare_source_meridian_warp.mp4 (source | Meridian | warp guide, with
+  audio), s20_B_meridian_arc8_with_audio.mp4, s20_A_source_still_first5s.mp4.
+- Open: scenes are 7-8 s, so 175/243 frames need their .pt converted to .safetensors
+  (meridian_convert.py); not wired into the tab.
