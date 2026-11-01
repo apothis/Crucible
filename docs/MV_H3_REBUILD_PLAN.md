@@ -2270,3 +2270,11 @@ already shows her, the building and her hands, which is the user's direction. No
   edge band and grey holes [H: the model fills the warp's edge streaks as sparkles].
   Files: .mvwork/booth/s10/s10_compare_old_left_meridian_right.mp4 (with audio),
   s10_A_old_take_free_arc.mp4, s10_B_still_render_source.mp4, s10_C_meridian_arc10_from_still.mp4.
+- User: scene 10 Meridian lip-sync is out. Measured [M]: face-motion cross-correlation still
+  source vs Meridian, 64-frame windows: lag 0 (r 0.86) at 0-2.7 s, then 3/-19/9/5 frames with r
+  falling to 0.31 by 5.3-8 s: the lips drift and loosen after ~3 s. Not the warp: depth_warp.py
+  frame_schedule maps Motion Frame output i -> source int(i * fps/24) = 1:1, and
+  MeridianReference cuts <Video 1> 1:1. [H] Meridian regenerates the face from a 480-class
+  <Video 1> with no song in the latent (our chains lip-lock through MiniMaxH3SongMaskedAVContext).
+  Next test proposed: the song window in the Meridian latent via SongMaskedAVContext, all else equal.
+  Fallback: InfiniteTalk v2v (redrives lips from audio, keeps camera) on the Meridian output.
