@@ -811,6 +811,8 @@ function RoomPinnedProgress({ job }: { job: RpJob | null | undefined }) {
   );
 }
 
+const MERIDIAN_MAX_FRAMES = 243;   // backend/mv_meridian.py MERIDIAN_LENGTHS[-1]
+
 function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, refreshTakes, onClose, render, armed, onArm, onFile, roomJob, onRoomJob }: {
   scriptName: string; scene: Scene; take: Take; busy: boolean; setErr: (s: string) => void; setBusyMsg: (s: string) => void;
   refreshTakes: () => Promise<void>; onClose: () => void; render: Record<string, unknown>; armed: boolean; onArm: () => void; onFile: (f: File) => void;
@@ -822,6 +824,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
   const [dry, setDry] = useState<CamDry | null>(null);
   const [copied, setCopied] = useState(false);
   const [guess, setGuess] = useState("");        // the assumed side, kept until the move is chosen by hand
+  const [checkErr, setCheckErr] = useState("");  // the check's refusal, shown in the panel (not only at the top of the tab)
   const fromStill = take.params.variant === "still" || (scene.camera || "static").trim() === "static";
   const wire = (m: string) => (way === "move2d" ? TO_2D[m] : TO_3D[m]) || m;
   const base = { script: scriptName, scene: scene.index, job_id: take.id };
@@ -830,7 +833,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
   useEffect(() => {
     let live = true;
     (async () => {
-      setErr("");
+      setErr(""); setCheckErr("");
       try {
         const q = { ...base, move: move ? wire(move) : undefined, amount, dry_run: true };
         const r = (way === "move2d" ? await api.mvMove2dTake(q)
@@ -842,7 +845,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
           setMove(FROM_ANY[r.move] || r.move);
           setGuess((r.flags || []).find((f) => f.includes("assumed")) || "");
         }
-      } catch (e) { if (live) setErr(String((e as Error).message || e)); }
+      } catch (e) { if (live) setCheckErr(String((e as Error).message || e)); }
     })();
     return () => { live = false; };
   }, [way, move, amount, take.id, scene.empty_room_id]);
@@ -878,12 +881,15 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
       what: "Moves a crop of this take. Her lips, the room and the song stay exactly as rendered. No depth: the background moves with her." },
     { id: "roomplate", title: "Room pinned (best for singing)", time: `about ${Math.round((way === "roomplate" && dry?.minutes) || 13)} min on the box`,
       what: "Real depth. The room is your empty-room picture, held still, so it cannot change; H3 draws the people again with the song, so lips are as good as a normal take. Needs one picture (below)." },
-    { id: "meridian", title: "Meridian", time: "about 13 min on the box",
+    { id: "meridian", title: "Meridian", time: "about 13 min on the box, takes up to 10 s only",
       what: "Real depth, no picture needed. Redraws the whole take from a small copy: fine when the face is still, but lips can lag on lively singing, and windows and signs get repainted." },
   ];
   const emptyFromOther = way === "roomplate" && !!scene.empty_room_id && !!scene.empty_room_of && scene.empty_room_of !== take.id;
   const needPicture = way === "roomplate" && (!scene.empty_room_id || emptyFromOther);
   const running = roomJob?.status === "running";
+  // Meridian's text embeddings stop at 243 frames (10.1 s); longer takes cannot use it
+  const takeFrames = Number(take.params.frames) || 0;
+  const meridianTooLong = takeFrames > MERIDIAN_MAX_FRAMES;
 
   return (
     <div className="space-y-3 rounded border border-[var(--color-line)] p-3 text-[11px]">
@@ -911,10 +917,13 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
       <div className="space-y-1">
         <div className="font-semibold">2 · How</div>
         {WAYS.map((w) => (
-          <label key={w.id} className={`flex cursor-pointer gap-2 rounded border p-2 ${way === w.id ? "border-[var(--color-accent)]" : "border-[var(--color-line)]"}`}>
-            <input type="radio" name={`way_${take.id}`} checked={way === w.id} onChange={() => { setWay(w.id); setDry(null); }} />
+          <label key={w.id} className={`flex gap-2 rounded border p-2 ${w.id === "meridian" && meridianTooLong ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${way === w.id ? "border-[var(--color-accent)]" : "border-[var(--color-line)]"}`}>
+            <input type="radio" name={`way_${take.id}`} checked={way === w.id} disabled={w.id === "meridian" && meridianTooLong}
+              onChange={() => { setWay(w.id); setDry(null); setCheckErr(""); }} />
             <div><div className="font-semibold">{w.title} <span className="font-normal text-[var(--color-muted)]">· {w.time}</span></div>
-              <div className="text-[var(--color-muted)]">{w.what}</div></div>
+              <div className="text-[var(--color-muted)]">{w.what}</div>
+              {w.id === "meridian" && meridianTooLong
+                ? <div className="text-amber-300">not for this take: it is {(takeFrames / 24).toFixed(1)} s, Meridian stops at 10.1 s. Use room pinned or the 2D move.</div> : null}</div>
           </label>
         ))}
       </div>
@@ -943,6 +952,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
         {!fromStill
           ? <span className="text-amber-300">not on this take: open it on the "still version" take (step 2 of the card above)</span>
           : needPicture ? <span className="text-amber-300">add the empty-room picture first (step 3)</span>
+          : checkErr ? <span className="text-red-400">can't make this: {checkErr}</span>
           : !dry ? <span className="text-[var(--color-muted)]">checking...</span> : null}
       </div>
       <RoomPinnedProgress job={roomJob} />
