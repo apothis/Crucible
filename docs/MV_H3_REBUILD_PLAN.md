@@ -2358,3 +2358,19 @@ already shows her, the building and her hands, which is the user's direction. No
   Lip-timing proxy unusable on this take (her hand-to-hair moves dominate the face box: lags
   jump -20..+20, r 0.24-0.56); the user's eyes decide. Files: .mvwork/booth/s24/
   s24_compare_old_left_meridian_right.mp4 (+ A old, B still, C Meridian).
+
+### 20.57 Scene 24 lips off again; depth parallax and 2D move tested (2026-11-01)
+- User: scene 24's Meridian take (song-locked) has the lip-sync off again. So the song lock is
+  not a reliable fix: Meridian redraws the mouth every frame from a 480-class copy of the source.
+- Test (user go): the Camera H3 warp WITHOUT Meridian, at full resolution (warp_format
+  "CrossView (LTX)": source size, any length, magenta + mask for gaps), same arc (az -10, 192
+  frames, still take 80c19e62); 80 s on the box. Gaps filled with cv2.inpaint (Telea) and a fixed
+  centre crop sized to hide the frame-edge gaps (.mvwork/booth/s24/parallax_fill.py).
+  Result [M]: edge gaps up to L 75 / R 172 / T 19 / B 48 px -> 1.355x crop; filled share of the kept
+  frame mean 1.3 %, max 4.0 %. Frames: a dark crack across her cheek and forehead by the end (depth
+  tear at the hair/face edge), striped disocclusion beside her hair smeared by the fill. Lips exact
+  (source pixels). Not usable at this move size.
+- Comparison made with no GPU: a 2D move on the still take (scale 1.08, eased pan toward the lamp
+  over the clip, ffmpeg). No parallax; nothing redrawn, lips and room exact.
+  Files: s24_D_depth_parallax_arc_right.mp4, s24_E_2d_pan_toward_lamp.mp4,
+  s24_compare_meridian_parallax_2dpan.mp4 (Meridian | depth parallax | 2D pan, with audio).
