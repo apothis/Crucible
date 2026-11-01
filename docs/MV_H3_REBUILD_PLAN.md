@@ -2219,3 +2219,9 @@ already shows her, the building and her hands, which is the user's direction. No
 - Offline check (real routes, scene 39): after = the opening still itself -> end picture and
   pins 108/144 pixel-identical to the previous rail (max diff 0); a rail with no done-by time is
   refused with the message. Stand-in cleared afterwards. Tab block renders with the prompt.
+- User 2026-11-01: scene 39 is fine as is (the rail take; the reach is not needed in a wide).
+  Placement rule for the after picture: pictures are filed in step 3 (Pictures), not on the render
+  page, and the slot appears ONLY for scenes likely to need it. Done now: the render-page section
+  is hidden unless a scene already has one. Not built: the writer marks scenes whose people end in
+  a different state (a schema flag + its edit prompt, like opening_still), and step 3 shows the
+  after slot for those scenes only. Backend unchanged.

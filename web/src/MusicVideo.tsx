@@ -751,7 +751,7 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
           ) : <div className="flex aspect-video items-center justify-center rounded border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)]">no end picture</div>}
         </div>
       </div>
-      {startPic && (
+      {startPic && hasAfter && (   /* shown only once a scene has one; adding one moves to step 3 for scenes the writer marks (s.20.54) */
         <details className="mt-3 text-xs" open={hasAfter}>
           <summary className="cursor-pointer text-[var(--color-muted)]">after the action (optional): when someone ends somewhere other than where they start, the end and the pins come from this picture</summary>
           <div className="mt-2 grid gap-3 md:grid-cols-2">
