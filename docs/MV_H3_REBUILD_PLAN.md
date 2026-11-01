@@ -2374,3 +2374,15 @@ already shows her, the building and her hands, which is the user's direction. No
   over the clip, ffmpeg). No parallax; nothing redrawn, lips and room exact.
   Files: s24_D_depth_parallax_arc_right.mp4, s24_E_2d_pan_toward_lamp.mp4,
   s24_compare_meridian_parallax_2dpan.mp4 (Meridian | depth parallax | 2D pan, with audio).
+- User: depth parallax is useless (breaks as much as the original, differently); the 2D move will
+  have to do. Asked why the lips held on scene 10 but not 24.
+- Mouth-opening track [M] (OpenCV Haar face per frame, dark share of the lower-face patch,
+  z-scored; source still take vs Meridian take; face found in every frame of all three):
+  scene 10 song-locked:  whole lag 1 frame r 0.86; 2 s windows 1/0.94, 2/0.96, 1/0.91, -8/0.25
+  scene 10 no song:      whole lag 4 r 0.51; 0/0.81, 4/0.84, 6/0.60, 8/-0.51 (drifts later)
+  scene 24 song-locked:  whole lag -3 r 0.17; 8/0.22, 8/0.44, 3/0.61, -2/0.76
+  = scene 24's mouth is about 8 frames (1/3 s) late and barely follows the source in its first
+  4 s, the stretch where she laughs, belts and puts a hand to her hair; it recovers later.
+  [H] Meridian redraws the mouth from a 480-class copy plus the song; a steady frontal face
+  (scene 10) survives that, big fast performance (scene 24) does not. Not reliable for singing.
+  opencv-python-headless pinned <5 in the venv (5.0 dropped CascadeClassifier).
