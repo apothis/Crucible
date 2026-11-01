@@ -2253,3 +2253,20 @@ already shows her, the building and her hands, which is the user's direction. No
   audio), s20_B_meridian_arc8_with_audio.mp4, s20_A_source_still_first5s.mp4.
 - Open: scenes are 7-8 s, so 175/243 frames need their .pt converted to .safetensors
   (meridian_convert.py); not wired into the tab.
+- Scene 10 (user pick: its arc warps toward the end), two runs:
+  1. Still render: rewrite_scene {camera: "static"} -> new script copy
+     never_yours_20261031_000950_rw10_20261101_132938.json (working script untouched); rendered with
+     the old take's settings (refs face+body, turbo, 1344x768, seed 20261027), job e500adbe:
+     floor_r 0.998, lag 0, same room 0-8.5 s.
+  2. Meridian on it: text_cond 243 converted from fixed_embed_243.pt on the Mac (weights_only load;
+     my conversion of 124 is tensor-equal to the hosted 124 file), all 209 frames at length 243
+     (node holds the last frame), arc azimuth 0 -> +10 deg, trimmed to 209 frames, take audio
+     muxed. 799 s on the 3090.
+  Frames vs the old directly-rendered arc [M]: old take doubles the wall lamp at 4 s, grows a
+  "GROCERY" sign and "heo" lettering in the window, shrinks the lamp; Meridian keeps one lamp, the
+  same booth back and window frame while the camera turns toward the window (lamp leaves frame
+  right). Still redrawn in Meridian: the neon shape (squiggle -> loops) and a brighter street.
+  New artifact: white specks in the lower right from about 6 s, where the warp guide has a striped
+  edge band and grey holes [H: the model fills the warp's edge streaks as sparkles].
+  Files: .mvwork/booth/s10/s10_compare_old_left_meridian_right.mp4 (with audio),
+  s10_A_old_take_free_arc.mp4, s10_B_still_render_source.mp4, s10_C_meridian_arc10_from_still.mp4.
