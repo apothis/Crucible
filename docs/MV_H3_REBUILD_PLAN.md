@@ -2404,3 +2404,25 @@ already shows her, the building and her hands, which is the user's direction. No
 - Through the tab, scene 24: panel guessed arc toward frame left (flagged), set to frame right;
   take 5950eac5 in seconds: 192 frames, audio, sync 0.996 lag 0, opening 0.55.
   Copy: .mvwork/booth/s24/s24_F_2d_arc_right_from_app.mp4.
+
+### 20.59 Research: other ways to stop the warping (2026-11-01) [report in; nothing built]
+- User asked for other options. Background research (subagent, read-only) ranked:
+  1. Masked-latent room plate: the moving EMPTY-booth plate in the video latent, denoise mask 0 on
+     the room, 1 on a dilated envelope of her, a 0.4-0.6 seam band; ref2va references and song
+     lock as now. Room identical by construction where the mask is 0; she is generated as in the
+     still takes (lips via the song latent). Risk [H]: her perspective may not match the plate
+     move (she slides), visible seam. Needs a ~40-line node (H3 AV latent split/merge + mask).
+  2. Composite then heal: matte her from the still singing take, composite over the moving plate
+     (her layer moved more than the plate = real parallax), masked H3 pass with 0 on her and the
+     room, ~0.3-0.5 only on the edge band / disocclusions / shadow. Lips exact (VAE round trip,
+     or paste back). Good for pushes, trucks, arcs <= ~10 deg.
+  3. Masked rail: the rail crops as background-only latent keyframes (mask 0 on the room only).
+  4. MiniMax H3 Fun ControlNet Union 2.0 (core node, ref2va template, control off on audio):
+     MLSD/depth of the warped plate; ~4.5 GB int8 download, VRAM unknown.
+  5. Wan-family camera tools (ReCamMaster, Uni3C, Fun Camera...): no song lip-sync; second tier.
+  6. Prompts / camera LoRAs / H3 camera reference video: already weak here.
+- Verified by me [V]: comfy/ldm/minimax/model.py mask_row_values + the "masked rows run at their own
+  strength: mask value m puts a row at sigma = m * sigma_stream ... clamped at the cond timestep for
+  fully preserved rows" block (local copy .mvwork/comfy_src/minimax_model.py 77-85, 683-697):
+  per-2x2-patch-row (32 px, 4-frame) denoise mask with its own timestep, amax-pooled.
+  MiniMaxH3AddGuide has no mask input.
