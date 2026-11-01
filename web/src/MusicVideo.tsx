@@ -884,8 +884,8 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
       </div>
       {!fromStill && (
         <div className="rounded border border-amber-700 p-2 text-amber-300">
-          This take already has the scene's own move, and a broken move stays broken. Start from the scene's still version: tick
-          "still version, to add the move afterwards" in the render card above, render it, then add the move on that take.
+          This take already has the scene's own move, and a broken move stays broken. Use the "Camera move broke the room?" card
+          above: step 1 renders the still version, step 2 opens this panel on it.
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -932,7 +932,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
         </Action>
         <GhostButton onClick={onClose}>close</GhostButton>
         {!fromStill
-          ? <span className="text-amber-300">not on this take: open this panel on the scene's "still version" take (see the note at the top)</span>
+          ? <span className="text-amber-300">not on this take: open it on the "still version" take (step 2 of the card above)</span>
           : needPicture ? <span className="text-amber-300">add the empty-room picture first (step 3)</span>
           : !dry ? <span className="text-[var(--color-muted)]">checking...</span> : null}
       </div>
@@ -958,22 +958,17 @@ function TakesStep(p: {
   const [filter, setFilter] = useState<"all" | "todo">("all");
   const scene = script.scenes[p.sel ?? 0] || script.scenes[0];
   const list = (idx: number) => takes[String(idx)] || [];
-  // still version (opt-in, s.20.56): render the scene with a still camera, the clean source for a
-  // Meridian re-shoot of a move that rebuilt the room
-  const [stillMode, setStillMode] = useState(false);
-  useEffect(() => { setStillMode(false); }, [scene.index]);
   const moving = (scene.camera || "static").trim() !== "static";
   // the "add a camera move" panel, open on one take at a time
   const [camFor, setCamFor] = useState<string | null>(null);
   useEffect(() => { setCamFor(null); }, [scene.index]);
 
-  const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}|${stillMode ? "still" : ""}`;
+  const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}`;
   const renderBody = (idx: number, dryRun: boolean, pinSeed?: number) => {
     const body: Record<string, unknown> = {
       script: scriptName, scene: idx, ref_ids: [p.faceId, p.bodyId].map((x) => x.trim()).filter(Boolean),
       turbo: p.turbo, attention: ATTENTION, width: Number(p.width), height: Number(p.height), dry_run: dryRun,
     };
-    if (stillMode) body.variant = "still";
     const s = pinSeed ?? (p.seed.trim() ? Number(p.seed) : undefined);
     if (s !== undefined && !Number.isNaN(s)) body.seed = s;
     return body;
@@ -981,16 +976,35 @@ function TakesStep(p: {
   const doDry = async (idx: number) => {
     setErr(""); setBusyMsg("checking the render settings (no GPU)...");
     try {
-      if (stillMode && !script.scenes.find((x) => x.index === idx)?.still_clips?.length) {
-        setBusyMsg("writing the still version of the scene (no GPU, a few minutes)...");
-        await api.mvStillVariant({ script: scriptName, scene: idx });
-        p.reloadScript();
-        setBusyMsg("checking the render settings (no GPU)...");
-      }
       const r = await api.mvRenderScene(renderBody(idx, true));
       p.setDry((d) => ({ ...d, [idx]: { ...(r as Dry), sig: sig() } }));
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
+  };
+  // step 1 of "fix a broken camera move": the scene again with a still camera (its still text is
+  // written first when the scene has none), checked, confirmed and sent in one go
+  const doStillRender = async (idx: number) => {
+    setErr("");
+    try {
+      if (!script.scenes.find((x) => x.index === idx)?.still_clips?.length) {
+        setBusyMsg("writing the still version of the scene (no GPU, a minute or two)...");
+        await api.mvStillVariant({ script: scriptName, scene: idx });
+        p.reloadScript();
+      }
+      setBusyMsg("checking the still version (no GPU)...");
+      const dr = await api.mvRenderScene({ ...renderBody(idx, true), variant: "still" }) as Dry;
+      setBusyMsg("");
+      const warn = dr.flags.length ? `\n\nWarnings:\n- ${dr.flags.join("\n- ")}` : "";
+      if (!window.confirm(`Render the still version of scene ${idx} on the box now? (about 10 min, seed ${dr.settings?.seed})${warn}`)) return;
+      setBusyMsg("sending the still version to the box (30-60 s)...");
+      await api.mvRenderScene({ ...renderBody(idx, false, Number(dr.settings?.seed)), variant: "still" });
+      await p.refreshTakes();
+    } catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
+  };
+  const openMoveOn = (jid: string) => {
+    setCamFor(jid);
+    window.setTimeout(() => document.getElementById(`take-${jid}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   };
   // a seed that already made a take of this scene would most likely make the same take again
   // a take with this seed AND the same end picture and rail would come out the same; the same seed
@@ -1001,7 +1015,7 @@ function TakesStep(p: {
   const canRender = (idx: number) => {
     const dr = dry[idx];
     const endNow = script.scenes.find((x) => x.index === idx)?.end_still_id || null;
-    return !!dr && dr.sig === sig() && (stillMode || (dr.end_still_id || null) === endNow) && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed, dr);
+    return !!dr && dr.sig === sig() && (dr.end_still_id || null) === endNow && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed, dr);
   };
   const doRender = async (idx: number) => {
     const dr = dry[idx];
@@ -1228,6 +1242,56 @@ function TakesStep(p: {
               busy={!!busyMsg} setErr={setErr} reload={p.reloadScript}
               armed={JSON.stringify(p.target) === JSON.stringify({ kind: "after", idx: scene.index })}
               onArm={() => p.setTarget({ kind: "after", idx: scene.index })} onFile={(f) => p.fileStill(scene.index, f, "after")} />
+            {moving && (() => {
+              const still = list(scene.index).find((t) => t.params.variant === "still");
+              const stillDone = !!still && still.status === "done";
+              const derived = list(scene.index).filter((t) => ["move2d", "meridian", "roomplate"].includes(String(t.params.engine)));
+              const step = !still ? 1 : !stillDone ? 1 : derived.length ? 3 : 2;
+              const n = (k: number, label: string) => (
+                <span className={`mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${step === k ? "bg-[var(--color-accent)] text-white" : step > k ? "bg-emerald-700 text-white" : "bg-[var(--color-line)]"}`}>{step > k ? "✓" : label}</span>);
+              return (
+                <Card title="Camera move broke the room?"
+                  sub="This scene's camera moves. If the walls, windows or signs change shape as it moves, don't re-render it as it is: render it with the camera still, then add the move to that clean take. Three steps:">
+                  <div className="space-y-3 text-xs">
+                    <div className="flex items-start">
+                      {n(1, "1")}
+                      <div className="flex-1">
+                        <div className="font-semibold">Render a still version of this scene</div>
+                        <div className="text-[var(--color-muted)]">the same scene and singing with the camera still, so the room cannot warp. About 10 min on the box. It appears in the takes below labelled "still version".</div>
+                        <div className="mt-1">
+                          {!still ? <Action onClick={() => doStillRender(scene.index)} disabled={!!busyMsg}>render the still version</Action>
+                            : !stillDone ? <Pill tone="warn">still version rendering on the box</Pill>
+                            : <span className="text-emerald-500">done ({when(still.created)})</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-start">
+                      {n(2, "2")}
+                      <div className="flex-1">
+                        <div className="font-semibold">Add the camera move to the still version</div>
+                        <div className="text-[var(--color-muted)]">opens a panel on the still version where you pick the move and one of three ways to add it:</div>
+                        <ul className="ml-4 list-disc text-[var(--color-muted)]">
+                          <li><b>Room pinned</b> (best for singing): real depth, the room cannot change, lips as good as a normal take. You make one picture in ChatGPT (the panel gives you the frame and the prompt). About 12 min.</li>
+                          <li><b>2D move</b>: seconds, nothing redrawn, but flat (no depth).</li>
+                          <li><b>Meridian</b>: real depth and no picture needed, but lips can lag when she sings energetically. About 13 min.</li>
+                        </ul>
+                        <div className="mt-1">
+                          <Action onClick={() => still && openMoveOn(still.id)} disabled={!stillDone || !!busyMsg}>add the move to the still version</Action>
+                          {!stillDone && <span className="ml-2 text-[var(--color-muted)]">after step 1</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-start">
+                      {n(3, "3")}
+                      <div className="flex-1">
+                        <div className="font-semibold">Watch the new take and choose it</div>
+                        <div className="text-[var(--color-muted)]">it appears in the takes below, labelled with the way and the move (for example "room pinned: pull out, small"). Press "Use in the video" on the one you want.</div>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
             <Card title="Render this scene on the box" sub="first check the settings (no GPU, shows any warnings), then render. Each render adds a take below.">
               <div className="flex flex-wrap items-center gap-2">
                 <GhostButton onClick={() => doDry(scene.index)} disabled={!!busyMsg}>1 · Check the settings</GhostButton>
@@ -1235,12 +1299,6 @@ function TakesStep(p: {
                   title={canRender(scene.index) ? "queue this scene on the box" : "check the settings first; warnings need the accept tick"}>2 · Render on the box</Action>
                 {dr && dr.flags.length > 0 && <label className="flex items-center gap-1 text-xs text-amber-400"><input type="checkbox" checked={p.acceptFlags} onChange={(e) => p.setAcceptFlags(e.target.checked)} /> render despite the warnings</label>}
               </div>
-              {moving && (
-                <label className="flex items-center gap-2 text-xs" title="for a move that rebuilt the room: render the scene still, then add the move on that take ('2D move', or 're-shoot the move' with Meridian)">
-                  <input type="checkbox" checked={stillMode} onChange={(e) => setStillMode(e.target.checked)} />
-                  still version, to add the move afterwards{scene.still_clips?.length ? "" : " (the check writes its still text first, no GPU)"}
-                </label>
-              )}
               {dr && (
                 <div className={`rounded border p-2 text-[11px] ${dr.sig !== sig() || dr.flags.length ? "border-amber-700" : "border-emerald-800"}`}>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[var(--color-muted)]">
@@ -1249,7 +1307,7 @@ function TakesStep(p: {
                     {dr.variant === "still" ? <span>still version (camera static)</span> : null}
                     {dr.end_still_id ? <span>ends on the end picture</span> : null}
                     {dr.rail_frames?.length ? <span>pinned on the way at {dr.rail_frames.map((f) => (f / 24).toFixed(1)).join(", ")} s</span> : null}
-                    {dr.sig !== sig() || (!stillMode && (dr.end_still_id || null) !== (scene.end_still_id || null)) ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
+                    {dr.sig !== sig() || (dr.end_still_id || null) !== (scene.end_still_id || null) ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
                   </div>
                   {seedUsed(scene.index, dr.settings?.seed, dr) && <div className="mt-1 text-amber-300">seed {dr.settings?.seed} already made a take of this scene with the same end picture, so it would most likely come out the same. Clear the seed in the render settings and check again for a new one.</div>}
                   {dr.flags.length ? <ul className="mt-1 list-disc pl-4 text-amber-300">{dr.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : <div className="mt-1 text-emerald-500">no warnings: ready to render</div>}
@@ -1281,7 +1339,7 @@ function TakesStep(p: {
                   const c = t.check;
                   const u = t.upscaled;
                   return (
-                    <div key={t.id} className={`space-y-2 rounded-lg p-2 ${chosen ? "border-2 border-emerald-600" : "border border-[var(--color-line)]"}`}>
+                    <div key={t.id} id={`take-${t.id}`} className={`space-y-2 rounded-lg p-2 ${chosen ? "border-2 border-emerald-600" : "border border-[var(--color-line)]"}`}>
                       {t.status === "done" && t.media_url
                         ? <video src={t.media_url} controls muted preload="metadata" className="w-full rounded bg-black" />
                         : <div className="rounded bg-black/40 p-4"><Bar label={`${t.status} on the box`} frac={t.max ? (t.progress || 0) / t.max : 0} /></div>}

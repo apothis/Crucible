@@ -2485,3 +2485,12 @@ already shows her, the building and her hands, which is the user's direction. No
   mean 0.338, no end picture/rail, seed 683798812 (random); 192 frames + audio; sync 0.996 lag 0,
   opening 0.67. Frames [M]: a steady push in, the window, lamp, panelling and booth unchanged 0-7.8 s,
   she performs (hand to neck/hair). Copy: .mvwork/booth/s24/s24_H_room_pinned_push_in_from_app.mp4.
+- User: the process needs to be explained more clearly (scene 33: opened the panel on the original
+  take, the greyed button gave no reason; the still version was started via the render card's
+  checkbox). Rebuilt as ONE guided card on every scene whose camera moves, above the render card:
+  "Camera move broke the room?" with three numbered steps and their live state:
+  1 Render a still version (one button: still text if needed, check, confirm with any warnings, send;
+    then "rendering on the box" / "done"), 2 Add the camera move to the still version (the three ways
+    in one line each; the button opens the panel on the still take and scrolls to it), 3 Watch the new
+    take and choose it. The still-version checkbox is gone from the render card (one place to start);
+    the panel's notes point back to the card. Checked in the tab on scene 33 mid-render.
