@@ -34,6 +34,7 @@ from . import mv_stems as mv_stems_mod
 from . import mv_locations as mv_locations_mod
 from . import mv_takes as mv_takes_mod
 from . import mv_finish as mv_finish_mod
+from . import mv_meridian as mv_meridian_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -331,6 +332,11 @@ def on_complete_media(pid):
                         with LOCK:
                             JOBS[pid]["params"].update(fps_out=fx["fps"], fps_fixed=fx["fixed"], frames=fx["frames"],
                                                        source_audio=swapped)
+                    trim = (JOBS.get(pid, {}).get("params") or {}).get("trim_frames")
+                    if trim and ext == ".mp4":
+                        # Meridian re-shoots (s.20.56): back to the source take's length, its audio under it
+                        src = _lib_video_path((JOBS[pid]["params"] or {}).get("audio_from"))
+                        mv_finish_mod.trim_with_audio(path, src, int(trim))
                     with LOCK:
                         JOBS[pid]["audio_file"] = path   # reuse the field; it is just a path
                         JOBS[pid]["status"] = "done"
@@ -1205,6 +1211,19 @@ def mv_render_scene(p: dict):
         scene = script["scenes"][int(p.get("scene", -1))]
     except Exception:
         raise HTTPException(400, "scene must index a scene of the script")
+    # variant "still" (opt-in, s.20.56): the scene's still version, the source for a Meridian
+    # re-shoot of a move that fell apart. Its clip text was rewritten with a static camera by
+    # /api/mv/still_variant and stored on the scene; no end picture or rail (they shape a move).
+    variant = (p.get("variant") or "").strip() or None
+    if variant not in (None, "still"):
+        raise HTTPException(400, "variant must be 'still' or omitted")
+    if variant == "still":
+        still = scene.get("still_clips") or []
+        if not still:
+            raise HTTPException(400, "this scene has no still version yet: make it first (/api/mv/still_variant)")
+        if len(still) != len(scene.get("clips") or []):
+            raise HTTPException(400, "the still version was written for a different clip plan: make it again")
+        scene = dict(scene, clips=still, camera="static", end_still_id=None, rail=None)
     env_only = scene.get("performance") == "no_singing_environment"
     loc = mv_writer_mod.location_of(script, scene)
     loc_ref = p.get("location_ref_id") or ((p.get("location_refs") or {}).get(loc["id"]) if loc else None)
@@ -1348,7 +1367,7 @@ def mv_render_scene(p: dict):
                 "first_frame_from": first_frame_from,
                 "anchor_first": anchor_first, "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
                 "anchor_from": anchor_from, "end_still_id": end_still,
-                "rail_frames": [r["frame"] for r in rail] or None,
+                "rail_frames": [r["frame"] for r in rail] or None, "variant": variant,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run", "anchor_first")}
@@ -1370,7 +1389,7 @@ def mv_render_scene(p: dict):
                               "anchor_first": anchor_first, "anchor_from": anchor_from,
                               "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
                               "end_still_id": end_still,
-                              "rail_frames": [r["frame"] for r in rail] or None})
+                              "rail_frames": [r["frame"] for r in rail] or None, "variant": variant})
 
 
 def _mv_resolve_locks(raw):
@@ -2359,6 +2378,122 @@ def _mv_write_run(p, on_log=None):
     script["files"] = {"json": jpath, "md": mpath}
     script["log"] = log_lines
     return script
+
+
+@app.post("/api/mv/meridian_take")
+def mv_meridian_take(p: dict):
+    """Re-shoot a take's camera move with Meridian (opt-in, s.20.56): the scene's take (best a
+    STILL take: its still version, or a scene written static) is redrawn along a camera path
+    through its own depth, with the song locked in the latent, and lands as a new take of the
+    same scene, trimmed to the source and with the source's audio. Slow: about 13 min for an
+    8.7 s take on the 3090. p: {script, scene, job_id (a finished take of that scene), move?
+    (mv_meridian.MOVES; default guessed from the scene's camera line), amount? (small|large),
+    seed?, dry_run?}. The dry run says what would be sent, nothing is queued."""
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "a re-shoot needs a saved script")
+    try:
+        scene = script["scenes"][int(p.get("scene", -1))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    jid = os.path.basename(str(p.get("job_id") or ""))
+    src_path = _lib_video_path(jid)
+    if not src_path:
+        raise HTTPException(400, "job_id must be a finished take in the library")
+    with db() as conn:
+        r = conn.execute("SELECT params FROM jobs WHERE id=?", (jid,)).fetchone()
+    try:
+        sp = json.loads((r["params"] if r else None) or "{}")
+    except Exception:
+        sp = {}
+    rows = [{"id": jid, "params": sp, "status": "done"}]
+    if not mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene=scene["index"], scenes=script["scenes"]):
+        raise HTTPException(400, "that take is not a take of this scene")
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
+                          "stream=nb_read_packets", "-of", "csv=p=0", src_path], capture_output=True, text=True)
+    frames = int((out.stdout or "0").strip() or 0)
+    try:
+        length = mv_meridian_mod.length_for(frames)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    guess, guess_amount, guessed = mv_meridian_mod.move_from_camera(scene.get("still_of_camera") or scene.get("camera"))
+    move = (p.get("move") or "").strip() or guess
+    amount = (p.get("amount") or "").strip() or guess_amount
+    if not move:
+        raise HTTPException(400, "the scene's camera line names no move Meridian can make: choose one (move)")
+    if move not in mv_meridian_mod.MOVES or amount not in ("small", "large"):
+        raise HTTPException(400, f"move must be one of {', '.join(mv_meridian_mod.MOVES)}; amount small or large")
+    seed = int(p["seed"]) if str(p.get("seed") or "").strip() else video_mod._seed({})
+    flags = []
+    if sp.get("variant") != "still" and (scene.get("camera") or "static").strip() != "static":
+        flags.append("this take was rendered with the scene's own move: Meridian keeps whatever warping it has; "
+                     "the still version of the scene is the clean source")
+    if guessed and not p.get("move"):
+        flags.append(f"the camera line gives no side; assumed {mv_meridian_mod.MOVE_LABELS[move]}")
+    summary = {"scene": scene["index"], "job_id": jid, "frames": frames, "length": length, "move": move,
+               "move_label": mv_meridian_mod.MOVE_LABELS[move], "amount": amount, "seed": seed,
+               "camera": scene.get("still_of_camera") or scene.get("camera"), "flags": flags,
+               # measured on the 3090: 318 s for 124 frames, 799 s for 243 (about 3.3 s a frame)
+               "minutes": round(length * 3.3 / 60, 1)}
+    if p.get("dry_run"):
+        return dict(summary, dry_run=True)
+    audio_src = _lib_source_path(script["audio_id"])
+    if not audio_src:
+        raise HTTPException(400, "the script's song is not in the library")
+    try:
+        lock_src = mv_stems_mod.lock_source(LIBRARY, script["audio_id"], audio_src, "mix")
+        wav = mv_h3_mod.song_window_wav(lock_src, float(scene["start"]), length / 24.0 + 1.0)
+        song_name = C.upload_audio(wav, _audio_name("mvsong", wav))
+        with open(src_path, "rb") as f:
+            src_name = C.upload_audio(f.read(), f"meridian_src_{jid}.mp4")
+    except Exception as e:
+        raise HTTPException(500, f"upload failed: {e}")
+    graph, resolved = mv_meridian_mod.build_meridian_graph(src_name, song_name, frames, move, amount, seed,
+                                                           prefix="videogen/meridian")
+    resolved.update({"script": name, "scene_index": scene["index"], "scene_title": scene.get("title"),
+                     "scene_start": scene["start"], "scene_end": scene["end"],
+                     "title": f"{script.get('title') or name} / {int(scene['index']):02d} {scene.get('title') or ''} (Meridian)".strip(),
+                     "performance": scene.get("performance"), "meridian_of": jid, "audio_from": jid,
+                     "trim_frames": frames, "width": 1344, "height": 768})
+    return dict(_submit_video(graph, resolved, "videoclip"), **summary)
+
+
+@app.post("/api/mv/still_variant")
+def mv_still_variant(p: dict):
+    """The STILL version of one scene (opt-in, s.20.56): the writer's clip pass for a copy of the
+    scene with camera "static" (everything else as written), stored on the scene of the SAVED
+    script as still_clips, so render_scene {variant: "still"} renders it under the same script
+    and its take lists with the scene's others. It is the source for a Meridian re-shoot when the
+    scene's direct move rebuilt the room. No GPU (the writer CLI, a few minutes).
+    p: {script, scene (0-based), provider?, model?, effort?}. Returns {scene, prompts, problems}."""
+    import copy
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "a still version needs a saved script")
+    try:
+        idx = int(p.get("scene", -1))
+        orig = script["scenes"][idx]
+    except Exception:
+        raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
+    work_script = copy.deepcopy(script)
+    sc = work_script["scenes"][idx]
+    sc["camera"] = "static"
+    sc.pop("locked", None)
+    mv_writer_mod._finish_scene(sc, work_script["facts"]["sections"])
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    try:
+        mv_writer_mod.write_scene_clips(
+            work_script, sc, p.get("provider") or "claude_sub", p.get("model") or mv_writer_mod.WRITER_MODEL,
+            p.get("effort") or mv_writer_mod.WRITER_EFFORT, CFG.get("claude_model", ""),
+            os.path.join(work, "lyricalign"), print)
+    except Exception as e:
+        raise HTTPException(500, f"writer failed: {e}")
+    if len(sc["clips"]) != len(orig.get("clips") or []):
+        raise HTTPException(500, "the still pass planned a different number of clips; not stored")
+    _mv_set_scene_field(name, orig["index"], "still_clips", sc["clips"])
+    _mv_set_scene_field(name, orig["index"], "still_of_camera", orig.get("camera"))
+    return {"scene": orig["index"], "prompts": [c["prompt"] for c in sc["clips"]],
+            "problems": [c.get("problems") for c in sc["clips"]]}
 
 
 @app.post("/api/mv/rewrite_scene")

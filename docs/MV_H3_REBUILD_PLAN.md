@@ -2307,3 +2307,38 @@ already shows her, the building and her hands, which is the user's direction. No
   0.16 (8 s), with the best rigid shift drifting dx +2 -> -8 -> +2, dy +6 -> +12: Meridian draws
   a larger, re-shaped window as the camera turns, so a rigid paste cannot sit in it. Not usable;
   kept as s10_G_sign_pasted_REJECTED_doubled_post.mp4.
+
+### 20.56 Meridian re-shoot in the app (2026-11-01) [built; tab checked; end-to-end fire not yet run]
+- User: keep scene 10's version E; Meridian must be opt-in, only for scenes whose move failed
+  (the previous video's moves were fine), never on by default: it is slow.
+- How it engages (Scenes and takes):
+  1. A scene whose direct move rebuilt the room: tick "still version, for a Meridian re-shoot"
+     in the render card. The check first runs POST /api/mv/still_variant (the writer's clip pass
+     for a copy of the scene with camera "static", no GPU, a few minutes), stored on the SAME
+     script as scene.still_clips (+ still_of_camera); render_scene {variant: "still"} renders it
+     (no end picture or rail). The take is labelled "still version".
+  2. On any take of the scene, "re-shoot the move": POST /api/mv/meridian_take {script, scene,
+     job_id, move?, amount?, seed?, dry_run?}. The move is guessed from the scene's camera line
+     (mv_meridian.move_from_camera; flagged when the side is assumed) and can be changed:
+     arc left/right, push in, pull out, truck left/right, pedestal up/down; small or large. The
+     dry run shows frames, the Meridian length and minutes (3.3 s a frame measured); a take that
+     already moves is flagged (Meridian keeps its warping). The fire uploads the take and the
+     song window (mix, scene start, length/24 + 1 s), builds mv_meridian.build_meridian_graph
+     (= version E: song lock + warp 832, author's sampler) and submits a normal library job;
+     on download, mv_finish.trim_with_audio cuts it to the source's frames and lays the source
+     take's audio under it. It lands as a take of the scene labelled "Meridian: <move>, <amount>".
+- Box: all 8 text_cond lengths (73..243) converted (weights_only load, the 124 conversion
+  tensor-equal to the hosted file) and installed. Scene length >243 frames (10.1 s) is refused.
+- Filed: scene 10's still render (e500adbe, params script -> the working script, variant
+  still, rendered_under kept) and version E as a Meridian take (b9aab3f9, 209 frames via
+  trim_with_audio). Tab: both listed with their labels; the Meridian take measures sync 1.00 (the
+  source take's audio: this score says nothing about the lips), opening 0.8x; the re-shoot dry
+  run on the still take reads arc toward frame left / small / 209 at 243 / ~13 min, with the
+  assumed-side flag.
+- Mistake fixed: the hand-made rewrite copy (..._rw10_20261101_132938) had become the newest
+  script, so the tab opened it instead of the working one (only scene 10's clips + camera
+  differed; no user choice was in it). Moved to .mvwork/booth/s10/. still_variant stores on the
+  working script, so this cannot recur.
+- Signs [M]: azimuth + = toward frame left. lateral / height signs unmeasured [H].
+- Not yet run through the app: still_variant (writer) + a variant still render, and a Meridian
+  fire's download/trim/audio as a job.

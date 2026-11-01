@@ -134,6 +134,33 @@ def source_audio(path, source):
     return True
 
 
+def trim_with_audio(path, source, frames, crf=16):
+    """A Meridian re-shoot (s.20.56) comes back at Meridian's own length with no audio: cut it to
+    the source take's `frames` (frame-accurate, re-encoded) and lay the source take's audio
+    under it (the take's audio is the song-locked one). Returns the frame count written."""
+    tmp = path + ".trim.mp4"
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path]
+    has_audio = False
+    if source:
+        try:
+            has_audio = bool(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                                             "stream=index", "-of", "csv=p=0", source],
+                                            capture_output=True, text=True, timeout=30).stdout.strip())
+        except Exception:
+            has_audio = False
+    if has_audio:
+        cmd += ["-i", source, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "copy"]
+    else:
+        cmd += ["-map", "0:v:0"]
+    cmd += ["-frames:v", str(int(frames)), "-c:v", "libx264", "-crf", str(crf), "-preset", "slow",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"trim failed: {r.stderr[-300:]}")
+    os.replace(tmp, path)
+    return int(frames)
+
+
 def finish_cut(cut_path, out_path, width, height, ident_path=None, endcard_plate=None, endcard_secs=0.0,
                crf=18, preset="medium"):
     """[ident +] cut [+ end plate over the last endcard_secs] -> out_path (h264 yuv420p, aac 320k,

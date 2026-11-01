@@ -16,7 +16,7 @@ type Locked = { job_id: string; take_start: number; script: string };
 type Scene = {
   index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string;
   framing?: string; camera?: string; lighting?: string; mood?: string; action?: string; others?: string; why?: string;
-  opening_still?: string; opening_still_id?: string; end_still_id?: string; after_still_id?: string; rail?: { end_still_id: string; every: number; after_still_id?: string | null; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
+  opening_still?: string; opening_still_id?: string; end_still_id?: string; after_still_id?: string; still_clips?: Clip[]; still_of_camera?: string; rail?: { end_still_id: string; every: number; after_still_id?: string | null; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[]; matches_location_still?: boolean;
 };
 type Refs = { face?: string; body?: string; shared?: string };
@@ -28,7 +28,12 @@ type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boole
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
-type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; sig: string };
+type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
+// a Meridian re-shoot (s.20.56): what the dry run of /api/mv/meridian_take returns
+type MeridianDry = { frames: number; length: number; move: string; move_label: string; amount: string; seed: number; camera?: string; flags: string[]; minutes: number };
+const MERIDIAN_MOVES: [string, string][] = [["arc_left", "arc toward frame left"], ["arc_right", "arc toward frame right"],
+  ["push_in", "push in"], ["pull_out", "pull out"], ["truck_left", "truck left"], ["truck_right", "truck right"],
+  ["pedestal_up", "pedestal up"], ["pedestal_down", "pedestal down"]];
 type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
@@ -787,13 +792,22 @@ function TakesStep(p: {
   const [filter, setFilter] = useState<"all" | "todo">("all");
   const scene = script.scenes[p.sel ?? 0] || script.scenes[0];
   const list = (idx: number) => takes[String(idx)] || [];
+  // still version (opt-in, s.20.56): render the scene with a still camera, the clean source for a
+  // Meridian re-shoot of a move that rebuilt the room
+  const [stillMode, setStillMode] = useState(false);
+  useEffect(() => { setStillMode(false); }, [scene.index]);
+  const moving = (scene.camera || "static").trim() !== "static";
+  // the Meridian panel open on one take: its dry run and the chosen move
+  const [mer, setMer] = useState<{ take: string; move: string; amount: string; dry: MeridianDry | null } | null>(null);
+  useEffect(() => { setMer(null); }, [scene.index]);
 
-  const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}`;
+  const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}|${stillMode ? "still" : ""}`;
   const renderBody = (idx: number, dryRun: boolean, pinSeed?: number) => {
     const body: Record<string, unknown> = {
       script: scriptName, scene: idx, ref_ids: [p.faceId, p.bodyId].map((x) => x.trim()).filter(Boolean),
       turbo: p.turbo, attention: ATTENTION, width: Number(p.width), height: Number(p.height), dry_run: dryRun,
     };
+    if (stillMode) body.variant = "still";
     const s = pinSeed ?? (p.seed.trim() ? Number(p.seed) : undefined);
     if (s !== undefined && !Number.isNaN(s)) body.seed = s;
     return body;
@@ -801,6 +815,12 @@ function TakesStep(p: {
   const doDry = async (idx: number) => {
     setErr(""); setBusyMsg("checking the render settings (no GPU)...");
     try {
+      if (stillMode && !script.scenes.find((x) => x.index === idx)?.still_clips?.length) {
+        setBusyMsg("writing the still version of the scene (no GPU, a few minutes)...");
+        await api.mvStillVariant({ script: scriptName, scene: idx });
+        p.reloadScript();
+        setBusyMsg("checking the render settings (no GPU)...");
+      }
       const r = await api.mvRenderScene(renderBody(idx, true));
       p.setDry((d) => ({ ...d, [idx]: { ...(r as Dry), sig: sig() } }));
     } catch (e) { setErr(String((e as Error).message || e)); }
@@ -815,7 +835,7 @@ function TakesStep(p: {
   const canRender = (idx: number) => {
     const dr = dry[idx];
     const endNow = script.scenes.find((x) => x.index === idx)?.end_still_id || null;
-    return !!dr && dr.sig === sig() && (dr.end_still_id || null) === endNow && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed, dr);
+    return !!dr && dr.sig === sig() && (stillMode || (dr.end_still_id || null) === endNow) && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed, dr);
   };
   const doRender = async (idx: number) => {
     const dr = dry[idx];
@@ -828,6 +848,25 @@ function TakesStep(p: {
       await p.refreshTakes();
     }
     catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
+  };
+  const checkMeridian = async (jid: string, move?: string, amount?: string) => {
+    setErr("");
+    try {
+      const r = await api.mvMeridianTake({ script: scriptName, scene: scene.index, job_id: jid, move, amount, dry_run: true }) as MeridianDry;
+      setMer({ take: jid, move: r.move, amount: r.amount, dry: r });
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  const openMeridian = (jid: string) => { setMer({ take: jid, move: "", amount: "small", dry: null }); checkMeridian(jid); };
+  const fireMeridian = async (jid: string) => {
+    if (!mer?.dry) return;
+    if (!window.confirm(`Re-shoot this take on the box with Meridian now? (${mer.dry.move_label}, ${mer.dry.amount}, about ${Math.round(mer.dry.minutes)} min)`)) return;
+    setErr(""); setBusyMsg("sending the re-shoot to the box...");
+    try {
+      await api.mvMeridianTake({ script: scriptName, scene: scene.index, job_id: jid, move: mer.move, amount: mer.amount, seed: mer.dry.seed });
+      setMer(null);
+      await p.refreshTakes();
+    } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
   };
   const doCheck = async (idx: number, jid: string) => {
@@ -1049,14 +1088,21 @@ function TakesStep(p: {
                   title={canRender(scene.index) ? "queue this scene on the box" : "check the settings first; warnings need the accept tick"}>2 · Render on the box</Action>
                 {dr && dr.flags.length > 0 && <label className="flex items-center gap-1 text-xs text-amber-400"><input type="checkbox" checked={p.acceptFlags} onChange={(e) => p.setAcceptFlags(e.target.checked)} /> render despite the warnings</label>}
               </div>
+              {moving && (
+                <label className="flex items-center gap-2 text-xs" title="for a move that rebuilt the room: render the scene still, then use 're-shoot the move' on that take (Meridian keeps the room it was given)">
+                  <input type="checkbox" checked={stillMode} onChange={(e) => setStillMode(e.target.checked)} />
+                  still version, for a Meridian re-shoot of the move{scene.still_clips?.length ? "" : " (the check writes its still text first, no GPU)"}
+                </label>
+              )}
               {dr && (
                 <div className={`rounded border p-2 text-[11px] ${dr.sig !== sig() || dr.flags.length ? "border-amber-700" : "border-emerald-800"}`}>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[var(--color-muted)]">
                     <span>{dr.clips} clip{dr.clips === 1 ? "" : "s"}</span><span>{dr.settings?.width}x{dr.settings?.height}</span><span>seed {dr.settings?.seed}</span>
                     <span>{dr.settings?.turbo ? "turbo" : "base"}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
+                    {dr.variant === "still" ? <span>still version (camera static)</span> : null}
                     {dr.end_still_id ? <span>ends on the end picture</span> : null}
                     {dr.rail_frames?.length ? <span>pinned on the way at {dr.rail_frames.map((f) => (f / 24).toFixed(1)).join(", ")} s</span> : null}
-                    {dr.sig !== sig() || (dr.end_still_id || null) !== (scene.end_still_id || null) ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
+                    {dr.sig !== sig() || (!stillMode && (dr.end_still_id || null) !== (scene.end_still_id || null)) ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
                   </div>
                   {seedUsed(scene.index, dr.settings?.seed, dr) && <div className="mt-1 text-amber-300">seed {dr.settings?.seed} already made a take of this scene with the same end picture, so it would most likely come out the same. Clear the seed in the render settings and check again for a new one.</div>}
                   {dr.flags.length ? <ul className="mt-1 list-disc pl-4 text-amber-300">{dr.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : <div className="mt-1 text-emerald-500">no warnings: ready to render</div>}
@@ -1097,6 +1143,8 @@ function TakesStep(p: {
                           ? <><Pill tone="ok">in the video</Pill><GhostButton onClick={() => choose(scene.index, null)}>remove</GhostButton></>
                           : <Action onClick={() => choose(scene.index, t.id)} title="this take plays in the scene; it replaces the scene's current choice">Use in the video</Action>)}
                         <span className="text-[11px] text-[var(--color-muted)]">{when(t.created)} · seed {t.params.seed}{t.seconds !== null ? ` · ${t.seconds.toFixed(1)} s` : ""}{t.from_script ? " · earlier script" : ""}</span>
+                        {t.params.variant === "still" && <Pill tone="muted" title="rendered with a still camera, the source for a Meridian re-shoot">still version</Pill>}
+                        {t.params.engine === "meridian" && <Pill tone="muted" title="re-shot with Meridian from another take of this scene">Meridian: {(MERIDIAN_MOVES.find((m) => m[0] === t.params.move) || ["", t.params.move])[1]}, {t.params.amount}</Pill>}
                       </div>
                       {t.status === "done" && (
                         <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -1110,6 +1158,28 @@ function TakesStep(p: {
                             : upscaleBusy(u) ? <Pill tone="warn">upscaling {pct(u!.progress, u!.max) || u!.status}</Pill>
                             : <GhostButton onClick={() => doUpscale(scene.index, t)} disabled={!!busyMsg} title="FlashVSR+ Turbo 2x on the box (GPU); step 5 can upscale every chosen take at once">upscale 2x</GhostButton>}
                           {u?.status === "error" && <span className="text-red-400" title={u.error || ""}>upscale failed</span>}
+                          {t.params.engine !== "meridian" && (
+                            <GhostButton onClick={() => openMeridian(t.id)} disabled={!!busyMsg}
+                              title="redraw this take along a camera move through its own depth (Meridian, opt-in, about 13 min for an 8 s take); best on a still take">re-shoot the move</GhostButton>
+                          )}
+                        </div>
+                      )}
+                      {mer?.take === t.id && (
+                        <div className="space-y-2 rounded border border-[var(--color-line)] p-2 text-[11px]">
+                          <div className="font-semibold">Re-shoot the move with Meridian</div>
+                          <div className="text-[var(--color-muted)]">keeps this take's room, people and singing, and moves the camera through its depth. The result is a new take of this scene.</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select className={`${inp} w-auto`} value={mer.move} onChange={(e) => checkMeridian(t.id, e.target.value, mer.amount)}>
+                              {MERIDIAN_MOVES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                            </select>
+                            <select className={`${inp} w-auto`} value={mer.amount} onChange={(e) => checkMeridian(t.id, mer.move, e.target.value)}>
+                              <option value="small">small (performance)</option><option value="large">large (B-roll)</option>
+                            </select>
+                            <Action onClick={() => fireMeridian(t.id)} disabled={!!busyMsg || !mer.dry}>re-shoot on the box{mer.dry ? ` (~${Math.round(mer.dry.minutes)} min)` : ""}</Action>
+                            <GhostButton onClick={() => setMer(null)}>close</GhostButton>
+                          </div>
+                          {mer.dry && <div className="text-[var(--color-muted)]">{mer.dry.frames} frames, rendered at Meridian's {mer.dry.length} and trimmed back · seed {mer.dry.seed}{mer.dry.camera ? ` · the scene asks: ${mer.dry.camera}` : ""}</div>}
+                          {mer.dry?.flags.length ? <ul className="list-disc pl-4 text-amber-300">{mer.dry.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : null}
                         </div>
                       )}
                     </div>
