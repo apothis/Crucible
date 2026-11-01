@@ -1316,6 +1316,14 @@ def mv_render_scene(p: dict):
             if end_still and rail_rec.get("end_still_id") == end_still]
     if rail and len(prompts) > 1:
         raise HTTPException(400, "rail pictures are for single-clip scenes; this scene chains more than one clip")
+    if rail and lane == "ref2va" and not anchor_first:
+        # the rail is cut from the scene's opening still, so on the reference lane that still
+        # pins frame 0 too (the i2v lane already starts on it); otherwise the path has no start
+        if not (scene.get("opening_still_id") and _lib_image_path(scene["opening_still_id"])):
+            raise HTTPException(400, "this rail needs the scene's opening still, which is no longer in the library")
+        if keyframes in ("still_first", "still_first_last"):
+            raise HTTPException(400, "a rail starts on the opening still; keyframes still_first also guide frame 0")
+        anchor_first, anchor_still, anchor_from = True, scene["opening_still_id"], "rail"
     for r in rail:
         if not _lib_image_path(r["still_id"]):
             raise HTTPException(400, f"rail picture {r['still_id']} is not a still in the library; make the end picture again")
@@ -1572,10 +1580,24 @@ def mv_push_end_still(p: dict):
     if rail_every and clips_n > 1:
         raise HTTPException(400, "a rail is for single-clip scenes; this scene chains more than one clip")
     im = Image.open(_lib_image_path(src)).convert("RGB")
+    fx, fy = float(p.get("cx", 0.5)), float(p.get("cy", 0.5))     # fractions of the picture as shown
+    if scene.get("performance") != "no_singing_environment":
+        # her scenes render on the reference lane, where the frame-0 anchor and every pin go
+        # through MiniMaxH3AddGuide, which COVER-CROPS to the canvas (centre); crop the same way
+        # first so the pins and the anchor are one geometry (the i2v lane stretches instead)
+        W0, H0 = im.size
+        if W0 / H0 > W / H:
+            nw = H0 * W / H
+            im = im.crop((round((W0 - nw) / 2), 0, round((W0 + nw) / 2), H0))
+            fx = (fx * W0 - (W0 - nw) / 2) / nw
+        elif W0 / H0 < W / H:
+            nh = W0 * H / W
+            im = im.crop((0, round((H0 - nh) / 2), W0, round((H0 + nh) / 2)))
+            fy = (fy * H0 - (H0 - nh) / 2) / nh
     w, h = im.size
     cw, ch = w / zoom, h / zoom
-    cx = min(max(float(p.get("cx", 0.5)) * w, cw / 2), w - cw / 2)
-    cy = min(max(float(p.get("cy", 0.5)) * h, ch / 2), h - ch / 2)
+    cx = min(max(fx * w, cw / 2), w - cw / 2)
+    cy = min(max(fy * h, ch / 2), h - ch / 2)
     box = (cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2)
     # the first frame is stretched to the canvas, so the crop is stretched the same way
     out_w = max(W, int(round(cw)))
