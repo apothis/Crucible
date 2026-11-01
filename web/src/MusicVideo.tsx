@@ -789,15 +789,37 @@ const moveLabel = (m: unknown) => (CAM_MOVES.find((x) => x[0] === (FROM_ANY[Stri
 type CamWay = "move2d" | "roomplate" | "meridian";
 type CamDry = { move: string; amount: string; camera?: string; flags: string[]; minutes?: number; frames?: number; length?: number; seed?: number; empty_room_id?: string | null; empty_prompt?: string };
 
-function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, refreshTakes, onClose, render, armed, onArm, onFile }: {
+// a room-pinned job (s.20.61) before its take exists: 5 steps, named by the backend's stage text
+type RpJob = { id: string; stage: string; status: string; error?: string | null; take_job_id?: string | null };
+const RP_STEPS: [string, string][] = [["uploading", "uploading"], ["moving the empty room", "moving the empty room"],
+  ["moving the take", "moving the take, finding the people"], ["building", "building the room plate and mask"],
+  ["render", "rendering"]];
+const rpStep = (stage: string) => {
+  const i = RP_STEPS.findIndex(([k]) => (stage || "").includes(k));
+  return i < 0 ? (stage.startsWith("sent") ? 5 : 1) : i + 1;
+};
+function RoomPinnedProgress({ job }: { job: RpJob | null | undefined }) {
+  if (!job) return null;
+  if (job.status === "error") return <div className="rounded border border-red-800 p-2 text-xs text-red-400">room-pinned move failed: {job.error}</div>;
+  const k = rpStep(job.stage);
+  const sent = job.status === "done";
+  return (
+    <div className="rounded border border-[var(--color-accent)] p-2 text-xs">
+      <Bar label={sent ? "Room-pinned move sent: the new take is rendering below (about 10 min, it has its own bar)"
+        : `Room-pinned move, step ${k} of 5: ${job.stage}`} frac={sent ? 1 : (k - 0.5) / 5} />
+    </div>
+  );
+}
+
+function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, refreshTakes, onClose, render, armed, onArm, onFile, roomJob, onRoomJob }: {
   scriptName: string; scene: Scene; take: Take; busy: boolean; setErr: (s: string) => void; setBusyMsg: (s: string) => void;
   refreshTakes: () => Promise<void>; onClose: () => void; render: Record<string, unknown>; armed: boolean; onArm: () => void; onFile: (f: File) => void;
+  roomJob: RpJob | null; onRoomJob: (id: string) => void;
 }) {
   const [way, setWay] = useState<CamWay>("roomplate");
   const [move, setMove] = useState("");
   const [amount, setAmount] = useState("small");
   const [dry, setDry] = useState<CamDry | null>(null);
-  const [job, setJob] = useState<{ id: string; stage: string; status: string; error?: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
   const [guess, setGuess] = useState("");        // the assumed side, kept until the move is chosen by hand
   const fromStill = take.params.variant === "still" || (scene.camera || "static").trim() === "static";
@@ -825,19 +847,6 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
     return () => { live = false; };
   }, [way, move, amount, take.id, scene.empty_room_id]);
 
-  // a room-pinned job runs in the background: follow its stages
-  useEffect(() => {
-    if (!job || job.status !== "running") return;
-    const t = window.setInterval(async () => {
-      try {
-        const r = await api.mvRoomplateJob(job.id) as { stage: string; status: string; error?: string | null };
-        setJob({ id: job.id, ...r });
-        if (r.status !== "running") await refreshTakes();
-      } catch (e) { setJob({ ...job, status: "error", error: String((e as Error).message || e) }); }
-    }, 4000);
-    return () => window.clearInterval(t);
-  }, [job?.id, job?.status]);
-
   const make = async () => {
     if (!dry) return;
     const m = wire(move);
@@ -858,7 +867,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
         if (!window.confirm(`Render this scene with the room pinned on the box now? (${moveLabel(move)}, ${amount}, about ${Math.round(dry.minutes || 13)} min)`)) return;
         const { dry_run: _d, variant: _v, script: _s, scene: _c, ...settings } = render;
         const r = await api.mvRoomplateTake({ ...settings, ...base, move: m, amount }) as { job: string };
-        setJob({ id: r.job, stage: "starting", status: "running" });
+        onRoomJob(r.job);
       }
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
@@ -874,7 +883,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
   ];
   const emptyFromOther = way === "roomplate" && !!scene.empty_room_id && !!scene.empty_room_of && scene.empty_room_of !== take.id;
   const needPicture = way === "roomplate" && (!scene.empty_room_id || emptyFromOther);
-  const running = job?.status === "running";
+  const running = roomJob?.status === "running";
 
   return (
     <div className="space-y-3 rounded border border-[var(--color-line)] p-3 text-[11px]">
@@ -936,11 +945,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
           : needPicture ? <span className="text-amber-300">add the empty-room picture first (step 3)</span>
           : !dry ? <span className="text-[var(--color-muted)]">checking...</span> : null}
       </div>
-      {job && (
-        <div className={job.status === "error" ? "text-red-400" : "text-[var(--color-muted)]"}>
-          {job.status === "error" ? `room-pinned move failed: ${job.error}` : job.stage}
-        </div>
-      )}
+      <RoomPinnedProgress job={roomJob} />
     </div>
   );
 }
@@ -962,6 +967,42 @@ function TakesStep(p: {
   // the "add a camera move" panel, open on one take at a time
   const [camFor, setCamFor] = useState<string | null>(null);
   useEffect(() => { setCamFor(null); }, [scene.index]);
+  // the scene's room-pinned job, remembered in the browser so a reload or a closed panel keeps it
+  const rpKey = `mv_roomplate_${scriptName}_${scene.index}`;
+  const [rpJob, setRpJob] = useState<RpJob | null>(null);
+  useEffect(() => {
+    let id: string | null = null;
+    try { id = window.localStorage.getItem(rpKey); } catch { id = null; }
+    setRpJob(id ? { id, stage: "checking", status: "running" } : null);
+  }, [rpKey]);
+  const startRpJob = (id: string) => {
+    try { window.localStorage.setItem(rpKey, id); } catch { /* the bar still shows until a reload */ }
+    setRpJob({ id, stage: "starting", status: "running" });
+  };
+  useEffect(() => {
+    if (!rpJob || rpJob.status !== "running") return;
+    const poll = async () => {
+      try {
+        const r = await api.mvRoomplateJob(rpJob.id) as RpJob;
+        setRpJob({ ...r, id: rpJob.id });
+        if (r.status !== "running") await p.refreshTakes();
+      } catch {
+        // the backend no longer knows it (restarted): forget it
+        try { window.localStorage.removeItem(rpKey); } catch { /* nothing to clear */ }
+        setRpJob(null);
+      }
+    };
+    poll();
+    const t = window.setInterval(poll, 4000);
+    return () => window.clearInterval(t);
+  }, [rpJob?.id, rpJob?.status]);
+  useEffect(() => {
+    // once its take is in the list, the take's own bar takes over
+    if (rpJob?.status === "done" && rpJob.take_job_id && list(scene.index).some((t) => t.id === rpJob.take_job_id)) {
+      try { window.localStorage.removeItem(rpKey); } catch { /* nothing to clear */ }
+      setRpJob(null);
+    }
+  }, [takes, rpJob?.status, rpJob?.take_job_id]);
 
   const sig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.turbo}|${p.width}|${p.height}`;
   const renderBody = (idx: number, dryRun: boolean, pinSeed?: number) => {
@@ -1279,6 +1320,7 @@ function TakesStep(p: {
                           <Action onClick={() => still && openMoveOn(still.id)} disabled={!stillDone || !!busyMsg}>add the move to the still version</Action>
                           {!stillDone && <span className="ml-2 text-[var(--color-muted)]">after step 1</span>}
                         </div>
+                        <div className="mt-2"><RoomPinnedProgress job={rpJob} /></div>
                       </div>
                     </div>
                     <div className="flex items-start">
@@ -1333,6 +1375,7 @@ function TakesStep(p: {
                     <GhostButton onClick={() => choose(scene.index, null)} className="ml-auto">remove</GhostButton></div>
                 </div>
               )}
+              <RoomPinnedProgress job={rpJob} />
               <div className="grid gap-3 2xl:grid-cols-2">
                 {tl.map((t) => {
                   const chosen = scene.locked?.job_id === t.id;
@@ -1377,7 +1420,8 @@ function TakesStep(p: {
                           render={renderBody(scene.index, false)}
                           armed={JSON.stringify(p.target) === JSON.stringify({ kind: "empty", idx: scene.index, take: t.id })}
                           onArm={() => p.setTarget({ kind: "empty", idx: scene.index, take: t.id })}
-                          onFile={(f) => p.fileStill(scene.index, f, "empty", t.id)} />
+                          onFile={(f) => p.fileStill(scene.index, f, "empty", t.id)}
+                          roomJob={rpJob} onRoomJob={startRpJob} />
                       )}
                     </div>
                   );

@@ -2494,3 +2494,9 @@ already shows her, the building and her hands, which is the user's direction. No
     in one line each; the button opens the panel on the still take and scrolls to it), 3 Watch the new
     take and choose it. The still-version checkbox is gone from the render card (one place to start);
     the panel's notes point back to the card. Checked in the tab on scene 33 mid-render.
+- User: pressing "render with the room pinned" showed no progress. The job was running (scene 33,
+  pull out: room move, people pass, plate+mask on the Mac, then the render sent as take 09379998),
+  but the stage was one small grey line in the panel only. Now a RoomPinnedProgress bar ("step k of
+  5: <stage>", then "sent: the new take is rendering below") shows in the panel, in the guided card
+  and above the takes; the job id is remembered per scene in the browser (localStorage), so a reload
+  or a closed panel keeps the bar; it clears once the take is in the list (its own bar takes over).
