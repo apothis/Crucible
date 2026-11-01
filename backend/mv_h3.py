@@ -159,7 +159,7 @@ def chain_recipe(p, lane="ref2va"):
 
 
 def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None, first_frame_name=None,
-                   anchor_name=None):
+                   anchor_name=None, end_frame_name=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -192,6 +192,11 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         guidance for the first frame, not a <Picture n>, so the prompt is unchanged. Later clips
         continue from the previous clip's context frames and are not anchored. Not combinable
         with keyframes still_first / still_first_last (two guides on the same frame).
+    end_frame_name: optional upload of the picture the LAST clip should end on (opt-in, s.20.52):
+        the end of a camera move, e.g. a crop of the first frame toward where a push-in stops, so
+        the move is bounded by two views of the same geometry. Lane i2v feeds it as the node's
+        last_frame; the reference lane anchors it at frame -1 through MiniMaxH3AddGuide. Not
+        combinable with keyframes still_last / still_first_last (two guides on the last frame).
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -248,6 +253,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         raise ValueError("the frame-0 anchor is a reference-lane guide; lane i2v pins the first frame by itself")
     if anchor_name and keyframes in ("still_first", "still_first_last"):
         raise ValueError("anchor and keyframes still_first both guide frame 0; choose one")
+    if end_frame_name and keyframes in ("still_last", "still_first_last"):
+        raise ValueError("an end frame and keyframes still_last both guide the last frame; choose one")
     up_w, up_h = int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)
     upscale = bool(up_w or up_h)
     if upscale:
@@ -290,6 +297,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         g["30"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
     if anchor_name:
         g["29"] = {"class_type": "LoadImage", "inputs": {"image": anchor_name}}
+    if end_frame_name:
+        g["28"] = {"class_type": "LoadImage", "inputs": {"image": end_frame_name}}
     ref_video_names = list(ref_video_names or [])[:3]
     for k, name in enumerate(ref_video_names):
         g[str(60 + 2 * k)] = {"class_type": "LoadVideo", "inputs": {"file": name}}
@@ -319,6 +328,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                       "width": w, "height": h, "length": frames}
             if i2v:
                 i2v_in["first_frame"] = ["30", 0]     # fed raw, as build_h3_i2v does (stretched to the canvas)
+            if i2v and end_frame_name and i == len(clips) - 1:
+                i2v_in["last_frame"] = ["28", 0]      # the move's end view (the caller sizes it to the canvas)
             g[r2v] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2v_in}
         latent = [r2v, 1]
         if not free_av:
@@ -353,6 +364,13 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
             g[gid] = {"class_type": "MiniMaxH3AddGuide",
                       "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": 0,
                                  "vae": ["6", 0], "image": ["29", 0]}}
+            positive = [gid, 0]
+        if end_frame_name and not i2v and i == len(clips) - 1:
+            # end frame on the reference lane: the same AddGuide as the keyframe plates, last frame only
+            gid = str(base + 9)
+            g[gid] = {"class_type": "MiniMaxH3AddGuide",
+                      "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": -1,
+                                 "vae": ["6", 0], "image": ["28", 0]}}
             positive = [gid, 0]
         clip_model = model
         if clock_fps is not None:
@@ -424,7 +442,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "ref_video_count": len(ref_video_names) if lane == "ref2va" else 0,
                 "keyframes": keyframes if (keyframes and ref_names) else None,
                 "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
-                "anchor_first": bool(anchor_name),
+                "anchor_first": bool(anchor_name), "end_frame": bool(end_frame_name),
                 "upscale": [up_w, up_h] if upscale else None,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}

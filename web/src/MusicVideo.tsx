@@ -16,7 +16,7 @@ type Locked = { job_id: string; take_start: number; script: string };
 type Scene = {
   index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string;
   framing?: string; camera?: string; lighting?: string; mood?: string; action?: string; others?: string; why?: string;
-  opening_still?: string; opening_still_id?: string; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
+  opening_still?: string; opening_still_id?: string; end_still_id?: string; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[]; matches_location_still?: boolean;
 };
 type Refs = { face?: string; body?: string; shared?: string };
@@ -28,7 +28,7 @@ type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boole
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
-type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; sig: string };
+type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; sig: string };
 type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
@@ -373,7 +373,8 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
           width={width} setWidth={setWidth} height={height} setHeight={setHeight} acceptFlags={acceptFlags} setAcceptFlags={setAcceptFlags}
           dry={dry} setDry={setDry} busyMsg={busyMsg} setBusyMsg={setBusyMsg} setErr={setErr}
           refreshTakes={refreshTakes} reloadScript={reloadScript} target={target} setTarget={setTarget} fileStill={fileStill}
-          goPictures={() => setStep(3)} />
+          goPictures={() => setStep(3)}
+          startPicOf={(sc) => sc.opening_still_id || (envOnly(sc) ? (() => { const pl = (script.locations || []).find((x) => x.id === sc.location); return pl ? placePic(pl) : null; })() : null)} />
       )}
 
       {step === 5 && script && <FinalStep script={script} scriptName={scriptName} takes={takes} refreshTakes={refreshTakes} reloadScript={reloadScript} />}
@@ -655,6 +656,65 @@ function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, t
   );
 }
 
+// ---------- the end of a camera move: a second view of the same picture the take must arrive at ----------
+function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, reload }: {
+  scene: Scene; startPic: string | null; scriptName: string; width: number; height: number; busy: boolean;
+  setErr: (s: string) => void; reload: () => void;
+}) {
+  const [zoom, setZoom] = useState(1.5);
+  const [c, setC] = useState({ x: 0.5, y: 0.5 });
+  const [working, setWorking] = useState(false);
+  useEffect(() => { setC({ x: 0.5, y: 0.5 }); }, [scene.index]);
+  if (!startPic && !scene.end_still_id) return null;
+  // the crop box as the backend clamps it, in fractions of the picture
+  const fw = 1 / zoom, fh = 1 / zoom;
+  const x0 = Math.min(Math.max(c.x - fw / 2, 0), 1 - fw), y0 = Math.min(Math.max(c.y - fh / 2, 0), 1 - fh);
+  const make = async () => {
+    setErr(""); setWorking(true);
+    try { await api.mvPushEndStill({ script: scriptName, scene: scene.index, zoom, cx: x0 + fw / 2, cy: y0 + fh / 2, width, height }); reload(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setWorking(false); }
+  };
+  const clear = async () => {
+    setErr("");
+    try { await api.mvSceneEndStill({ script: scriptName, scene: scene.index, still_id: null }); reload(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+  };
+  return (
+    <Card title="Where the move ends" sub="optional: the take starts on the first picture and must arrive at this one, so a push cannot run past it or lose the room. For a push-in: click the first picture where the push heads, set how far, make the end picture.">
+      <div className="grid gap-3 md:grid-cols-2">
+        {startPic ? (
+          <div>
+            <div className="mb-1 text-[11px] text-[var(--color-muted)]">first picture: click where the push heads</div>
+            <div className="relative cursor-crosshair overflow-hidden rounded bg-black" onClick={(e) => {
+              const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+              setC({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+            }}>
+              <img src={`/api/media/${startPic}`} alt="" className="block w-full" />
+              <div className="pointer-events-none absolute border-2 border-[var(--color-accent)]"
+                style={{ left: `${x0 * 100}%`, top: `${y0 * 100}%`, width: `${fw * 100}%`, height: `${fh * 100}%` }} />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <label className="flex items-center gap-1">push to <input type="number" min={1.05} max={4} step={0.05} value={zoom} className={`${inp} w-20`}
+                onChange={(e) => setZoom(Math.min(4, Math.max(1.05, Number(e.target.value) || 1.5)))} />x closer</label>
+              <GhostButton onClick={make} disabled={busy || working}>{working ? "making..." : scene.end_still_id ? "make it again" : "make the end picture"}</GhostButton>
+            </div>
+          </div>
+        ) : <div className="text-xs text-[var(--color-muted)]">this scene renders from references, so it has no first picture to crop; an end picture made elsewhere still applies</div>}
+        <div>
+          <div className="mb-1 text-[11px] text-[var(--color-muted)]">end picture{scene.end_still_id ? "" : ": none, the move is free"}</div>
+          {scene.end_still_id ? (
+            <>
+              <img src={`/api/media/${scene.end_still_id}`} alt="" className="block w-full rounded" />
+              <div className="mt-2"><GhostButton onClick={clear} disabled={busy}>remove the end picture</GhostButton></div>
+            </>
+          ) : <div className="flex aspect-video items-center justify-center rounded border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)]">no end picture</div>}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ---------- 4 Scenes and takes: render each scene, choose the take that plays ----------
 function TakesStep(p: {
   script: Script; scriptName: string; takes: Record<string, Take[]>; sel: number | null; setSel: (n: number | null) => void;
@@ -662,6 +722,7 @@ function TakesStep(p: {
   width: number; setWidth: (v: number) => void; height: number; setHeight: (v: number) => void; acceptFlags: boolean; setAcceptFlags: (v: boolean) => void;
   dry: Record<number, Dry>; setDry: (f: (d: Record<number, Dry>) => Record<number, Dry>) => void; busyMsg: string; setBusyMsg: (s: string) => void; setErr: (s: string) => void;
   refreshTakes: () => Promise<void>; reloadScript: () => void; target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File) => void; goPictures: () => void;
+  startPicOf: (sc: Scene) => string | null;
 }) {
   const { script, scriptName, takes, dry, busyMsg, setBusyMsg, setErr } = p;
   const [filter, setFilter] = useState<"all" | "todo">("all");
@@ -690,7 +751,8 @@ function TakesStep(p: {
   const seedUsed = (idx: number, sd: unknown) => sd != null && list(idx).some((t) => String(t.params?.seed) === String(sd));
   const canRender = (idx: number) => {
     const dr = dry[idx];
-    return !!dr && dr.sig === sig() && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed);
+    const endNow = script.scenes.find((x) => x.index === idx)?.end_still_id || null;
+    return !!dr && dr.sig === sig() && (dr.end_still_id || null) === endNow && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed);
   };
   const doRender = async (idx: number) => {
     const dr = dry[idx];
@@ -913,6 +975,8 @@ function TakesStep(p: {
           </Card>
 
           <div className="space-y-4">
+            <EndOfMove scene={scene} startPic={p.startPicOf(scene)} scriptName={scriptName} width={p.width} height={p.height}
+              busy={!!busyMsg} setErr={setErr} reload={p.reloadScript} />
             <Card title="Render this scene on the box" sub="first check the settings (no GPU, shows any warnings), then render. Each render adds a take below.">
               <div className="flex flex-wrap items-center gap-2">
                 <GhostButton onClick={() => doDry(scene.index)} disabled={!!busyMsg}>1 · Check the settings</GhostButton>
@@ -925,7 +989,8 @@ function TakesStep(p: {
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[var(--color-muted)]">
                     <span>{dr.clips} clip{dr.clips === 1 ? "" : "s"}</span><span>{dr.settings?.width}x{dr.settings?.height}</span><span>seed {dr.settings?.seed}</span>
                     <span>{dr.settings?.turbo ? "turbo" : "base"}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
-                    {dr.sig !== sig() ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
+                    {dr.end_still_id ? <span>ends on the end picture</span> : null}
+                    {dr.sig !== sig() || (dr.end_still_id || null) !== (scene.end_still_id || null) ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
                   </div>
                   {seedUsed(scene.index, dr.settings?.seed) && <div className="mt-1 text-amber-300">seed {dr.settings?.seed} already made a take of this scene, so it would most likely come out the same. Clear the seed in the render settings and check again for a new one.</div>}
                   {dr.flags.length ? <ul className="mt-1 list-disc pl-4 text-amber-300">{dr.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : <div className="mt-1 text-emerald-500">no warnings: ready to render</div>}

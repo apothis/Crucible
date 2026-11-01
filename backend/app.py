@@ -1108,6 +1108,13 @@ def _h3_chain(p: dict, meta=None):
                 raise HTTPException(400, f"first_frame_id: {p['first_frame_id']} is not a still in the library")
             with open(ff_path, "rb") as f:
                 first_frame = C.upload_audio(f.read(), os.path.basename(ff_path))
+        end_frame = None
+        if p.get("end_still_id"):
+            e_path = _lib_image_path(p["end_still_id"])
+            if not e_path:
+                raise HTTPException(400, f"end_still_id: {p['end_still_id']} is not a still in the library")
+            with open(e_path, "rb") as f:
+                end_frame = C.upload_audio(f.read(), os.path.basename(e_path))
         anchor = None
         if p.get("anchor_still_id"):
             a_path = _lib_image_path(p["anchor_still_id"])
@@ -1132,10 +1139,12 @@ def _h3_chain(p: dict, meta=None):
 
     def _build(q):
         graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos,
-                                                   first_frame_name=first_frame, anchor_name=anchor)
+                                                   first_frame_name=first_frame, anchor_name=anchor,
+                                                   end_frame_name=end_frame)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
         resolved["first_frame_id"] = os.path.basename(str(p["first_frame_id"])) if p.get("first_frame_id") else None
         resolved["anchor_still_id"] = os.path.basename(str(p["anchor_still_id"])) if p.get("anchor_still_id") else None
+        resolved["end_still_id"] = os.path.basename(str(p["end_still_id"])) if p.get("end_still_id") else None
         resolved["camera_ref"] = os.path.basename(cam_path) if cam_path else None
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
@@ -1284,6 +1293,13 @@ def mv_render_scene(p: dict):
         raise HTTPException(400, "free_av drops the song from the latent; environment-only scenes only (the song is laid in at assembly)")
     if free_av and len(prompts) > 1:
         raise HTTPException(400, "free_av is for single-clip plates; this scene chains more than one clip")
+    # end picture (opt-in, s.20.52): the request's, else the one filed on the scene
+    end_still = (p.get("end_still_id") or "").strip() or scene.get("end_still_id") or None
+    if end_still and not _lib_image_path(end_still):
+        raise HTTPException(400, f"end_still_id {end_still} is not a still in the library")
+    if end_still and keyframes in ("still_last", "still_first_last"):
+        raise HTTPException(400, "an end picture and keyframes still_last both guide the last frame; choose one")
+    end_still = os.path.basename(str(end_still)) if end_still else None
     if p.get("dry_run"):
         # the gate before the GPU: what WOULD be submitted, nothing queued. settings = the exact
         # recipe/size/seed the chain would run (seed drawn now when none was sent, so a fire from
@@ -1304,13 +1320,14 @@ def mv_render_scene(p: dict):
                 "lane": lane, "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                 "first_frame_from": first_frame_from,
                 "anchor_first": anchor_first, "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
-                "anchor_from": anchor_from,
+                "anchor_from": anchor_from, "end_still_id": end_still,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run", "anchor_first")}
     chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
     q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs, "lane": lane,
               "first_frame_id": first_frame, "anchor_still_id": anchor_still if anchor_first else None,
+              "end_still_id": end_still,
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
@@ -1323,7 +1340,8 @@ def mv_render_scene(p: dict):
                               "free_av": free_av, "clock_fps": clock_fps, "lane": lane, "distant": distant,
                               "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                               "anchor_first": anchor_first, "anchor_from": anchor_from,
-                              "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None})
+                              "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
+                              "end_still_id": end_still})
 
 
 def _mv_resolve_locks(raw):
@@ -1451,6 +1469,90 @@ def mv_scene_still_set(p: dict):
 # background batch fires of the Music Video tab (render_script async): the rows list fills as each
 # scene is sent, so the tab can show progress while the box queue builds
 MV_BATCHES: Dict[str, dict] = {}
+
+
+def _mv_set_scene_field(script_name, idx, key, value):
+    """Write (value) or remove (None) one field on a scene of a SAVED script. Returns the scene."""
+    path = os.path.join(mv_takes_mod.scripts_dir(LIBRARY), script_name)
+    with open(path) as f:
+        scr = json.load(f)
+    sc = scr["scenes"][int(idx)]
+    if value is None:
+        sc.pop(key, None)
+    else:
+        sc[key] = value
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(scr, f, indent=1)
+    os.replace(tmp, path)
+    return sc
+
+
+@app.post("/api/mv/scene_end_still")
+def mv_scene_end_still(p: dict):
+    """The picture a scene's camera move ENDS on (s.20.52), filed on the scene so every render
+    and batch uses it: {script, scene, still_id} sets it, still_id null clears it."""
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "end pictures need a saved script")
+    try:
+        idx = script["scenes"][int(p.get("scene", -1))]["index"]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    sid = os.path.basename(str(p.get("still_id") or "").strip()) or None
+    if sid and not _lib_image_path(sid):
+        raise HTTPException(400, "still_id must be a picture in the library")
+    sc = _mv_set_scene_field(name, idx, "end_still_id", sid)
+    return {"scene": idx, "end_still_id": sc.get("end_still_id")}
+
+
+@app.post("/api/mv/push_end_still")
+def mv_push_end_still(p: dict):
+    """Make the END picture of a push-in from the scene's own first frame (s.20.52): a crop of
+    that picture `zoom` times closer around (cx, cy) (0-1 of its width/height), resized to the
+    canvas aspect (width x height, default 1344x768) so the node's last_frame path takes it as
+    it is. Both ends of the move are then the same geometry and the push cannot run past the
+    crop. Frame 0 is the scene's opening still, else its location still (the i2v lane's rule);
+    scenes that render from references only have no frame 0 to crop. Files the picture in the
+    library and on the scene. p: {script, scene, zoom (1.05-4), cx?, cy?, width?, height?}."""
+    import io
+    from PIL import Image
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "end pictures need a saved script")
+    try:
+        scene = script["scenes"][int(p.get("scene", -1))]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    src = scene.get("opening_still_id") if scene.get("opening_still_id") and _lib_image_path(scene["opening_still_id"]) else None
+    if not src and scene.get("performance") == "no_singing_environment":
+        loc = mv_writer_mod.location_of(script, scene)
+        if loc:
+            src = loc.get("still_id") or mv_locations_mod.still_for(mv_locations_mod.load(LIBRARY), loc["id"])
+    if not src or not _lib_image_path(src):
+        raise HTTPException(400, "this scene has no first-frame picture to crop (it renders from references)")
+    zoom = float(p.get("zoom") or 1.5)
+    if not (1.05 <= zoom <= 4.0):
+        raise HTTPException(400, "zoom must be between 1.05 and 4")
+    W, H = int(p.get("width") or 1344), int(p.get("height") or 768)
+    im = Image.open(_lib_image_path(src)).convert("RGB")
+    w, h = im.size
+    cw, ch = w / zoom, h / zoom
+    cx = min(max(float(p.get("cx", 0.5)) * w, cw / 2), w - cw / 2)
+    cy = min(max(float(p.get("cy", 0.5)) * h, ch / 2), h - ch / 2)
+    box = (cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2)
+    # the first frame is stretched to the canvas, so the crop is stretched the same way
+    out_w = max(W, int(round(cw)))
+    out = im.resize((out_w, int(round(out_w * H / W))), Image.LANCZOS, box=box)
+    buf = io.BytesIO()
+    out.save(buf, format="PNG")
+    filed = _file_external_still(buf.getvalue(), f"push_end_{name}_{scene['index']}.png",
+                                 f"{script.get('title') or name} / {int(scene['index']):02d} push end x{zoom:g}",
+                                 kind="mv_end", extra={"push_end_of": os.path.basename(src), "zoom": zoom,
+                                                        "cx": round(cx / w, 4), "cy": round(cy / h, 4)})
+    _mv_set_scene_field(name, scene["index"], "end_still_id", filed["still_id"])
+    return {"scene": scene["index"], "end_still_id": filed["still_id"], "media_url": filed["media_url"],
+            "from_still_id": os.path.basename(src), "zoom": zoom, "cx": round(cx / w, 4), "cy": round(cy / h, 4)}
 
 
 @app.post("/api/mv/render_script")
