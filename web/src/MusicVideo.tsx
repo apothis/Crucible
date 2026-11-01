@@ -668,6 +668,7 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
   const zoom = Math.min(4, Math.max(1.05, Number(zoomText) || 1.5));
   const [c, setC] = useState({ x: 0.5, y: 0.5 });
   const [railOn, setRailOn] = useState(false);          // opt-in: pin the in-between views too
+  const [railAfterText, setRailAfterText] = useState("0"); // no pin before this (an early action stays free)
   const [working, setWorking] = useState(false);
   const rail = scene.rail && scene.rail.end_still_id === scene.end_still_id ? scene.rail.stills : [];
   useEffect(() => { setC({ x: 0.5, y: 0.5 }); }, [scene.index]);
@@ -677,7 +678,8 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
   const x0 = Math.min(Math.max(c.x - fw / 2, 0), 1 - fw), y0 = Math.min(Math.max(c.y - fh / 2, 0), 1 - fh);
   const make = async () => {
     setErr(""); setWorking(true);
-    try { await api.mvPushEndStill({ script: scriptName, scene: scene.index, zoom, cx: x0 + fw / 2, cy: y0 + fh / 2, width, height, rail: railOn ? 1.5 : 0 }); reload(); }
+    try { await api.mvPushEndStill({ script: scriptName, scene: scene.index, zoom, cx: x0 + fw / 2, cy: y0 + fh / 2, width, height, rail: railOn ? 1.5 : 0,
+      rail_after: railOn ? Math.max(0, Number(railAfterText) || 0) : 0 }); reload(); }
     catch (e) { setErr(String((e as Error).message || e)); }
     finally { setWorking(false); }
   };
@@ -705,6 +707,11 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
                 onChange={(e) => setZoomText(e.target.value)} />x closer</label>
               <label className="flex items-center gap-1" title="also pin a crop every 1.5 s along the push, so the camera's path is held all the way and not only at its two ends">
                 <input type="checkbox" checked={railOn} onChange={(e) => setRailOn(e.target.checked)} />pin the path every 1.5 s</label>
+              {railOn && (
+                <label className="flex items-center gap-1" title="no pin before this time, so an early action (a reach, a turn) is not held at the opening pose">
+                  from <input type="number" min={0} step={0.5} value={railAfterText} className={`${inp} w-16`}
+                    onChange={(e) => setRailAfterText(e.target.value)} /> s</label>
+              )}
               <GhostButton onClick={make} disabled={busy || working}>{working ? "making..." : scene.end_still_id ? "make it again" : "make the end picture"}</GhostButton>
             </div>
           </div>

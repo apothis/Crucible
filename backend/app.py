@@ -1545,14 +1545,17 @@ def mv_push_end_still(p: dict):
     crop. Frame 0 is the scene's opening still, else its location still (the i2v lane's rule);
     scenes that render from references only have no frame 0 to crop. Files the picture in the
     library and on the scene. p: {script, scene, zoom (1.05-4), cx?, cy?, width?, height?,
-    rail? (seconds, 0/absent = off)}.
+    rail? (seconds, 0/absent = off), rail_after? (seconds, default 0)}.
 
     rail (opt-in, s.20.53): also make the in-between views every `rail` seconds of the scene's
     clip, pinned at those frames so the path is held all the way and not only at the ends. The
     move is a zoom at a constant rate toward the one point that the full picture and the end crop
     share (scale zoom**(frame/last frame)), so each pin is a crop of the same picture and the last
     one lands exactly on the end crop. No pin in the last half second (the end picture holds it).
-    Single-clip scenes only. Making the end picture again replaces the rail (or clears it)."""
+    Single-clip scenes only. Making the end picture again replaces the rail (or clears it).
+    rail_after: no pin before this many seconds, so an action the scene's people make early (a
+    reach, a turn) is not held at the opening pose; the opening still and the later pins still
+    hold the room."""
     import io
     from PIL import Image
     script, name = _mv_load_script(p.get("script"))
@@ -1574,6 +1577,9 @@ def mv_push_end_still(p: dict):
         raise HTTPException(400, "zoom must be between 1.05 and 4")
     W, H = int(p.get("width") or 1344), int(p.get("height") or 768)
     rail_every = float(p.get("rail") or 0)
+    rail_after = float(p.get("rail_after") or 0)
+    if rail_after < 0:
+        raise HTTPException(400, "rail_after must be 0 or more seconds")
     if rail_every and not (0.5 <= rail_every <= 5):
         raise HTTPException(400, "rail must be between 0.5 and 5 seconds")
     clips_n = len(scene.get("clips") or [None])
@@ -1619,6 +1625,9 @@ def mv_push_end_still(p: dict):
         px, py = box[0] * zoom / (zoom - 1), box[1] * zoom / (zoom - 1)
         f = step
         while f < last - 12:
+            if f < rail_after * 24:
+                f += step
+                continue
             z = zoom ** (f / last)
             rb = (px - px / z, py - py / z, px + (w - px) / z, py + (h - py) / z)
             rw = max(W, int(round(rb[2] - rb[0])))
@@ -1631,7 +1640,8 @@ def mv_push_end_still(p: dict):
             rail.append({"still_id": rf["still_id"], "frame": f, "zoom": round(z, 4)})
             f += step
     _mv_set_scene_field(name, scene["index"], "rail",
-                        {"end_still_id": filed["still_id"], "every": rail_every, "stills": rail} if rail else None)
+                        {"end_still_id": filed["still_id"], "every": rail_every, "after": rail_after, "stills": rail}
+                        if rail else None)
     return {"scene": scene["index"], "end_still_id": filed["still_id"], "media_url": filed["media_url"],
             "from_still_id": os.path.basename(src), "zoom": zoom, "cx": round(cx / w, 4), "cy": round(cy / h, 4),
             "rail": rail or None}
