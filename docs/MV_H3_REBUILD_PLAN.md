@@ -2204,3 +2204,18 @@ already shows her, the building and her hands, which is the user's direction. No
   A rail cut from one still fits scenes whose people end where they started (21: a head turn);
   a state change needs the late pins and the end cut from a still of the END state (an edit of
   the opening still, same framing). Not built. A/B: .mvwork/rail_bar/s39_C_rail_pins_from_4s_*.mp4.
+
+### 20.54 After-the-action picture (2026-11-01) [built; offline-checked; not rendered]
+- Why: 20.53's 39 result. User: build it only as something reusable, not for one scene.
+- scene.after_still_id: filed through POST /api/mv/scene_still {slot: "after"} (paste/drop on the
+  "after the action" block of Where the move ends) or /api/mv/scene_after_still {still_id|null}.
+  push_end_still then cuts the END picture and every pin from it (same pre-crop as the opening
+  still on the reference lane; shape must match the opening still within 2 %, resized to it);
+  with a rail, rail_after ("action done by") is required and no pin goes before it. Frame 0 stays
+  the opening still. Without an after picture nothing changes.
+- The ChatGPT edit prompt is generic, built in the tab from scene.action: keep camera, framing,
+  room, light and every person's place, clothes and identity; change only what has happened by
+  the END of the moment, shown finished and held still.
+- Offline check (real routes, scene 39): after = the opening still itself -> end picture and
+  pins 108/144 pixel-identical to the previous rail (max diff 0); a rail with no done-by time is
+  refused with the message. Stand-in cleared afterwards. Tab block renders with the prompt.

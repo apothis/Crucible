@@ -210,7 +210,25 @@ seated performance shot, one seed, with only the camera wording or the resolutio
   cannot express; not the default. Code: chain `ref_video_names`, route `camera_ref`.
 - **Keyframe-bounded moves (`MiniMaxH3AddGuide`, `CustomKeyframes`) fix a move's end composition
   exactly but pin her pose, so B-roll and environment scenes only.** [P: node behaviour; not
-  built in the MV lane yet] GPT keyframes are available on request. [U]
+  built in the MV lane yet] GPT keyframes are available on request. [U] SUPERSEDED for pushes
+  by the rail below (built 2026-11-01), which also runs on scenes with her.
+- **A push that loses the room gets a rail: the end view plus crops every 1.5 s, all cut from the
+  scene's first picture.** (Scenes and takes, "Where the move ends": make the end picture, tick
+  "pin the path".) The crops follow one constant-rate zoom toward the aim point, pinned through
+  `MiniMaxH3AddGuide` at their frames; on the reference lane the opening still also pins frame 0
+  and the crops are cut the way AddGuide cover-crops. [M: Never Yours 14 (hall), 21 and 39 (bar):
+  the free moves rebuilt the room every second; with the rail every sampled frame is the same
+  room; sync 0.995-0.997. Motion judged by the user, pending.] An end picture alone (no pins)
+  still let the hall stretch mid-move. [M: 14] Code: `push_end_still {rail, rail_after}`,
+  `build_h3_chain(guide_frames=)`, docs/MV_H3_REBUILD_PLAN.md s.20.52-20.54.
+- **Every pin asserts the people's pose at that moment, so a rail cut from the opening still
+  only fits scenes whose people end where they started.** [M: 39, a scripted reach: absent with
+  pins every 1.5 s AND with pins from 4 s only (near-identical takes); present in the free take.
+  Cause [H]: the late pins and the end show the pre-action pose.] For a state change (a reach,
+  standing up, putting something down) give the scene an AFTER-THE-ACTION picture: an edit of its
+  opening still with the same framing (the tab writes the edit prompt from the scene's action),
+  set "action done by" N s; no pin goes before N, and the pins after it and the end are cut from
+  the after picture. [built 2026-11-01, untested on a render]
 - **Camera LoRAs add vocabulary, not bounds, and a third LoRA over Turbo plus two identity
   pictures risks identity.** Fallback only. [P cards; untested here]
 - **Production fallback that always works: render static, FlashVSR x2, ffmpeg zoompan of 4-8 %.**

@@ -16,7 +16,7 @@ type Locked = { job_id: string; take_start: number; script: string };
 type Scene = {
   index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string;
   framing?: string; camera?: string; lighting?: string; mood?: string; action?: string; others?: string; why?: string;
-  opening_still?: string; opening_still_id?: string; end_still_id?: string; rail?: { end_still_id: string; every: number; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
+  opening_still?: string; opening_still_id?: string; end_still_id?: string; after_still_id?: string; rail?: { end_still_id: string; every: number; after_still_id?: string | null; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[]; matches_location_still?: boolean;
 };
 type Refs = { face?: string; body?: string; shared?: string };
@@ -29,7 +29,7 @@ type Upscale = { id: string; status: string; progress: number; max: number; erro
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; sig: string };
-type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "place"; id: string } | null;
+type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
 // FlashVSR+ Turbo 2x: 554 s for the 15 s scene 6 take, 2026-10-30 (the whole SSBS batch ran at
@@ -240,13 +240,14 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   const doneTakes = (idx: number) => sceneTakes(idx).filter((t) => t.status === "done");
 
   // ---------- filing pictures ----------
-  const fileStill = async (idx: number, file: File) => {
+  const fileStill = async (idx: number, file: File, slot: "opening" | "after" = "opening") => {
     setErr(""); setBusyMsg(`filing the picture for scene ${idx}...`);
     try {
       const fd = new FormData();
       fd.append("file", file, file.name || "still.png");
       fd.append("script", scriptName);
       fd.append("scene", String(idx));
+      fd.append("slot", slot);
       await api.mvSceneStill(fd);
       reloadScript();
     } catch (e) { setErr(String((e as Error).message || e)); }
@@ -287,6 +288,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
     if (!f) return;
     e.preventDefault();
     if (target.kind === "scene") fileStill(target.idx, f);
+    else if (target.kind === "after") fileStill(target.idx, f, "after");
     else if (target.kind === "place") filePlace(target.id, f);
     else fileRef(target.kind, f);
   };
@@ -660,15 +662,25 @@ function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, t
 }
 
 // ---------- the end of a camera move: a second view of the same picture the take must arrive at ----------
-function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, reload }: {
+// the ChatGPT edit that turns a scene's opening still into the state its action ends in (s.20.54):
+// built from the scene's own action text, so it serves any scene where someone changes state
+const afterPrompt = (sc: Scene) =>
+  "Edit this picture. Keep the camera position, framing, lens, room, light, weather and every person's place, " +
+  "clothes and identity exactly as they are. Change only what has happened by the END of this moment, shown " +
+  `finished and held still, not in motion: ${(sc.action || "").trim()}`;
+
+function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, reload, armed, onArm, onFile }: {
   scene: Scene; startPic: string | null; scriptName: string; width: number; height: number; busy: boolean;
-  setErr: (s: string) => void; reload: () => void;
+  setErr: (s: string) => void; reload: () => void; armed: boolean; onArm: () => void; onFile: (f: File) => void;
 }) {
   const [zoomText, setZoomText] = useState("1.5");      // typed freely, clamped where it is used
   const zoom = Math.min(4, Math.max(1.05, Number(zoomText) || 1.5));
   const [c, setC] = useState({ x: 0.5, y: 0.5 });
   const [railOn, setRailOn] = useState(false);          // opt-in: pin the in-between views too
   const [railAfterText, setRailAfterText] = useState("0"); // no pin before this (an early action stays free)
+  const [copiedAfter, setCopiedAfter] = useState(false);
+  const hasAfter = !!scene.after_still_id;
+  const railAfter = Math.max(0, Number(railAfterText) || 0);
   const [working, setWorking] = useState(false);
   const rail = scene.rail && scene.rail.end_still_id === scene.end_still_id ? scene.rail.stills : [];
   useEffect(() => { setC({ x: 0.5, y: 0.5 }); }, [scene.index]);
@@ -679,7 +691,7 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
   const make = async () => {
     setErr(""); setWorking(true);
     try { await api.mvPushEndStill({ script: scriptName, scene: scene.index, zoom, cx: x0 + fw / 2, cy: y0 + fh / 2, width, height, rail: railOn ? 1.5 : 0,
-      rail_after: railOn ? Math.max(0, Number(railAfterText) || 0) : 0 }); reload(); }
+      rail_after: railOn ? railAfter : 0 }); reload(); }
     catch (e) { setErr(String((e as Error).message || e)); }
     finally { setWorking(false); }
   };
@@ -708,11 +720,11 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
               <label className="flex items-center gap-1" title="also pin a crop every 1.5 s along the push, so the camera's path is held all the way and not only at its two ends">
                 <input type="checkbox" checked={railOn} onChange={(e) => setRailOn(e.target.checked)} />pin the path every 1.5 s</label>
               {railOn && (
-                <label className="flex items-center gap-1" title="no pin before this time, so an early action (a reach, a turn) is not held at the opening pose">
-                  from <input type="number" min={0} step={0.5} value={railAfterText} className={`${inp} w-16`}
+                <label className="flex items-center gap-1" title={hasAfter ? "the second the action is done by: no pin before it, and every pin after it comes from the after-the-action picture" : "no pin before this time, so an early action (a reach, a turn) is not held at the opening pose"}>
+                  {hasAfter ? "action done by" : "from"} <input type="number" min={0} step={0.5} value={railAfterText} className={`${inp} w-16`}
                     onChange={(e) => setRailAfterText(e.target.value)} /> s</label>
               )}
-              <GhostButton onClick={make} disabled={busy || working}>{working ? "making..." : scene.end_still_id ? "make it again" : "make the end picture"}</GhostButton>
+              <GhostButton onClick={make} disabled={busy || working || (railOn && hasAfter && railAfter <= 0)}>{working ? "making..." : scene.end_still_id ? "make it again" : "make the end picture"}</GhostButton>
             </div>
           </div>
         ) : <div className="text-xs text-[var(--color-muted)]">this scene renders from references, so it has no first picture to crop; an end picture made elsewhere still applies</div>}
@@ -739,6 +751,25 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
           ) : <div className="flex aspect-video items-center justify-center rounded border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)]">no end picture</div>}
         </div>
       </div>
+      {startPic && (
+        <details className="mt-3 text-xs" open={hasAfter}>
+          <summary className="cursor-pointer text-[var(--color-muted)]">after the action (optional): when someone ends somewhere other than where they start, the end and the pins come from this picture</summary>
+          <div className="mt-2 grid gap-3 md:grid-cols-2">
+            <ImageSlot src={scene.after_still_id ? `/api/media/${scene.after_still_id}` : null} armed={armed} onArm={onArm} onFile={onFile}
+              empty={<><div className="font-semibold">no after picture</div><div>1. copy the edit prompt  2. in ChatGPT, edit this scene's opening picture with it  3. click here + Cmd+V, or drop it</div></>}>
+              <div className="flex flex-wrap gap-2">
+                <GhostButton onClick={async () => { try { await navigator.clipboard.writeText(afterPrompt(scene)); setCopiedAfter(true); window.setTimeout(() => setCopiedAfter(false), 1500); } catch { setErr("the browser blocked the clipboard: copy the prompt by hand"); } }}
+                  disabled={!scene.action}>{copiedAfter ? "copied" : "copy edit prompt"}</GhostButton>
+                {hasAfter && <GhostButton onClick={async () => { try { await api.mvSceneAfterStill({ script: scriptName, scene: scene.index, still_id: null }); reload(); } catch (e) { setErr(String((e as Error).message || e)); } }} disabled={busy}>remove</GhostButton>}
+              </div>
+            </ImageSlot>
+            <div className="text-[11px] text-[var(--color-muted)]">
+              <div className="mb-1 whitespace-pre-wrap rounded border border-[var(--color-line)] p-2">{afterPrompt(scene)}</div>
+              {hasAfter ? "Make the end picture again to use it. With the path pinned, set when the action is done by: no pin goes before that, the pins after it and the end come from this picture, and the take still starts on the opening picture." : "Same framing as the opening picture (an edit of it), so the crops line up."}
+            </div>
+          </div>
+        </details>
+      )}
     </Card>
   );
 }
@@ -749,7 +780,7 @@ function TakesStep(p: {
   faceId: string; bodyId: string; seed: string; setSeed: (v: string) => void; turbo: boolean; setTurbo: (v: boolean) => void;
   width: number; setWidth: (v: number) => void; height: number; setHeight: (v: number) => void; acceptFlags: boolean; setAcceptFlags: (v: boolean) => void;
   dry: Record<number, Dry>; setDry: (f: (d: Record<number, Dry>) => Record<number, Dry>) => void; busyMsg: string; setBusyMsg: (s: string) => void; setErr: (s: string) => void;
-  refreshTakes: () => Promise<void>; reloadScript: () => void; target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File) => void; goPictures: () => void;
+  refreshTakes: () => Promise<void>; reloadScript: () => void; target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File, slot?: "opening" | "after") => void; goPictures: () => void;
   startPicOf: (sc: Scene) => string | null;
 }) {
   const { script, scriptName, takes, dry, busyMsg, setBusyMsg, setErr } = p;
@@ -1008,7 +1039,9 @@ function TakesStep(p: {
 
           <div className="space-y-4">
             <EndOfMove scene={scene} startPic={p.startPicOf(scene)} scriptName={scriptName} width={p.width} height={p.height}
-              busy={!!busyMsg} setErr={setErr} reload={p.reloadScript} />
+              busy={!!busyMsg} setErr={setErr} reload={p.reloadScript}
+              armed={JSON.stringify(p.target) === JSON.stringify({ kind: "after", idx: scene.index })}
+              onArm={() => p.setTarget({ kind: "after", idx: scene.index })} onFile={(f) => p.fileStill(scene.index, f, "after")} />
             <Card title="Render this scene on the box" sub="first check the settings (no GPU, shows any warnings), then render. Each render adds a take below.">
               <div className="flex flex-wrap items-center gap-2">
                 <GhostButton onClick={() => doDry(scene.index)} disabled={!!busyMsg}>1 · Check the settings</GhostButton>

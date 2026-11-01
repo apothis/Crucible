@@ -116,6 +116,7 @@ export const api = {
   mvTakeCheck: (p: { job_id: string; script: string; scene: number }) => jpost("/api/mv/take_check", p),
   mvPushEndStill: (p: { script: string; scene: number; zoom: number; cx: number; cy: number; width?: number; height?: number; rail?: number; rail_after?: number }) => jpost("/api/mv/push_end_still", p), // the end view of a push-in, cropped from frame 0
   mvSceneEndStill: (p: { script: string; scene: number; still_id: string | null }) => jpost("/api/mv/scene_end_still", p),
+  mvSceneAfterStill: (p: { script: string; scene: number; still_id: string | null }) => jpost("/api/mv/scene_after_still", p), // the state the action ends in
   mvScriptRefStills: (p: { script: string; face_id?: string; body_id?: string }) => jpost("/api/mv/script_ref_stills", p), // the singer's two pictures for one script
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),

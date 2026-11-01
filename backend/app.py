@@ -1442,15 +1442,26 @@ def mv_opening_still(p: dict):
 
 
 @app.post("/api/mv/scene_still")
-async def mv_scene_still(file: UploadFile = File(...), script: str = Form(...), scene: int = Form(...), label: str = Form(None)):
+async def mv_scene_still(file: UploadFile = File(...), script: str = Form(...), scene: int = Form(...), label: str = Form(None),
+                         slot: str = Form("opening")):
     """File a scene's OPENING still (generated from /api/mv/opening_still's prompt) in the library;
-    returns its still_id for render_scene's first_frame_id. No location row is touched."""
+    returns its still_id for render_scene's first_frame_id. No location row is touched.
+    slot "after": the scene's AFTER-THE-ACTION picture instead (s.20.54, used by push_end_still)."""
     scr, name = _mv_load_script(script)
     try:
         sc = scr["scenes"][int(scene)]
     except Exception:
         raise HTTPException(400, "scene must index a scene of the script")
     data = await file.read()
+    if slot == "after":
+        if not name or name == "(inline)":
+            raise HTTPException(400, "after pictures need a saved script")
+        filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - scene {sc['index']} after the action",
+                                     kind="after_still", extra={"scene": sc["index"], "script": name})
+        _mv_set_scene_field(name, sc["index"], "after_still_id", filed["still_id"])
+        return {"still": filed, "scene": sc["index"], "title": sc.get("title"), "slot": "after"}
+    if slot != "opening":
+        raise HTTPException(400, "slot must be opening or after")
     filed = _file_external_still(data, file.filename, label or f"{scr.get('title')} - scene {sc['index']} opening still",
                                  kind="opening_still", extra={"scene": sc["index"], "script": name})
     recorded = _mv_record_opening_still(name, sc["index"], filed["still_id"])
@@ -1555,7 +1566,14 @@ def mv_push_end_still(p: dict):
     Single-clip scenes only. Making the end picture again replaces the rail (or clears it).
     rail_after: no pin before this many seconds, so an action the scene's people make early (a
     reach, a turn) is not held at the opening pose; the opening still and the later pins still
-    hold the room."""
+    hold the room.
+
+    After the action (opt-in, s.20.54): when the scene has an after_still_id (an edit of its
+    opening still with the same framing, showing the state the scene's action ends in), the end
+    picture and every pin are cropped from THAT picture, so the rail no longer asserts the
+    opening pose at the end. With a rail, rail_after is then required: the second the action is
+    done by (no pin before it, so the action itself is left free). The opening still stays frame 0.
+    Any scene where someone ends somewhere other than where they started uses this."""
     import io
     from PIL import Image
     script, name = _mv_load_script(p.get("script"))
@@ -1585,21 +1603,38 @@ def mv_push_end_still(p: dict):
     clips_n = len(scene.get("clips") or [None])
     if rail_every and clips_n > 1:
         raise HTTPException(400, "a rail is for single-clip scenes; this scene chains more than one clip")
+    after_id = scene.get("after_still_id") if scene.get("after_still_id") and _lib_image_path(scene["after_still_id"]) else None
+    if after_id and rail_every and rail_after <= 0:
+        raise HTTPException(400, "with an after-the-action picture, set when the action is done (rail_after, seconds): "
+                                 "no pin goes before it, so the action stays free")
     im = Image.open(_lib_image_path(src)).convert("RGB")
+    late = Image.open(_lib_image_path(after_id)).convert("RGB") if after_id else None
+    if late is not None:
+        a0, a1 = im.size[0] / im.size[1], late.size[0] / late.size[1]
+        if abs(a0 - a1) / a0 > 0.02:
+            raise HTTPException(400, "the after-the-action picture must have the opening still's framing "
+                                     "(an edit of it); its shape differs")
+        late = late.resize(im.size, Image.LANCZOS)
     fx, fy = float(p.get("cx", 0.5)), float(p.get("cy", 0.5))     # fractions of the picture as shown
     if scene.get("performance") != "no_singing_environment":
         # her scenes render on the reference lane, where the frame-0 anchor and every pin go
         # through MiniMaxH3AddGuide, which COVER-CROPS to the canvas (centre); crop the same way
         # first so the pins and the anchor are one geometry (the i2v lane stretches instead)
         W0, H0 = im.size
+        cbox = None
         if W0 / H0 > W / H:
             nw = H0 * W / H
-            im = im.crop((round((W0 - nw) / 2), 0, round((W0 + nw) / 2), H0))
+            cbox = (round((W0 - nw) / 2), 0, round((W0 + nw) / 2), H0)
             fx = (fx * W0 - (W0 - nw) / 2) / nw
         elif W0 / H0 < W / H:
             nh = W0 * H / W
-            im = im.crop((0, round((H0 - nh) / 2), W0, round((H0 + nh) / 2)))
+            cbox = (0, round((H0 - nh) / 2), W0, round((H0 + nh) / 2))
             fy = (fy * H0 - (H0 - nh) / 2) / nh
+        if cbox:
+            im = im.crop(cbox)
+            late = late.crop(cbox) if late is not None else None
+    if late is None:
+        late = im                       # no after picture: the end and pins come from the opening still
     w, h = im.size
     cw, ch = w / zoom, h / zoom
     cx = min(max(fx * w, cw / 2), w - cw / 2)
@@ -1607,13 +1642,14 @@ def mv_push_end_still(p: dict):
     box = (cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2)
     # the first frame is stretched to the canvas, so the crop is stretched the same way
     out_w = max(W, int(round(cw)))
-    out = im.resize((out_w, int(round(out_w * H / W))), Image.LANCZOS, box=box)
+    out = late.resize((out_w, int(round(out_w * H / W))), Image.LANCZOS, box=box)
     buf = io.BytesIO()
     out.save(buf, format="PNG")
     filed = _file_external_still(buf.getvalue(), f"push_end_{name}_{scene['index']}.png",
                                  f"{script.get('title') or name} / {int(scene['index']):02d} push end x{zoom:g}",
                                  kind="mv_end", extra={"push_end_of": os.path.basename(src), "zoom": zoom,
-                                                        "cx": round(cx / w, 4), "cy": round(cy / h, 4)})
+                                                        "cx": round(cx / w, 4), "cy": round(cy / h, 4),
+                                                        "after_still_id": after_id})
     _mv_set_scene_field(name, scene["index"], "end_still_id", filed["still_id"])
     rail = []
     if rail_every:
@@ -1631,7 +1667,7 @@ def mv_push_end_still(p: dict):
             z = zoom ** (f / last)
             rb = (px - px / z, py - py / z, px + (w - px) / z, py + (h - py) / z)
             rw = max(W, int(round(rb[2] - rb[0])))
-            pic = im.resize((rw, int(round(rw * H / W))), Image.LANCZOS, box=rb)
+            pic = late.resize((rw, int(round(rw * H / W))), Image.LANCZOS, box=rb)
             rbuf = io.BytesIO()
             pic.save(rbuf, format="PNG")
             rf = _file_external_still(rbuf.getvalue(), f"push_rail_{name}_{scene['index']}_{f}.png",
@@ -1640,11 +1676,30 @@ def mv_push_end_still(p: dict):
             rail.append({"still_id": rf["still_id"], "frame": f, "zoom": round(z, 4)})
             f += step
     _mv_set_scene_field(name, scene["index"], "rail",
-                        {"end_still_id": filed["still_id"], "every": rail_every, "after": rail_after, "stills": rail}
+                        {"end_still_id": filed["still_id"], "every": rail_every, "after": rail_after,
+                         "after_still_id": after_id, "stills": rail}
                         if rail else None)
     return {"scene": scene["index"], "end_still_id": filed["still_id"], "media_url": filed["media_url"],
             "from_still_id": os.path.basename(src), "zoom": zoom, "cx": round(cx / w, 4), "cy": round(cy / h, 4),
-            "rail": rail or None}
+            "rail": rail or None, "after_still_id": after_id}
+
+
+@app.post("/api/mv/scene_after_still")
+def mv_scene_after_still(p: dict):
+    """Set or clear (still_id null) a scene's AFTER-THE-ACTION picture (s.20.54) from a still
+    already in the library. It takes effect when the end picture is made (again)."""
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "after pictures need a saved script")
+    try:
+        idx = script["scenes"][int(p.get("scene", -1))]["index"]
+    except Exception:
+        raise HTTPException(400, "scene must index a scene of the script")
+    sid = os.path.basename(str(p.get("still_id") or "").strip()) or None
+    if sid and not _lib_image_path(sid):
+        raise HTTPException(400, "still_id must be a picture in the library")
+    sc = _mv_set_scene_field(name, idx, "after_still_id", sid)
+    return {"scene": idx, "after_still_id": sc.get("after_still_id")}
 
 
 @app.post("/api/mv/render_script")
