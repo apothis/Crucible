@@ -2299,3 +2299,11 @@ already shows her, the building and her hands, which is the user's direction. No
   D, E and F all redraw it as loops; the reference picture (F) did not hold it. So the neon is
   Meridian redrawing, not disocclusion. warp_long_side 832 = keep. Files: s10_E_warp832_songlock.mp4,
   s10_F_warp832_ref_songlock.mp4, s10_compare_D_left_E_right_warp832.mp4.
+- Neon paste-back (user pick, no GPU; .mvwork/booth/s10/paste_sign.py): composite the guide's
+  window glow onto E with a feathered union mask. Result [M]: the original squiggle returns, but
+  from ~5 s a doubled window post shows and some mask edges read as hard lines. Cause [M]: the
+  output's window does not follow the guide's geometry; edge correlation on the window area,
+  output vs best-shifted guide, falls 0.46 (0 s) -> 0.36 (2 s) -> 0.25 (4 s) -> 0.17 (7 s) ->
+  0.16 (8 s), with the best rigid shift drifting dx +2 -> -8 -> +2, dy +6 -> +12: Meridian draws
+  a larger, re-shaped window as the camera turns, so a rigid paste cannot sit in it. Not usable;
+  kept as s10_G_sign_pasted_REJECTED_doubled_post.mp4.
