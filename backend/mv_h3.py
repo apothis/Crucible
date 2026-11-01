@@ -159,7 +159,7 @@ def chain_recipe(p, lane="ref2va"):
 
 
 def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=None, first_frame_name=None,
-                   anchor_name=None, end_frame_name=None):
+                   anchor_name=None, end_frame_name=None, guide_frames=None):
     """One scene chain as an API graph.
 
     p: {clips: [{prompt}, ...] (1-20, the six-section Ref2VA prompts, one per clip),
@@ -197,6 +197,11 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         the move is bounded by two views of the same geometry. Lane i2v feeds it as the node's
         last_frame; the reference lane anchors it at frame -1 through MiniMaxH3AddGuide. Not
         combinable with keyframes still_last / still_first_last (two guides on the last frame).
+    guide_frames: optional [(upload name, pixel frame)] pinned inside the clip through
+        MiniMaxH3AddGuide (opt-in, s.20.53, the rail): the in-between views of a camera move, e.g.
+        crops of the first frame along a push-in, so the path is held at every pin and not only at
+        its two ends. Single-clip chains only (the frames count from the clip's frame 0); a pin
+        must sit strictly between the first and last frame.
     ref_names: ComfyUI upload names of the <Picture 1..9> references, in prompt order.
         For a scripted scene that is face, body, then the person-free LOCATION still (the place
         as <Subject 2>/<Picture 3>); an environment-only scene passes the location still alone
@@ -255,6 +260,13 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         raise ValueError("anchor and keyframes still_first both guide frame 0; choose one")
     if end_frame_name and keyframes in ("still_last", "still_first_last"):
         raise ValueError("an end frame and keyframes still_last both guide the last frame; choose one")
+    guide_frames = [(str(n), int(f)) for n, f in (guide_frames or [])]
+    if guide_frames:
+        if len(clips) > 1:
+            raise ValueError("rail pictures are for single-clip chains")
+        for _, f in guide_frames:
+            if not (0 < f < frames - 1):
+                raise ValueError(f"a rail picture at frame {f} is outside frames 1..{frames - 2}")
     up_w, up_h = int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)
     upscale = bool(up_w or up_h)
     if upscale:
@@ -299,6 +311,8 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         g["29"] = {"class_type": "LoadImage", "inputs": {"image": anchor_name}}
     if end_frame_name:
         g["28"] = {"class_type": "LoadImage", "inputs": {"image": end_frame_name}}
+    for k, (name, _) in enumerate(guide_frames):
+        g[str(900 + k)] = {"class_type": "LoadImage", "inputs": {"image": name}}
     ref_video_names = list(ref_video_names or [])[:3]
     for k, name in enumerate(ref_video_names):
         g[str(60 + 2 * k)] = {"class_type": "LoadVideo", "inputs": {"file": name}}
@@ -372,6 +386,15 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                       "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": -1,
                                  "vae": ["6", 0], "image": ["28", 0]}}
             positive = [gid, 0]
+        if guide_frames and i == 0:
+            # the rail (s.20.53): each in-between view of the move at its own pixel frame, the same
+            # AddGuide again (the node cover-crops to the canvas; the caller sizes each to it)
+            for k, (_, f) in enumerate(guide_frames):
+                gid = str(950 + k)
+                g[gid] = {"class_type": "MiniMaxH3AddGuide",
+                          "inputs": {"positive": positive, "latent": [r2v, 1], "frame_idx": f,
+                                     "vae": ["6", 0], "image": [str(900 + k), 0]}}
+                positive = [gid, 0]
         clip_model = model
         if clock_fps is not None:
             # Clock compression (opt-in, free-AV plates): the pack's node retimes the packed
@@ -443,6 +466,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "keyframes": keyframes if (keyframes and ref_names) else None,
                 "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
                 "anchor_first": bool(anchor_name), "end_frame": bool(end_frame_name),
+                "rail_frames": [f for _, f in guide_frames] or None,
                 "upscale": [up_w, up_h] if upscale else None,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}

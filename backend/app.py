@@ -1115,6 +1115,13 @@ def _h3_chain(p: dict, meta=None):
                 raise HTTPException(400, f"end_still_id: {p['end_still_id']} is not a still in the library")
             with open(e_path, "rb") as f:
                 end_frame = C.upload_audio(f.read(), os.path.basename(e_path))
+        rail = []
+        for r in p.get("rail") or []:
+            r_path = _lib_image_path(r.get("still_id"))
+            if not r_path:
+                raise HTTPException(400, f"rail: {r.get('still_id')} is not a still in the library")
+            with open(r_path, "rb") as f:
+                rail.append((C.upload_audio(f.read(), os.path.basename(r_path)), int(r["frame"])))
         anchor = None
         if p.get("anchor_still_id"):
             a_path = _lib_image_path(p["anchor_still_id"])
@@ -1140,11 +1147,13 @@ def _h3_chain(p: dict, meta=None):
     def _build(q):
         graph, resolved = mv_h3_mod.build_h3_chain(q, refs, master, lock_name=lock_name, ref_video_names=ref_videos,
                                                    first_frame_name=first_frame, anchor_name=anchor,
-                                                   end_frame_name=end_frame)
+                                                   end_frame_name=end_frame, guide_frames=rail)
         resolved["audio_id"] = os.path.basename(p["audio_id"])
         resolved["first_frame_id"] = os.path.basename(str(p["first_frame_id"])) if p.get("first_frame_id") else None
         resolved["anchor_still_id"] = os.path.basename(str(p["anchor_still_id"])) if p.get("anchor_still_id") else None
         resolved["end_still_id"] = os.path.basename(str(p["end_still_id"])) if p.get("end_still_id") else None
+        resolved["rail"] = [{"still_id": os.path.basename(str(r["still_id"])), "frame": int(r["frame"])}
+                            for r in p.get("rail") or []] or None
         resolved["camera_ref"] = os.path.basename(cam_path) if cam_path else None
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
@@ -1300,6 +1309,16 @@ def mv_render_scene(p: dict):
     if end_still and keyframes in ("still_last", "still_first_last"):
         raise HTTPException(400, "an end picture and keyframes still_last both guide the last frame; choose one")
     end_still = os.path.basename(str(end_still)) if end_still else None
+    # the rail (opt-in, s.20.53): in-between views pinned along the move, filed with the end
+    # picture they lead to; any other end picture (or none) leaves the move unrailed
+    rail_rec = scene.get("rail") or {}
+    rail = [{"still_id": r["still_id"], "frame": int(r["frame"])} for r in rail_rec.get("stills") or []
+            if end_still and rail_rec.get("end_still_id") == end_still]
+    if rail and len(prompts) > 1:
+        raise HTTPException(400, "rail pictures are for single-clip scenes; this scene chains more than one clip")
+    for r in rail:
+        if not _lib_image_path(r["still_id"]):
+            raise HTTPException(400, f"rail picture {r['still_id']} is not a still in the library; make the end picture again")
     if p.get("dry_run"):
         # the gate before the GPU: what WOULD be submitted, nothing queued. settings = the exact
         # recipe/size/seed the chain would run (seed drawn now when none was sent, so a fire from
@@ -1321,13 +1340,14 @@ def mv_render_scene(p: dict):
                 "first_frame_from": first_frame_from,
                 "anchor_first": anchor_first, "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
                 "anchor_from": anchor_from, "end_still_id": end_still,
+                "rail_frames": [r["frame"] for r in rail] or None,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
                                                  "use_location_library", "dry_run", "anchor_first")}
     chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
     q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs, "lane": lane,
               "first_frame_id": first_frame, "anchor_still_id": anchor_still if anchor_first else None,
-              "end_still_id": end_still,
+              "end_still_id": end_still, "rail": rail or None,
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
               "context_frames": scene["plan"]["context_frames"]})
@@ -1341,7 +1361,8 @@ def mv_render_scene(p: dict):
                               "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                               "anchor_first": anchor_first, "anchor_from": anchor_from,
                               "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
-                              "end_still_id": end_still})
+                              "end_still_id": end_still,
+                              "rail_frames": [r["frame"] for r in rail] or None})
 
 
 def _mv_resolve_locks(raw):
@@ -1503,6 +1524,7 @@ def mv_scene_end_still(p: dict):
     if sid and not _lib_image_path(sid):
         raise HTTPException(400, "still_id must be a picture in the library")
     sc = _mv_set_scene_field(name, idx, "end_still_id", sid)
+    sc = _mv_set_scene_field(name, idx, "rail", None)    # a rail leads to the end picture it was made with
     return {"scene": idx, "end_still_id": sc.get("end_still_id")}
 
 
@@ -1514,7 +1536,15 @@ def mv_push_end_still(p: dict):
     it is. Both ends of the move are then the same geometry and the push cannot run past the
     crop. Frame 0 is the scene's opening still, else its location still (the i2v lane's rule);
     scenes that render from references only have no frame 0 to crop. Files the picture in the
-    library and on the scene. p: {script, scene, zoom (1.05-4), cx?, cy?, width?, height?}."""
+    library and on the scene. p: {script, scene, zoom (1.05-4), cx?, cy?, width?, height?,
+    rail? (seconds, 0/absent = off)}.
+
+    rail (opt-in, s.20.53): also make the in-between views every `rail` seconds of the scene's
+    clip, pinned at those frames so the path is held all the way and not only at the ends. The
+    move is a zoom at a constant rate toward the one point that the full picture and the end crop
+    share (scale zoom**(frame/last frame)), so each pin is a crop of the same picture and the last
+    one lands exactly on the end crop. No pin in the last half second (the end picture holds it).
+    Single-clip scenes only. Making the end picture again replaces the rail (or clears it)."""
     import io
     from PIL import Image
     script, name = _mv_load_script(p.get("script"))
@@ -1535,6 +1565,12 @@ def mv_push_end_still(p: dict):
     if not (1.05 <= zoom <= 4.0):
         raise HTTPException(400, "zoom must be between 1.05 and 4")
     W, H = int(p.get("width") or 1344), int(p.get("height") or 768)
+    rail_every = float(p.get("rail") or 0)
+    if rail_every and not (0.5 <= rail_every <= 5):
+        raise HTTPException(400, "rail must be between 0.5 and 5 seconds")
+    clips_n = len(scene.get("clips") or [None])
+    if rail_every and clips_n > 1:
+        raise HTTPException(400, "a rail is for single-clip scenes; this scene chains more than one clip")
     im = Image.open(_lib_image_path(src)).convert("RGB")
     w, h = im.size
     cw, ch = w / zoom, h / zoom
@@ -1551,8 +1587,32 @@ def mv_push_end_still(p: dict):
                                  kind="mv_end", extra={"push_end_of": os.path.basename(src), "zoom": zoom,
                                                         "cx": round(cx / w, 4), "cy": round(cy / h, 4)})
     _mv_set_scene_field(name, scene["index"], "end_still_id", filed["still_id"])
+    rail = []
+    if rail_every:
+        frames = int(((scene.get("plan") or {}).get("frames")) or 0)
+        if frames < 48:
+            raise HTTPException(400, "this scene has no clip plan to space a rail along")
+        last, step = frames - 1, max(1, int(round(rail_every * 24)))
+        # the fixed point P of the zoom: box_end = P + (full - P) / zoom on each edge
+        px, py = box[0] * zoom / (zoom - 1), box[1] * zoom / (zoom - 1)
+        f = step
+        while f < last - 12:
+            z = zoom ** (f / last)
+            rb = (px - px / z, py - py / z, px + (w - px) / z, py + (h - py) / z)
+            rw = max(W, int(round(rb[2] - rb[0])))
+            pic = im.resize((rw, int(round(rw * H / W))), Image.LANCZOS, box=rb)
+            rbuf = io.BytesIO()
+            pic.save(rbuf, format="PNG")
+            rf = _file_external_still(rbuf.getvalue(), f"push_rail_{name}_{scene['index']}_{f}.png",
+                                      f"{script.get('title') or name} / {int(scene['index']):02d} rail f{f} x{z:.3f}",
+                                      kind="mv_end", extra={"rail_of": filed["still_id"], "frame": f, "zoom": round(z, 4)})
+            rail.append({"still_id": rf["still_id"], "frame": f, "zoom": round(z, 4)})
+            f += step
+    _mv_set_scene_field(name, scene["index"], "rail",
+                        {"end_still_id": filed["still_id"], "every": rail_every, "stills": rail} if rail else None)
     return {"scene": scene["index"], "end_still_id": filed["still_id"], "media_url": filed["media_url"],
-            "from_still_id": os.path.basename(src), "zoom": zoom, "cx": round(cx / w, 4), "cy": round(cy / h, 4)}
+            "from_still_id": os.path.basename(src), "zoom": zoom, "cx": round(cx / w, 4), "cy": round(cy / h, 4),
+            "rail": rail or None}
 
 
 @app.post("/api/mv/render_script")

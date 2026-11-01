@@ -2149,3 +2149,33 @@ already shows her, the building and her hands, which is the user's direction. No
   `..._facts_20261029_232452_mc4_..._mc3_..._rw17_..._sp1_20261029_232657.json`.
 - Gated dry run: 14 to render at turbo 1344x768 seed 20261027, 22 passed takes, 102 s of video;
   flagged: scene 0 (sky moves / unpinned).
+
+### 20.52 End picture for a camera move (2026-11-01) [built; one take]
+- Why: on Never Yours every push inside the bar and the hall lost the room mid-move (scene 14
+  corridor push, scenes 21/39 zoom into the wide bar). User: make the moves work, do not ban them.
+- scene.end_still_id = the view the move must arrive at; i2v lane feeds it as the node's
+  last_frame, the reference lane as MiniMaxH3AddGuide at frame -1. POST /api/mv/push_end_still
+  crops the scene's first picture toward the aim point (zoom 1.05-4), stretched to the canvas
+  aspect like the first frame [V, node source: first_frame stretches, last_frame cover-crops].
+- Scene 14 take, seed 273520885, prompt unchanged ("large amplitude at fast speed"), x1.35 at
+  (0.495, 0.43): sync 0.997, lag 0, last frame = the end picture. From frames (not motion):
+  2-4 s the hall becomes a longer darker corridor with a ceiling lamp, then returns; streaky wall
+  texture 5-7 s. [H] the prompt drives harder than the bounded distance, so the middle is free.
+
+### 20.53 The rail: in-between views pinned along the move (2026-11-01) [built; checked; not rendered]
+- Source facts [V, ComfyUI comfy_extras/nodes_minimax_h3.py + comfy/ldm/minimax/model.py]:
+  MiniMaxH3AddGuide takes any pixel frame; each guide is extra conditioning tokens placed at
+  time cursor + 5/3 * frame (the same list first_frame/last_frame use), cover-cropped to the
+  canvas. Several guides chain on one conditioning.
+- push_end_still {rail: seconds} also files crops every `rail` s (no pin in the last 0.5 s):
+  a constant-rate zoom (scale zoom**(f/last)) toward the one fixed point the full picture and
+  the end crop share, so every pin is the same geometry and the series lands on the end crop.
+  Stored as scene.rail {end_still_id, every, stills[{still_id, frame, zoom}]}; used only with
+  the end picture it was made for; single-clip scenes only. build_h3_chain(guide_frames=)
+  adds LoadImage 900+k and AddGuide 950+k on clip 1; no rail = graph unchanged (checked offline).
+- Tab: "pin the path every 1.5 s" on Where the move ends (default off). The reused-seed hold now
+  compares seed AND end picture AND rail, so a same-seed comparison with a new rail is allowed.
+- Scene 14 rail (x1.35 at the same point): pins at 36/72/108/144 (x1.06/1.12/1.18/1.25), new
+  end picture equals the old one (max pixel diff 6). Tab check: seed 273520885, pinned at
+  1.5/3.0/4.5/6.0 s, no warnings. Render waiting on the box (ComfyUI :8188 and :5080 refused
+  connections 2026-11-01 10:40-11:00). One variable vs the 20.52 take: the rail.

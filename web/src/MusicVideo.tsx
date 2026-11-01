@@ -16,7 +16,7 @@ type Locked = { job_id: string; take_start: number; script: string };
 type Scene = {
   index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string;
   framing?: string; camera?: string; lighting?: string; mood?: string; action?: string; others?: string; why?: string;
-  opening_still?: string; opening_still_id?: string; end_still_id?: string; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
+  opening_still?: string; opening_still_id?: string; end_still_id?: string; rail?: { end_still_id: string; every: number; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[]; matches_location_still?: boolean;
 };
 type Refs = { face?: string; body?: string; shared?: string };
@@ -28,7 +28,7 @@ type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boole
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
-type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; sig: string };
+type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; sig: string };
 type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
@@ -664,7 +664,9 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
   const [zoomText, setZoomText] = useState("1.5");      // typed freely, clamped where it is used
   const zoom = Math.min(4, Math.max(1.05, Number(zoomText) || 1.5));
   const [c, setC] = useState({ x: 0.5, y: 0.5 });
+  const [railOn, setRailOn] = useState(false);          // opt-in: pin the in-between views too
   const [working, setWorking] = useState(false);
+  const rail = scene.rail && scene.rail.end_still_id === scene.end_still_id ? scene.rail.stills : [];
   useEffect(() => { setC({ x: 0.5, y: 0.5 }); }, [scene.index]);
   if (!startPic && !scene.end_still_id) return null;
   // the crop box as the backend clamps it, in fractions of the picture
@@ -672,7 +674,7 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
   const x0 = Math.min(Math.max(c.x - fw / 2, 0), 1 - fw), y0 = Math.min(Math.max(c.y - fh / 2, 0), 1 - fh);
   const make = async () => {
     setErr(""); setWorking(true);
-    try { await api.mvPushEndStill({ script: scriptName, scene: scene.index, zoom, cx: x0 + fw / 2, cy: y0 + fh / 2, width, height }); reload(); }
+    try { await api.mvPushEndStill({ script: scriptName, scene: scene.index, zoom, cx: x0 + fw / 2, cy: y0 + fh / 2, width, height, rail: railOn ? 1.5 : 0 }); reload(); }
     catch (e) { setErr(String((e as Error).message || e)); }
     finally { setWorking(false); }
   };
@@ -698,6 +700,8 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <label className="flex items-center gap-1">push to <input type="number" min={1.05} max={4} step={0.05} value={zoomText} className={`${inp} w-20`}
                 onChange={(e) => setZoomText(e.target.value)} />x closer</label>
+              <label className="flex items-center gap-1" title="also pin a crop every 1.5 s along the push, so the camera's path is held all the way and not only at its two ends">
+                <input type="checkbox" checked={railOn} onChange={(e) => setRailOn(e.target.checked)} />pin the path every 1.5 s</label>
               <GhostButton onClick={make} disabled={busy || working}>{working ? "making..." : scene.end_still_id ? "make it again" : "make the end picture"}</GhostButton>
             </div>
           </div>
@@ -707,6 +711,19 @@ function EndOfMove({ scene, startPic, scriptName, width, height, busy, setErr, r
           {scene.end_still_id ? (
             <>
               <img src={`/api/media/${scene.end_still_id}`} alt="" className="block w-full rounded" />
+              {rail.length ? (
+                <div className="mt-2">
+                  <div className="mb-1 text-[11px] text-[var(--color-muted)]">pinned on the way: {rail.length} pictures</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {rail.map((r) => (
+                      <div key={r.still_id} className="text-[10px] text-[var(--color-muted)]">
+                        <img src={`/api/media/${r.still_id}`} alt="" className="block w-full rounded" />
+                        {(r.frame / 24).toFixed(1)} s, x{r.zoom.toFixed(2)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-2"><GhostButton onClick={clear} disabled={busy}>remove the end picture</GhostButton></div>
             </>
           ) : <div className="flex aspect-video items-center justify-center rounded border border-dashed border-[var(--color-line)] text-xs text-[var(--color-muted)]">no end picture</div>}
@@ -749,11 +766,15 @@ function TakesStep(p: {
     finally { setBusyMsg(""); }
   };
   // a seed that already made a take of this scene would most likely make the same take again
-  const seedUsed = (idx: number, sd: unknown) => sd != null && list(idx).some((t) => String(t.params?.seed) === String(sd));
+  // a take with this seed AND the same end picture and rail would come out the same; the same seed
+  // with a different end picture or rail is a controlled comparison, not a repeat
+  const seedUsed = (idx: number, sd: unknown, dr?: Dry) => sd != null && list(idx).some((t) => String(t.params?.seed) === String(sd)
+    && (t.params?.end_still_id || null) === (dr?.end_still_id || null)
+    && JSON.stringify(t.params?.rail_frames || null) === JSON.stringify(dr?.rail_frames || null));
   const canRender = (idx: number) => {
     const dr = dry[idx];
     const endNow = script.scenes.find((x) => x.index === idx)?.end_still_id || null;
-    return !!dr && dr.sig === sig() && (dr.end_still_id || null) === endNow && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed);
+    return !!dr && dr.sig === sig() && (dr.end_still_id || null) === endNow && (dr.flags.length === 0 || p.acceptFlags) && !seedUsed(idx, dr.settings?.seed, dr);
   };
   const doRender = async (idx: number) => {
     const dr = dry[idx];
@@ -991,9 +1012,10 @@ function TakesStep(p: {
                     <span>{dr.clips} clip{dr.clips === 1 ? "" : "s"}</span><span>{dr.settings?.width}x{dr.settings?.height}</span><span>seed {dr.settings?.seed}</span>
                     <span>{dr.settings?.turbo ? "turbo" : "base"}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
                     {dr.end_still_id ? <span>ends on the end picture</span> : null}
+                    {dr.rail_frames?.length ? <span>pinned on the way at {dr.rail_frames.map((f) => (f / 24).toFixed(1)).join(", ")} s</span> : null}
                     {dr.sig !== sig() || (dr.end_still_id || null) !== (scene.end_still_id || null) ? <span className="text-amber-400">settings changed since the check: check again</span> : null}
                   </div>
-                  {seedUsed(scene.index, dr.settings?.seed) && <div className="mt-1 text-amber-300">seed {dr.settings?.seed} already made a take of this scene, so it would most likely come out the same. Clear the seed in the render settings and check again for a new one.</div>}
+                  {seedUsed(scene.index, dr.settings?.seed, dr) && <div className="mt-1 text-amber-300">seed {dr.settings?.seed} already made a take of this scene with the same end picture, so it would most likely come out the same. Clear the seed in the render settings and check again for a new one.</div>}
                   {dr.flags.length ? <ul className="mt-1 list-disc pl-4 text-amber-300">{dr.flags.map((f, i) => <li key={i}>{f}</li>)}</ul> : <div className="mt-1 text-emerald-500">no warnings: ready to render</div>}
                 </div>
               )}
