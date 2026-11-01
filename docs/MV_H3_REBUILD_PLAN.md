@@ -2185,3 +2185,13 @@ already shows her, the building and her hands, which is the user's direction. No
   (no invented corridor or ceiling lamp at 2-4 s, no wall streaks at 5-7 s), scale grows
   steadily to the end picture. Motion (smoothness, any stepping at the pins) not judged: user
   watches. A/B copies: .mvwork/rail_s14/s14_A_end_picture_only_*.mp4, s14_B_rail_pins_*.mp4.
+- Bar, reference lane (2026-11-01, user go): scenes 21 and 39 got opening stills WITH her (GPT,
+  1672x941), end x1.30 at the last booth (0.55, 0.43), rail every 1.5 s. Crops cut from the
+  still centre-cropped to the canvas (AddGuide cover-crops), and a rail on the reference lane pins
+  frame 0 to the opening still (anchor_from "rail"); graph verified on :8188 (AddGuide 108 f0,
+  109 f-1, 950-953). Seed 20261027 = the old free-move takes. Checks: 21 floor_r 0.997, 39
+  0.995, lag 0, no flags. Frames: the room holds at every sampled time in both (the old takes
+  rebuild the bar each second); both people stay in the booth with small head turns. 39's
+  scripted reach to the keys in the first 4 s is not visible in any sampled frame [H: the pins
+  at 1.5/3.0 s hold the opening pose]. Motion and identity are the user's to judge.
+  A/B: .mvwork/rail_bar/s{21,39}_A_free_move_*.mp4 vs s{21,39}_B_rail_*.mp4.
