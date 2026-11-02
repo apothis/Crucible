@@ -1582,6 +1582,18 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
   const nUpDone = planned.filter((x) => upOf(x.job)?.status === "done").length;
   const nUpBusy = planned.filter((x) => upscaleBusy(upOf(x.job))).length;
   const toUpscale = planned.filter((x) => { const u = upOf(x.job); return !u || u.status === "error"; });
+  const nUpRunning = planned.filter((x) => { const s = upOf(x.job)?.status; return s === "running" || s === "finalizing"; }).length;
+  const upLeftSecs = planned.filter((x) => upOf(x.job)?.status !== "done")
+    .reduce((a, x) => a + (takeById[x.job!]?.seconds || (x.sc.end - x.sc.start)), 0);
+  // "upscale all" uploads every take before it answers (about 8 s each, 6 min for a whole video):
+  // meanwhile the takes are re-read so each one shows up as it reaches the box
+  const [upSending, setUpSending] = useState<{ total: number; before: number } | null>(null);
+  useEffect(() => {
+    if (!upSending) return;
+    const t = window.setInterval(() => { refreshTakes().catch(() => undefined); }, 4000);
+    return () => window.clearInterval(t);
+  }, [upSending]); // eslint-disable-line react-hooks/exhaustive-deps
+  const upSent = upSending ? Math.min(upSending.total, Math.max(0, nUpBusy + nUpDone - upSending.before)) : 0;
 
   const cut = cuts.find((c) => c.stamp === copyFrom) || null;
   const cutChanges = cut ? script.scenes.filter((sc) => cut.jobs[String(sc.index)] && cut.jobs[String(sc.index)] !== sc.locked?.job_id) : [];
@@ -1604,6 +1616,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
     const mins = Math.max(1, Math.round((secs * UPSCALE_SECS_PER_SEC) / 60));
     if (!window.confirm(`Upscale ${toUpscale.length} take${toUpscale.length === 1 ? "" : "s"} 2x with FlashVSR+ on the box? They run one after another: ${secs.toFixed(0)} s of video, roughly ${mins} min.`)) return;
     setErr(""); setMsg(""); setBusy(true);
+    setUpSending({ total: toUpscale.length, before: nUpBusy + nUpDone });
     try {
       const jobs: Record<string, string> = {};
       toUpscale.forEach((x) => { jobs[String(x.sc.index)] = x.job!; });
@@ -1611,7 +1624,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
       setMsg(`queued ${r.queued?.length || 0} upscales${r.skipped?.length ? `, skipped ${r.skipped.length}` : ""}`);
       await refreshTakes();
     } catch (e) { setErr(String((e as Error).message || e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setUpSending(null); }
   };
   const previewIdent = async () => {
     setIdentBusy(true); setErr("");
@@ -1701,7 +1714,13 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
             </div>
             {q.up && (
               <div className={`rounded-lg border p-2.5 text-xs space-y-2 ${nUpDone === planned.length ? "border-emerald-800" : "border-amber-700"}`}>
-                <div>{nUpDone} of {planned.length} takes upscaled{nUpBusy ? ` · ${nUpBusy} upscaling on the box now` : ""}</div>
+                <div>{nUpDone} of {planned.length} takes upscaled{nUpBusy ? ` · ${nUpRunning} upscaling now, ${nUpBusy - nUpRunning} waiting in the box queue` : ""}{nUpBusy ? ` · about ${Math.max(1, Math.round((upLeftSecs * UPSCALE_SECS_PER_SEC) / 60))} min left` : ""}</div>
+                {(nUpBusy > 0 || upSending) && (
+                  <div className="h-1.5 w-full overflow-hidden rounded bg-[var(--color-line)]">
+                    <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${planned.length ? (100 * nUpDone) / planned.length : 0}%` }} />
+                  </div>
+                )}
+                {upSending && <div className="text-amber-400">sending the takes to the box: {upSent} of {upSending.total} sent (each one uploads in about 8 s; the box starts on the first straight away)</div>}
                 {toUpscale.length > 0 && <GhostButton onClick={upscaleAll} disabled={busy}>upscale the {toUpscale.length} missing on the box (GPU)</GhostButton>}
               </div>
             )}
