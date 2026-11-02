@@ -282,26 +282,31 @@ def endcard_layout(width=1920, height=1080):
 
 
 def endcard_plate(out_path, band_text, band_font, band_treatment, more_text="",
-                  width=1920, height=1080, look=None):
+                  width=1920, height=1080, look=None, window=True):
     """The static overlay for the end-card segment of the card-visualizer video: a light
     darkening of the whole frame, a heavier dim over the card window (the loop keeps
     moving underneath, muted), the card border, the band wordmark and a 'More from ...'
-    line. Transparent otherwise; no element panels (see ENDCARD_LAYOUT)."""
+    line. Transparent otherwise; no element panels (see ENDCARD_LAYOUT).
+    window=False leaves out the card window's dim and border: a music video fills the whole
+    frame, so there is no card window (user 2026-11-02)."""
     L = {k: round(v * width / 1920) for k, v in CARD_LAYOUT.items()}
     E = endcard_layout(width, height)
     img = Image.new("RGBA", (width, height), (0, 0, 0, E["frame_dim"]))
     d = ImageDraw.Draw(img)
-    d.rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
-                fill=(0, 0, 0, E["window_dim"]))
+    if window:
+        d.rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                    fill=(0, 0, 0, E["window_dim"]))
     if look and look.get("backdrop"):
-        d.rectangle([L["card_x"] - 1, L["card_y"] - 1, L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
-                    outline=look["ivory"] + (look["border_alpha"],), width=1)
+        if window:
+            d.rectangle([L["card_x"] - 1, L["card_y"] - 1, L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                        outline=look["ivory"] + (look["border_alpha"],), width=1)
         _modern_column(img, look, band_text, None, None, width, height, more_text=more_text)
         img.save(out_path, format="PNG")
         return out_path
-    d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
-                 L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
-                outline=(210, 190, 160, 70), width=4)
+    if window:
+        d.rectangle([L["card_x"] - 4, L["card_y"] - 4,
+                     L["card_x"] + L["card_w"] + 4, L["card_y"] + L["card_h"] + 4],
+                    outline=(210, 190, 160, 70), width=4)
     if str(band_text or "").strip():
         wm = render_wordmark(band_text, band_font, band_treatment, height=260)
         f = min(L["col_w"] / wm.width, L["band_max_h"] / wm.height, 1.0)

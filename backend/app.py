@@ -2099,7 +2099,7 @@ def _mv_assemble_run(p: dict, progress=None):
             ec_plate = os.path.join(out_dir, "endcard_plate.png")
             wordmark_mod.endcard_plate(ec_plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
                                        str(wmc.get("treatment") or "ember"), more, width=w, height=h,
-                                       look=wordmark_mod.look_of(wmc))
+                                       look=wordmark_mod.look_of(wmc), window=False)
             res["end_card"] = {"secs": ec_secs, "text": more}
         final = os.path.join(out_dir, f"{p.get('name') or slug + '_final'}.mp4")
         fin = mv_finish_mod.finish_cut(out, final, w, h, ident_path=ident_path, endcard_plate=ec_plate,
