@@ -3805,11 +3805,12 @@ def youtube_loopify(body: dict):
 
 
 @app.get("/api/youtube/endcard_preview")
-def youtube_endcard_preview(text: str = "", res: str = "1080p"):
+def youtube_endcard_preview(text: str = "", res: str = "1080p", window: bool = True):
     """PNG preview of the end-card plate (wordmark + 'More from' line + the two video
     panels + subscribe circle) over a dark canvas with the card window marked - what
     the final seconds of a card-layout video look like before YouTube overlays its
-    elements. Query: text (the 'More from ...' line), res."""
+    elements. Query: text (the 'More from ...' line), res, window (false = music video
+    end card: no card window, the video fills the frame)."""
     import io
     from PIL import Image, ImageDraw
     w, h = (3840, 2160) if str(res).lower() == "4k" else (1920, 1080)
@@ -3818,11 +3819,12 @@ def youtube_endcard_preview(text: str = "", res: str = "1080p"):
     plate = _yt_scratch("endcard_preview.png")
     wordmark_mod.endcard_plate(plate, str(wmc.get("text") or ""), str(wmc.get("font") or "luminari"),
                                str(wmc.get("treatment") or "ember"), more, width=w, height=h,
-                               look=wordmark_mod.look_of(wmc))
+                               look=wordmark_mod.look_of(wmc), window=window)
     base = Image.new("RGBA", (w, h), (12, 8, 6, 255))
-    L = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
-    ImageDraw.Draw(base).rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
-                                   fill=(40, 30, 28, 255))
+    if window:
+        L = {k: round(v * w / 1920) for k, v in wordmark_mod.CARD_LAYOUT.items()}
+        ImageDraw.Draw(base).rectangle([L["card_x"], L["card_y"], L["card_x"] + L["card_w"], L["card_y"] + L["card_h"]],
+                                       fill=(40, 30, 28, 255))
     base.alpha_composite(Image.open(plate).convert("RGBA"))
     buf = io.BytesIO()
     base.convert("RGB").resize((960, 540)).save(buf, format="PNG")

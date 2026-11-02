@@ -1750,7 +1750,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
                 </Field>
                 <Field label="text"><input className={inp} value={ecText} onChange={(e) => setEcText(e.target.value)} placeholder="More from Apotheon" /></Field>
               </div>
-              <img src={`/api/youtube/endcard_preview?text=${encodeURIComponent(ecText)}&t=${encodeURIComponent(ecText.length)}`} alt="" className="w-full rounded border border-[var(--color-line)]" />
+              <img src={`/api/youtube/endcard_preview?window=false&text=${encodeURIComponent(ecText)}&t=${encodeURIComponent(ecText.length)}`} alt="" className="w-full rounded border border-[var(--color-line)]" />
               <div className="text-[11px] text-[var(--color-muted)]">in YouTube Studio, put the "two videos + subscribe" end screen over it</div>
             </>}
           </Card>
