@@ -1547,6 +1547,17 @@ def mv_scene_still_set(p: dict):
 MV_BATCHES: Dict[str, dict] = {}
 
 
+def _box_answering(timeout=5) -> bool:
+    """True when ComfyUI on the box takes a connection (GET /system_stats)."""
+    try:
+        return requests.get(f"{C.base}/system_stats", timeout=timeout).ok
+    except Exception:
+        return False
+
+
+BOX_DOWN = f"the box is not answering (ComfyUI at {HOST})"
+
+
 def _mv_set_scene_field(script_name, idx, key, value):
     """Write (value) or remove (None) one field on a scene of a SAVED script. Returns the scene."""
     path = os.path.join(mv_takes_mod.scripts_dir(LIBRARY), script_name)
@@ -1746,26 +1757,50 @@ def mv_render_script(p: dict):
         q = {k: v for k, v in p.items() if k != "async"}
         if not q.get("from_dry"):
             raise HTTPException(400, "a live batch fires from a dry run: send {from_dry: <the dry manifest>}")
+        if not _box_answering():
+            raise HTTPException(503, f"{BOX_DOWN}: nothing was sent. Check the box, then send again.")
+        # the song and the scene count, so the tab can find this batch again after leaving the step
+        script_name, total = None, None
+        try:
+            with open(os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_batches", os.path.basename(q["from_dry"]))) as f:
+                dman = json.load(f)
+            accept = {int(x) for x in (q.get("accept_flags") or [])}
+            script_name = dman.get("script")
+            total = sum(1 for r in dman.get("scenes", []) if r.get("status") == "dry" and (not r.get("flags") or int(r["index"]) in accept))
+        except Exception:
+            pass
         jid = uuid.uuid4().hex
         rows = []
         with LOCK:
-            MV_BATCHES[jid] = {"status": "sending", "created": time.time(), "rows": rows}
+            MV_BATCHES[jid] = {"status": "sending", "created": time.time(), "rows": rows, "script": script_name, "total": total}
 
         def run():
             try:
                 res = _mv_render_script_run(q, rows_out=rows)
                 with LOCK:
-                    MV_BATCHES[jid].update(status="done", counts=res.get("counts"), manifest=res.get("manifest"))
+                    MV_BATCHES[jid].update(status="error" if res.get("stopped") else "done", error=res.get("stopped"),
+                                           counts=res.get("counts"), manifest=res.get("manifest"))
             except HTTPException as e:
                 with LOCK:
                     MV_BATCHES[jid].update(status="error", error=e.detail if isinstance(e.detail, str) else json.dumps(e.detail))
             except Exception as e:
                 with LOCK:
                     MV_BATCHES[jid].update(status="error", error=str(e))
+            with LOCK:
+                MV_BATCHES[jid]["ended"] = time.time()
 
         threading.Thread(target=run, daemon=True).start()
         return {"job_id": jid, "status": "sending"}
     return _mv_render_script_run(p)
+
+
+def _mv_batch_view(jid: str, j: dict) -> dict:
+    rows = list(j["rows"])
+    return {"id": jid, "status": j["status"], "error": j.get("error"), "counts": j.get("counts"),
+            "manifest": j.get("manifest"), "seconds": round(time.time() - j["created"], 1),
+            "script": j.get("script"), "total": j.get("total"),
+            "ended_ago": round(time.time() - j["ended"], 1) if j.get("ended") else None,
+            "rows": [{k: r.get(k) for k in ("index", "title", "status", "error", "job_id")} for r in rows]}
 
 
 @app.get("/api/mv/render_script_job/{jid}")
@@ -1774,10 +1809,19 @@ def mv_render_script_job(jid: str):
         j = MV_BATCHES.get(jid)
         if not j:
             raise HTTPException(404, "no such batch (the backend may have restarted)")
-        rows = list(j["rows"])
-    return {"id": jid, "status": j["status"], "error": j.get("error"), "counts": j.get("counts"),
-            "manifest": j.get("manifest"), "seconds": round(time.time() - j["created"], 1),
-            "rows": [{k: r.get(k) for k in ("index", "title", "status", "error", "job_id")} for r in rows]}
+        return _mv_batch_view(jid, j)
+
+
+@app.get("/api/mv/render_script_latest")
+def mv_render_script_latest(script: str):
+    """The newest background batch for a script (since the backend started), so the tab picks its
+    progress back up after leaving the step or reloading. {job: null} when there is none."""
+    with LOCK:
+        mine = [(jid, j) for jid, j in MV_BATCHES.items() if j.get("script") == script]
+        if not mine:
+            return {"job": None}
+        jid, j = max(mine, key=lambda x: x[1]["created"])
+        return {"job": _mv_batch_view(jid, j)}
 
 
 SCENE_RECIPE_KEYS = ("turbo", "steps", "sampler", "scheduler")
@@ -1833,6 +1877,7 @@ def _mv_render_script_run(p: dict, rows_out=None):
                                                      "from_dry", "accept_flags")}
     rows = rows_out if rows_out is not None else []
     first_live = True
+    stopped = None
     for sc in script["scenes"]:
         idx = sc["index"]
         row = {"index": idx, "title": sc.get("title"), "start": sc["start"], "end": sc["end"],
@@ -1866,10 +1911,13 @@ def _mv_render_script_run(p: dict, rows_out=None):
             req["free"] = None if first_live else False
         try:
             r = mv_render_scene(req)
-        except HTTPException as e:
-            row.update({"job_id": None, "status": "error", "error": e.detail}); rows.append(row); continue
         except Exception as e:
-            row.update({"job_id": None, "status": "error", "error": str(e)}); rows.append(row); continue
+            row.update({"job_id": None, "status": "error", "error": e.detail if isinstance(e, HTTPException) else str(e)})
+            rows.append(row)
+            if not dry and not _box_answering():   # the box went away: stop instead of failing every scene left
+                stopped = f"{BOX_DOWN}: stopped at scene {idx}, the scenes after it were not sent. Check the box, then check and send again."
+                break
+            continue
         if dry:
             row.update({"job_id": None, "status": "dry", "lane": r.get("lane"), "first_frame_id": r.get("first_frame_id"),
                         "first_frame_from": r.get("first_frame_from"), "location_ref_id": r.get("location_ref_id"),
@@ -1895,6 +1943,8 @@ def _mv_render_script_run(p: dict, rows_out=None):
     manifest["manifest"] = mpath
     manifest["counts"] = {k: sum(1 for r in rows if r["status"] == k) for k in ("queued", "dry", "existing", "skipped", "error", "blocked")}
     manifest["flagged"] = [r["index"] for r in rows if r.get("flags")]
+    if stopped:
+        manifest["stopped"] = stopped
     return manifest
 
 

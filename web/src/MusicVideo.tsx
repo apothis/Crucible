@@ -1215,12 +1215,22 @@ function TakesStep(p: {
       setBJob({ id: (r as { job_id: string }).job_id, status: "sending", rows: [], total: bSendable });
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
+  // coming back to the step (or reloading): pick up this song's batch if it is still sending or
+  // ended in the last half hour, so its progress and errors show again
+  useEffect(() => {
+    let live = true;
+    api.mvRenderScriptLatest(scriptName).then((r) => {
+      const j = (r as { job: (BatchJob & { ended_ago?: number | null }) | null }).job;
+      if (live && j && (j.status === "sending" || (j.ended_ago ?? Infinity) < 1800)) setBJob((b) => b ?? j);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [scriptName]);
   useEffect(() => {
     if (!bJob || bJob.status !== "sending") return;
     const t = window.setInterval(async () => {
       try {
         const j = (await api.mvRenderScriptJob(bJob.id)) as BatchJob;
-        setBJob((b) => ({ ...j, total: b?.total }));
+        setBJob((b) => ({ ...j, total: j.total ?? b?.total }));
         await p.refreshTakes();
         if (j.status !== "sending") setBDry(null);
       } catch (e) { setErr(String((e as Error).message || e)); setBJob((b) => (b ? { ...b, status: "error" } : b)); }

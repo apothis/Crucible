@@ -127,6 +127,7 @@ export const api = {
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),
   mvRenderScript: (p: unknown) => jpost("/api/mv/render_script", p),   // dry_run first; a fire = {from_dry, accept_flags, async}
   mvRenderScriptJob: (id: string) => jget(`/api/mv/render_script_job/${id}`),   // dry_run: true = the gate, nothing queued
+  mvRenderScriptLatest: (script: string) => jget(`/api/mv/render_script_latest?script=${encodeURIComponent(script)}`),   // {job: null | the newest batch}
   mvSceneStill: (fd: FormData) => jform("/api/mv/scene_still", fd),  // file + script + scene (+ label)
   mvLocations: () => jget("/api/mv/locations"),                       // the place library: {locations: [{id, still_id, still_present, ...}]}
   mvLocationImport: (p: { script: string; location_id: string; still_id: string }) => jpost("/api/mv/locations/import", p), // link a library picture to a script's place
