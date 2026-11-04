@@ -28,7 +28,7 @@ type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boole
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
-type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
+type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; anchor_first?: boolean; anchor_from?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
 type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "empty"; idx: number; take: string } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
@@ -840,14 +840,16 @@ const SCHEDULERS: [string, string][] = [
   ["simple", "simple (current default)"], ["beta", "beta"], ["normal", "normal"],
 ];
 const stepsLabel = (turbo: boolean, steps: string) => steps.trim() || (turbo ? "8" : "20");
-// one scene's recipe; steps "" = the recipe's own (8 turbo, 20 base)
-type Recipe = { turbo: boolean; steps: string; sampler: string; scheduler: string };
+// one scene's recipe; steps "" = the recipe's own (8 turbo, 20 base). anchor (opt-in, off by
+// default): a scene she is in starts on its own opening picture (backend anchor_first; the face
+// and body pictures still carry her identity). Environment scenes already start on theirs.
+type Recipe = { turbo: boolean; steps: string; sampler: string; scheduler: string; anchor: boolean };
 // user 2026-11-01: turbo warped the room on camera moves (Never Yours booth scenes) and base cleared
 // every one first try, so a camera move defaults to base and only a static scene to turbo
 // (the backend's scene_default_turbo is the same rule)
 const sceneMoves = (sc: Scene) => (sc.camera || "static").trim() !== "static";
-const sceneDefaultRecipe = (sc: Scene): Recipe => ({ turbo: !sceneMoves(sc), steps: "", sampler: DEFAULT_SAMPLER, scheduler: DEFAULT_SCHEDULER });
-const recipeText = (r: Recipe) => `${r.turbo ? "turbo" : "base"}, ${stepsLabel(r.turbo, r.steps)} steps, ${r.sampler}/${r.scheduler}`;
+const sceneDefaultRecipe = (sc: Scene): Recipe => ({ turbo: !sceneMoves(sc), steps: "", sampler: DEFAULT_SAMPLER, scheduler: DEFAULT_SCHEDULER, anchor: false });
+const recipeText = (r: Recipe) => `${r.turbo ? "turbo" : "base"}, ${stepsLabel(r.turbo, r.steps)} steps, ${r.sampler}/${r.scheduler}${r.anchor ? ", starts on its picture" : ""}`;
 
 const MERIDIAN_MAX_FRAMES = 243;   // backend/mv_meridian.py MERIDIAN_LENGTHS[-1]
 
@@ -1064,6 +1066,7 @@ function TakesStep(p: {
     if (r.steps.trim() && Number.isInteger(n) && n > 0) b.steps = n;
     if (r.sampler && r.sampler !== DEFAULT_SAMPLER) b.sampler = r.sampler;
     if (r.scheduler && r.scheduler !== DEFAULT_SCHEDULER) b.scheduler = r.scheduler;
+    if (r.anchor) b.anchor_first = true;
     return b;
   };
   const renderBody = (idx: number, dryRun: boolean, pinSeed?: number) => {
@@ -1428,7 +1431,7 @@ function TakesStep(p: {
                 <div className={`rounded border p-2 text-[11px] ${dr.sig !== sig(scene.index) || dr.flags.length ? "border-amber-700" : "border-emerald-800"}`}>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[var(--color-muted)]">
                     <span>{dr.clips} clip{dr.clips === 1 ? "" : "s"}</span><span>{dr.settings?.width}x{dr.settings?.height}</span><span>seed {dr.settings?.seed}</span>
-                    <span>{dr.settings?.turbo ? "turbo" : "base"}, {dr.settings?.steps} steps, {dr.settings?.sampler || rc.sampler}/{dr.settings?.scheduler || rc.scheduler}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures</span>}
+                    <span>{dr.settings?.turbo ? "turbo" : "base"}, {dr.settings?.steps} steps, {dr.settings?.sampler || rc.sampler}/{dr.settings?.scheduler || rc.scheduler}</span>{dr.lane === "i2v" ? <span>starts on {dr.first_frame_id ? "a picture" : "the place's picture"}</span> : <span>renders from the singer's and the place's pictures{dr.anchor_first ? ", starting on this scene's picture" : ""}</span>}
                     {dr.variant === "still" ? <span>still version (camera static)</span> : null}
                     {dr.end_still_id ? <span>ends on the end picture</span> : null}
                     {dr.rail_frames?.length ? <span>pinned on the way at {dr.rail_frames.map((f) => (f / 24).toFixed(1)).join(", ")} s</span> : null}
@@ -1443,6 +1446,13 @@ function TakesStep(p: {
                 <div className="mt-2 text-[11px] text-[var(--color-muted)]">This scene only ({moving ? "camera move: base by default, turbo warped the room on moves" : "static camera: turbo by default"}):</div>
                 <div className="mt-1 grid grid-cols-2 gap-2 md:grid-cols-4">
                   <label className="flex items-end gap-2 pb-2 text-xs"><input type="checkbox" checked={rc.turbo} onChange={(e) => p.setRecipe(scene, { turbo: e.target.checked })} /> turbo</label>
+                  {!envOnly(scene) && (
+                    <label className={`col-span-2 flex items-end gap-2 pb-2 text-xs md:col-span-3 ${scene.opening_still_id ? "" : "opacity-50"}`}
+                      title="Off: her scenes render from her face, body and place pictures only. On: the clip starts on this scene's picture (step 3), and her face and body pictures still keep her identity. Untested on most scenes: judge the take.">
+                      <input type="checkbox" checked={rc.anchor} disabled={!scene.opening_still_id && !rc.anchor} onChange={(e) => p.setRecipe(scene, { anchor: e.target.checked })} />
+                      start on this scene's picture{scene.opening_still_id ? "" : " (add one in step 3 first)"}
+                    </label>
+                  )}
                   <Field label="steps" hint={`blank = ${rc.turbo ? "8 (the turbo recipe)" : "20 (the base recipe)"}`}>
                     <input className={inp} type="number" min={1} max={60} placeholder={rc.turbo ? "8" : "20"} value={rc.steps} onChange={(e) => p.setRecipe(scene, { steps: e.target.value })} /></Field>
                   <Field label="sampler" hint={SAMPLERS.find(([v]) => v === rc.sampler)?.[2] || ""}>

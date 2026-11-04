@@ -1824,7 +1824,7 @@ def mv_render_script_latest(script: str):
         return {"job": _mv_batch_view(jid, j)}
 
 
-SCENE_RECIPE_KEYS = ("turbo", "steps", "sampler", "scheduler")
+SCENE_RECIPE_KEYS = ("turbo", "steps", "sampler", "scheduler", "anchor_first")
 
 
 def _mv_render_script_run(p: dict, rows_out=None):
@@ -1833,8 +1833,9 @@ def _mv_render_script_run(p: dict, rows_out=None):
     one after another. p: {script, ref_ids: [face, body], skip?: [scene indexes], only?: [indexes],
         existing?: {index: job_id} (scenes already rendered on this text, carried into the manifest
         for assembly), dry_run?, plus the common render_scene knobs (seed, turbo, width, height,
-        attention, crf ...), per_scene?: {index: {turbo?, steps?, sampler?, scheduler?}} (the tab's
-        per-scene recipe, laid over the common knobs for that scene)}.
+        attention, crf ...), per_scene?: {index: {turbo?, steps?, sampler?, scheduler?, anchor_first?}} (the tab's
+        per-scene recipe, laid over the common knobs for that scene; anchor_first = start her
+        scene on its opening still, opt-in per scene)}.
     Scenes are submitted with free=False so the box is never freed under a running job; ComfyUI
     swaps the fl2va/ref2va weights itself between jobs. Writes a batch manifest under
     .mvwork/mv_batches/ (scene -> job_id) that /api/mv/assemble reads. Errors on one scene are
