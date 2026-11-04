@@ -2779,7 +2779,9 @@ def mv_rewrite_scene(p: dict):
     p: {script (saved name under .mvwork/mv_scripts), scene (0-based index), provider?, model?,
         effort?, set?: {scene fields to change before the pass, from: action, camera, keep_in_frame,
         framing, lighting, mood, setting, anchor_figure (bool: one distant anonymous figure as the
-        shot's real-time anchor, the writer's only exception to no-other-people)}}.
+        shot's real-time anchor, the writer's only exception to no-other-people), others, performance,
+        title, location (one of the script's location ids), opening_still (the picture prompt)}; a new
+        framing, performance, location or picture prompt drops the filed opening still}.
     Returns {files, scene, title, set, problems, text, prompts, log}."""
     script, name = _mv_load_script(p.get("script"))
     try:
@@ -2789,12 +2791,14 @@ def mv_rewrite_scene(p: dict):
         raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
     changes = p.get("set") or {}
     allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure", "others",
-               "performance", "title")
+               "performance", "title", "location", "opening_still")
     bad = [k for k in changes if k not in allowed]
     if bad:
         raise HTTPException(400, f"set: unknown scene fields {bad}; allowed {list(allowed)}")
-    if ("framing" in changes and changes["framing"] != sc.get("framing")) or \
-       ("performance" in changes and changes["performance"] != sc.get("performance")):
+    loc_ids = [l.get("id") for l in script.get("locations") or []]
+    if "location" in changes and changes["location"] not in loc_ids:
+        raise HTTPException(400, f"set.location must be one of the script's locations {loc_ids}")
+    if any(k in changes and changes[k] != sc.get(k) for k in ("framing", "performance", "location", "opening_still")):
         sc.pop("opening_still_id", None)       # made for the old shot
     sc.update(changes)
     sc.pop("locked", None)                     # rewritten text = a new shot: it re-renders
