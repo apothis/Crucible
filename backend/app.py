@@ -1966,14 +1966,14 @@ def mv_assemble(p: dict):
     plate the YouTube tab uses); file: true files the result in the library as a Music video;
     async: true runs the whole cut as a background job -> {job_id} (poll /api/job/{id}, then
     GET /api/mv/assemble_result/{id}). A partial cut ignores intro and end_card. use_upscaled: true
-    cuts each take's newest FlashVSR+ upscale where one exists (POST /api/mv/upscale_takes); the
-    result lists which scenes had one."""
+    cuts each take's newest upscale where one exists (POST /api/mv/upscale_takes), from
+    upscale_engine (flashvsr_plus, the default | seedvr2); the result lists which scenes had one."""
     if p.get("async"):
         jid = uuid.uuid4().hex
         script_obj, sname = _mv_load_script(p.get("script")) if p.get("script") else (None, None)
         params = {"script": sname, "title": (script_obj or {}).get("title"), "partial": bool(p.get("partial")),
                   "intro": p.get("intro"), "end_card": p.get("end_card"), "width": p.get("width"), "height": p.get("height"),
-                  "use_upscaled": bool(p.get("use_upscaled"))}
+                  "use_upscaled": bool(p.get("use_upscaled")), "upscale_engine": p.get("upscale_engine") or "flashvsr_plus"}
         with LOCK:
             JOBS[jid] = {"created": time.time(), "mode": "musicvideo", "status": "running",
                          "progress": 0, "max": 1, "params": params}
@@ -2052,7 +2052,7 @@ def _mv_assemble_run(p: dict, progress=None):
     if not src:
         raise HTTPException(400, "the script's song is not in the library")
     missing, parts = [], []
-    # use_upscaled: a take's newest FlashVSR+ upscale stands in for it (same frames and rate, so the
+    # use_upscaled: a take's newest upscale of upscale_engine stands in for it (same frames and rate, so the
     # trims below hold); takes without one stay as rendered and are listed in the result
     up_rows = _mv_upscale_rows() if p.get("use_upscaled") else []
     upscaled, not_upscaled = {}, []
@@ -2063,7 +2063,7 @@ def _mv_assemble_run(p: dict, progress=None):
             missing.append({"index": sc["index"], "title": sc.get("title"), "job_id": j})
         else:
             if p.get("use_upscaled"):
-                uid, upath = mv_takes_mod.upscale_path(up_rows, j, LIBRARY)
+                uid, upath = mv_takes_mod.upscale_path(up_rows, j, LIBRARY, p.get("upscale_engine") or "flashvsr_plus")
                 if upath:
                     upscaled[sc["index"]], path = uid, upath
                 else:
@@ -3119,7 +3119,7 @@ def mv_takes(script: str, scene: Optional[int] = None):
 
 
 def _mv_upscale_rows():
-    """Every FlashVSR+ upscale job: finished library rows plus the in-memory running/failed ones."""
+    """Every upscale job (FlashVSR+ and SeedVR2): finished library rows plus the in-memory running/failed ones."""
     rows = []
     with db() as conn:
         for r in conn.execute("SELECT id, created, status, params FROM jobs WHERE mode='videoclip' AND status='done' "
@@ -3137,20 +3137,25 @@ def _mv_upscale_rows():
 
 @app.post("/api/mv/upscale_takes")
 def mv_upscale_takes(p: dict):
-    """FlashVSR+ 2x upscale of takes (GPU on the box; the tab fires it only on a click). p:
-    {jobs: {scene_index: take_id}, scale? (2.0), script?}: one take = the per-take button, the
+    """Upscale takes (GPU on the box; the tab fires it only on a click). p: {jobs: {scene_index:
+    take_id}, engine? (flashvsr_plus = FlashVSR+ 2x, the default | seedvr2 = SeedVR2 to 1440p),
+    scale? (2.0, FlashVSR+ only), script?}: one take = the per-take button, the
     Assemble plan's map = "upscale all". A take that already has a finished or queued upscale is
     skipped (force: true queues it again). ComfyUI runs the queued jobs one after another. With
     script, each upscale is named after its scene in THAT script (a take rendered under an earlier
-    script carries that script's scene number in its own title)."""
+    script carries that script's scene number in its own title). The skip checks the same
+    engine only, so a take can hold one upscale of each to compare."""
     jobs = {str(k): os.path.basename(str(v)) for k, v in (p.get("jobs") or {}).items() if v}
     if not jobs:
         raise HTTPException(400, "jobs must map scene indexes to take ids")
+    engine = p.get("engine") or "flashvsr_plus"
+    if engine not in UPSCALE_ENGINES:
+        raise HTTPException(400, f"engine must be one of {', '.join(UPSCALE_ENGINES)}")
     scr = _mv_load_script(p["script"])[0] if p.get("script") else None
     have = {}
     for r in _mv_upscale_rows():
         prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
-        if r.get("status") in ("done", "pending", "running", "finalizing"):
+        if r.get("status") in ("done", "pending", "running", "finalizing") and _upscale_engine(prm) == engine:
             have.setdefault(prm.get("upscale_of"), r.get("status"))
     queued, skipped = [], []
     for idx, take in sorted(jobs.items(), key=lambda kv: int(kv[0])):
@@ -3160,15 +3165,15 @@ def mv_upscale_takes(p: dict):
         if not _lib_video_path(take):
             skipped.append({"scene": int(idx), "take": take, "why": "no file in the library"})
             continue
-        sub = {"scale": p.get("scale") or 2.0}
+        sub = {"scale": p.get("scale") or 2.0} if engine == "flashvsr_plus" else {}
         if scr:
             try:
                 sub["title"] = f"{scr.get('title') or ''} / {int(idx):02d} {scr['scenes'][int(idx)].get('title') or ''}".strip(" /")
             except Exception:
                 pass
-        r = _flashvsr_plus_submit(take, sub)
+        r = _flashvsr_plus_submit(take, sub, engine)
         queued.append({"scene": int(idx), "take": take, "job_id": r["job_id"]})
-    return {"queued": queued, "skipped": skipped}
+    return {"queued": queued, "skipped": skipped, "engine": engine}
 
 
 @app.post("/api/mv/take_check")
@@ -3289,8 +3294,18 @@ def video_flashvsr(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
-def _flashvsr_plus_submit(video_id, p=None):
-    """Queue a FlashVSR+ upscale of one library clip (video.build_flashvsr_plus_upscale). The job
+UPSCALE_ENGINES = ("flashvsr_plus", "seedvr2")
+
+
+def _upscale_engine(prm):
+    """The engine of an upscale job's params; upscales queued before SeedVR2 came back carry
+    flashvsr_plus or nothing (all of those were FlashVSR+)."""
+    return "seedvr2" if (prm or {}).get("engine") == "seedvr2" else "flashvsr_plus"
+
+
+def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
+    """Queue an upscale of one library clip: FlashVSR+ 2x (video.build_flashvsr_plus_upscale) or,
+    engine="seedvr2", SeedVR2 to a 1440 short side (video.build_seedvr2_upscale). The job
     carries upscale_of = the clip's id (the Music Video tab links an upscale to its take by it, and
     assembly can swap it in) and expect_fps = the clip's rate, which on_complete_media holds."""
     p = dict(p or {})
@@ -3316,11 +3331,16 @@ def _flashvsr_plus_submit(video_id, p=None):
     try:
         with open(vid, "rb") as f:
             ref = C.upload_audio(f.read(), os.path.basename(vid))    # <take id>.mp4: unique per clip
-        graph, resolved = video_mod.build_flashvsr_plus_upscale(p, ref)
+        if engine == "seedvr2":
+            graph, resolved = video_mod.build_seedvr2_upscale(p, ref, _probe_fps(vid))
+            label = f"SeedVR2 {resolved['resolution']}p"
+        else:
+            graph, resolved = video_mod.build_flashvsr_plus_upscale(p, ref)
+            label = f"FlashVSR+ {resolved['scale']:g}x"
     except Exception as e:
         raise HTTPException(500, f"build failed: {e}")
     resolved.update(video_id=video_id, upscale_of=video_id, expect_fps=_probe_fps(vid),
-                    title=f"{src_title or video_id[:8]} / FlashVSR+ {resolved['scale']:g}x")
+                    title=f"{src_title or video_id[:8]} / {label}")
     return _submit_video(graph, resolved, "videoclip")
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type Config, type LibItem } from "./api";
 import { useDraftCtx, useDrafts } from "./drafts";
 import { Field, GhostButton, inp, type RunCtx } from "./ui";
@@ -25,8 +25,8 @@ type PlaceRow = Place & { still_present?: boolean };
 type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; ref_stills?: { face?: string; body?: string }; locations?: Place[]; scenes: Scene[] };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
-type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; fps?: number | null; fps_fixed?: boolean | null };
-type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null };
+type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; resolution?: number | null; fps?: number | null; fps_fixed?: boolean | null };
+type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; anchor_first?: boolean; anchor_from?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
 type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "empty"; idx: number; take: string } | { kind: "place"; id: string } | null;
@@ -35,7 +35,17 @@ const ATTENTION = "comfy kitchen attention";   // the proven chain setting (ever
 // FlashVSR+ Turbo 2x: 554 s for the 15 s scene 6 take, 2026-10-30 (the whole SSBS batch ran at
 // about that rate); only a rough guide for the time shown before a fire
 const UPSCALE_SECS_PER_SEC = 37;
+// the two upscalers (backend mv_upscale_takes): FlashVSR+ Turbo 2x, and SeedVR2 7B fp8 to a 1440
+// short side (brought back 2026-11-05 to compare again; no timing measured on the 7B yet)
+type UpEngine = "flashvsr_plus" | "seedvr2";
+const UP_ENGINES: Record<UpEngine, { name: string; button: string; done: string; tip: string; secsPerSec: number | null }> = {
+  flashvsr_plus: { name: "FlashVSR+", button: "upscale 2x", done: "upscaled 2x", tip: "FlashVSR+ Turbo 2x on the box (GPU); step 5 can upscale every chosen take at once", secsPerSec: UPSCALE_SECS_PER_SEC },
+  seedvr2: { name: "SeedVR2", button: "SeedVR2 1440p", done: "SeedVR2 1440p", tip: "SeedVR2 7B (fp8) to 1440p on the box (GPU), to compare with FlashVSR+; slower, no timing measured yet", secsPerSec: null },
+};
+const upMins = (eng: UpEngine, secs: number) => { const r = UP_ENGINES[eng].secsPerSec; return r ? `roughly ${Math.max(1, Math.round((secs * r) / 60))} min` : "time not measured yet"; };
 const upscaleBusy = (u?: Upscale | null) => !!u && u.status !== "done" && u.status !== "error";
+// a backend from before SeedVR2 sends only upscaled (the FlashVSR+ one)
+const upsOf = (t?: Take | null): Partial<Record<UpEngine, Upscale>> => t?.upscales || (t?.upscaled ? { flashvsr_plus: t.upscaled } : {});
 // how a scene's opening picture is used (backend render_scene): a scene WITHOUT the singer renders
 // image-to-video and starts on it (else on its place's picture; a scene the writer marked as
 // differing from the place's picture must have its own); a scene WITH her renders from her two
@@ -243,7 +253,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   useEffect(() => { loadPlaces(); }, [loadPlaces, scriptName]);
 
   // poll while any take or upscale is still running
-  const rendering = useMemo(() => Object.values(takes).some((l) => l.some((t) => t.status !== "done" || upscaleBusy(t.upscaled))), [takes]);
+  const rendering = useMemo(() => Object.values(takes).some((l) => l.some((t) => t.status !== "done" || Object.values(upsOf(t)).some((u) => upscaleBusy(u)))), [takes]);
   useEffect(() => {
     if (!rendering) return;
     const h = window.setInterval(refreshTakes, 5000);
@@ -1147,12 +1157,12 @@ function TakesStep(p: {
     try { await api.mvLockTake({ script: scriptName, scene: idx, job_id: jid }); p.reloadScript(); }
     catch (e) { setErr(String((e as Error).message || e)); }
   };
-  const doUpscale = async (idx: number, t: Take) => {
-    const mins = Math.max(1, Math.round(((t.seconds || 6) * UPSCALE_SECS_PER_SEC) / 60));
-    if (!window.confirm(`Upscale this take 2x with FlashVSR+ on the box now? (roughly ${mins} min)`)) return;
+  const doUpscale = async (idx: number, t: Take, eng: UpEngine = "flashvsr_plus") => {
+    const prev = upsOf(t)[eng];
+    if (!window.confirm(`Upscale this take ${eng === "seedvr2" ? "to 1440p with SeedVR2" : "2x with FlashVSR+"} on the box now? (${upMins(eng, t.seconds || 6)})`)) return;
     setErr(""); setBusyMsg("sending the take to the box...");
     try {
-      const r = await api.mvUpscaleTakes({ jobs: { [String(idx)]: t.id }, script: scriptName, force: t.upscaled?.status === "error" || t.upscaled?.status === "done" });
+      const r = await api.mvUpscaleTakes({ jobs: { [String(idx)]: t.id }, script: scriptName, engine: eng, force: prev?.status === "error" || prev?.status === "done" });
       if (!r.queued?.length && r.skipped?.length) setErr(`not queued: ${r.skipped[0].why}`);
       await p.refreshTakes();
     } catch (e) { setErr(String((e as Error).message || e)); }
@@ -1488,7 +1498,6 @@ function TakesStep(p: {
                 {tl.map((t) => {
                   const chosen = scene.locked?.job_id === t.id;
                   const c = t.check;
-                  const u = t.upscaled;
                   return (
                     <div key={t.id} id={`take-${t.id}`} className={`space-y-2 rounded-lg p-2 ${chosen ? "border-2 border-emerald-600" : "border border-[var(--color-line)]"}`}>
                       {t.status === "done" && t.media_url
@@ -1511,11 +1520,19 @@ function TakesStep(p: {
                             <Pill tone={c.opening_jump === null ? "muted" : c.opening_flag ? "bad" : "ok"} title="a jump in the first 2 s (fade or morph in); 4 or more is flagged">opening {c.opening_jump === null ? "n/a" : c.opening_jump.toFixed(1)}x</Pill>
                             <GhostButton onClick={() => openLightbox(c.sheet_url + "?t=" + Date.now())}>frames</GhostButton>
                           </> : <GhostButton onClick={() => doCheck(scene.index, t.id)} disabled={!!busyMsg} title="measure sync and the opening (Mac, no GPU)">measure sync</GhostButton>}
-                          {u?.status === "done" && u.media_url
-                            ? <><Pill tone="ok">upscaled 2x</Pill><GhostButton onClick={() => openLightbox(u.media_url!)}>play upscale</GhostButton></>
-                            : upscaleBusy(u) ? <Pill tone="warn">upscaling {pct(u!.progress, u!.max) || u!.status}</Pill>
-                            : <GhostButton onClick={() => doUpscale(scene.index, t)} disabled={!!busyMsg} title="FlashVSR+ Turbo 2x on the box (GPU); step 5 can upscale every chosen take at once">upscale 2x</GhostButton>}
-                          {u?.status === "error" && <span className="text-red-400" title={u.error || ""}>upscale failed</span>}
+                          {(Object.keys(UP_ENGINES) as UpEngine[]).map((eng) => {
+                            const u = upsOf(t)[eng];
+                            const E = UP_ENGINES[eng];
+                            return (
+                              <Fragment key={eng}>
+                                {u?.status === "done" && u.media_url
+                                  ? <><Pill tone="ok">{E.done}</Pill><GhostButton onClick={() => openLightbox(u.media_url!)}>play {E.name}</GhostButton></>
+                                  : upscaleBusy(u) ? <Pill tone="warn">{E.name} {pct(u!.progress, u!.max) || u!.status}</Pill>
+                                  : <GhostButton onClick={() => doUpscale(scene.index, t, eng)} disabled={!!busyMsg} title={E.tip}>{E.button}</GhostButton>}
+                                {u?.status === "error" && <span className="text-red-400" title={u.error || ""}>{E.name} failed</span>}
+                              </Fragment>
+                            );
+                          })}
                           {!["move2d", "meridian", "roomplate"].includes(String(t.params.engine)) && (
                             <GhostButton onClick={() => setCamFor(camFor === t.id ? null : t.id)} disabled={!!busyMsg}
                               title="add a camera move to this take: 2D move, room pinned or Meridian (the panel explains each)">{camFor === t.id ? "close camera move" : "add a camera move"}</GhostButton>
@@ -1546,11 +1563,12 @@ function TakesStep(p: {
 // ---------- 5 Final video: the chosen takes -> the cut, with the ident in front and the end card ----------
 type AsmResult = { output: string; seconds: number; scenes: number; partial?: boolean; missing?: number[]; intro?: { seconds: number; cached: boolean }; end_card?: { secs: number; text: string }; endcard_at?: number | null; library_id?: string; media_url?: string; upscaled?: Record<string, string>; not_upscaled?: number[] };
 
-const QUALITY: { key: string; label: string; sub: string; size: string; up: boolean }[] = [
+const QUALITY: { key: string; label: string; sub: string; size: string; up: boolean; engine?: UpEngine }[] = [
   { key: "draft", label: "Draft", sub: "the renders as they are (1344x768): a quick check of the edit", size: "1344x768", up: false },
   { key: "hd", label: "1080p from the renders", sub: "the renders resized to 1920x1080, no upscale", size: "1920x1080", up: false },
-  { key: "up1440", label: "1440p, upscaled", sub: "every take upscaled 2x with FlashVSR+, cut at 2560x1440: the YouTube master", size: "2560x1440", up: true },
-  { key: "up4k", label: "4K, upscaled", sub: "the 2x upscales stretched to 3840x2160", size: "3840x2160", up: true },
+  { key: "up1440", label: "1440p, upscaled", sub: "every take upscaled 2x with FlashVSR+, cut at 2560x1440: the YouTube master", size: "2560x1440", up: true, engine: "flashvsr_plus" },
+  { key: "up1440s", label: "1440p, upscaled with SeedVR2", sub: "every take upscaled to 1440p with SeedVR2 (7B), cut at 2560x1440: to compare with FlashVSR+", size: "2560x1440", up: true, engine: "seedvr2" },
+  { key: "up4k", label: "4K, upscaled", sub: "the FlashVSR+ 2x upscales stretched to 3840x2160", size: "3840x2160", up: true, engine: "flashvsr_plus" },
 ];
 
 function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { script: Script; scriptName: string; takes: Record<string, Take[]>; refreshTakes: () => Promise<void>; reloadScript: () => void }) {
@@ -1575,6 +1593,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
   const [copyFrom, setCopyFrom] = useState("");
   const title = introTitle.trim() || script.title;
   const q = QUALITY.find((x) => x.key === quality) || QUALITY[0];
+  const qEng: UpEngine = q.engine || "flashvsr_plus";
 
   useEffect(() => {
     let alive = true;
@@ -1597,7 +1616,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
   const missing = plan.filter((x) => !x.job);
   const partial = missing.length > 0;
   const unchosen = plan.filter((x) => x.how === "newest").length;
-  const upOf = (job: string | null) => (job ? takeById[job]?.upscaled || null : null);
+  const upOf = (job: string | null) => (job ? upsOf(takeById[job])[qEng] || null : null);
   const planned = plan.filter((x) => x.job);
   const nUpDone = planned.filter((x) => upOf(x.job)?.status === "done").length;
   const nUpBusy = planned.filter((x) => upscaleBusy(upOf(x.job))).length;
@@ -1633,14 +1652,13 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
   const upscaleAll = async () => {
     if (!toUpscale.length) return;
     const secs = toUpscale.reduce((a, x) => a + (takeById[x.job!]?.seconds || (x.sc.end - x.sc.start)), 0);
-    const mins = Math.max(1, Math.round((secs * UPSCALE_SECS_PER_SEC) / 60));
-    if (!window.confirm(`Upscale ${toUpscale.length} take${toUpscale.length === 1 ? "" : "s"} 2x with FlashVSR+ on the box? They run one after another: ${secs.toFixed(0)} s of video, roughly ${mins} min.`)) return;
+    if (!window.confirm(`Upscale ${toUpscale.length} take${toUpscale.length === 1 ? "" : "s"} with ${UP_ENGINES[qEng].name} on the box? They run one after another: ${secs.toFixed(0)} s of video, ${upMins(qEng, secs)}.`)) return;
     setErr(""); setMsg(""); setBusy(true);
     setUpSending({ total: toUpscale.length, before: nUpBusy + nUpDone });
     try {
       const jobs: Record<string, string> = {};
       toUpscale.forEach((x) => { jobs[String(x.sc.index)] = x.job!; });
-      const r = await api.mvUpscaleTakes({ jobs, script: scriptName });
+      const r = await api.mvUpscaleTakes({ jobs, script: scriptName, engine: qEng });
       setMsg(`queued ${r.queued?.length || 0} upscales${r.skipped?.length ? `, skipped ${r.skipped.length}` : ""}`);
       await refreshTakes();
     } catch (e) { setErr(String((e as Error).message || e)); }
@@ -1662,7 +1680,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
     plan.forEach((x) => { if (x.job && x.how !== "chosen") jobs[String(x.sc.index)] = x.job; });
     try {
       const r = await api.mvAssemble({
-        script: scriptName, jobs, partial, width: w, height: h, async: true, use_upscaled: q.up,
+        script: scriptName, jobs, partial, width: w, height: h, async: true, use_upscaled: q.up, upscale_engine: qEng,
         intro: introOn && !partial ? { title, sub: introSub, edge: introEdge } : null,
         end_card: ecOn && !partial ? { secs: Number(ecSecs), text: ecText.trim() } : null,
       });
@@ -1701,7 +1719,7 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={fillNewest} onChange={(e) => setFillNewest(e.target.checked)} /> scenes with no chosen take play their newest take{unchosen ? ` (${unchosen} scene${unchosen === 1 ? "" : "s"} now)` : ""}</label>
           <div className="max-h-[50vh] overflow-auto rounded-lg border border-[var(--color-line)]">
             <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-[var(--color-panel)] text-[var(--color-muted)]"><tr><th className="px-2 py-1.5 text-left">scene</th><th className="px-2 py-1.5 text-left">at</th><th className="px-2 py-1.5 text-left">take</th><th className="px-2 py-1.5 text-left">upscaled</th></tr></thead>
+              <thead className="sticky top-0 bg-[var(--color-panel)] text-[var(--color-muted)]"><tr><th className="px-2 py-1.5 text-left">scene</th><th className="px-2 py-1.5 text-left">at</th><th className="px-2 py-1.5 text-left">take</th><th className="px-2 py-1.5 text-left">upscaled ({UP_ENGINES[qEng].name})</th></tr></thead>
               <tbody>
                 {plan.map((x) => {
                   const t = x.job ? takeById[x.job] : null;
@@ -1734,14 +1752,14 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
             </div>
             {q.up && (
               <div className={`rounded-lg border p-2.5 text-xs space-y-2 ${nUpDone === planned.length ? "border-emerald-800" : "border-amber-700"}`}>
-                <div>{nUpDone} of {planned.length} takes upscaled{nUpBusy ? ` · ${nUpRunning} upscaling now, ${nUpBusy - nUpRunning} waiting in the box queue` : ""}{nUpBusy ? ` · about ${Math.max(1, Math.round((upLeftSecs * UPSCALE_SECS_PER_SEC) / 60))} min left` : ""}</div>
+                <div>{nUpDone} of {planned.length} takes upscaled with {UP_ENGINES[qEng].name}{nUpBusy ? ` · ${nUpRunning} upscaling now, ${nUpBusy - nUpRunning} waiting in the box queue` : ""}{nUpBusy && UP_ENGINES[qEng].secsPerSec ? ` · about ${Math.max(1, Math.round((upLeftSecs * UP_ENGINES[qEng].secsPerSec!) / 60))} min left` : ""}</div>
                 {(nUpBusy > 0 || upSending) && (
                   <div className="h-1.5 w-full overflow-hidden rounded bg-[var(--color-line)]">
                     <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${planned.length ? (100 * nUpDone) / planned.length : 0}%` }} />
                   </div>
                 )}
                 {upSending && <div className="text-amber-400">sending the takes to the box: {upSent} of {upSending.total} sent (each one uploads in about 8 s; the box starts on the first straight away)</div>}
-                {toUpscale.length > 0 && <GhostButton onClick={upscaleAll} disabled={busy}>upscale the {toUpscale.length} missing on the box (GPU)</GhostButton>}
+                {toUpscale.length > 0 && <GhostButton onClick={upscaleAll} disabled={busy}>upscale the {toUpscale.length} missing with {UP_ENGINES[qEng].name} on the box (GPU)</GhostButton>}
               </div>
             )}
           </Card>

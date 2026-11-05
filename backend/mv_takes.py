@@ -168,10 +168,16 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
     return out
 
 
+def _engine(prm):
+    """Upscales queued before SeedVR2 came back carry flashvsr_plus or no engine: all FlashVSR+."""
+    return "seedvr2" if prm.get("engine") == "seedvr2" else "flashvsr_plus"
+
+
 def attach_upscales(takes, rows, library_dir):
-    """Link each take to its FlashVSR+ upscale (library or running jobs whose params carry
-    upscale_of = the take id): take["upscaled"] = the newest finished one, else the running or
-    failed one, so the tab can show progress or the error. Mutates and returns takes."""
+    """Link each take to its upscales (library or running jobs whose params carry upscale_of =
+    the take id), per engine: take["upscales"] = {engine: the newest finished one, else the
+    running or failed one}, so the tab can show progress or the error; take["upscaled"] = the
+    FlashVSR+ one (what the tab showed before SeedVR2). Mutates and returns takes."""
     by_take = {}
     for r in rows:
         try:
@@ -189,25 +195,30 @@ def attach_upscales(takes, rows, library_dir):
             "id": r["id"], "created": r.get("created") or 0, "status": r.get("status"),
             "progress": r.get("progress", 0), "max": r.get("max", 0), "error": r.get("error"),
             "media_url": f"/api/media/{r['id']}" if done else None,
-            "engine": prm.get("engine"), "scale": prm.get("scale"),
+            "engine": _engine(prm), "scale": prm.get("scale"), "resolution": prm.get("resolution"),
             "fps": prm.get("fps_out"), "fps_fixed": prm.get("fps_fixed")})
     for lst in takes.values():
         for t in lst:
             ups = sorted(by_take.get(t["id"], []), key=lambda u: -u["created"])
-            pick = next((u for u in ups if u["status"] == "done"), None) or (ups[0] if ups else None)
-            t["upscaled"] = pick
+            t["upscales"] = {}
+            for eng in ("flashvsr_plus", "seedvr2"):
+                mine = [u for u in ups if u["engine"] == eng]
+                pick = next((u for u in mine if u["status"] == "done"), None) or (mine[0] if mine else None)
+                if pick:
+                    t["upscales"][eng] = pick
+            t["upscaled"] = t["upscales"].get("flashvsr_plus")
     return takes
 
 
-def upscale_path(rows, take_id, library_dir):
-    """The newest finished upscale file of a take, or None (rows as for attach_upscales)."""
+def upscale_path(rows, take_id, library_dir, engine="flashvsr_plus"):
+    """The newest finished upscale file of a take from one engine, or None (rows as for attach_upscales)."""
     best = None
     for r in rows:
         try:
             prm = r["params"] if isinstance(r["params"], dict) else json.loads(r["params"])
         except Exception:
             continue
-        if prm.get("upscale_of") != take_id or r.get("status") != "done":
+        if prm.get("upscale_of") != take_id or r.get("status") != "done" or _engine(prm) != engine:
             continue
         path = os.path.join(library_dir, f"{r['id']}.mp4")
         if os.path.exists(path) and os.path.getsize(path) > 0 and (best is None or (r.get("created") or 0) > best[0]):

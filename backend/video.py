@@ -522,6 +522,49 @@ def build_flashvsr_plus_upscale(p, video_ref):
                "color_fix": color_fix, "kind": "video"}
 
 
+# SeedVR2 (numz ComfyUI-SeedVR2_VideoUpscaler), the second Music Video upscaler. Model list read off
+# the box /object_info 2026-11-05; the 7B fp8 "mixed_block35" file is the one the node's docs name
+# for 24 GB cards. The graph is the one validated in June (commits 7d39d42, 3a1d983, 29f0b40, then
+# removed in e117243): DiT offloaded to cpu, VAE encode AND decode tiled (untiled crashed the box).
+SEEDVR2_DIT = "seedvr2_ema_7b_fp8_e4m3fn_mixed_block35_fp16.safetensors"
+SEEDVR2_VAE = "ema_vae_fp16.safetensors"
+
+
+def build_seedvr2_upscale(p, video_ref, fps):
+    """Upscale a finished clip with SeedVR2 to a target SHORT side (1440 = a 1344x768 take ->
+    2520x1440). video_ref = uploaded video name on ComfyUI; fps = the source rate (CreateVideo
+    writes it, so the frames keep the song's timing). p: {model?, resolution? (1440), batch_size?
+    (9, must be 4n+1), color_correction? (lab), blocks_to_swap? (0), seed? (42)}."""
+    model = p.get("model") or SEEDVR2_DIT
+    resolution = int(p.get("resolution") or 1440)
+    batch = int(p.get("batch_size") or 9)            # 3B fp16 at 1440: 13 peaked 23.7 GB, 9 had margin
+    if (batch - 1) % 4:
+        batch = 9
+    cc = p.get("color_correction") or "lab"
+    blocks = int(p.get("blocks_to_swap") or 0)
+    seed = int(p.get("seed") if p.get("seed") is not None else 42)
+    g = {"1": {"class_type": "VHS_LoadVideo",
+               "inputs": {"video": video_ref, "force_rate": 0.0, "custom_width": 0, "custom_height": 0,
+                          "frame_load_cap": 0, "skip_first_frames": 0, "select_every_nth": 1}},
+         "2": {"class_type": "SeedVR2LoadDiTModel",
+               "inputs": {"model": model, "device": "cuda:0", "blocks_to_swap": blocks,
+                          "offload_device": "cpu", "attention_mode": "sdpa"}},
+         "3": {"class_type": "SeedVR2LoadVAEModel",
+               "inputs": {"model": SEEDVR2_VAE, "device": "cuda:0",
+                          "encode_tiled": True, "encode_tile_size": 1024, "encode_tile_overlap": 128,
+                          "decode_tiled": True, "decode_tile_size": 1024, "decode_tile_overlap": 128}},
+         "4": {"class_type": "SeedVR2VideoUpscaler",
+               "inputs": {"image": ["1", 0], "dit": ["2", 0], "vae": ["3", 0], "seed": seed,
+                          "resolution": resolution, "max_resolution": 0, "batch_size": batch,
+                          "uniform_batch_size": False, "color_correction": cc, "offload_device": "cpu"}},
+         # VHS_LoadVideo outputs: images [1,0], frame_count [1,1], audio [1,2], video_info [1,3]
+         "5": {"class_type": "CreateVideo", "inputs": {"images": ["4", 0], "fps": float(fps), "audio": ["1", 2]}},
+         "6": {"class_type": "SaveVideo",
+               "inputs": {"video": ["5", 0], "filename_prefix": "videogen/seedvr2", "format": "auto", "codec": "auto"}}}
+    return g, {"engine": "seedvr2", "model": model, "resolution": resolution, "batch_size": batch,
+               "color_correction": cc, "blocks_to_swap": blocks, "seed": seed, "fps": fps, "kind": "video"}
+
+
 # ================================================================= MiniMax H3 (video + native audio)
 # Ported from the user's reference workflow MINIMAX_H3_ULTRA_WORKFLOW.json (Aitrepreneur). Node
 # signatures + model filenames VERIFIED live on the box /object_info 2026-08-02; the frame-count and
