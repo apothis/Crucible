@@ -40,7 +40,7 @@ const UPSCALE_SECS_PER_SEC = 37;
 type UpEngine = "flashvsr_plus" | "seedvr2";
 const UP_ENGINES: Record<UpEngine, { name: string; button: string; done: string; tip: string; secsPerSec: number | null }> = {
   flashvsr_plus: { name: "FlashVSR+", button: "upscale 2x", done: "upscaled 2x", tip: "FlashVSR+ Turbo 2x on the box (GPU); step 5 can upscale every chosen take at once", secsPerSec: UPSCALE_SECS_PER_SEC },
-  seedvr2: { name: "SeedVR2", button: "SeedVR2 1440p", done: "SeedVR2 1440p", tip: "SeedVR2 7B (fp8) to 1440p on the box (GPU), to compare with FlashVSR+; slower, no timing measured yet", secsPerSec: null },
+  seedvr2: { name: "SeedVR2", button: "SeedVR2 1440p", done: "SeedVR2 1440p", tip: "SeedVR2 3B (fp16, the node author's video settings) to 1440p on the box (GPU), to compare with FlashVSR+; no timing measured yet", secsPerSec: null },
 };
 const upMins = (eng: UpEngine, secs: number) => { const r = UP_ENGINES[eng].secsPerSec; return r ? `roughly ${Math.max(1, Math.round((secs * r) / 60))} min` : "time not measured yet"; };
 const upscaleBusy = (u?: Upscale | null) => !!u && u.status !== "done" && u.status !== "error";
@@ -1567,7 +1567,7 @@ const QUALITY: { key: string; label: string; sub: string; size: string; up: bool
   { key: "draft", label: "Draft", sub: "the renders as they are (1344x768): a quick check of the edit", size: "1344x768", up: false },
   { key: "hd", label: "1080p from the renders", sub: "the renders resized to 1920x1080, no upscale", size: "1920x1080", up: false },
   { key: "up1440", label: "1440p, upscaled", sub: "every take upscaled 2x with FlashVSR+, cut at 2560x1440: the YouTube master", size: "2560x1440", up: true, engine: "flashvsr_plus" },
-  { key: "up1440s", label: "1440p, upscaled with SeedVR2", sub: "every take upscaled to 1440p with SeedVR2 (7B), cut at 2560x1440: to compare with FlashVSR+", size: "2560x1440", up: true, engine: "seedvr2" },
+  { key: "up1440s", label: "1440p, upscaled with SeedVR2", sub: "every take upscaled to 1440p with SeedVR2 (the node author's video settings), cut at 2560x1440: to compare with FlashVSR+", size: "2560x1440", up: true, engine: "seedvr2" },
   { key: "up4k", label: "4K, upscaled", sub: "the FlashVSR+ 2x upscales stretched to 3840x2160", size: "3840x2160", up: true, engine: "flashvsr_plus" },
 ];
 
