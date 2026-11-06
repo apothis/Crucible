@@ -1942,7 +1942,18 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
   const [keepLocks, setKeepLocks] = d.use("wKeepLocks", true);
   const [forTrack, setForTrack] = d.use("wTrack", "");
   const [job, setJob] = useState<{ id: string; status: string; log: string[]; seconds: number; error?: string | null; script?: string | null } | null>(null);
+  const [jobId, setJobId] = d.use("wJobId", "");
+  const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
+  // a write started before the tab was left (or reloaded): show it again and keep polling it
+  useEffect(() => {
+    if (!jobId || job?.id === jobId) return;
+    let alive = true;
+    api.mvWriteJob(jobId).then((r) => { if (alive) setJob({ id: jobId, status: r.status, log: r.log || [], seconds: r.seconds, error: r.error, script: r.script }); })
+      .catch(() => { if (alive) setJobId(""); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId]);
 
   // a different track: start from its own title and style (the refs describe the lead, so they stay)
   useEffect(() => {
@@ -1962,6 +1973,21 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
     setFace(r.face || ""); setBody(r.body || ""); setShared(r.shared || "");
     if (!concept.trim() && loaded.script.concept) setConcept(loaded.script.concept);
   };
+  const [latestFrom, setLatestFrom] = useState("");
+  const fromLatest = async () => {
+    setErr("");
+    try {
+      const rows = ((await api.mvScripts()) as ScriptRow[]).slice().sort((a, b) => b.mtime - a.mtime);
+      for (const row of rows) {
+        const r = ((await api.mvScript(row.name)).script as Script).refs || {};
+        if (r.face && r.body && r.shared) {
+          setFace(r.face); setBody(r.body); setShared(r.shared); setLatestFrom(row.title || row.name);
+          return;
+        }
+      }
+      setErr("no saved script has the singer's three descriptions");
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
   // the open project's song: only what it has replaces a field, so a field it lacks keeps the track's
   const fromProject = () => {
     const ps = projectSong(drafts.get, projectName, trackMode);
@@ -1973,20 +1999,23 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
     else setErr("the open project has no lyrics: title and style filled");
   };
   const nLocks = loaded ? loaded.script.scenes.filter((s) => s.locked).length : 0;
-  const ready = title.trim() && lyrics.trim() && face.trim() && body.trim() && shared.trim();
+  const missing = ([[title, "the title"], [lyrics, "the lyrics"], [face, "the face picture's description"], [body, "the full-body picture's description"], [shared, "what is in both pictures"]] as const)
+    .filter(([v]) => !v.trim()).map(([, label]) => label);
+  const ready = !missing.length;
 
   const write = async () => {
-    if (!ready) { setErr("title, lyrics and the three descriptions of the singer are needed"); return; }
+    if (!ready) { setErr(`Still needed before Claude can write: ${missing.join(", ")}.`); return; }
     if (!window.confirm(`Write a new script for "${title}"? Claude (the subscription, no GPU) writes the whole video; it takes several minutes.${keepLocks && nLocks ? ` The ${nLocks} chosen takes of the open script are kept.` : ""}`)) return;
-    setErr("");
+    setErr(""); setSending(true);
     try {
       const r = await api.mvWrite({
         async: true, audio_id: audioId, title: title.trim(), style: style.trim(), lyrics, concept: concept.trim() || undefined,
         refs: { face: face.trim(), body: body.trim(), shared: shared.trim() }, locations,
         keep_locks_from: keepLocks && nLocks && loaded ? loaded.name : undefined,
       });
-      setJob({ id: r.job_id, status: "writing", log: [], seconds: 0 });
-    } catch (e) { setErr(String((e as Error).message || e)); }
+      setJob({ id: r.job_id, status: "writing", log: [], seconds: 0 }); setJobId(r.job_id);
+    } catch (e) { setErr("The writer did not start: " + String((e as Error).message || e)); }
+    finally { setSending(false); }
   };
   useEffect(() => {
     if (!job || job.status !== "writing") return;
@@ -1994,8 +2023,8 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
       try {
         const r = await api.mvWriteJob(job.id);
         setJob({ id: job.id, status: r.status, log: r.log || [], seconds: r.seconds, error: r.error, script: r.script });
-        if (r.status === "done" && r.script) { window.clearInterval(h); await onWritten(r.script); }
-        if (r.status === "error") window.clearInterval(h);
+        if (r.status === "done" && r.script) { window.clearInterval(h); setJobId(""); await onWritten(r.script); }
+        if (r.status === "error") { window.clearInterval(h); setJobId(""); }
       } catch { /* keep polling */ }
     }, 3000);
     return () => window.clearInterval(h);
@@ -2019,7 +2048,9 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
           <div className="flex flex-wrap gap-2">
             <GhostButton onClick={fromProject} title={projectName ? `title, style and lyrics from the drafts of "${projectName}" (unsaved edits included)` : "title, style and lyrics from the drafts in the tabs"}>
               fill from the open project{projectName ? ` (${projectName})` : ""}</GhostButton>
-            {loaded && <GhostButton onClick={fromScript} title="the singer's descriptions (and the idea, if empty) of the open script">copy the singer from the open script</GhostButton>}
+            {loaded ? <GhostButton onClick={fromScript} title="the singer's descriptions (and the idea, if empty) of the open script">copy the singer from the open script</GhostButton>
+              : <GhostButton onClick={fromLatest} title="the three descriptions of the singer from your newest script that has them (any song)">copy the singer from your latest script</GhostButton>}
+            {latestFrom && <span className="self-center text-[11px] text-[var(--color-muted)]">singer copied from "{latestFrom}"</span>}
           </div>
           <Field label="your idea for the video" hint="optional; empty = Claude proposes one">
             <textarea className={`${inp} h-16`} value={concept} onChange={(e) => setConcept(e.target.value)} />
@@ -2039,8 +2070,9 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
               </select>
             </Field>
             {nLocks > 0 && <label className="flex items-center gap-2 pb-2 text-xs"><input type="checkbox" checked={keepLocks} onChange={(e) => setKeepLocks(e.target.checked)} /> keep the open script's {nLocks} chosen takes</label>}
-            <Action onClick={write} disabled={!ready || job?.status === "writing"}>{job?.status === "writing" ? "writing..." : "Write the script"}</Action>
+            <Action onClick={write} disabled={sending || job?.status === "writing"}>{sending ? "starting..." : job?.status === "writing" ? "writing..." : "Write the script"}</Action>
           </div>
+          {!ready && !job && <div className="text-[11px] text-amber-400">Still needed: {missing.join(", ")}.</div>}
           {job && (
             <div className={`rounded border p-2 text-[11px] ${job.status === "error" ? "border-red-800" : job.status === "done" ? "border-emerald-800" : "border-[var(--color-line)]"}`}>
               <div>{job.status === "writing" ? `writing, ${Math.round(job.seconds)} s` : job.status === "done" ? "written and opened" : `failed: ${job.error}`}</div>
