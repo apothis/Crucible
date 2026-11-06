@@ -160,8 +160,9 @@ function ImageSlot({ src, empty, armed, onArm, onFile, aspect = "aspect-video", 
 
 const STEPS = ["Song", "Script", "Pictures", "Scenes and takes", "Final video", "YouTube text"] as const;
 
-export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean; library: LibItem[] } & RunCtx) {
+export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; busy: boolean; library: LibItem[]; projectName?: string } & RunCtx) {
   const d = useDrafts("mv");
+  const drafts = useDraftCtx();
   const [step, setStep] = d.use("step", 1);
   const [audioId, setAudioId] = d.use("audioId", "");
   const [scriptName, setScriptName] = d.use("scriptName", "");
@@ -191,6 +192,21 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   const [placeRows, setPlaceRows] = useState<PlaceRow[]>([]);
 
   const audios = library.filter((i) => i.audio_url);
+  // the open project's song and its tracks in the Library (by song name, through mastered/naturalized copies)
+  const byId = useMemo(() => new Map(library.map((i) => [i.id, i])), [library]);
+  const projSong = projectSong(drafts.get, projectName);
+  const projKeys = [projSong.title, projectName || ""].map(songKey).filter(Boolean);
+  const projTracks = projKeys.length ? audios.filter((a) => projKeys.includes(songKey(trackSongName(a, byId)))) : [];
+  const originMode = (id: string) => { const it = byId.get(id); return it ? trackOrigin(it, byId).mode : undefined; };
+  // a track picked from the project: the writer starts from the project's song, not the track's facts
+  const pickFromProject = (id: string) => {
+    const ps = projectSong(drafts.get, projectName, originMode(id));
+    setAudioId(id); setScriptName(""); setSel(null); setDry({});
+    if (ps.title) drafts.set("mv", "wTitle", ps.title);
+    if (ps.style) drafts.set("mv", "wStyle", ps.style);
+    if (ps.lyrics.trim()) drafts.set("mv", "wLyrics", ps.lyrics);
+    drafts.set("mv", "wTrack", id);
+  };
   const recipeKey = (idx: number) => `${scriptName}#${idx}`;
   const recipeOf = (sc: Scene): Recipe => ({ ...sceneDefaultRecipe(sc), ...(recipes[recipeKey(sc.index)] || {}) });
   const setRecipe = (sc: Scene, patch: Partial<Recipe> | null) => setRecipes((r) => {
@@ -329,7 +345,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
   const nChosen = scenes.filter((s) => s.locked).length;
   const nRunning = scenes.filter((s) => sceneTakes(s.index).some((t) => t.status !== "done")).length;
   const notRendered = scenes.filter((s) => !s.locked && !doneTakes(s.index).length && !sceneTakes(s.index).some((t) => t.status !== "done"));
-  const next: { step: number; text: string } = !audioId ? { step: 1, text: "Pick the song this video is for." }
+  const next: { step: number; text: string } = !audioId ? { step: 1, text: projTracks.length ? `Pick the song this video is for: the open project "${projectName}" has ${projTracks.length} track${projTracks.length === 1 ? "" : "s"} of it (on the right).` : "Pick the song this video is for." }
     : !script ? { step: 2, text: scripts.length ? "Open one of this song's scripts, or write a new one." : "Write the script: Claude plans every scene of the video from the song." }
     : !face.trim() || !body.trim() ? { step: 3, text: "Add the singer's two reference pictures (face and full body): every scene is rendered with them." }
     : placesBare.length && notRendered.length ? { step: 3, text: `${placesBare.length} place${placesBare.length === 1 ? " has" : "s have"} no picture yet (${placesBare.map((pl) => pl.name || pl.id).join(", ")}). Every scene in a place renders against its picture.` }
@@ -380,6 +396,8 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
 
       {step === 1 && (
         <SongStep audioId={audioId} audios={audios}
+          project={projectName || projSong.title ? { name: projectName || "", title: projSong.title, hasLyrics: !!projSong.lyrics.trim(), tracks: projTracks } : null}
+          onPickProject={pickFromProject}
           onPick={(id) => { setAudioId(id); setScriptName(""); setSel(null); setDry({}); }}
           onImported={(id) => { onDone(); setAudioId(id); setScriptName(""); setSel(null); }}
           onNext={() => setStep(2)} />
@@ -389,6 +407,7 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
         <ScriptStep audioId={audioId} scripts={scripts} scriptName={scriptName} script={script} allScripts={allScripts} setAllScripts={setAllScripts}
           onOpen={(name) => { setScriptName(name); setSel(null); setDry({}); }}
           onWritten={async (name) => { await loadScripts(); setScriptName(name); setSel(null); setDry({}); }}
+          projectName={projectName} trackMode={audioId ? originMode(audioId) : undefined}
           onNext={() => setStep(3)} />
       )}
 
@@ -419,7 +438,8 @@ export function MusicVideoForm({ library, onDone }: { cfg: Config; busy: boolean
 // ---------- 1 Song: pick from the library or import from disk, its facts, the vocal stem ----------
 type SongInfo = { audio_id: string; title: string; style: string; seconds: number | null; stem: boolean };
 
-function SongStep({ audioId, audios, onPick, onImported, onNext }: { audioId: string; audios: LibItem[]; onPick: (id: string) => void; onImported: (id: string) => void; onNext: () => void }) {
+type ProjectTracks = { name: string; title: string; hasLyrics: boolean; tracks: LibItem[] };
+function SongStep({ audioId, audios, project, onPickProject, onPick, onImported, onNext }: { audioId: string; audios: LibItem[]; project: ProjectTracks | null; onPickProject: (id: string) => void; onPick: (id: string) => void; onImported: (id: string) => void; onNext: () => void }) {
   const [info, setInfo] = useState<SongInfo | null>(null);
   const [q, setQ] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -473,6 +493,22 @@ function SongStep({ audioId, audios, onPick, onImported, onNext }: { audioId: st
         </div>
       </Card>
       <div className="space-y-4">
+        {project && (
+          <Card title={<>From the open project{project.name ? <span className="font-normal text-[var(--color-muted)]"> · {project.name}</span> : ""}</>}
+            sub={`"${project.title || project.name}": picking a track here also fills the script writer with the project's title, style and lyrics${project.hasLyrics ? "" : " (it has no lyrics yet)"}`}>
+            {project.tracks.length ? (
+              <div className="max-h-56 overflow-auto rounded-lg border border-[var(--color-line)]">
+                {[...project.tracks].sort((a, b) => b.created - a.created).map((a) => (
+                  <button key={a.id} onClick={() => onPickProject(a.id)}
+                    className={`flex w-full items-center gap-3 border-b border-[var(--color-line)] px-3 py-1.5 text-left text-xs hover:bg-[var(--color-panel2)] ${a.id === audioId ? "bg-[#2a1c19] text-[var(--color-accent)]" : ""}`}>
+                    <span className="flex-1 truncate">{audioLabel(a)}</span>
+                    <span className="text-[10px] text-[var(--color-muted)]">{a.mode} · {when(a.created)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : <div className="text-xs text-[var(--color-muted)]">No Library track is named "{project.title || project.name}" yet: pick it on the left, or import it below (with that title).</div>}
+          </Card>
+        )}
         {info && (
           <Card title={<>{info.title || "(untitled track)"} <span className="font-normal text-[var(--color-muted)]">{info.seconds ? mmss(info.seconds) : ""}</span></>} sub="the song picked">
             {info.style && <div className="text-xs text-[var(--color-muted)]">{info.style}</div>}
@@ -496,9 +532,9 @@ function SongStep({ audioId, audios, onPick, onImported, onNext }: { audioId: st
 }
 
 // ---------- 2 Script: the song's scripts, open one or write a new one ----------
-function ScriptStep({ audioId, scripts, scriptName, script, allScripts, setAllScripts, onOpen, onWritten, onNext }: {
+function ScriptStep({ audioId, scripts, scriptName, script, allScripts, setAllScripts, onOpen, onWritten, onNext, projectName, trackMode }: {
   audioId: string; scripts: ScriptRow[]; scriptName: string; script: Script | null; allScripts: boolean; setAllScripts: (v: boolean) => void;
-  onOpen: (name: string) => void; onWritten: (name: string) => Promise<void>; onNext: () => void;
+  onOpen: (name: string) => void; onWritten: (name: string) => Promise<void>; onNext: () => void; projectName?: string; trackMode?: string;
 }) {
   // revisions of one song share a title: the ones a video was cut from come first, newest video first
   const sorted = [...scripts].sort((a, b) => (b.last_video || "").localeCompare(a.last_video || "") || b.mtime - a.mtime);
@@ -528,7 +564,8 @@ function ScriptStep({ audioId, scripts, scriptName, script, allScripts, setAllSc
         {script && <Action onClick={onNext}>Next: the pictures</Action>}
       </Card>
       {audioId && <WriterPanel audioId={audioId} startOpen={scripts.length === 0}
-        loaded={script && script.audio_id === audioId ? { name: scriptName, script } : null} onWritten={onWritten} />}
+        loaded={script && script.audio_id === audioId ? { name: scriptName, script } : null} onWritten={onWritten}
+        projectName={projectName} trackMode={trackMode} />}
     </div>
   );
 }
@@ -1833,16 +1870,64 @@ function FinalStep({ script, scriptName, takes, refreshTakes, reloadScript }: { 
 }
 
 // ---------- the writer: Claude writes a whole script for the song (no GPU; the subscription CLI) ----------
-function lyricsFromProject(get: (ns: string, key: string) => unknown): string {
-  const suno = (get("suno", "lyrics") as string) || "";
-  if (suno.trim()) return suno;
-  const m3 = (get("music3", "lyrics") as string) || "";
-  if (m3.trim()) return m3;
-  const blocks = (get("song", "blocks") as { type?: string; lyrics?: string }[] | undefined) || [];
-  return blocks.filter((b) => (b.lyrics || "").trim()).map((b) => `[${b.type || "Section"}]\n${(b.lyrics || "").trim()}`).join("\n\n");
+// the song engines whose drafts hold a song: the engine that made the picked track reads first
+const SONG_ENGINES = ["suno", "music3", "yue2", "song"] as const;
+function engineOrder(prefer?: string): string[] {
+  return prefer && (SONG_ENGINES as readonly string[]).includes(prefer) ? [prefer, ...SONG_ENGINES.filter((e) => e !== prefer)] : [...SONG_ENGINES];
 }
+function lyricsFromProject(get: (ns: string, key: string) => unknown, prefer?: string): string {
+  for (const ns of engineOrder(prefer)) {
+    if (ns === "song") {
+      const blocks = (get("song", "blocks") as { type?: string; lyrics?: string }[] | undefined) || [];
+      const t = blocks.filter((b) => (b.lyrics || "").trim()).map((b) => `[${b.type || "Section"}]\n${(b.lyrics || "").trim()}`).join("\n\n");
+      if (t.trim()) return t;
+    } else {
+      const t = (get(ns, "lyrics") as string) || "";
+      if (t.trim()) return t;
+    }
+  }
+  return "";
+}
+// the open project's song, from its live drafts (unsaved edits included): title, style, lyrics
+function projectSong(get: (ns: string, key: string) => unknown, projectName?: string, prefer?: string): { title: string; style: string; lyrics: string } {
+  const str = (ns: string, key: string) => ((get(ns, key) as string) || "").toString().trim();
+  const m3Style = () => {
+    // Music 3 keeps the genre at the end of its Basic Attributes field, the imagery in its own field
+    const f = (get("music3", "fields") as Record<string, string> | undefined) || {};
+    const tail = String(f["Basic Attributes"] || "").split(".").map((s) => s.trim()).filter(Boolean).pop() || "";
+    const img = String(f["Application Scenarios & Imagery"] || "").trim();
+    return [tail, img].filter(Boolean).join(". ");
+  };
+  let title = "", style = "";
+  for (const ns of engineOrder(prefer)) {
+    title = title || str(ns, "title");
+    style = style || (ns === "suno" ? str("suno", "style") : ns === "yue2" ? str("yue2", "style") : ns === "song" ? str("song", "tags") : m3Style());
+  }
+  return { title: title || (projectName || "").trim(), style, lyrics: lyricsFromProject(get, prefer) };
+}
+// a track's song name: its title, else an import's name, walked back through params.source to the
+// original take (a naturalized or mastered copy carries neither), with the copy suffix dropped
+function trackOrigin(it: LibItem, byId: Map<string, LibItem>): LibItem {
+  let cur = it;
+  for (let i = 0; i < 12; i++) {
+    const p = cur.params || {};
+    const src = typeof p.source === "string" ? p.source : "";
+    if ((p.title && String(p.title).trim()) || !/^[0-9a-f-]{32,36}$/.test(src)) return cur;
+    const up = byId.get(src);
+    if (!up) return cur;
+    cur = up;
+  }
+  return cur;
+}
+function trackSongName(it: LibItem, byId: Map<string, LibItem>): string {
+  const p = trackOrigin(it, byId).params || {};
+  if (p.title && String(p.title).trim()) return String(p.title);
+  return typeof p.source === "string" && !/^[0-9a-f-]{32,36}$/.test(p.source) ? p.source : "";
+}
+const songKey = (s: string) => s.toLowerCase().replace(/\s*\((naturalized|mastered|master|mixed|remaster(ed)?|imported)\)\s*$/i, "")
+  .replace(/\s*\([^)]*\)\s*$/, "").replace(/[^a-z0-9]+/g, " ").trim();
 
-function WriterPanel({ audioId, loaded, onWritten, startOpen }: { audioId: string; loaded: { name: string; script: Script } | null; onWritten: (name: string) => Promise<void>; startOpen: boolean }) {
+function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, trackMode }: { audioId: string; loaded: { name: string; script: Script } | null; onWritten: (name: string) => Promise<void>; startOpen: boolean; projectName?: string; trackMode?: string }) {
   const d = useDrafts("mv");
   const drafts = useDraftCtx();
   const [open, setOpen] = useState(startOpen);
@@ -1876,6 +1961,16 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen }: { audioId: strin
     const r = loaded.script.refs || {};
     setFace(r.face || ""); setBody(r.body || ""); setShared(r.shared || "");
     if (!concept.trim() && loaded.script.concept) setConcept(loaded.script.concept);
+  };
+  // the open project's song: only what it has replaces a field, so a field it lacks keeps the track's
+  const fromProject = () => {
+    const ps = projectSong(drafts.get, projectName, trackMode);
+    if (!ps.lyrics.trim() && !ps.style && !ps.title) { setErr("the open project has no song in it (Suno, Music 3, YuE2 or Song builder)"); return; }
+    setErr("");
+    if (ps.title) setTitle(ps.title);
+    if (ps.style) setStyle(ps.style);
+    if (ps.lyrics.trim()) setLyrics(ps.lyrics);
+    else setErr("the open project has no lyrics: title and style filled");
   };
   const nLocks = loaded ? loaded.script.scenes.filter((s) => s.locked).length : 0;
   const ready = title.trim() && lyrics.trim() && face.trim() && body.trim() && shared.trim();
@@ -1919,10 +2014,11 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen }: { audioId: strin
             <Field label="style" hint="genre and mood, filled from the song"><input className={inp} value={style} onChange={(e) => setStyle(e.target.value)} /></Field>
           </div>
           <Field label="lyrics" hint="with section tags ([Verse], [Chorus] ...)">
-            <textarea className={`${inp} h-40 font-mono text-[11px]`} value={lyrics} onChange={(e) => setLyrics(e.target.value)} placeholder="paste the lyrics, or take them from the open project" />
+            <textarea className={`${inp} h-40 font-mono text-[11px]`} value={lyrics} onChange={(e) => setLyrics(e.target.value)} placeholder="paste the lyrics, or fill them from the open project" />
           </Field>
           <div className="flex flex-wrap gap-2">
-            <GhostButton onClick={() => { const t = lyricsFromProject(drafts.get); if (t.trim()) setLyrics(t); else setErr("the open project has no lyrics (Suno, Music 3 or Song builder)"); }}>lyrics from the open project</GhostButton>
+            <GhostButton onClick={fromProject} title={projectName ? `title, style and lyrics from the drafts of "${projectName}" (unsaved edits included)` : "title, style and lyrics from the drafts in the tabs"}>
+              fill from the open project{projectName ? ` (${projectName})` : ""}</GhostButton>
             {loaded && <GhostButton onClick={fromScript} title="the singer's descriptions (and the idea, if empty) of the open script">copy the singer from the open script</GhostButton>}
           </div>
           <Field label="your idea for the video" hint="optional; empty = Claude proposes one">

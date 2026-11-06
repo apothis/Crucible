@@ -280,7 +280,7 @@ function Controls({ mode, cfg, busy, song, setSong, goTo, handoff, setHandoff, l
     case "music3": return <Music3StudioForm {...p} song={song} projectName={projectName} goTo={goTo} />;
     case "yue2": return <Yue2StudioForm {...p} song={song} projectName={projectName} library={library} goTo={goTo} />;
     case "suno": return <SunoStudioForm {...p} goTo={goTo} />;
-    case "mv": return <MusicVideoForm {...p} library={library} />;
+    case "mv": return <MusicVideoForm {...p} library={library} projectName={projectName} />;
     case "youtube": return <YouTubeForm {...p} library={library} />;
     case "compare": return <CompareView items={library} ids={compare} setCompare={setCompare} refresh={ctx.onDone} />;
     case "loratrain": return <LoraTrainingForm cfg={cfg} />;
