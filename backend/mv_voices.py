@@ -28,7 +28,7 @@ import requests
 
 from . import lyricalign
 
-VERSION = 1
+VERSION = 2
 SR = 16000
 WIN, HOP = 1.5, 0.75          # window and hop, seconds
 VOICED_DB = 30.0              # a 50 ms frame is voiced within this many dB of the stem's loudest
@@ -40,6 +40,16 @@ UNSURE_MARGIN = 0.10          # a line whose own fingerprint is this close to bo
 UNSURE_FLOOR = 0.40           # ... or this far from both (a choir, a layered shout): B-roll, not lip-sync
 # Vanadis 2026-11-07: clean lines sit 0.2-0.5 apart; the unsure ones were 2:35 (0.04), 3:49 (0.05) and
 # 4:08 (0.37 / 0.26), the same lines the window strips showed as borderline
+# ANSWERS: a short call and answer inside one line ("Vanadis (Vanadis)": he calls, she answers,
+# under a second each) is too short for the 1.5 s windows (measured 2026-11-07: every window over
+# the Vanadis choruses read him, the user heard her answers). A fine pass of short windows over the
+# sung stretches finds stretches of the OTHER voice inside a run; they stay off the runs (the line
+# is not a shared line) and are listed as answers, which a lip-sync render can mute from what the
+# singer on screen is driven by.
+FINE_WIN, FINE_HOP = 0.6, 0.2  # fine windows, seconds
+FINE_PAD = (0.3, 1.6)          # fine windows cover each line from this before its start to this after its end
+FINE_MARGIN = 0.08             # a fine window names a voice when nearer to it than to the other by this
+ANSWER_MIN_WINS = 2            # ... and an answer is this many consecutive such windows
 MALE_TAG = re.compile(r"(?i)\b(male|man|men|boy|baritone|bass|tenor|growl\w*|harsh|scream\w*|death)\b")
 FEMALE_TAG = re.compile(r"(?i)\b(female|woman|women|girl|soprano|alto|mezzo)\b")
 
@@ -72,7 +82,22 @@ def _segments(x, sections):
         if on[a:b].mean() >= VOICED_FRAC:
             wins.append([round(t, 2), round(t + WIN, 2)])
         t += HOP
-    return lines, wins
+    spans = []
+    for a, b in sorted(lines):
+        a, b = max(0.0, a - FINE_PAD[0]), b + FINE_PAD[1]
+        if spans and a <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    fine = []
+    for a, b in spans:
+        t = a
+        while t + FINE_WIN <= min(b, len(x) / SR):
+            i, j = int(t / 0.05), int((t + FINE_WIN) / 0.05)
+            if on[i:j].mean() >= VOICED_FRAC:
+                fine.append([round(t, 2), round(t + FINE_WIN, 2)])
+            t += FINE_HOP
+    return lines, wins, fine
 
 
 def _kmeans(X, k=3, inits=40, iters=60, seed=0):
@@ -109,20 +134,21 @@ def fingerprint(stem_path, sections, helper_host, upload, cache_file, log=print)
             pass
     wav16 = os.path.splitext(cache_file)[0] + ".16k.wav"
     x = _stem16k(stem_path, wav16)
-    lines, wins = _segments(x, sections)
+    lines, wins, fine = _segments(x, sections)
     with open(wav16, "rb") as f:
         data = f.read()
     name = upload(data, f"voice_{hashlib.md5(data).hexdigest()[:16]}.wav")
-    log(f"[voices] fingerprinting {len(lines)} lines + {len(wins)} windows on the box")
+    log(f"[voices] fingerprinting {len(lines)} lines + {len(wins)} windows + {len(fine)} fine windows on the box")
     r = requests.post(f"http://{helper_host}/voice/timeline",
-                      json={"input_name": name, "segments": lines + wins}, timeout=1800)
+                      json={"input_name": name, "segments": lines + wins + fine}, timeout=1800)
     if r.status_code == 404 and "Not Found" in r.text:
         raise RuntimeError("the box helper predates /voice/timeline: redeploy lora_upload_server.py and restart it")
     r.raise_for_status()
     res = r.json()
     emb = res["embeddings"]
-    c = {"key": key, "lines": lines, "windows": wins, "line_emb": emb[:len(lines)],
-         "win_emb": emb[len(lines):], "provider": res.get("provider"), "summary": res.get("summary")}
+    n1, n2 = len(lines), len(lines) + len(wins)
+    c = {"key": key, "lines": lines, "windows": wins, "fine": fine, "line_emb": emb[:n1],
+         "win_emb": emb[n1:n2], "fine_emb": emb[n2:], "provider": res.get("provider"), "summary": res.get("summary")}
     with open(cache_file, "w") as f:
         json.dump(c, f)
     return c
@@ -170,6 +196,36 @@ def _runs(wins, labels, him, her):
     for r in merged:
         r["start"], r["end"] = round(r["start"], 2), round(r["end"], 2)
     return merged
+
+
+def _answers(fp, C, her, him, bleed, runs):
+    """Short stretches of the other voice inside a run (a call and answer), from the fine windows:
+    [{start, end, voice}]. A fine window names a voice when it is FINE_MARGIN nearer to it than to
+    the other and nearer to it than to the bleed; ANSWER_MIN_WINS consecutive windows naming the
+    voice the run does not hold make an answer."""
+    F = np.array(fp.get("fine_emb") or [], float)
+    if not len(F):
+        return []
+    sim = F @ C.T
+    out, cur = [], None
+    for (a, b), s in zip(fp["fine"], sim):
+        t = (a + b) / 2
+        base = next((r["voice"] for r in runs if r["start"] <= t < r["end"]), None)
+        v = None
+        if s[her] - s[him] >= FINE_MARGIN and s[her] > s[bleed]:
+            v = "her"
+        elif s[him] - s[her] >= FINE_MARGIN and s[him] > s[bleed]:
+            v = "him"
+        hit = v if base and v and v != base else None
+        if hit and cur and cur["voice"] == hit and a - cur["last"] <= FINE_HOP + 1e-6:
+            cur["end"], cur["last"], cur["n"] = b, a, cur["n"] + 1
+            continue
+        if cur and cur["n"] >= ANSWER_MIN_WINS:
+            out.append(cur)
+        cur = {"start": a, "end": b, "last": a, "n": 1, "voice": hit} if hit else None
+    if cur and cur["n"] >= ANSWER_MIN_WINS:
+        out.append(cur)
+    return [{"start": round(x["start"], 2), "end": round(x["end"], 2), "voice": x["voice"]} for x in out]
 
 
 def voice_seconds(runs, a, b):
@@ -224,6 +280,7 @@ def timeline(fp, sections, lyrics_raw, swap=False):
         him, her = her, him
         how += "; swapped by the user"
     runs = _runs(wins, lab, him, her)
+    answers = _answers(fp, C, her, him, bleed, runs)
     L = {(round(a, 2), round(b, 2)): np.array(e, float) for (a, b), e in zip(fp["lines"], fp["line_emb"]) if e}
     lines = []
     for l in all_lines:
@@ -243,10 +300,12 @@ def timeline(fp, sections, lyrics_raw, swap=False):
         # not unsure (it shows her, user rule); B-roll covers an unsure line (user rule, 2026-11-07)
         unsure = v == "unknown" or (">" not in v and cos is not None and (
             abs(cos["him"] - cos["her"]) < UNSURE_MARGIN or max(cos.values()) < UNSURE_FLOOR))
+        ans = [x for x in answers if x["end"] > l["start"] and x["start"] < l["end"] + FINE_PAD[1]]
         lines.append({"start": l["start"], "end": l["end"], "text": l["text"], "voice": v, "unsure": bool(unsure),
+                      "answers": ans,
                       "cos": {k: round(x, 3) for k, x in cos.items()} if cos else None,
                       "seconds": {k: round(x, 2) for k, x in sec.items()}})
-    return {"version": VERSION, "runs": runs, "lines": lines, "how": how, "swap": bool(swap),
+    return {"version": VERSION, "runs": runs, "answers": answers, "lines": lines, "how": how, "swap": bool(swap),
             "separation": round(float(C[voices[0]] @ C[voices[1]]), 3),
             "sung_seconds": {"her": round(sum(r["end"] - r["start"] for r in runs if r["voice"] == "her"), 1),
                              "him": round(sum(r["end"] - r["start"] for r in runs if r["voice"] == "him"), 1)}}
@@ -278,6 +337,7 @@ def apply(sections, tl):
             l["voice"] = m["voice"] if m else "unknown"
             l["voice_seconds"] = m["seconds"] if m else {"her": 0.0, "him": 0.0}
             l["voice_unsure"] = bool(m["unsure"]) if m else True
+            l["voice_answers"] = m.get("answers") or [] if m else []
         cuts = []
         for a, b in zip(tl["runs"], tl["runs"][1:]):
             # a change straight from one voice to the other (a change across a silence is
@@ -293,6 +353,7 @@ def apply(sections, tl):
             if s["start"] + 0.5 < t < s["end"] - 0.5 and s.get("vocal") and not near_line_cut:
                 cuts.append(t)
         s["voice_cuts"] = cuts
+        s["voice_answers"] = [x for x in tl.get("answers") or [] if x["end"] > s["start"] and x["start"] < s["end"]]
         s["voice_runs"] = [{"start": max(r["start"], s["start"]), "end": min(r["end"], s["end"]), "voice": r["voice"]}
                            for r in tl["runs"] if r["end"] > s["start"] and r["start"] < s["end"]]
     return sections

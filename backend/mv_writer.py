@@ -240,6 +240,7 @@ Fixed facts about this production:
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
 - Environment-only B-roll (no person in frame) moves ONE element only (the sea, a curtain, the rain, a flame), slowly, with everything else still. A second moving element, or any rhythm ("every few seconds", "with each gust"), makes the model run the shot as a timelapse (measured). Sounds belong to the soundscape, not to the picture.
 - LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location. When the brief lists KNOWN LOCATIONS (places already photographed for earlier scripts or other videos, their stills on file), prefer them wherever one serves THIS video and refer to each by its exact id; invent a new location only where no known one fits the song. Never redecorate a known place: its fixed elements are what its description says, and your scene settings there must match that description.
+- THE SAME PEOPLE ACROSS A CUT IN ONE PLACE (user, 2026-11-07): two scenes cut back to back in the same location show the same people. The location still fixes the camera position, so cutting from an empty plate to her in the same place makes her appear out of nowhere, and cutting from her to an empty plate there makes her vanish. When the next scene adds or removes a person, set it in another location (a second angle or a detail of a place counts as its own location: add one rather than break this rule). Setups of her in one place cut together freely; an environment plate between them belongs to another place.
 - Timing is NOT yours beyond choosing cut points: the system computes clip windows and which words fall where.
 
 Write for the song's genre: its pace, weight and mood should be visible in the choice of places, light, weather, movement and the proportion of performance to B-roll."""
@@ -337,7 +338,9 @@ def _section_text(sections):
                 while vcuts and vcuts[0] < l["start"]:
                     out.append(f"      cut {vcuts.pop(0):6.2f} | VOICE CHANGE (measured)")
                 tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] else "            |"
-                who = (f"[{VOICE_LABEL.get(l['voice'], l['voice'])}{', UNSURE: B-roll, no lip-sync' if l.get('voice_unsure') else ''}] "
+                ans = "".join(f", answered by {VOICE_LABEL.get(x['voice'], x['voice'])} at {x['start']:.2f}s"
+                              for x in l.get("voice_answers") or [])
+                who = (f"[{VOICE_LABEL.get(l['voice'], l['voice'])}{ans}{', UNSURE: B-roll, no lip-sync' if l.get('voice_unsure') else ''}] "
                        if l.get("voice") else "")
                 out.append(f"      {tag} {l['start']:7.2f}-{l['end']:6.2f}  {who}{l['text']}")
                 prev_end = l["end"]
@@ -423,6 +426,63 @@ def check_duet(sc, sections):
     return problems
 
 
+def solo_mute_ranges(script, scene, a, b):
+    """Two singers: the song-second stretches inside [a, b) where the OTHER singer is heard (their
+    measured runs and their answers), for a lip-sync scene of this singer. Muted from what the
+    render hears, the singer on screen is not driven by the other's words (2026-11-07: his lips
+    took her answering "Vanadis" too). Shared lines are left in: they show her, lip-syncing all
+    of it (user rule). [] on a one-singer script or a scene with no singer."""
+    d = script.get("duet") or {}
+    who = singer_of(script, scene)
+    if not d or who not in ("her", "him"):
+        return []
+    other = "him" if who == "her" else "her"
+    shared = [(l["start"], l["end"]) for s in script["facts"]["sections"] for l in s.get("lines") or []
+              if is_shared(l.get("voice"))]
+    out = []
+    for r in list(d.get("runs") or []) + list(d.get("answers") or []):
+        if r["voice"] != other:
+            continue
+        lo, hi = max(a, float(r["start"])), min(b, float(r["end"]))
+        for s0, e0 in shared:            # cut the shared lines out of the range
+            if hi > s0 and lo < e0:
+                if lo < s0:
+                    out.append([round(lo, 2), round(s0, 2)])
+                lo = max(lo, e0)
+        if hi - lo > 0.05:
+            out.append([round(lo, 2), round(hi, 2)])
+    return sorted(out)
+
+
+def continuity_problems(script):
+    """Cuts between two back-to-back scenes in the SAME location that change who is in frame
+    (user, 2026-11-07: an empty plate, then her on the same background, makes her appear out of
+    nowhere; the location still fixes the camera, so the cut reads as a pop). Who is in frame =
+    singer_of (her / him / none). Returns [(index of the later scene, problem)]."""
+    out = []
+    sc = script.get("scenes") or []
+    for a, b in zip(sc, sc[1:]):
+        if not a.get("location") or a.get("location") != b.get("location"):
+            continue
+        wa, wb = singer_of(script, a), singer_of(script, b)
+        if wa == wb:
+            continue
+        who = {"none": "nobody"}
+        what = f"{who.get(wa, wa)} -> {who.get(wb, wb)}"
+        out.append((b["index"], f"cut from scene {a['index'] + 1} in the same location `{b['location']}` changes who is in frame "
+                                f"({what}): move one of the two scenes to another location or angle, or keep the same people in both"))
+    return out
+
+
+def mark_continuity(script):
+    """Refresh the continuity problems on every scene (drops old ones first, so it can rerun after edits)."""
+    for sc in script.get("scenes") or []:
+        sc["scene_problems"] = [p for p in (sc.get("scene_problems") or []) if not p.startswith("cut from scene ")]
+    for i, msg in continuity_problems(script):
+        script["scenes"][i]["scene_problems"].append(msg)
+    return script
+
+
 def locks_text(locks):
     """The ALREADY SHOT block: one line per locked take, in song order."""
     out = []
@@ -441,7 +501,9 @@ TWO SINGERS. This song is a duet, and this block overrides "the singer is the on
 - Every scene names its "singer": "her" or "him" for the one person the references define in that scene, "none" for an environment-only plate. A lip-sync scene (sing_to_camera, sing_away) shows the singer whose voice is heard, never her lip-syncing his words or him lip-syncing hers. Where the voice changes inside a section, cut on the listed VOICE CHANGE point so each lip-sync scene holds one voice.
 - Each scene shows ONE of the two (two-shots of both singers are untested on this model and are not written). A SHARED line (both voices in it) always shows HER, lip-syncing it.
 - A line marked UNSURE is one the measurement cannot place: cover it with B-roll (an environment plate, or a silent shot of either singer at medium or wider), never a lip-sync scene. If in doubt about who sings, B-roll.
+- A line ANSWERED by the other singer (a short call and answer, measured: "[HIM, answered by HER at 91.10s]") belongs to the line's singer: one lip-sync scene of that singer holds it, and the answer is heard off screen (the render mutes the answer from what the singer on screen lip-syncs). Never cut to the other singer for an answer this short.
 - Either singer may appear silent (no_singing_her, written with singer him for his silent shots) under the other's voice at medium or wider.
+- A change of singer at a cut is the same jump as a person appearing: when the next scene shows the other singer, set it in another location (or another angle of the place, its own location), never the same location as the scene before.
 - He has one outfit for the whole video (wardrobe2), as his references show; his opening_still describes him in the setting, hers describes her.
 - His vocal delivery: {voice}. Write his performance for it."""
 
@@ -1126,7 +1188,8 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
         tl = duet["measure"](facts["sections"])
         mv_voices.apply(facts["sections"], tl)
         duet_rec = {"refs2": duet["refs2"], "voice": duet.get("voice") or "", "how": tl["how"], "swap": tl["swap"],
-                    "separation": tl["separation"], "runs": tl["runs"], "sung_seconds": tl["sung_seconds"]}
+                    "separation": tl["separation"], "runs": tl["runs"], "answers": tl.get("answers") or [],
+                    "sung_seconds": tl["sung_seconds"]}
         log(f"[mvw] voices: her {tl['sung_seconds']['her']}s, him {tl['sung_seconds']['him']}s ({tl['how']})")
     refs_text = (f"<Picture 1> (face / identity): {refs['face']}\n<Picture 2> (full body / wardrobe): {refs['body']}\n"
                  f"Both show: {refs['shared']}")
@@ -1155,6 +1218,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
         sc.setdefault("clips", [])
         script["scenes"].append(sc)
     script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
+    mark_continuity(script)
     return script
 
 

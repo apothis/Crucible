@@ -1092,6 +1092,14 @@ def _h3_chain(p: dict, meta=None):
         lock_src = mv_stems_mod.lock_source(LIBRARY, p["audio_id"], src, lock)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
+    # mute (opt-in, two singers): song-second ranges where the vocal stem is subtracted from the
+    # lock, so the singer on screen does not lip-sync the other singer's words
+    mute = [[float(a), float(b)] for a, b in (p.get("mute") or [])]
+    if mute:
+        stem = mv_stems_mod.vocal_stem_path(LIBRARY, p["audio_id"])
+        if not stem:
+            raise HTTPException(400, "mute needs the song's vocal stem (POST /api/mv/stems first)")
+        lock_src = mv_stems_mod.muted_path(LIBRARY, p["audio_id"], lock_src, stem, mute)
     # camera_ref: a short mp4 under .mvwork (a manufactured pace clip) sent as <Video 1>
     cam_ref = p.get("camera_ref")
     cam_path = None
@@ -1168,6 +1176,7 @@ def _h3_chain(p: dict, meta=None):
         resolved["ref_ids"] = [os.path.basename(r) for r in ref_ids]
         resolved["pad_seconds"] = round(pad, 3)
         resolved["lock"] = lock
+        resolved["mute"] = mute or None
         resolved.update(meta or {})
         return graph, resolved
 
@@ -1250,6 +1259,12 @@ def mv_render_scene(p: dict):
             raise HTTPException(400, "this is one of his scenes: set his face and body pictures for the script first")
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
+    # solo lock (opt-in, two singers): a lip-sync scene's lock loses the other singer's measured
+    # stretches (runs and answers), so the face on screen does not mouth them; the mux keeps them
+    mute = None
+    if p.get("solo_lock") and script.get("duet") and str(scene.get("performance") or "").startswith("sing"):
+        span = float(scene["plan"]["span_seconds"]) + 1.0
+        mute = mv_writer_mod.solo_mute_ranges(script, scene, float(scene["start"]), float(scene["start"]) + span) or None
     distant = (not env_only) and mv_writer_mod.is_distant(scene)
     if distant and len(singer_refs) >= 2:
         singer_refs = [singer_refs[1]]          # body picture only (ref_ids order is face, body); s.20.31 H1
@@ -1382,17 +1397,18 @@ def mv_render_scene(p: dict):
                 "first_frame_from": first_frame_from,
                 "anchor_first": anchor_first, "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
                 "anchor_from": anchor_from, "end_still_id": end_still,
-                "rail_frames": [r["frame"] for r in rail] or None, "variant": variant,
+                "rail_frames": [r["frame"] for r in rail] or None, "variant": variant, "mute": mute,
                 "prompts": prompts}
     q = {k: v for k, v in p.items() if k not in ("script", "scene", "ref_ids", "location_refs", "location_ref_id",
-                                                 "use_location_library", "dry_run", "anchor_first", "room_plate_meta")}
+                                                 "use_location_library", "dry_run", "anchor_first", "room_plate_meta",
+                                                 "solo_lock", "mute")}
     chain_refs = [] if lane == "i2v" else singer_refs + ([loc_ref] if loc_ref else [])
     q.update({"audio_id": script["audio_id"], "ref_ids": chain_refs, "lane": lane,
               "first_frame_id": first_frame, "anchor_still_id": anchor_still if anchor_first else None,
               "end_still_id": end_still, "rail": rail or None,
               "clips": [{"prompt": pr} for pr in prompts],
               "song_start": scene["start"], "frames": scene["plan"]["frames"],
-              "context_frames": scene["plan"]["context_frames"]})
+              "context_frames": scene["plan"]["context_frames"], "mute": mute})
     return _h3_chain(q, meta={"script": script_name, "scene_index": scene["index"], "scene_title": scene.get("title"),
                               "title": f"{script.get('title') or script_name} / {int(scene['index']):02d} {scene.get('title') or ''}".strip(),
                               "scene_start": scene["start"], "scene_end": scene["end"], "performance": scene.get("performance"),
@@ -2441,10 +2457,11 @@ def mv_voices(p: dict):
     tl = _mv_voice_measure(aid, p["lyrics"], facts["sections"], p.get("swap"))
     mv_voices_mod.apply(facts["sections"], tl)
     secs = [{"type": x["type"], "start": x["start"], "end": x["end"],
-             "lines": [{**{k: l.get(k) for k in ("start", "end", "text", "voice")}, "unsure": l.get("voice_unsure", False)}
+             "lines": [{**{k: l.get(k) for k in ("start", "end", "text", "voice")}, "unsure": l.get("voice_unsure", False),
+                        "answers": l.get("voice_answers") or []}
                        for l in x["lines"]]}
             for x in facts["sections"] if x.get("lines")]
-    return {**{k: tl[k] for k in ("runs", "how", "swap", "separation", "sung_seconds")}, "sections": secs,
+    return {**{k: tl[k] for k in ("runs", "answers", "how", "swap", "separation", "sung_seconds")}, "sections": secs,
             "duration": dur}
 
 
@@ -2527,6 +2544,7 @@ def _mv_write_run(p, on_log=None):
     stamp = time.strftime("%Y%m%d_%H%M%S")
     jpath = os.path.join(out_dir, f"{slug}_{stamp}.json")
     mpath = os.path.join(out_dir, f"{slug}_{stamp}.md")
+    mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:
@@ -2907,6 +2925,7 @@ def mv_rewrite_scene(p: dict):
     base = re.sub(r"\.json$", "", os.path.basename(str(name)))
     jpath = os.path.join(out_dir, f"{base}_rw{idx}_{stamp}.json")
     mpath = os.path.join(out_dir, f"{base}_rw{idx}_{stamp}.md")
+    mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:
@@ -2934,6 +2953,21 @@ def mv_refresh_facts(p: dict):
     facts = mv_writer_mod.song_facts(src, lyrics_raw, script["duration"], cache_dir=os.path.join(work, "lyricalign"),
                                      align_path=stem)
     script["facts"] = facts
+    if script.get("duet"):
+        # two singers: re-measure the voices on the new sections (the box fingerprints are cached
+        # per song). The stored blocks have lost the lyric gender tags, so the naming (which group
+        # is him) is the one of the two that agrees with the script's own measured runs.
+        d = script["duet"]
+        old_runs = d.get("runs") or []
+
+        def agree(tl):
+            return sum(max(0.0, min(a["end"], b["end"]) - max(a["start"], b["start"]))
+                       for a in tl["runs"] for b in old_runs if a["voice"] == b["voice"])
+        tl = max((_mv_voice_measure(script["audio_id"], lyrics_raw, facts["sections"], sw) for sw in (False, True)),
+                 key=agree)
+        mv_voices_mod.apply(facts["sections"], tl)
+        d.update({"runs": tl["runs"], "answers": tl.get("answers") or [], "sung_seconds": tl["sung_seconds"],
+                  "separation": tl["separation"]})
     for sc in script["scenes"]:
         mv_writer_mod._finish_scene(sc, facts["sections"])
     key = lambda s: (s["type"], s["start"], s["end"], len(s["lines"]))
@@ -2946,6 +2980,7 @@ def mv_refresh_facts(p: dict):
     base = re.sub(r"\.json$", "", os.path.basename(str(name)))
     jpath = os.path.join(out_dir, f"{base}_facts_{stamp}.json")
     mpath = os.path.join(out_dir, f"{base}_facts_{stamp}.md")
+    mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:
@@ -3015,6 +3050,7 @@ def mv_split_scene(p: dict):
     base = re.sub(r"\.json$", "", os.path.basename(str(name)))
     jpath = os.path.join(out_dir, f"{base}_sp{idx}_{stamp}.json")
     mpath = os.path.join(out_dir, f"{base}_sp{idx}_{stamp}.md")
+    mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:
@@ -3088,6 +3124,7 @@ def mv_move_cut(p: dict):
     base = re.sub(r"\.json$", "", os.path.basename(str(name)))
     jpath = os.path.join(out_dir, f"{base}_mc{idx}_{stamp}.json")
     mpath = os.path.join(out_dir, f"{base}_mc{idx}_{stamp}.md")
+    mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:

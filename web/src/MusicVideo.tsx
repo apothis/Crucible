@@ -25,7 +25,8 @@ type PlaceRow = Place & { still_present?: boolean };
 type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; ref_stills?: { face?: string; body?: string; him_face?: string; him_body?: string }; locations?: Place[]; scenes: Scene[];
   duet?: { refs2: Refs; voice?: string; how?: string; swap?: boolean; sung_seconds?: { her: number; him: number } }; wardrobe2?: string };
 type RefKind = "face" | "body" | "him_face" | "him_body";
-type VoiceLine = { start: number; end: number; text: string; voice: string; unsure?: boolean };
+type VoiceLine = { start: number; end: number; text: string; voice: string; unsure?: boolean;
+  answers?: { start: number; end: number; voice: string }[] };
 type Voices = { how: string; swap: boolean; separation: number; sung_seconds: { her: number; him: number }; duration: number;
   sections: { type: string; start: number; end: number; lines: VoiceLine[] }[]; for?: string };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
@@ -190,6 +191,7 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
   const [width, setWidth] = d.use("width", 1344);
   const [height, setHeight] = d.use("height", 768);
   const [acceptFlags, setAcceptFlags] = d.use("acceptFlags", false);
+  const [soloLock, setSoloLock] = d.use("soloLock", false);
 
   const [scripts, setScripts] = useState<ScriptRow[]>([]);
   const [allScripts, setAllScripts] = useState(false);
@@ -431,7 +433,7 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
 
       {step === 4 && script && (
         <TakesStep script={script} scriptName={scriptName} takes={takes} sel={sel} setSel={setSel}
-          faceId={face} bodyId={body} seed={seed} setSeed={setSeed}
+          faceId={face} bodyId={body} seed={seed} setSeed={setSeed} soloLock={soloLock} setSoloLock={setSoloLock}
           recipeOf={recipeOf} setRecipe={setRecipe} recipeChanged={(sc) => !!recipes[recipeKey(sc.index)]}
           width={width} setWidth={setWidth} height={height} setHeight={setHeight} acceptFlags={acceptFlags} setAcceptFlags={setAcceptFlags}
           dry={dry} setDry={setDry} busyMsg={busyMsg} setBusyMsg={setBusyMsg} setErr={setErr}
@@ -1089,6 +1091,7 @@ function CameraMovePanel({ scriptName, scene, take, busy, setErr, setBusyMsg, re
 function TakesStep(p: {
   script: Script; scriptName: string; takes: Record<string, Take[]>; sel: number | null; setSel: (n: number | null) => void;
   faceId: string; bodyId: string; seed: string; setSeed: (v: string) => void;
+  soloLock: boolean; setSoloLock: (v: boolean) => void;
   recipeOf: (sc: Scene) => Recipe; setRecipe: (sc: Scene, patch: Partial<Recipe> | null) => void; recipeChanged: (sc: Scene) => boolean;
   width: number; setWidth: (v: number) => void; height: number; setHeight: (v: number) => void; acceptFlags: boolean; setAcceptFlags: (v: boolean) => void;
   dry: Record<number, Dry>; setDry: (f: (d: Record<number, Dry>) => Record<number, Dry>) => void; busyMsg: string; setBusyMsg: (s: string) => void; setErr: (s: string) => void;
@@ -1142,7 +1145,7 @@ function TakesStep(p: {
     }
   }, [takes, rpJob?.status, rpJob?.take_job_id]);
 
-  const commonSig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.width}|${p.height}`;
+  const commonSig = () => `${p.faceId}|${p.bodyId}|${p.seed}|${p.width}|${p.height}|${p.soloLock && p.script.duet ? "solo" : ""}`;
   const sig = (idx: number = scene.index) => `${commonSig()}|${JSON.stringify(recipeAt(idx))}`;
   // turbo always goes out; steps, sampler and scheduler only when they differ from the recipe's own
   const recipeKnobs = (b: Record<string, unknown>, r: Recipe) => {
@@ -1160,6 +1163,7 @@ function TakesStep(p: {
       attention: ATTENTION, width: Number(p.width), height: Number(p.height), dry_run: dryRun,
     };
     recipeKnobs(body, recipeAt(idx));
+    if (p.soloLock && p.script.duet) body.solo_lock = true;
     const s = pinSeed ?? (p.seed.trim() ? Number(p.seed) : undefined);
     if (s !== undefined && !Number.isNaN(s)) body.seed = s;
     return body;
@@ -1557,6 +1561,12 @@ function TakesStep(p: {
                   <Field label="width"><input className={inp} type="number" step={32} value={p.width} onChange={(e) => p.setWidth(Number(e.target.value))} /></Field>
                   <Field label="height"><input className={inp} type="number" step={32} value={p.height} onChange={(e) => p.setHeight(Number(e.target.value))} /></Field>
                 </div>
+                {p.script.duet && (
+                  <label className="mt-2 flex items-center gap-2 text-xs" title="A lip-sync scene's render hears the song with the other singer's measured parts (his lines, her answers) taken out of the vocal, so the face on screen does not mouth them. The finished video keeps the full song.">
+                    <input type="checkbox" checked={p.soloLock} onChange={(e) => p.setSoloLock(e.target.checked)} />
+                    Two singers: lip-sync hears only the singer on screen (mutes the other singer's parts and answers)
+                  </label>
+                )}
               </details>
             </Card>
 
@@ -2150,6 +2160,9 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
                           <div key={j} className="flex items-baseline gap-2 pl-2">
                             <span className="w-12 shrink-0 tabular-nums text-[var(--color-muted)]">{mmss(l.start)}</span>
                             <span className={`shrink-0 rounded px-1 text-[10px] ${VOICE_STYLE[l.voice] || VOICE_STYLE.unknown}`}>{VOICE_WORDS[l.voice] || l.voice}</span>
+                            {(l.answers || []).map((a, k) => (
+                              <span key={k} className="shrink-0 rounded bg-sky-900 px-1 text-[10px] text-sky-200" title="a short answer from the other voice inside this line: heard off screen, muted from the lip-sync with the two-singer option in step 4">answered by {a.voice === "him" ? "him" : "her"} {mmss(a.start)}</span>
+                            ))}
                             {l.unsure && <span className="shrink-0 rounded bg-amber-900 px-1 text-[10px] text-amber-200" title="the measurement cannot place this line: the writer covers it with B-roll">unsure: B-roll</span>}
                             <span className="truncate">{l.text}</span>
                           </div>

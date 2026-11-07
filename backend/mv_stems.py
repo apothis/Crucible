@@ -62,6 +62,27 @@ def vocal_forward_path(library_dir, audio_id, mix_path, stem_path, gain_db=VOCAL
     return out
 
 
+def muted_path(library_dir, audio_id, base_path, stem_path, ranges):
+    """`base_path` (the lock source: mix, stem or vocal-forward) with the vocal stem SUBTRACTED
+    inside `ranges` ([[start, end], ...] song seconds): the other singer's stretches removed from
+    what a lip-sync render hears, so the singer on screen is not driven by them (two singers,
+    2026-11-07). The stem comes from this mix, so the subtraction cancels the voice and leaves the
+    band. A LOCK source only; the mux stays the mix. Cached by the ranges."""
+    import hashlib
+    rs = sorted([round(float(a), 2), round(float(b), 2)] for a, b in ranges if float(b) > float(a))
+    tag = hashlib.md5((os.path.basename(base_path) + repr(rs)).encode()).hexdigest()[:12]
+    out = os.path.join(stem_dir(library_dir), f"{os.path.basename(audio_id)}.muted_{tag}.wav")
+    if os.path.exists(out):
+        return out
+    inside = "+".join(f"between(t,{a},{b})" for a, b in rs) or "0"
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", base_path, "-i", stem_path,
+           "-filter_complex", f"[1:a]aformat=channel_layouts=stereo,volume=0:enable='not({inside})',aeval='-val(0)|-val(1)'[v];"
+                              f"[0:a]aformat=channel_layouts=stereo[m];[m][v]amix=inputs=2:duration=first:normalize=0[o]",
+           "-map", "[o]", "-ac", "2", "-c:a", "pcm_s16le", out]
+    subprocess.run(cmd, check=True)
+    return out
+
+
 def lock_source(library_dir, audio_id, mix_path, lock):
     """The file the chain should cut its LOCK window from. Raises if a stem lock is asked for and
     no stem is cached (run POST /api/mv/stems first)."""
