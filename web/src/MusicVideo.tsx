@@ -62,7 +62,7 @@ function SingerBadge({ sc }: { sc: Scene }) {
   return <span className={`rounded px-1 text-[10px] ${sc.singer === "him" ? "bg-sky-900 text-sky-200" : "bg-rose-900 text-rose-200"}`}>{sc.singer}</span>;
 }
 const VOICE_STYLE: Record<string, string> = { her: "bg-rose-900 text-rose-200", him: "bg-sky-900 text-sky-200", "her>him": "bg-violet-900 text-violet-200", "him>her": "bg-violet-900 text-violet-200", unknown: "bg-neutral-800 text-neutral-300" };
-const VOICE_WORDS: Record<string, string> = { her: "her", him: "him", "her>him": "her, then him", "him>her": "him, then her", unknown: "not measured" };
+const VOICE_WORDS: Record<string, string> = { her: "her", him: "him", "her>him": "shared: shows her", "him>her": "shared: shows her", unknown: "not measured" };
 const needsPicture = (sc: Scene) => envOnly(sc) && sc.matches_location_still === false && !sc.opening_still_id;
 const pictureUse = (sc: Scene) => envOnly(sc)
   ? (sc.matches_location_still === false ? "no singer: the render starts on this picture (required)" : "no singer: the render starts on this picture (else on the place's picture)")

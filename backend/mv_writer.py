@@ -347,7 +347,13 @@ def _section_text(sections):
     return "\n".join(out)
 
 
-VOICE_LABEL = {"her": "HER", "him": "HIM", "her>him": "HER then HIM", "him>her": "HIM then HER", "unknown": "voice unmeasured"}
+VOICE_LABEL = {"her": "HER", "him": "HIM", "her>him": "SHARED (her then him): show HER", "him>her": "SHARED (him then her): show HER",
+               "unknown": "voice unmeasured"}
+
+
+def is_shared(voice):
+    """A line both singers sing (handed over partway): it always shows HER (user rule, 2026-11-07)."""
+    return ">" in str(voice or "")
 
 
 def is_duet(sections):
@@ -357,13 +363,17 @@ def is_duet(sections):
 
 def voice_seconds_in(sections, a, b):
     """Measured seconds of each voice singing a lyric line inside [a, b): the section's voice runs
-    intersected with its lines (so a line handed over partway counts each voice where it sings)."""
+    intersected with its lines (so a line handed over partway counts each voice where it sings).
+    A SHARED line counts as hers throughout: shared lines always show her (user rule, 2026-11-07)."""
     out = {"her": 0.0, "him": 0.0}
     for s in sections:
         runs = s.get("voice_runs") or []
         for l in s.get("lines") or []:
             lo, hi = max(a, l["start"]), min(b, l["end"])
             if hi <= lo:
+                continue
+            if is_shared(l.get("voice")):
+                out["her"] += hi - lo
                 continue
             for r in runs:
                 o = min(hi, r["end"]) - max(lo, r["start"])
@@ -422,7 +432,7 @@ TWO SINGERS. This song is a duet, and this block overrides "the singer is the on
 - Two people are defined by references: SHE (the lead, her two pictures) and HE (the male singer, his two pictures). Every rule above about the singer applies to whichever singer a scene shows: his scale is fixed inside a scene, he never walks toward the camera, his lip-sync needs his mouth readable at medium close-up or closer, a close shot of his silent face under words is as wrong as one of hers, and the first sung line lands on the face of whoever sings it.
 - WHO SINGS WHEN IS MEASURED from this recording: every line below carries its voice ([HER], [HIM], or [HER then HIM] for a line handed over partway). The lyric tags may say otherwise; the measurement wins.
 - Every scene names its "singer": "her" or "him" for the one person the references define in that scene, "none" for an environment-only plate. A lip-sync scene (sing_to_camera, sing_away) shows the singer whose voice is heard, never her lip-syncing his words or him lip-syncing hers. Where the voice changes inside a section, cut on the listed VOICE CHANGE point so each lip-sync scene holds one voice.
-- Each scene shows ONE of the two (two-shots of both singers are untested on this model and are not written). A line they share goes to the voice that holds most of it.
+- Each scene shows ONE of the two (two-shots of both singers are untested on this model and are not written). A SHARED line (both voices in it) always shows HER, lip-syncing it.
 - Either singer may appear silent (no_singing_her, written with singer him for his silent shots) under the other's voice at medium or wider.
 - He has one outfit for the whole video (wardrobe2), as his references show; his opening_still describes him in the setting, hers describes her.
 - His vocal delivery: {voice}. Write his performance for it."""

@@ -272,6 +272,10 @@ def apply(sections, tl):
                 continue
             t = round((a["end"] + b["start"]) / 2, 2)
             near_line_cut = any(-0.6 < (l["start"] - 0.5) - t < 0.6 for l in s.get("lines") or [])
+            # a hand-over inside a shared line is no cut: shared lines show her (user rule, 2026-11-07)
+            in_shared = any(">" in str(l.get("voice")) and l["start"] < t < l["end"] for l in s.get("lines") or [])
+            if in_shared:
+                continue
             if s["start"] + 0.5 < t < s["end"] - 0.5 and s.get("vocal") and not near_line_cut:
                 cuts.append(t)
         s["voice_cuts"] = cuts
