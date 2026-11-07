@@ -957,6 +957,69 @@ def dav_encode(body: dict = Body(...)):
         raise HTTPException(500, f"encode output unparseable: {lines[-1][:300]}")
 
 
+VOICE_MODEL_FILE = "voxceleb_resnet34_LM.onnx"
+VOICE_MODEL_URL = ("https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/"
+                   "voxceleb_resnet34_LM.onnx")
+
+
+@app.post("/voice/timeline")
+def voice_timeline(body: dict = Body(...)):
+    """Speaker fingerprints for stretches of a vocal stem, for telling two singers apart.
+    Body: {token?, input_name, segments: [[start_s, end_s], ...]}. input_name is a 16 kHz mono
+    16-bit WAV already in ComfyUI's input dir.
+
+    Runs backend-deployed voice_timeline_box.py once under ComfyUI's embedded python
+    (onnxruntime + torchaudio, nothing to install) and returns {dim, provider, embeddings}.
+    The process exits when done, so nothing stays loaded. First call fetches the WeSpeaker
+    ResNet34 model (CC-BY-4.0) into ComfyUI models\\speaker via curl."""
+    _auth(body or {})
+    portable, app_dir, py = _comfy_app()
+    if not py:
+        raise HTTPException(404, "ComfyUI portable install not found (set MG_COMFY_DIR)")
+    script = os.path.join(portable, "voice_timeline_box.py")
+    if not os.path.isfile(script):
+        raise HTTPException(404, f"voice_timeline_box.py not deployed at {script} (fs/write it there)")
+    name = os.path.basename(str(body.get("input_name") or ""))
+    src = os.path.join(app_dir, "input", name)
+    if not (name and os.path.isfile(src)):
+        raise HTTPException(404, f"input audio not found: {src}")
+    segs = body.get("segments") or []
+    if not isinstance(segs, list) or not segs:
+        raise HTTPException(400, "segments: a non-empty list of [start_s, end_s]")
+
+    model = os.path.join(app_dir, "models", "speaker", VOICE_MODEL_FILE)
+    if not os.path.isfile(model):
+        os.makedirs(os.path.dirname(model), exist_ok=True)
+        tmp = model + ".part"
+        r = subprocess.run(["curl", "-L", "-C", "-", "-o", tmp, VOICE_MODEL_URL],
+                           capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not os.path.isfile(tmp):
+            raise HTTPException(502, f"speaker model download failed: {(r.stderr or '')[-300:]}")
+        os.replace(tmp, model)
+
+    base = os.path.splitext(src)[0]
+    seg_file, out_file = base + ".segments.json", base + ".voice.json"
+    with open(seg_file, "w") as f:
+        json.dump({"segments": segs}, f)
+    r = subprocess.run([py, script, src, seg_file, model, out_file], capture_output=True, text=True,
+                       timeout=1800)
+    lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+    if r.returncode != 0 or not lines or not os.path.isfile(out_file):
+        raise HTTPException(500, f"voice timeline failed: {(r.stderr or r.stdout or '')[-800:]}")
+    with open(out_file) as f:
+        res = json.load(f)
+    try:
+        res["summary"] = json.loads(lines[-1])
+    except Exception:
+        res["summary"] = lines[-1][:300]
+    for p in (seg_file, out_file):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return res
+
+
 if __name__ == "__main__":
     import uvicorn
     print(f"[lora-upload] base dir: {BASE}")
