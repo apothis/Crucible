@@ -36,6 +36,10 @@ VOICED_FRAC = 0.6             # a window is measured when this share of it is vo
 MIN_RUN = 1.2                 # a voice run shorter than this merges into its neighbour
 MIXED_MIN = 1.0               # a line is "mixed" when the other voice holds this many seconds of it
 MIXED_FRAC = 0.25             # ... and this share of its length
+UNSURE_MARGIN = 0.10          # a line whose own fingerprint is this close to both voices is unsure
+UNSURE_FLOOR = 0.40           # ... or this far from both (a choir, a layered shout): B-roll, not lip-sync
+# Vanadis 2026-11-07: clean lines sit 0.2-0.5 apart; the unsure ones were 2:35 (0.04), 3:49 (0.05) and
+# 4:08 (0.37 / 0.26), the same lines the window strips showed as borderline
 MALE_TAG = re.compile(r"(?i)\b(male|man|men|boy|baritone|bass|tenor|growl\w*|harsh|scream\w*|death)\b")
 FEMALE_TAG = re.compile(r"(?i)\b(female|woman|women|girl|soprano|alto|mezzo)\b")
 
@@ -220,6 +224,7 @@ def timeline(fp, sections, lyrics_raw, swap=False):
         him, her = her, him
         how += "; swapped by the user"
     runs = _runs(wins, lab, him, her)
+    L = {(round(a, 2), round(b, 2)): np.array(e, float) for (a, b), e in zip(fp["lines"], fp["line_emb"]) if e}
     lines = []
     for l in all_lines:
         sec = voice_seconds(runs, l["start"], l["end"])
@@ -231,7 +236,15 @@ def timeline(fp, sections, lyrics_raw, swap=False):
             minor = "her" if major == "him" else "him"
             v = (f"{major}>{minor}" if _first_voice(runs, l) == major else f"{minor}>{major}") \
                 if sec[minor] >= MIXED_MIN and sec[minor] >= MIXED_FRAC * tot else major
-        lines.append({"start": l["start"], "end": l["end"], "text": l["text"], "voice": v,
+        e = L.get((round(l["start"], 2), round(l["end"], 2)))
+        cos = {"her": float(e @ C[her]), "him": float(e @ C[him])} if e is not None else None
+        # unsure = the measurement cannot say who sings it: no voiced windows, or the line's own
+        # fingerprint sits between the two voices or far from both. A shared hand-over is measured,
+        # not unsure (it shows her, user rule); B-roll covers an unsure line (user rule, 2026-11-07)
+        unsure = v == "unknown" or (">" not in v and cos is not None and (
+            abs(cos["him"] - cos["her"]) < UNSURE_MARGIN or max(cos.values()) < UNSURE_FLOOR))
+        lines.append({"start": l["start"], "end": l["end"], "text": l["text"], "voice": v, "unsure": bool(unsure),
+                      "cos": {k: round(x, 3) for k, x in cos.items()} if cos else None,
                       "seconds": {k: round(x, 2) for k, x in sec.items()}})
     return {"version": VERSION, "runs": runs, "lines": lines, "how": how, "swap": bool(swap),
             "separation": round(float(C[voices[0]] @ C[voices[1]]), 3),
@@ -264,6 +277,7 @@ def apply(sections, tl):
             m = by.get((round(l["start"], 2), round(l["end"], 2)))
             l["voice"] = m["voice"] if m else "unknown"
             l["voice_seconds"] = m["seconds"] if m else {"her": 0.0, "him": 0.0}
+            l["voice_unsure"] = bool(m["unsure"]) if m else True
         cuts = []
         for a, b in zip(tl["runs"], tl["runs"][1:]):
             # a change straight from one voice to the other (a change across a silence is

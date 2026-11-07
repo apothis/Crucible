@@ -25,7 +25,7 @@ type PlaceRow = Place & { still_present?: boolean };
 type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; ref_stills?: { face?: string; body?: string; him_face?: string; him_body?: string }; locations?: Place[]; scenes: Scene[];
   duet?: { refs2: Refs; voice?: string; how?: string; swap?: boolean; sung_seconds?: { her: number; him: number } }; wardrobe2?: string };
 type RefKind = "face" | "body" | "him_face" | "him_body";
-type VoiceLine = { start: number; end: number; text: string; voice: string };
+type VoiceLine = { start: number; end: number; text: string; voice: string; unsure?: boolean };
 type Voices = { how: string; swap: boolean; separation: number; sung_seconds: { her: number; him: number }; duration: number;
   sections: { type: string; start: number; end: number; lines: VoiceLine[] }[]; for?: string };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
@@ -2150,6 +2150,7 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
                           <div key={j} className="flex items-baseline gap-2 pl-2">
                             <span className="w-12 shrink-0 tabular-nums text-[var(--color-muted)]">{mmss(l.start)}</span>
                             <span className={`shrink-0 rounded px-1 text-[10px] ${VOICE_STYLE[l.voice] || VOICE_STYLE.unknown}`}>{VOICE_WORDS[l.voice] || l.voice}</span>
+                            {l.unsure && <span className="shrink-0 rounded bg-amber-900 px-1 text-[10px] text-amber-200" title="the measurement cannot place this line: the writer covers it with B-roll">unsure: B-roll</span>}
                             <span className="truncate">{l.text}</span>
                           </div>
                         ))}

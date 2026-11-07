@@ -337,7 +337,8 @@ def _section_text(sections):
                 while vcuts and vcuts[0] < l["start"]:
                     out.append(f"      cut {vcuts.pop(0):6.2f} | VOICE CHANGE (measured)")
                 tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] else "            |"
-                who = f"[{VOICE_LABEL.get(l['voice'], l['voice'])}] " if l.get("voice") else ""
+                who = (f"[{VOICE_LABEL.get(l['voice'], l['voice'])}{', UNSURE: B-roll, no lip-sync' if l.get('voice_unsure') else ''}] "
+                       if l.get("voice") else "")
                 out.append(f"      {tag} {l['start']:7.2f}-{l['end']:6.2f}  {who}{l['text']}")
                 prev_end = l["end"]
                 while vcuts and vcuts[0] < l["end"]:
@@ -408,6 +409,12 @@ def check_duet(sc, sections):
                                 f"({sec[heard]:.1f}s vs {sec[who]:.1f}s): singer set to {heard}; its opening "
                                 f"still prompt may still describe {who}")
                 who = heard
+            a, b = float(sc["start"]), float(sc["end"])
+            unsure = [l for s in sections for l in (s.get("lines") or [])
+                      if l.get("voice_unsure") and min(b, l["end"]) - max(a, l["start"]) >= 0.5]
+            if unsure:
+                problems.append("lip-sync over a line the measurement cannot place (" + "; ".join(
+                    f"{l['start']:.1f}s '{l['text'][:32]}'" for l in unsure) + "): B-roll there, no lip-sync")
             other = "him" if who == "her" else "her"
             if sec[other] >= DUET_OTHER_MIN:
                 problems.append(f"{VOICE_OWN[other]} voice is heard for {sec[other]:.1f}s inside {VOICE_OWN[who]} "
@@ -433,6 +440,7 @@ TWO SINGERS. This song is a duet, and this block overrides "the singer is the on
 - WHO SINGS WHEN IS MEASURED from this recording: every line below carries its voice ([HER], [HIM], or [HER then HIM] for a line handed over partway). The lyric tags may say otherwise; the measurement wins.
 - Every scene names its "singer": "her" or "him" for the one person the references define in that scene, "none" for an environment-only plate. A lip-sync scene (sing_to_camera, sing_away) shows the singer whose voice is heard, never her lip-syncing his words or him lip-syncing hers. Where the voice changes inside a section, cut on the listed VOICE CHANGE point so each lip-sync scene holds one voice.
 - Each scene shows ONE of the two (two-shots of both singers are untested on this model and are not written). A SHARED line (both voices in it) always shows HER, lip-syncing it.
+- A line marked UNSURE is one the measurement cannot place: cover it with B-roll (an environment plate, or a silent shot of either singer at medium or wider), never a lip-sync scene. If in doubt about who sings, B-roll.
 - Either singer may appear silent (no_singing_her, written with singer him for his silent shots) under the other's voice at medium or wider.
 - He has one outfit for the whole video (wardrobe2), as his references show; his opening_still describes him in the setting, hers describes her.
 - His vocal delivery: {voice}. Write his performance for it."""

@@ -2441,7 +2441,8 @@ def mv_voices(p: dict):
     tl = _mv_voice_measure(aid, p["lyrics"], facts["sections"], p.get("swap"))
     mv_voices_mod.apply(facts["sections"], tl)
     secs = [{"type": x["type"], "start": x["start"], "end": x["end"],
-             "lines": [{k: l.get(k) for k in ("start", "end", "text", "voice")} for l in x["lines"]]}
+             "lines": [{**{k: l.get(k) for k in ("start", "end", "text", "voice")}, "unsure": l.get("voice_unsure", False)}
+                       for l in x["lines"]]}
             for x in facts["sections"] if x.get("lines")]
     return {**{k: tl[k] for k in ("runs", "how", "swap", "separation", "sung_seconds")}, "sections": secs,
             "duration": dur}
