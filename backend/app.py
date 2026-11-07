@@ -30,6 +30,7 @@ from . import video as video_mod
 from . import musicvideo as musicvideo_mod
 from . import mv_h3 as mv_h3_mod
 from . import mv_writer as mv_writer_mod
+from . import mv_voices as mv_voices_mod
 from . import mv_stems as mv_stems_mod
 from . import mv_locations as mv_locations_mod
 from . import mv_takes as mv_takes_mod
@@ -1241,6 +1242,12 @@ def mv_render_scene(p: dict):
     if loc_ref and not _lib_image_path(loc_ref):
         raise HTTPException(400, f"location still {os.path.basename(str(loc_ref))} for '{loc['id']}' is not in the library")
     singer_refs = [] if env_only else [r for r in (p.get("ref_ids") or []) if r]
+    if not env_only and mv_writer_mod.singer_of(script, scene) == "him":
+        # two-singer script: his scenes use HIS two pictures (ref_ids2, else the script's own)
+        rs = script.get("ref_stills") or {}
+        singer_refs = [r for r in (p.get("ref_ids2") or [rs.get("him_face"), rs.get("him_body")]) if r]
+        if len(singer_refs) < 2:
+            raise HTTPException(400, "this is one of his scenes: set his face and body pictures for the script first")
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
     distant = (not env_only) and mv_writer_mod.is_distant(scene)
@@ -2379,6 +2386,67 @@ def _mv_locks_from_script(name):
     return out, skipped
 
 
+def _mv_duet_check(p):
+    """The optional second singer (off unless p.duet is given): his three descriptions and a cached
+    vocal stem (the voices are measured on it)."""
+    d = p.get("duet")
+    if not d:
+        return None
+    r2 = d.get("refs2") or {}
+    missing = [k for k in ("face", "body", "shared") if not str(r2.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(400, "the second singer needs his " + ", ".join(missing) + " description(s)")
+    if not LORA_UPLOAD_HOST:
+        raise HTTPException(400, "lora_upload_host not set - the box helper (:5080) measures the voices")
+    if not mv_stems_mod.vocal_stem_path(LIBRARY, p["audio_id"]):
+        raise HTTPException(400, "two singers need the vocal stem (the voices are measured on it): make it first")
+    return d
+
+
+def _mv_voice_measure(audio_id, lyrics, sections, swap=False, log=print):
+    """The measured voice timeline (mv_voices) of a song on its cached vocal stem; the box
+    fingerprints are cached per song, so a swap or a re-write does not call the box again."""
+    stem = mv_stems_mod.vocal_stem_path(LIBRARY, audio_id)
+    if not stem:
+        raise HTTPException(400, "no vocal stem cached for this song")
+    try:
+        fp = mv_voices_mod.fingerprint(stem, sections, LORA_UPLOAD_HOST, C.upload_audio,
+                                       mv_voices_mod.cache_path(LIBRARY, audio_id), log=log)
+    except Exception as e:
+        raise HTTPException(502, f"measuring the voices on the box failed: {e}")
+    return mv_voices_mod.timeline(fp, sections, lyrics, swap=bool(swap))
+
+
+@app.post("/api/mv/voices")
+def mv_voices(p: dict):
+    """Who sings when, for a two-singer video: p {audio_id, lyrics, swap?}. Aligns the lyrics on the
+    cached vocal stem (the writer's own song_facts, cached), fingerprints lines and windows on the
+    box (POST :5080/voice/timeline, cached per song) and returns the labelled timeline: {runs,
+    lines, sections: [{type, start, end, lines: [{start, end, text, voice}]}], how, swap,
+    separation, sung_seconds}. swap flips which measured voice is his."""
+    aid = os.path.basename(str(p.get("audio_id") or ""))
+    src = _lib_source_path(aid) if aid else None
+    if not src:
+        raise HTTPException(400, "audio_id must reference a library track")
+    if not (p.get("lyrics") or "").strip():
+        raise HTTPException(400, "lyrics are required (the voices are read line by line)")
+    if not LORA_UPLOAD_HOST:
+        raise HTTPException(400, "lora_upload_host not set - the box helper (:5080) measures the voices")
+    stem = mv_stems_mod.vocal_stem_path(LIBRARY, aid)
+    if not stem:
+        raise HTTPException(400, "no vocal stem yet: make it first (the voices are measured on it)")
+    dur = musicvideo_mod.audio_duration(src)
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    facts = mv_writer_mod.song_facts(src, p["lyrics"], dur, cache_dir=os.path.join(work, "lyricalign"), align_path=stem)
+    tl = _mv_voice_measure(aid, p["lyrics"], facts["sections"], p.get("swap"))
+    mv_voices_mod.apply(facts["sections"], tl)
+    secs = [{"type": x["type"], "start": x["start"], "end": x["end"],
+             "lines": [{k: l.get(k) for k in ("start", "end", "text", "voice")} for l in x["lines"]]}
+            for x in facts["sections"] if x.get("lines")]
+    return {**{k: tl[k] for k in ("runs", "how", "swap", "separation", "sung_seconds")}, "sections": secs,
+            "duration": dur}
+
+
 def _mv_write_check(p):
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
@@ -2388,6 +2456,7 @@ def _mv_write_check(p):
         raise HTTPException(400, "refs needs face, body and shared descriptions")
     if not _lib_source_path(p["audio_id"]):
         raise HTTPException(400, "audio_id must reference a library track")
+    _mv_duet_check(p)
 
 
 def _mv_write_run(p, on_log=None):
@@ -2410,6 +2479,9 @@ def _mv_write_run(p, on_log=None):
     if align_on == "vocals" and not stem:
         raise HTTPException(400, "align_on=vocals but no vocal stem is cached; POST /api/mv/stems first")
     align_path = stem if align_on in ("auto", "vocals") else None
+    duet_in = _mv_duet_check(p)
+    if duet_in and align_on == "mix":
+        raise HTTPException(400, "two singers are measured on the vocal stem: align_on mix cannot be used with them")
     try:
         known = mv_locations_mod.select(mv_locations_mod.load(LIBRARY), p.get("locations"), title=p["title"])
     except ValueError as e:
@@ -2429,6 +2501,12 @@ def _mv_write_run(p, on_log=None):
         _log(f"keeping {len(kept)} locked takes from {os.path.basename(str(p['keep_locks_from']))}"
              + (f"; could not place scenes {skipped}" if skipped else ""))
     locks = _mv_resolve_locks(raw_locks)
+    duet = None
+    if duet_in:
+        duet = {"refs2": {k: str(duet_in["refs2"][k]).strip() for k in ("face", "body", "shared")},
+                "voice": str(duet_in.get("voice") or "").strip(),
+                "measure": lambda sections: _mv_voice_measure(p["audio_id"], p["lyrics"], sections,
+                                                              duet_in.get("swap"), log=_log)}
 
     try:
         script = mv_writer_mod.write_script(
@@ -2437,7 +2515,9 @@ def _mv_write_run(p, on_log=None):
             model=p.get("model") or mv_writer_mod.WRITER_MODEL,
             effort=p.get("effort") or mv_writer_mod.WRITER_EFFORT,
             claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log,
-            align_path=align_path, known_locations=known, locks=locks)
+            align_path=align_path, known_locations=known, locks=locks, duet=duet)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"writer failed: {e}")
     out_dir = os.path.join(work, "mv_scripts")
@@ -3205,14 +3285,14 @@ def mv_take_sheet(jid: str):
 
 @app.post("/api/mv/script_ref_stills")
 def mv_script_ref_stills(p: dict):
-    """The singer's two reference pictures for ONE script: p {script, face_id?, body_id?} writes
-    script.ref_stills {face, body} in place (state, like a lock). The tab renders with them, so
+    """The singer's two reference pictures for ONE script: p {script, face_id?, body_id?,
+    him_face_id?, him_body_id? (two-singer scripts)} writes script.ref_stills in place (state, like a lock). The tab renders with them, so
     each song keeps its own look; an empty id clears that side."""
     script, name = _mv_load_script(p.get("script"))
     if name == "(inline)":
         raise HTTPException(400, "reference pictures need a saved script")
     rs = dict(script.get("ref_stills") or {})
-    for side in ("face", "body"):
+    for side in ("face", "body", "him_face", "him_body"):
         key = f"{side}_id"
         if key not in p:
             continue

@@ -262,6 +262,8 @@ def cut_points(sections):
             if s["start"] < c < s["end"]:
                 pts.add(round(c, 3))
             prev_end = l["end"]
+        for c in s.get("voice_cuts") or []:                   # two-singer songs: a measured hand-over
+            pts.add(round(c, 3))                               # from one voice to the other
     first = first_sung_line(sections)
     if first and first["start"] - FIRST_LINE_LEAD > 0:        # the lip-sync setup for the first word
         pts.add(round(first["start"] - FIRST_LINE_LEAD, 3))   # starts this far ahead of it (user rule)
@@ -305,6 +307,8 @@ def check_scene(sc, sections):
         if first["start"] - a < FIRST_LINE_LEAD - 0.05:
             problems.append(f"starts {first['start'] - a:.2f}s before the first sung line; the lip-sync setup "
                             f"starts at least {FIRST_LINE_LEAD:.0f}s ahead of it (cut point {first['start'] - FIRST_LINE_LEAD:.2f}s)")
+    if is_duet(sections):
+        problems += check_duet(sc, sections)
     return problems
 
 
@@ -327,12 +331,79 @@ def _section_text(sections):
             out.append(f"      cut {setup:6.2f} | FIRST-LINE SETUP: the lip-sync scene for the first word starts here")
         if s["vocal"]:
             prev_end = s["start"]
+            vcuts = sorted(s.get("voice_cuts") or [])
             for l in s["lines"]:
                 c = max(l["start"] - LINE_LEAD, prev_end)
+                while vcuts and vcuts[0] < l["start"]:
+                    out.append(f"      cut {vcuts.pop(0):6.2f} | VOICE CHANGE (measured)")
                 tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] else "            |"
-                out.append(f"      {tag} {l['start']:7.2f}-{l['end']:6.2f}  {l['text']}")
+                who = f"[{VOICE_LABEL.get(l['voice'], l['voice'])}] " if l.get("voice") else ""
+                out.append(f"      {tag} {l['start']:7.2f}-{l['end']:6.2f}  {who}{l['text']}")
                 prev_end = l["end"]
+                while vcuts and vcuts[0] < l["end"]:
+                    out.append(f"      cut {vcuts.pop(0):6.2f} | VOICE CHANGE (measured, inside the line above)")
+            for vc in vcuts:
+                out.append(f"      cut {vc:6.2f} | VOICE CHANGE (measured)")
     return "\n".join(out)
+
+
+VOICE_LABEL = {"her": "HER", "him": "HIM", "her>him": "HER then HIM", "him>her": "HIM then HER", "unknown": "voice unmeasured"}
+
+
+def is_duet(sections):
+    """True when the section table carries measured voices (a two-singer script)."""
+    return any(l.get("voice") for s in sections for l in (s.get("lines") or []))
+
+
+def voice_seconds_in(sections, a, b):
+    """Measured seconds of each voice singing a lyric line inside [a, b): the section's voice runs
+    intersected with its lines (so a line handed over partway counts each voice where it sings)."""
+    out = {"her": 0.0, "him": 0.0}
+    for s in sections:
+        runs = s.get("voice_runs") or []
+        for l in s.get("lines") or []:
+            lo, hi = max(a, l["start"]), min(b, l["end"])
+            if hi <= lo:
+                continue
+            for r in runs:
+                o = min(hi, r["end"]) - max(lo, r["start"])
+                if o > 0:
+                    out[r["voice"]] = out.get(r["voice"], 0.0) + o
+    return out
+
+
+VOICE_OWN = {"her": "her", "him": "his"}
+DUET_OTHER_MIN = 1.0     # the other singer's voice this long inside a lip-sync scene is a problem
+
+
+def check_duet(sc, sections):
+    """Two-singer rules: every scene names its singer; a lip-sync scene shows the voice that is
+    heard (the measured timeline is definitive). Sets sc['singer'] for a lip-sync scene from the
+    measurement when the writer named the other one. Returns problems."""
+    problems = []
+    perf = str(sc.get("performance") or "")
+    if perf == "no_singing_environment":
+        sc["singer"] = "none"
+        return problems
+    who = str(sc.get("singer") or "").strip().lower()
+    if who not in ("her", "him"):
+        problems.append(f"names no singer ('{sc.get('singer')}'): set to her")
+        who = "her"
+    if perf.startswith("sing"):
+        sec = voice_seconds_in(sections, float(sc["start"]), float(sc["end"]))
+        if sum(sec.values()) > 0:
+            heard = max(sec, key=sec.get)
+            if heard != who:
+                problems.append(f"lip-sync scene written for {who} but the measured voice here is {heard} "
+                                f"({sec[heard]:.1f}s vs {sec[who]:.1f}s): singer set to {heard}; its opening "
+                                f"still prompt may still describe {who}")
+                who = heard
+            other = "him" if who == "her" else "her"
+            if sec[other] >= DUET_OTHER_MIN:
+                problems.append(f"{VOICE_OWN[other]} voice is heard for {sec[other]:.1f}s inside {VOICE_OWN[who]} "
+                                f"lip-sync scene: cut at the voice change")
+    sc["singer"] = who
+    return problems
 
 
 def locks_text(locks):
@@ -345,13 +416,28 @@ def locks_text(locks):
     return "\n".join(out)
 
 
-def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None, locks=None):
+DUET_RULES = """
+
+TWO SINGERS. This song is a duet, and this block overrides "the singer is the one lead" above:
+- Two people are defined by references: SHE (the lead, her two pictures) and HE (the male singer, his two pictures). Every rule above about the singer applies to whichever singer a scene shows: his scale is fixed inside a scene, he never walks toward the camera, his lip-sync needs his mouth readable at medium close-up or closer, a close shot of his silent face under words is as wrong as one of hers, and the first sung line lands on the face of whoever sings it.
+- WHO SINGS WHEN IS MEASURED from this recording: every line below carries its voice ([HER], [HIM], or [HER then HIM] for a line handed over partway). The lyric tags may say otherwise; the measurement wins.
+- Every scene names its "singer": "her" or "him" for the one person the references define in that scene, "none" for an environment-only plate. A lip-sync scene (sing_to_camera, sing_away) shows the singer whose voice is heard, never her lip-syncing his words or him lip-syncing hers. Where the voice changes inside a section, cut on the listed VOICE CHANGE point so each lip-sync scene holds one voice.
+- Each scene shows ONE of the two (two-shots of both singers are untested on this model and are not written). A line they share goes to the voice that holds most of it.
+- Either singer may appear silent (no_singing_her, written with singer him for his silent shots) under the other's voice at medium or wider.
+- He has one outfit for the whole video (wardrobe2), as his references show; his opening_still describes him in the setting, hers describes her.
+- His vocal delivery: {voice}. Write his performance for it."""
+
+
+def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None, locks=None, duet=None):
     """known: library rows (mv_locations) the model may reuse by id; None/[] = none offered.
-    locks: takes already shot and passed ({start, end, scene}); the model writes only the gaps."""
+    locks: takes already shot and passed ({start, end, scene}); the model writes only the gaps.
+    duet: {"voice": how he sings} when the song has a second (male) singer: the duet rules join
+    the system prompt and every scene names its singer (refs then describes all four pictures)."""
     schema = {
         "concept": "2-3 sentences: what the video is about and how it moves (string)",
         "look": "one sentence of visual style for every prompt: film stock feel, light QUALITY, contrast, colour grade, camera weight ONLY. Never name an object or a light source in it (no candles, lamps, fires, torches, windows): the sentence rides on every exterior prompt too, and a prop named here gets hallucinated into shots that cannot hold it (measured: 'candle and lamp interiors' put lit candles over a cliff road). Interior warmth belongs in that scene's lighting field (string)",
         "wardrobe": "the singer's one outfit, as it appears in the references, in one sentence (string)",
+        **({"wardrobe2": "the male singer's one outfit, as his references show it, in one sentence (string)"} if duet else {}),
         "arc": "how light, weather and time of day progress across the song's sections, and the payoff objects from the lyrics (where each is first shown and where it returns changed), 2-4 sentences (string)",
         "locations": [{
             "id": "snake_case id (a KNOWN location's exact id when reusing one)",
@@ -367,6 +453,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "location": "id of one of the locations",
             "setting": "the place, concrete and filmable, no people, 2-3 sentences; name any visible sky",
             "performance": "one of: sing_to_camera | sing_away | no_singing_her | no_singing_environment",
+            **({"singer": "her | him | none: the one singer this scene shows (none for no_singing_environment); a lip-sync scene shows the measured voice"} if duet else {}),
             "framing": "e.g. medium close-up, medium, wide, extreme wide, detail",
             "camera": "'static', or ONE move in the model's grammar: '<verb> with small amplitude at slow speed toward X throughout the take' (one framing only, never a second framing to reach, no distances)",
             "keep_in_frame": "one or two fixed things that must stay in frame until the end of the take, e.g. 'the oil lamp and the window' (string)",
@@ -381,7 +468,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
     }
     user = (f"SONG: {title}\nSTYLE / GENRE: {style}\n"
             f"DURATION: {facts['duration']:.1f}s. Lyric alignment cover {facts.get('cover')}.\n\n"
-            f"REFERENCES (the only person in the video):\n{refs}\n\n"
+            + (f"REFERENCES (the two singers):\n{refs}\n\n" if duet else f"REFERENCES (the only person in the video):\n{refs}\n\n")
             + (f"USER CONCEPT (follow it): {concept}\n\n" if concept else "")
             + (("KNOWN LOCATIONS (already photographed; a still of each is on file). Reuse one by its exact id "
                 "with {\"id\": ..., \"reuse\": true}; a new place needs a full entry with a still prompt:\n"
@@ -401,7 +488,8 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
                "next scene's `from`, the last ends at the song's end. Every from/to is a section edge or a listed "
                "cut point; inside a lineless span (intro, solo, outro) any second is allowed. ")
             + "Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
-    return SCENE_SYSTEM, user
+    system = SCENE_SYSTEM + (DUET_RULES.replace("{voice}", duet.get("voice") or "as heard on the recording") if duet else "")
+    return system, user
 
 
 def _keep_raw(cache_dir, name, text):
@@ -663,6 +751,7 @@ def plan_scene_clips(scene, sections, fps=H3_FPS, frames=CHAIN_FRAMES, context=C
                 if l["end"] <= c["song_start"] or l["start"] >= c["song_end"]:
                     continue
                 lines.append({"text": l["text"], "song_start": l["start"], "song_end": l["end"],
+                              **({"voice": l["voice"]} if l.get("voice") else {}),
                               "in_clip_start": round(max(0.0, l["start"] - c["song_start"]), 2),
                               "in_clip_end": round(min(plan["seconds"], l["end"] - c["song_start"]), 2),
                               "starts_before_clip": l["start"] < c["song_start"],
@@ -692,10 +781,19 @@ Hard rules (they come from measured failures; do not bend them):
 - 150-320 words of detailed_description per clip; concrete, visual, in order of time."""
 
 
+def singer_of(script, scene):
+    """'her' | 'him' | 'none': who <Subject 1> is in this scene (always her on a one-singer script)."""
+    if not script.get("duet"):
+        return "none" if scene.get("performance") == "no_singing_environment" else "her"
+    return scene.get("singer") or ("none" if scene.get("performance") == "no_singing_environment" else "her")
+
+
 def clip_prompt(script, scene, clips):
     loc = location_of(script, scene)
+    who = singer_of(script, scene)
     user = {
-        "song": script["title"], "look": script["look"], "wardrobe": script["wardrobe"],
+        "song": script["title"], "look": script["look"],
+        "wardrobe": script.get("wardrobe2") if who == "him" else script["wardrobe"],
         "concept": script["concept"],
         "scene": {k: scene.get(k) for k in ("title", "setting", "performance", "framing", "camera", "keep_in_frame",
                                             "lighting", "mood", "action", "section_types", "start", "end", "anchor_figure", "others")},
@@ -707,6 +805,15 @@ def clip_prompt(script, scene, clips):
         "return": {"clips": [{"index": 0, "summary": "...", "detailed_description": "[Shot 1] ...",
                               "overall_soundscape": "...", "non_diegetic_music": "..."}]},
     }
+    if script.get("duet") and who != "none":
+        voice = (script["duet"].get("voice") or "").strip()
+        user["subject_1"] = (
+            "THE MALE SINGER (he, him), not the female lead: every rule written about her applies to him in "
+            "this scene; write he/his, never she/her" + (f". His vocal delivery: {voice}" if voice else "")
+            if who == "him" else "the female lead (she, her)")
+        user["voices"] = ("each audible line carries its MEASURED voice; only lines in this scene's singer's "
+                          "voice go inside <d>. A line in the other singer's voice is heard but not sung on screen: "
+                          "no <d> for it, and the singer's lips stay closed through it")
     return CLIP_SYSTEM, json.dumps(user, indent=1)
 
 
@@ -738,18 +845,40 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant
     is not readable at this distance."""
     refs = script["refs"]
     env_only = scene.get("performance") == "no_singing_environment"
-    if distant:
+    him = singer_of(script, scene) == "him"
+    if him:
+        refs = script["duet"]["refs2"]
+        wardrobe = script.get("wardrobe2") or ""
+    else:
+        wardrobe = script["wardrobe"]
+    if distant and him:
+        singer_def = ("<Subject 1> is the male singer, seen at a distance: his full-body appearance, build, hair and "
+                      f"wardrobe come from <Picture 1>. Wardrobe: {wardrobe}\n")
+        singer_ret = ("<Subject 1> (appears throughout [Shot 1], a small figure in a wide frame): partially_preserved - "
+                      "retain his silhouette, hair, build and the wardrobe; his face is not readable at this "
+                      "distance and is never shown closer; the framing stays as described below and no close view of "
+                      "him is inserted.\n")
+        loc_pic = 2
+    elif distant:
         singer_def = ("<Subject 1> is the singer, seen at a distance: her full-body appearance, build, hair and "
-                      f"wardrobe come from <Picture 1>. Wardrobe: {script['wardrobe']}\n")
+                      f"wardrobe come from <Picture 1>. Wardrobe: {wardrobe}\n")
         singer_ret = ("<Subject 1> (appears throughout [Shot 1], a small figure in a wide frame): partially_preserved - "
                       "retain her silhouette, long dark hair, build and the wardrobe; her face is not readable at this "
                       "distance and is never shown closer; the framing stays as described below and no close view of "
                       "her is inserted.\n")
         loc_pic = 2
+    elif him:
+        singer_def = ("<Subject 1> is the male singer: his facial identity comes from <Picture 1>; "
+                      "his full-body appearance, body proportions and wardrobe come from <Picture 2>. "
+                      f"{refs['shared']} Wardrobe: {wardrobe}\n")
+        singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the "
+                      "referenced face, eyes, hair, beard, skin, body proportions and the wardrobe exactly, while pose, "
+                      "expression, framing, lighting and movement follow the performance described below.\n")
+        loc_pic = 3
     else:
         singer_def = ("<Subject 1> is the singer: her facial identity comes from <Picture 1>; "
                       "her full-body appearance, body proportions and wardrobe come from <Picture 2>. "
-                      f"{refs['shared']} Wardrobe: {script['wardrobe']}\n")
+                      f"{refs['shared']} Wardrobe: {wardrobe}\n")
         singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the "
                       "referenced face, eyes, hair, skin, body proportions and the wardrobe exactly, while pose, "
                       "expression, framing, lighting and movement follow the performance described below.\n")
@@ -811,8 +940,9 @@ def compile_prompt_i2v(script, scene, clip, text):
     if desc.startswith("[Shot 1]"):
         desc = desc[len("[Shot 1]"):].strip()
     # her scenes on this lane (opt-in): no subject is declared, she is the woman in frame 0
-    desc = re.sub(r"<Subject 1>\s*\(S1\)|<Subject 1>|\bS1\b", "the woman", desc)
-    desc = re.sub(r"(^|[.!?]\s+)the woman", lambda m: m.group(1) + "The woman", desc)
+    person = "the man" if singer_of(script, scene) == "him" else "the woman"
+    desc = re.sub(r"<Subject 1>\s*\(S1\)|<Subject 1>|\bS1\b", person, desc)
+    desc = re.sub(r"(^|[.!?]\s+)" + person, lambda m: m.group(1) + person.capitalize(), desc)
     soundscape = (text.get("overall_soundscape") or "Near-silent ambience; no other sound.").strip()
     music = (text.get("non_diegetic_music") or "N/A").strip()
     return (I2V_OPENING + "\n\n"
@@ -957,7 +1087,7 @@ def pace_problems(prompt, performance=None):
 
 def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs, concept=None,
                  provider="claude_sub", model=WRITER_MODEL, effort=WRITER_EFFORT, claude_model="",
-                 cache_dir=None, log=print, align_path=None, known_locations=None, locks=None):
+                 cache_dir=None, log=print, align_path=None, known_locations=None, locks=None, duet=None):
     """Song -> full script JSON (scenes with chain plans and compiled per-clip prompts).
     `locks` = takes the user passed, kept as they are ({start, end, scene: the source scene with
     its clips, locked: {job_id, take_start, script}}): the writer fills only the gaps and pass 2
@@ -965,12 +1095,29 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
     `refs` = {"face": one-line description of <Picture 1>, "body": of <Picture 2>,
               "shared": a sentence naming what BOTH show (the details the prompt may mention)}.
     `known_locations` = library rows (mv_locations) the model may reuse by id instead of
-    inventing a new place; a reused row carries its still id into the script."""
+    inventing a new place; a reused row carries its still id into the script.
+    `duet` (optional, two-singer songs) = {"refs2": {face, body, shared}: his two pictures, described
+    like `refs`; "voice": how he sings; "measure": sections -> the measured voice timeline
+    (mv_voices.timeline)}. The timeline tags every aligned line with its voice; each scene then
+    names its singer and the checker holds lip-sync scenes to the voice that is heard."""
     facts = song_facts(audio_path, lyrics_raw, duration, cache_dir=cache_dir, align_path=align_path)
     log(f"[mvw] facts: {len(facts['sections'])} sections, cover {facts.get('cover')}, aligned on {facts['aligned_on']}")
+    duet_rec = None
+    if duet:
+        from . import mv_voices
+        tl = duet["measure"](facts["sections"])
+        mv_voices.apply(facts["sections"], tl)
+        duet_rec = {"refs2": duet["refs2"], "voice": duet.get("voice") or "", "how": tl["how"], "swap": tl["swap"],
+                    "separation": tl["separation"], "runs": tl["runs"], "sung_seconds": tl["sung_seconds"]}
+        log(f"[mvw] voices: her {tl['sung_seconds']['her']}s, him {tl['sung_seconds']['him']}s ({tl['how']})")
     refs_text = (f"<Picture 1> (face / identity): {refs['face']}\n<Picture 2> (full body / wardrobe): {refs['body']}\n"
                  f"Both show: {refs['shared']}")
-    system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept, known=known_locations, locks=locks)
+    if duet:
+        r2 = duet["refs2"]
+        refs_text = ("SHE, the female lead:\n" + refs_text + "\n\nHE, the male singer (his own two pictures):\n"
+                     f"face / identity: {r2['face']}\nfull body / wardrobe: {r2['body']}\nBoth show: {r2['shared']}")
+    system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept, known=known_locations, locks=locks,
+                                duet=duet_rec)
     raw = llm_mod.complete(provider, model, system, user, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
     _keep_raw(cache_dir, f"{audio_id}_pass1.txt", raw)
     plan = _extract_json(raw)
@@ -981,6 +1128,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
     script = {"title": title, "audio_id": audio_id, "style": style, "duration": duration,
               "concept": plan.get("concept", ""), "look": plan.get("look", ""),
               "wardrobe": plan.get("wardrobe", ""), "arc": plan.get("arc", ""), "refs": refs, "facts": facts,
+              **({"duet": duet_rec, "wardrobe2": plan.get("wardrobe2", "")} if duet_rec else {}),
               "locations": locations, "known_offered": [r["id"] for r in (known_locations or [])],
               "writer": {"provider": provider, "model": model, "effort": effort}, "scenes": []}
     for sc in scenes:
@@ -1095,6 +1243,10 @@ def script_markdown(script):
            f"{len(script['scenes'])} scenes, {script['clip_count']} clips.", "",
            f"**Concept.** {script['concept']}", "", f"**Look.** {script['look']}", "",
            f"**Wardrobe.** {script['wardrobe']}", ""]
+    if script.get("duet"):
+        d = script["duet"]
+        out += [f"**His wardrobe.** {script.get('wardrobe2')}", "",
+                f"**Voices (measured).** her {d['sung_seconds']['her']}s, him {d['sung_seconds']['him']}s; {d['how']}.", ""]
     if script.get("arc"):
         out += [f"**Arc.** {script['arc']}", ""]
     # only plates: her scenes render on the reference lane, where a still is not frame 0
@@ -1120,7 +1272,8 @@ def script_markdown(script):
                 f"{', '.join(sc['section_types'])})"
                 + (f"  LOCKED: passed take, from {sc['locked'].get('take_start', sc['start']):.2f}s of its render"
                    if sc.get("locked") else ""), "",
-                f"- performance: {sc.get('performance')} | framing: {sc.get('framing')} | camera: {sc.get('camera')}"
+                f"- performance: {sc.get('performance')}" + (f" | singer: {sc.get('singer')}" if script.get("duet") else "")
+                + f" | framing: {sc.get('framing')} | camera: {sc.get('camera')}"
                 + (f" | keep in frame: {sc.get('keep_in_frame')}" if sc.get("keep_in_frame") else "")
                 + (f" | location: `{sc.get('location')}`" if sc.get("location") else ""),
                 f"- setting: {sc.get('setting')}", f"- lighting: {sc.get('lighting')} | mood: {sc.get('mood')}",
