@@ -122,7 +122,8 @@ export const api = {
   mvRoomplateTake: (p: Record<string, unknown>) => jpost("/api/mv/roomplate_take", p),   // room-pinned move (s.20.61)
   mvRoomplateJob: (id: string) => jget(`/api/mv/roomplate_job/${id}`),
   mvMeridianTake: (p: { script: string; scene: number; job_id: string; move?: string; amount?: string; seed?: number; dry_run?: boolean }) => jpost("/api/mv/meridian_take", p),
-  mvScriptRefStills: (p: { script: string; face_id?: string; body_id?: string }) => jpost("/api/mv/script_ref_stills", p), // the singer's two pictures for one script
+  mvScriptRefStills: (p: { script: string; face_id?: string; body_id?: string; him_face_id?: string; him_body_id?: string }) => jpost("/api/mv/script_ref_stills", p), // the singers' pictures for one script
+  mvVoices: (p: { audio_id: string; lyrics: string; swap?: boolean }) => jpost("/api/mv/voices", p),   // who sings when (two-singer videos)
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),
   mvRenderScript: (p: unknown) => jpost("/api/mv/render_script", p),   // dry_run first; a fire = {from_dry, accept_flags, async}

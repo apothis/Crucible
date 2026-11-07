@@ -14,7 +14,7 @@ import { openLightbox } from "./Lightbox";
 type Clip = { index: number; song_start: number; song_end: number; seconds: number; frames: number; lines?: string[]; vocal?: boolean; prompt?: string; problems?: string[] };
 type Locked = { job_id: string; take_start: number; script: string };
 type Scene = {
-  index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string;
+  index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string; singer?: string;
   framing?: string; camera?: string; lighting?: string; mood?: string; action?: string; others?: string; why?: string;
   opening_still?: string; opening_still_id?: string; end_still_id?: string; after_still_id?: string; still_clips?: Clip[]; still_of_camera?: string; empty_room_id?: string; empty_room_of?: string; rail?: { end_still_id: string; every: number; after_still_id?: string | null; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
   locked?: Locked; plan?: { frames: number; context_frames: number }; sections?: string[]; matches_location_still?: boolean;
@@ -22,14 +22,19 @@ type Scene = {
 type Refs = { face?: string; body?: string; shared?: string };
 type Place = { id: string; name?: string; description?: string; still_prompt?: string; still_id?: string };
 type PlaceRow = Place & { still_present?: boolean };
-type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; ref_stills?: { face?: string; body?: string }; locations?: Place[]; scenes: Scene[] };
+type Script = { title: string; audio_id: string; duration: number; style?: string; concept?: string; look?: string; wardrobe?: string; arc?: string; refs?: Refs; ref_stills?: { face?: string; body?: string; him_face?: string; him_body?: string }; locations?: Place[]; scenes: Scene[];
+  duet?: { refs2: Refs; voice?: string; how?: string; swap?: boolean; sung_seconds?: { her: number; him: number } }; wardrobe2?: string };
+type RefKind = "face" | "body" | "him_face" | "him_body";
+type VoiceLine = { start: number; end: number; text: string; voice: string };
+type Voices = { how: string; swap: boolean; separation: number; sung_seconds: { her: number; him: number }; duration: number;
+  sections: { type: string; start: number; end: number; lines: VoiceLine[] }[]; for?: string };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; resolution?: number | null; fps?: number | null; fps_fixed?: boolean | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; anchor_first?: boolean; anchor_from?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
-type Target = { kind: "face" | "body" } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "empty"; idx: number; take: string } | { kind: "place"; id: string } | null;
+type Target = { kind: RefKind } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "empty"; idx: number; take: string } | { kind: "place"; id: string } | null;
 
 const ATTENTION = "comfy kitchen attention";   // the proven chain setting (every SSBS fire script)
 // FlashVSR+ Turbo 2x: 554 s for the 15 s scene 6 take, 2026-10-30 (the whole SSBS batch ran at
@@ -52,6 +57,12 @@ const upsOf = (t?: Take | null): Partial<Record<UpEngine, Upscale>> => t?.upscal
 // pictures and the place's picture, and its opening picture is not sent unless the scene has a
 // rail (s.20.53), which pins frame 0 to it
 const envOnly = (sc: Scene) => sc.performance === "no_singing_environment";
+function SingerBadge({ sc }: { sc: Scene }) {
+  if (!sc.singer || sc.singer === "none") return null;
+  return <span className={`rounded px-1 text-[10px] ${sc.singer === "him" ? "bg-sky-900 text-sky-200" : "bg-rose-900 text-rose-200"}`}>{sc.singer}</span>;
+}
+const VOICE_STYLE: Record<string, string> = { her: "bg-rose-900 text-rose-200", him: "bg-sky-900 text-sky-200", "her>him": "bg-violet-900 text-violet-200", "him>her": "bg-violet-900 text-violet-200", unknown: "bg-neutral-800 text-neutral-300" };
+const VOICE_WORDS: Record<string, string> = { her: "her", him: "him", "her>him": "her, then him", "him>her": "him, then her", unknown: "not measured" };
 const needsPicture = (sc: Scene) => envOnly(sc) && sc.matches_location_still === false && !sc.opening_still_id;
 const pictureUse = (sc: Scene) => envOnly(sc)
   ? (sc.matches_location_still === false ? "no singer: the render starts on this picture (required)" : "no singer: the render starts on this picture (else on the place's picture)")
@@ -257,7 +268,8 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
   // the singer's pictures: the open script's own (each song keeps its look), else the shared setting
   const face = script?.ref_stills?.face || faceId;
   const body = script?.ref_stills?.body || bodyId;
-  const setRef = async (kind: "face" | "body", id: string) => {
+  const setRef = async (kind: RefKind, id: string) => {
+    if (!scriptName && (kind === "him_face" || kind === "him_body")) { setErr("his pictures belong to a script: open one first"); return; }
     if (!scriptName) { (kind === "face" ? setFaceId : setBodyId)(id); return; }
     setErr("");
     try { await api.mvScriptRefStills({ script: scriptName, [`${kind}_id`]: id }); reloadScript(); }
@@ -294,12 +306,12 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
     } catch (e) { setErr(String((e as Error).message || e)); }
     finally { setBusyMsg(""); }
   };
-  const fileRef = async (kind: "face" | "body", file: File) => {
-    setErr(""); setBusyMsg(`filing the ${kind} reference...`);
+  const fileRef = async (kind: RefKind, file: File) => {
+    setErr(""); setBusyMsg(`filing the ${kind.replace("_", " ")} reference...`);
     try {
       const fd = new FormData();
       fd.append("file", file, file.name || `${kind}.png`);
-      fd.append("label", `${script?.title || "music video"} - lead ${kind} reference`);
+      fd.append("label", `${script?.title || "music video"} - ${kind.startsWith("him_") ? `male singer ${kind.slice(4)}` : `lead ${kind}`} reference`);
       const r = await api.ytImportStill(fd) as { still_id: string };
       await setRef(kind, r.still_id);
     } catch (e) { setErr(String((e as Error).message || e)); }
@@ -412,7 +424,7 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
       )}
 
       {step === 3 && script && (
-        <PicturesStep script={script} library={library} faceId={face} bodyId={body} setFaceId={(id) => setRef("face", id)} setBodyId={(id) => setRef("body", id)}
+        <PicturesStep script={script} library={library} faceId={face} bodyId={body} setFaceId={(id) => setRef("face", id)} setBodyId={(id) => setRef("body", id)} setHim={(k, id) => setRef(k, id)}
           target={target} setTarget={setTarget} fileStill={fileStill} fileRef={fileRef} setErr={setErr}
           places={places} placeRows={placeRows} placePic={placePic} filePlace={filePlace} linkPlace={linkPlace} />
       )}
@@ -610,12 +622,12 @@ function StillPicker({ library, onPick, onClose, places }: { library: LibItem[];
   );
 }
 
-function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, target, setTarget, fileStill, fileRef, setErr, places, placeRows, placePic, filePlace, linkPlace }: {
-  script: Script; library: LibItem[]; faceId: string; bodyId: string; setFaceId: (v: string) => void; setBodyId: (v: string) => void;
-  target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File) => void; fileRef: (k: "face" | "body", f: File) => void; setErr: (s: string) => void;
+function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, setHim, target, setTarget, fileStill, fileRef, setErr, places, placeRows, placePic, filePlace, linkPlace }: {
+  script: Script; library: LibItem[]; faceId: string; bodyId: string; setFaceId: (v: string) => void; setBodyId: (v: string) => void; setHim: (k: "him_face" | "him_body", id: string) => void;
+  target: Target; setTarget: (t: Target) => void; fileStill: (idx: number, f: File) => void; fileRef: (k: RefKind, f: File) => void; setErr: (s: string) => void;
   places: Place[]; placeRows: PlaceRow[]; placePic: (pl: Place) => string | null; filePlace: (id: string, f: File) => void; linkPlace: (id: string, stillId: string) => void;
 }) {
-  const [picker, setPicker] = useState<"face" | "body" | null>(null);
+  const [picker, setPicker] = useState<RefKind | null>(null);
   const [placePicker, setPlacePicker] = useState<string | null>(null);
   const [copiedPlace, setCopiedPlace] = useState<string | null>(null);
   const copyPlace = async (pl: Place) => {
@@ -653,8 +665,33 @@ function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, t
             {script.refs?.body && <div><b className="text-[var(--color-ink)]">and the full-body picture as:</b> {script.refs.body}</div>}
           </div>
         </div>
-        {picker && <StillPicker library={library} onClose={() => setPicker(null)} onPick={(id) => { (picker === "face" ? setFaceId : setBodyId)(id); setPicker(null); }} />}
+        {picker && (picker === "face" || picker === "body") && <StillPicker library={library} onClose={() => setPicker(null)} onPick={(id) => { (picker === "face" ? setFaceId : setBodyId)(id); setPicker(null); }} />}
       </Card>
+
+      {script.duet && (
+        <Card title="The male singer: two reference pictures" sub={`used for every scene that shows him (${script.scenes.filter((sc) => sc.singer === "him").length} scenes). Same as hers: click a box and paste, drop an image, or pick one from the Library.`}>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {(["him_face", "him_body"] as const).map((k) => {
+              const id = (script.ref_stills || {})[k] || "";
+              return (
+                <div key={k} className="space-y-1">
+                  <div className="text-xs font-semibold">{k === "him_face" ? "His face (close-up portrait)" : "His full body (head to feet)"}</div>
+                  <ImageSlot src={id ? `/api/media/${id}` : null} aspect="aspect-[3/4]" armed={isT({ kind: k })} onArm={() => setTarget({ kind: k })}
+                    onFile={(f) => fileRef(k, f)} empty={<><div>no {k === "him_face" ? "face" : "full-body"} picture of him</div><div>click, then Cmd+V, or drop an image</div></>}>
+                    <GhostButton onClick={() => setPicker(picker === k ? null : k)}>from the Library</GhostButton>
+                  </ImageSlot>
+                </div>
+              );
+            })}
+            <div className="text-xs text-[var(--color-muted)] xl:col-span-2 space-y-2">
+              {script.duet.refs2?.face && <div><b className="text-[var(--color-ink)]">The script describes his face picture as:</b> {script.duet.refs2.face}</div>}
+              {script.duet.refs2?.body && <div><b className="text-[var(--color-ink)]">and his full-body picture as:</b> {script.duet.refs2.body}</div>}
+              {script.wardrobe2 && <div><b className="text-[var(--color-ink)]">His wardrobe:</b> {script.wardrobe2}</div>}
+            </div>
+          </div>
+          {picker && (picker === "him_face" || picker === "him_body") && <StillPicker library={library} onClose={() => setPicker(null)} onPick={(id) => { setHim(picker, id); setPicker(null); }} />}
+        </Card>
+      )}
 
       {places.length > 0 && (
         <Card title={`The places (${places.filter((pl) => placePic(pl)).length} of ${places.length})`}
@@ -703,6 +740,7 @@ function PicturesStep({ script, library, faceId, bodyId, setFaceId, setBodyId, t
             <div key={sc.index} className="space-y-1.5">
               <div className="flex items-baseline gap-2 text-xs">
                 <span className="font-semibold">{String(sc.index).padStart(2, "0")} {sc.title}</span>
+                {script.duet && <SingerBadge sc={sc} />}
                 <span className="ml-auto text-[var(--color-muted)]">{mmss(sc.start)}</span>
               </div>
               <div className={`text-[11px] ${needsPicture(sc) ? "text-amber-400" : "text-[var(--color-muted)]"}`}>{pictureUse(sc)}</div>
@@ -1356,7 +1394,7 @@ function TakesStep(p: {
                   {sc.opening_still_id && <img src={`/api/media/${sc.opening_still_id}`} alt="" className="h-full w-full object-cover" loading="lazy" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-semibold">{String(sc.index).padStart(2, "0")} {sc.title}</div>
+                  <div className="truncate text-xs font-semibold">{String(sc.index).padStart(2, "0")} {sc.title}{sc.singer === "him" ? " (him)" : ""}</div>
                   <div className="flex items-center gap-2 text-[10px] text-[var(--color-muted)]">{mmss(sc.start)} <Pill tone={st.tone}>{st.text}</Pill></div>
                 </div>
               </button>
@@ -1390,6 +1428,7 @@ function TakesStep(p: {
             <div className="space-y-1">
               <Row k="action" v={scene.action} />
               <Row k="performance" v={scene.performance?.replace(/_/g, " ")} />
+              {scene.singer && scene.singer !== "none" && <Row k="singer" v={scene.singer === "him" ? "him (his two pictures)" : "her"} />}
               <Row k="framing" v={scene.framing} />
               <Row k="camera" v={scene.camera} />
               <Row k="setting" v={scene.setting} />
@@ -1940,6 +1979,24 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
   const [shared, setShared] = d.use("wShared", "");
   const [locations, setLocations] = d.use("wLocations", "auto");
   const [keepLocks, setKeepLocks] = d.use("wKeepLocks", true);
+  // the optional second (male) singer: off by default; who sings when is measured, not read from tags
+  const [duet, setDuet] = d.use("wDuet", false);
+  const [face2, setFace2] = d.use("wFace2", "");
+  const [body2, setBody2] = d.use("wBody2", "");
+  const [shared2, setShared2] = d.use("wShared2", "");
+  const [voice2, setVoice2] = d.use("wVoice2", "");
+  const [swap, setSwap] = d.use("wSwap", false);
+  const [voices, setVoices] = d.use<Voices | null>("wVoices", null);
+  const [measuring, setMeasuring] = useState(false);
+  const measure = async (sw = swap) => {
+    if (!lyrics.trim()) { setErr("the lyrics are needed first: the voices are read line by line"); return; }
+    setErr(""); setMeasuring(true);
+    try {
+      const r = await api.mvVoices({ audio_id: audioId, lyrics, swap: sw }) as Voices;
+      setVoices({ ...r, for: audioId });
+    } catch (e) { setErr("Measuring the voices failed: " + String((e as Error).message || e)); }
+    finally { setMeasuring(false); }
+  };
   const [forTrack, setForTrack] = d.use("wTrack", "");
   const [job, setJob] = useState<{ id: string; status: string; log: string[]; seconds: number; error?: string | null; script?: string | null } | null>(null);
   const [jobId, setJobId] = d.use("wJobId", "");
@@ -1999,7 +2056,8 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
     else setErr("the open project has no lyrics: title and style filled");
   };
   const nLocks = loaded ? loaded.script.scenes.filter((s) => s.locked).length : 0;
-  const missing = ([[title, "the title"], [lyrics, "the lyrics"], [face, "the face picture's description"], [body, "the full-body picture's description"], [shared, "what is in both pictures"]] as const)
+  const missing = ([[title, "the title"], [lyrics, "the lyrics"], [face, "the face picture's description"], [body, "the full-body picture's description"], [shared, "what is in both pictures"],
+    ...(duet ? [[face2, "his face picture's description"], [body2, "his full-body picture's description"], [shared2, "what is in both of his pictures"]] as const : [])] as const)
     .filter(([v]) => !v.trim()).map(([, label]) => label);
   const ready = !missing.length;
 
@@ -2012,6 +2070,7 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
         async: true, audio_id: audioId, title: title.trim(), style: style.trim(), lyrics, concept: concept.trim() || undefined,
         refs: { face: face.trim(), body: body.trim(), shared: shared.trim() }, locations,
         keep_locks_from: keepLocks && nLocks && loaded ? loaded.name : undefined,
+        duet: duet ? { refs2: { face: face2.trim(), body: body2.trim(), shared: shared2.trim() }, voice: voice2.trim() || undefined, swap } : undefined,
       });
       setJob({ id: r.job_id, status: "writing", log: [], seconds: 0 }); setJobId(r.job_id);
     } catch (e) { setErr("The writer did not start: " + String((e as Error).message || e)); }
@@ -2061,6 +2120,46 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
             <Field label="full-body picture" hint="one line"><textarea className={`${inp} h-20 text-[11px]`} value={body} onChange={(e) => setBody(e.target.value)} /></Field>
             <Field label="in both" hint="what never changes"><textarea className={`${inp} h-20 text-[11px]`} value={shared} onChange={(e) => setShared(e.target.value)} /></Field>
           </div>
+          <label className="flex items-center gap-2 text-xs font-semibold">
+            <input type="checkbox" checked={duet} onChange={(e) => setDuet(e.target.checked)} /> Two singers: a male second voice as well as her
+          </label>
+          {duet && (
+            <div className="space-y-2 rounded border border-[var(--color-line)] p-2">
+              <div className="text-[11px] text-[var(--color-muted)]">Who sings when is measured from the recording (the vocal stem), not read from the lyric tags. Each scene then shows the singer whose voice is heard. His two pictures go in at step 3.</div>
+              <div className="grid gap-2 md:grid-cols-3">
+                <Field label="his face picture" hint="one line"><textarea className={`${inp} h-20 text-[11px]`} value={face2} onChange={(e) => setFace2(e.target.value)} /></Field>
+                <Field label="his full-body picture" hint="one line"><textarea className={`${inp} h-20 text-[11px]`} value={body2} onChange={(e) => setBody2(e.target.value)} /></Field>
+                <Field label="in both of his" hint="what never changes"><textarea className={`${inp} h-20 text-[11px]`} value={shared2} onChange={(e) => setShared2(e.target.value)} /></Field>
+              </div>
+              <Field label="how he sings" hint="optional, e.g. deep guttural growls"><input className={inp} value={voice2} onChange={(e) => setVoice2(e.target.value)} /></Field>
+              <div className="flex flex-wrap items-center gap-3">
+                <GhostButton onClick={() => measure()} title="aligns the lyrics on the vocal stem and fingerprints each line on the box (a few seconds; the first time also aligns the lyrics)">
+                  {measuring ? "measuring..." : voices && voices.for === audioId ? "measure again" : "measure who sings when"}</GhostButton>
+                <label className="flex items-center gap-2 text-xs" title="the measurement found two voices; this says which one is his">
+                  <input type="checkbox" checked={swap} onChange={(e) => { setSwap(e.target.checked); if (voices && voices.for === audioId) measure(e.target.checked); }} /> swap who is who
+                </label>
+              </div>
+              {voices && voices.for === audioId && (
+                <div className="space-y-1 text-[11px]">
+                  <div className="text-[var(--color-muted)]">her {voices.sung_seconds.her} s, him {voices.sung_seconds.him} s. Named by: {voices.how}. Listen at the hand-overs; if the two are the wrong way round, tick swap.</div>
+                  <div className="max-h-72 space-y-1 overflow-auto">
+                    {voices.sections.map((sec, i) => (
+                      <div key={i}>
+                        <div className="font-semibold">{sec.type} <span className="font-normal text-[var(--color-muted)]">{mmss(sec.start)}</span></div>
+                        {sec.lines.map((l, j) => (
+                          <div key={j} className="flex items-baseline gap-2 pl-2">
+                            <span className="w-12 shrink-0 tabular-nums text-[var(--color-muted)]">{mmss(l.start)}</span>
+                            <span className={`shrink-0 rounded px-1 text-[10px] ${VOICE_STYLE[l.voice] || VOICE_STYLE.unknown}`}>{VOICE_WORDS[l.voice] || l.voice}</span>
+                            <span className="truncate">{l.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-end gap-3">
             <Field label="places">
               <select className={inp} value={locations} onChange={(e) => setLocations(e.target.value)}>
