@@ -372,8 +372,8 @@ def voice_seconds_in(sections, a, b):
             lo, hi = max(a, l["start"]), min(b, l["end"])
             if hi <= lo:
                 continue
-            if is_shared(l.get("voice")):
-                out["her"] += hi - lo
+            if is_shared(l.get("voice")) and a <= l["start"] < b:   # the scene the shared line starts in shows her;
+                out["her"] += hi - lo                                # a tail spilling past a cut is counted as sung
                 continue
             for r in runs:
                 o = min(hi, r["end"]) - max(lo, r["start"])
