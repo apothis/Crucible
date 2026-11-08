@@ -869,6 +869,17 @@ def plan_scene_clips(scene, sections, fps=H3_FPS, frames=CHAIN_FRAMES, context=C
                     extra = {"answered_off_screen": [{"text": " ".join(re.findall(r"\(([^)]*)\)", l["text"])),
                                                       "by": x["voice"], "song_start": x["start"],
                                                       "song_end": x["end"]} for x in ans]}
+                ws = l.get("word_starts") or []
+                sung = text.split()
+                if ws and len(ws) == len(sung) and (l["start"] < c["song_start"] or l["end"] > c["song_end"]):
+                    # every sung word has a measured start: name exactly the words starting inside the part
+                    # of the clip that is kept (the tail past the scene end is trimmed at assembly), so the
+                    # writer does not guess where a cut falls in the line (2026-11-08: it put 'ever' on both
+                    # sides of a cut at 'pay')
+                    hi = min(c["song_end"], scene["end"])
+                    words = [w for w, t in zip(sung, ws) if c["song_start"] - 0.05 <= t < hi]
+                    if words:                  # none: a note held over the edge, written as before
+                        extra["audible_words"] = " ".join(words)
                 lines.append({"text": text, "song_start": l["start"], "song_end": l["end"],
                               **extra,
                               **({"voice": v} if v else {}),
@@ -888,7 +899,7 @@ CLIP_SYSTEM = """You write the per-clip text of MiniMax H3 reference-mode prompt
 
 Hard rules (they come from measured failures; do not bend them):
 - The song is already locked into the clip's audio. NEVER write <Audio 1>, never call the song a reference, never ask the model to generate or match music. Write non_diegetic_music as a description of the current song section itself and say the visible performance stays synchronized to it.
-- The singer is <Subject 1>. When she sings, write: <Subject 1> (S1) sings <d>[English] exact words</d>. Only the words audible inside THIS clip's window go inside <d>; a line that starts before the clip begins mid-phrase; a line that ends after the clip is cut mid-phrase. Instrumental passages have no <d>. Lips closed and relaxed when no vocal is audible; one open vowel shape held through sustained notes.
+- The singer is <Subject 1>. When she sings, write: <Subject 1> (S1) sings <d>[English] exact words</d>. Only the words audible inside THIS clip's window go inside <d>; a line that starts before the clip begins mid-phrase; a line that ends after the clip is cut mid-phrase. When a line carries audible_words (measured), those are exactly its words inside <d>, no word more or fewer. Instrumental passages have no <d>. Lips closed and relaxed when no vocal is audible; one open vowel shape held through sustained notes.
 - detailed_description starts with "[Shot 1]" and is ONE continuous shot. No [Shot 2], no cuts, no <scenetrans>.
 - Exactly ONE camera motion for the scene, as given, repeated in every clip in the model's own grammar: "The camera pushes in with small amplitude at slow speed toward X throughout the take, one continuous shot with no cut and no dissolve." Name what must stay in frame ("The oil lamp and the window stay in frame to the end.") and never name a second framing for the move to reach (that reads as a cut). Never metric distances (centimetres mean nothing to the model). If static: "The camera is static, locked off for the full clip."
 - Her scale is fixed for the whole scene: she never walks toward the camera, never comes closer, never grows in frame; the distance between her and the camera at the end of the clip is what it was at the start (she moves across the frame, away, or in place). If the scene's framing is wide or extreme wide she stays small to the last frame and her face is never shown closer; a change of scale is the next scene's job, not this clip's. (Measured 2026-10-29: an approach from the far end of a road rendered her face broken all the way in.) Name her direction relative to the CAMERA ("away from the camera, deeper into the frame", "across the frame on the near ground"), never as "to the right" or "to the left": a path that runs from the far ground toward the camera is a walk toward the lens whichever side it lies on, and the model follows the path, not the negation (measured 2026-10-29: "to the right along the ridge, never toward the camera" doubled her size in 18 seconds). On such a path she walks away toward the far end, or stands.
