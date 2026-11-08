@@ -1276,6 +1276,11 @@ def mv_render_scene(p: dict):
     if p.get("solo_lock") and script.get("duet") and str(scene.get("performance") or "").startswith("sing"):
         span = float(scene["plan"]["span_seconds"]) + 1.0
         mute = mv_writer_mod.solo_mute_ranges(script, scene, float(scene["start"]), float(scene["start"]) + span) or None
+    # mute (opt-in, by hand): extra song-second ranges whose vocal the render must not hear, e.g. the
+    # other singer's tail running past its measured end into this scene's first half second
+    extra = [[round(float(a), 2), round(float(b), 2)] for a, b in (p.get("mute") or []) if float(b) > float(a)]
+    if extra:
+        mute = sorted((mute or []) + extra)
     distant = (not env_only) and (not both) and mv_writer_mod.is_distant(scene)
     if distant and len(singer_refs) >= 2:
         singer_refs = [singer_refs[1]]          # body picture only (ref_ids order is face, body); s.20.31 H1
