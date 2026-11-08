@@ -117,9 +117,11 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
     the scene's (the SSBS cut of 2026-10-30 was assembled from takes across six script
     generations); such a take carries from_script = the name it was rendered under."""
     out = {}
-    windows, locked_ids = {}, {}
+    windows, locked_ids, after = {}, {}, {}
     if scenes:
         for sc in scenes:
+            if sc.get("takes_after"):
+                after[int(sc["index"])] = float(sc["takes_after"])
             windows[int(sc["index"])] = (round(float(sc["start"]), 2), round(float(sc["end"]), 2))
             if sc.get("locked") and sc["locked"].get("job_id"):
                 locked_ids[sc["locked"]["job_id"]] = int(sc["index"])
@@ -161,6 +163,9 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
                 "seconds": _duration(path) if done else None,
                 "params": {k: prm.get(k) for k in TAKE_PARAM_KEYS if k in prm},
                 "from_script": from_script,
+                # rendered before the scene was rewritten or marked for a re-render: an old shot
+                # (still listed, but the scene counts as unrendered for a batch)
+                "stale": bool(after.get(int(idx)) and float(r.get("created") or 0) < after[int(idx)]),
                 "check": cached_check(library_dir, jid) if done else None}
         out.setdefault(int(idx), []).append(take)
     for k in out:

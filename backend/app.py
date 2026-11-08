@@ -2458,7 +2458,7 @@ def mv_voices(p: dict):
     mv_voices_mod.apply(facts["sections"], tl)
     secs = [{"type": x["type"], "start": x["start"], "end": x["end"],
              "lines": [{**{k: l.get(k) for k in ("start", "end", "text", "voice")}, "unsure": l.get("voice_unsure", False),
-                        "answers": l.get("voice_answers") or []}
+                        "answers": l.get("voice_answers") or [], "switch": l.get("voice_switch")}
                        for l in x["lines"]]}
             for x in facts["sections"] if x.get("lines")]
     return {**{k: tl[k] for k in ("runs", "answers", "how", "swap", "separation", "sung_seconds")}, "sections": secs,
@@ -2902,6 +2902,7 @@ def mv_rewrite_scene(p: dict):
         sc.pop("opening_still_id", None)       # made for the old shot
     sc.update(changes)
     sc.pop("locked", None)                     # rewritten text = a new shot: it re-renders
+    sc["takes_after"] = time.time()            # ... and its earlier takes are old shots
     mv_writer_mod._finish_scene(sc, script["facts"]["sections"])
     work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
     log_lines = []
@@ -2933,6 +2934,61 @@ def mv_rewrite_scene(p: dict):
     return {"files": {"json": jpath, "md": mpath}, "scene": idx, "title": sc.get("title"), "set": changes,
             "problems": [c["problems"] for c in sc["clips"]], "text": [c["text"] for c in sc["clips"]],
             "prompts": [c["prompt"] for c in sc["clips"]], "log": log_lines}
+
+
+@app.post("/api/mv/mark_rerender")
+def mv_mark_rerender(p: dict):
+    """Mark scenes of a saved script as needing a new render: their takes so far are listed as old
+    shots and a batch counts the scene as unrendered (a lock is dropped). clear: true undoes it.
+    Saved in place (a marker, not a new script). p: {script, scenes: [index...], clear?}."""
+    script, name = _mv_load_script(p.get("script"))
+    n = len(script["scenes"])
+    idxs = sorted({int(i) for i in p.get("scenes") or []})
+    if not idxs or any(not 0 <= i < n for i in idxs):
+        raise HTTPException(400, f"scenes must be indexes of the script (0-{n - 1})")
+    now = time.time()
+    for i in idxs:
+        sc = script["scenes"][i]
+        if p.get("clear"):
+            sc.pop("takes_after", None)
+        else:
+            sc["takes_after"] = now
+            sc.pop("locked", None)
+    with open(os.path.join(mv_takes_mod.scripts_dir(LIBRARY), os.path.basename(str(name))), "w") as f:
+        json.dump(script, f, indent=1)
+    return {"script": os.path.basename(str(name)), "scenes": idxs, "cleared": bool(p.get("clear"))}
+
+
+@app.post("/api/video/cancel_queued")
+def video_cancel_queued(p: dict):
+    """Cancel video renders that have not started: they leave the box queue and are marked
+    cancelled (status error) so the tab stops showing them as pending. The running render is
+    left alone (/api/cancel interrupts it). p: {ids?: [job ids] (default: every queued video
+    job of this backend), script?: only that script's lineage}. Returns {cancelled: [...]}."""
+    try:
+        q = requests.get(f"{C.base}/queue", timeout=10).json()
+    except Exception as e:
+        raise HTTPException(502, f"the box queue did not answer: {e}")
+    running = {e[1] for e in q.get("queue_running") or []}
+    queued = {e[1] for e in q.get("queue_pending") or []}
+    ids = [os.path.basename(str(i)) for i in p.get("ids") or []]
+    if not ids:
+        ids = [pid for pid, (mode, prm) in _unfinished_video_jobs().items() if pid not in running]
+    if p.get("script"):
+        base = mv_takes_mod.lineage_base(os.path.basename(str(p["script"])))
+        ids = [i for i in ids if base in str((_unfinished_video_jobs().get(i) or ("", {}))[1].get("script") or "")]
+    ids = [i for i in ids if i not in running]
+    drop = [i for i in ids if i in queued]
+    if drop:
+        requests.post(f"{C.base}/queue", json={"delete": drop}, timeout=10)
+    with LOCK:
+        for i in ids:
+            if i in JOBS:
+                JOBS[i]["status"], JOBS[i]["error"] = "error", "cancelled"
+    with db() as conn:
+        for i in ids:
+            conn.execute("UPDATE jobs SET status='error', error='cancelled' WHERE id=? AND status NOT IN ('done','error')", (i,))
+    return {"cancelled": ids, "left_queue": drop}
 
 
 @app.post("/api/mv/refresh_facts")

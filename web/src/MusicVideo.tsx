@@ -14,6 +14,7 @@ import { openLightbox } from "./Lightbox";
 type Clip = { index: number; song_start: number; song_end: number; seconds: number; frames: number; lines?: string[]; vocal?: boolean; prompt?: string; problems?: string[] };
 type Locked = { job_id: string; take_start: number; script: string };
 type Scene = {
+  takes_after?: number;
   index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string; singer?: string;
   framing?: string; camera?: string; lighting?: string; mood?: string; action?: string; others?: string; why?: string;
   opening_still?: string; opening_still_id?: string; end_still_id?: string; after_still_id?: string; still_clips?: Clip[]; still_of_camera?: string; empty_room_id?: string; empty_room_of?: string; rail?: { end_still_id: string; every: number; after_still_id?: string | null; stills: { still_id: string; frame: number; zoom: number }[] }; lipsync?: boolean; scene_problems?: string[]; clips?: Clip[];
@@ -32,7 +33,7 @@ type Voices = { how: string; swap: boolean; separation: number; sung_seconds: { 
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; resolution?: number | null; fps?: number | null; fps_fixed?: boolean | null };
-type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
+type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; stale?: boolean; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; anchor_first?: boolean; anchor_from?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
 type Target = { kind: RefKind } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "empty"; idx: number; take: string } | { kind: "place"; id: string } | null;
@@ -1251,9 +1252,11 @@ function TakesStep(p: {
   const stateOf = (sc: Scene) => {
     const l = list(sc.index);
     const run = l.find((t) => t.status !== "done");
-    const n = l.filter((t) => t.status === "done").length;
+    const n = l.filter((t) => t.status === "done" && !t.stale).length;
+    const old = l.filter((t) => t.status === "done" && t.stale).length;
     if (sc.locked) return { tone: "ok" as const, text: "take chosen", todo: false };
-    if (run) return { tone: "accent" as const, text: `rendering ${pct(run.progress, run.max)}`, todo: false };
+    if (run && !run.stale) return { tone: "accent" as const, text: `rendering ${pct(run.progress, run.max)}`, todo: false };
+    if (!n && (old || run)) return { tone: "warn" as const, text: "needs a new render (old shots only)", todo: true };
     if (n) return { tone: "warn" as const, text: `${n} take${n === 1 ? "" : "s"}, none chosen`, todo: true };
     return { tone: "muted" as const, text: "not rendered", todo: true };
   };
@@ -1265,7 +1268,7 @@ function TakesStep(p: {
   const [bDry, setBDry] = useState<BatchDry | null>(null);
   const [bAccept, setBAccept] = useState(false);
   const [bJob, setBJob] = useState<BatchJob | null>(null);
-  const unrendered = script.scenes.filter((sc) => !sc.locked && list(sc.index).length === 0).map((sc) => sc.index);
+  const unrendered = script.scenes.filter((sc) => !sc.locked && list(sc.index).filter((t) => !t.stale).length === 0).map((sc) => sc.index);
   const bSig = () => `${commonSig()}|${unrendered.map((i) => `${i}:${JSON.stringify(recipeAt(i))}`).join(",")}`;
   const batchCommon = () => {
     const b: Record<string, unknown> = {
@@ -1273,6 +1276,7 @@ function TakesStep(p: {
       attention: ATTENTION, width: Number(p.width), height: Number(p.height),
       per_scene: Object.fromEntries(unrendered.map((i) => [String(i), recipeKnobs({}, recipeAt(i))])),
     };
+    if (p.soloLock && p.script.duet) b.solo_lock = true;
     const sd = p.seed.trim() ? Number(p.seed) : undefined;
     if (sd !== undefined && !Number.isNaN(sd)) b.seed = sd;
     return b;
@@ -1286,6 +1290,19 @@ function TakesStep(p: {
     finally { setBusyMsg(""); }
   };
   const bReady = bDry ? bDry.scenes.filter((r) => r.status === "dry") : [];
+  const queuedHere = Object.values(takes).flat().filter((t) => t.status === "pending").map((t) => t.id);
+  const doCancelQueued = async () => {
+    if (!window.confirm(`Take ${queuedHere.length} queued render${queuedHere.length === 1 ? "" : "s"} of this script off the box? The render running now carries on.`)) return;
+    setErr(""); setBusyMsg("cancelling the queued renders...");
+    try { await api.videoCancelQueued({ ids: queuedHere }); await p.refreshTakes(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+    finally { setBusyMsg(""); }
+  };
+  const doMark = async (idx: number, clear: boolean) => {
+    setErr("");
+    try { await api.mvMarkRerender({ script: scriptName, scenes: [idx], clear }); p.reloadScript(); await p.refreshTakes(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+  };
   // each scene's checked settings must be its own recipe: a backend from before per-scene settings
   // ignores per_scene (and reports no sampler), so its check is refused rather than fired
   const bWrong = bReady.filter((r) => {
@@ -1355,6 +1372,8 @@ function TakesStep(p: {
         sub="one settings check for all of them (no GPU), then one button sends them all to the box. Scenes that already have a take are left alone; render those one at a time below.">
         <div className="flex flex-wrap items-center gap-2">
           <GhostButton onClick={doBatchDry} disabled={!!busyMsg || bSending || unrendered.length === 0}>1 · Check all {unrendered.length}</GhostButton>
+          {queuedHere.length > 0 && <GhostButton onClick={doCancelQueued} disabled={!!busyMsg}
+            title="takes the renders that have not started off the box queue; the one rendering now carries on">cancel {queuedHere.length} queued</GhostButton>}
           <Action onClick={doBatchFire} disabled={!!busyMsg || bSending || !bFresh || bSendable === 0}
             title={bFresh ? "send them to the box" : "check them first"}>2 · Render {bFresh ? bSendable : unrendered.length} on the box</Action>
           {bFresh && bFlagged.length > 0 && <label className="flex items-center gap-1 text-xs text-amber-400"><input type="checkbox" checked={bAccept} onChange={(e) => setBAccept(e.target.checked)} /> also render the {bFlagged.length} with warnings</label>}
@@ -1516,6 +1535,10 @@ function TakesStep(p: {
                 <Action onClick={() => doRender(scene.index)} disabled={!!busyMsg || !canRender(scene.index)}
                   title={canRender(scene.index) ? "queue this scene on the box" : "check the settings first; warnings need the accept tick"}>2 · Render on the box</Action>
                 {dr && dr.flags.length > 0 && <label className="flex items-center gap-1 text-xs text-amber-400"><input type="checkbox" checked={p.acceptFlags} onChange={(e) => p.setAcceptFlags(e.target.checked)} /> render despite the warnings</label>}
+                {scene.takes_after
+                  ? <GhostButton onClick={() => doMark(scene.index, true)} disabled={!!busyMsg} title="its earlier takes count again">marked for a new render: undo</GhostButton>
+                  : list(scene.index).length > 0 && <GhostButton onClick={() => doMark(scene.index, false)} disabled={!!busyMsg}
+                      title="its takes so far become old shots, and the batch above renders it again">needs a new render</GhostButton>}
               </div>
               {dr && (
                 <div className={`rounded border p-2 text-[11px] ${dr.sig !== sig(scene.index) || dr.flags.length ? "border-amber-700" : "border-emerald-800"}`}>
@@ -1594,6 +1617,7 @@ function TakesStep(p: {
                           ? <><Pill tone="ok">in the video</Pill><GhostButton onClick={() => choose(scene.index, null)}>remove</GhostButton></>
                           : <Action onClick={() => choose(scene.index, t.id)} title="this take plays in the scene; it replaces the scene's current choice">Use in the video</Action>)}
                         <span className="text-[11px] text-[var(--color-muted)]">{when(t.created)} · seed {t.params.seed} · {t.params.turbo ? "turbo" : "base"}{t.params.steps ? ` ${t.params.steps} steps` : ""}{t.params.sampler && t.params.sampler !== DEFAULT_SAMPLER ? ` ${t.params.sampler}` : ""}{t.params.scheduler && t.params.scheduler !== DEFAULT_SCHEDULER ? `/${t.params.scheduler}` : ""}{t.seconds !== null ? ` · ${t.seconds.toFixed(1)} s` : ""}{t.from_script ? " · earlier script" : ""}</span>
+                        {t.stale && <Pill tone="warn" title="rendered before this scene was rewritten or marked for a new render">old shot</Pill>}
                         {t.params.variant === "still" && <Pill tone="muted" title="rendered with a still camera: add the camera move on this take">still version</Pill>}
                         {t.params.engine === "roomplate" && <Pill tone="muted" title="rendered again with the room pinned to the empty-room picture; H3 drew the people">room pinned: {moveLabel(t.params.move)}, {t.params.amount}</Pill>}
                         {t.params.engine === "move2d" && <Pill tone="muted" title="a moving crop of another take of this scene: nothing redrawn">2D move: {moveLabel(t.params.move)}, {t.params.amount}</Pill>}

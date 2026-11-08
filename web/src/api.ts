@@ -126,6 +126,8 @@ export const api = {
   mvVoices: (p: { audio_id: string; lyrics: string; swap?: boolean }) => jpost("/api/mv/voices", p),   // who sings when (two-singer videos)
   mvLockTake: (p: { script: string; scene: number; job_id: string | null }) => jpost("/api/mv/lock_take", p),
   mvRenderScene: (p: unknown) => jpost("/api/mv/render_scene", p),
+  mvMarkRerender: (p: { script: string; scenes: number[]; clear?: boolean }) => jpost("/api/mv/mark_rerender", p),
+  videoCancelQueued: (p: { ids?: string[]; script?: string }) => jpost("/api/video/cancel_queued", p),
   mvRenderScript: (p: unknown) => jpost("/api/mv/render_script", p),   // dry_run first; a fire = {from_dry, accept_flags, async}
   mvRenderScriptJob: (id: string) => jget(`/api/mv/render_script_job/${id}`),   // dry_run: true = the gate, nothing queued
   mvRenderScriptLatest: (script: string) => jget(`/api/mv/render_script_latest?script=${encodeURIComponent(script)}`),   // {job: null | the newest batch}

@@ -50,6 +50,7 @@ FINE_WIN, FINE_HOP = 0.6, 0.2  # fine windows, seconds
 FINE_PAD = (0.3, 1.6)          # fine windows cover each line from this before its start to this after its end
 FINE_MARGIN = 0.08             # a fine window names a voice when nearer to it than to the other by this
 ANSWER_MIN_WINS = 2            # ... and an answer is this many consecutive such windows
+HANDOVER_SEARCH = 1.5          # a hand-over is looked for this far either side of its coarse time
 MALE_TAG = re.compile(r"(?i)\b(male|man|men|boy|baritone|bass|tenor|growl\w*|harsh|scream\w*|death)\b")
 FEMALE_TAG = re.compile(r"(?i)\b(female|woman|women|girl|soprano|alto|mezzo)\b")
 
@@ -228,6 +229,43 @@ def _answers(fp, C, her, him, bleed, runs):
     return [{"start": round(x["start"], 2), "end": round(x["end"], 2), "voice": x["voice"]} for x in out]
 
 
+def _fine_labels(fp, C, her, him, bleed):
+    """[(centre, 'her' | 'him' | None)] for the fine windows (see _answers for the rule)."""
+    F = np.array(fp.get("fine_emb") or [], float)
+    out = []
+    if not len(F):
+        return out
+    for (a, b), s in zip(fp["fine"], F @ C.T):
+        v = "her" if s[her] - s[him] >= FINE_MARGIN and s[her] > s[bleed] else \
+            "him" if s[him] - s[her] >= FINE_MARGIN and s[him] > s[bleed] else None
+        out.append(((a + b) / 2, v))
+    return out
+
+
+def _refine(runs, labels):
+    """Move each direct hand-over between the two voices to where the fine windows change voice:
+    the time within HANDOVER_SEARCH of the coarse boundary that best splits the labelled fine
+    windows (the first voice before, the second after). The 1.5 s windows smear a hand-over by up
+    to a second (measured 2026-11-08, Vanadis 1:27: the coarse boundary sat about a second before
+    the switch the user hears). Runs are changed in place; returns them."""
+    for a, b in zip(runs, runs[1:]):
+        if a["voice"] == b["voice"] or b["start"] - a["end"] > 1e-6:
+            continue
+        t0 = a["end"]
+        near = [(t, v) for t, v in labels if v and abs(t - t0) <= HANDOVER_SEARCH]
+        if len(near) < 3:
+            continue
+        best, score = t0, None
+        cs = sorted(x for x, _ in near)
+        for t in sorted({round((x + y) / 2, 2) for x, y in zip(cs, cs[1:])} | {t0}):
+            sc = sum(1 for x, v in near if (x < t and v == a["voice"]) or (x >= t and v == b["voice"]))
+            if score is None or sc > score or (sc == score and abs(t - t0) < abs(best - t0)):
+                best, score = t, sc
+        best = min(max(best, a["start"] + 0.2), b["end"] - 0.2)
+        a["end"] = b["start"] = round(best, 2)
+    return runs
+
+
 def voice_seconds(runs, a, b):
     """Seconds of each voice inside [a, b)."""
     out = {"her": 0.0, "him": 0.0}
@@ -279,7 +317,7 @@ def timeline(fp, sections, lyrics_raw, swap=False):
     if swap:
         him, her = her, him
         how += "; swapped by the user"
-    runs = _runs(wins, lab, him, her)
+    runs = _refine(_runs(wins, lab, him, her), _fine_labels(fp, C, her, him, bleed))
     answers = _answers(fp, C, her, him, bleed, runs)
     L = {(round(a, 2), round(b, 2)): np.array(e, float) for (a, b), e in zip(fp["lines"], fp["line_emb"]) if e}
     lines = []
@@ -301,8 +339,11 @@ def timeline(fp, sections, lyrics_raw, swap=False):
         unsure = v == "unknown" or (">" not in v and cos is not None and (
             abs(cos["him"] - cos["her"]) < UNSURE_MARGIN or max(cos.values()) < UNSURE_FLOOR))
         ans = [x for x in answers if x["end"] > l["start"] and x["start"] < l["end"] + FINE_PAD[1]]
+        # a shared line's hand-over time: where its second voice takes over (a cut point the user
+        # may move a scene boundary to, so the second singer finishes the line on screen)
+        switch = next((round(r["start"], 2) for r in runs[1:] if ">" in v and l["start"] < r["start"] < l["end"]), None)
         lines.append({"start": l["start"], "end": l["end"], "text": l["text"], "voice": v, "unsure": bool(unsure),
-                      "answers": ans,
+                      "answers": ans, "switch": switch,
                       "cos": {k: round(x, 3) for k, x in cos.items()} if cos else None,
                       "seconds": {k: round(x, 2) for k, x in sec.items()}})
     return {"version": VERSION, "runs": runs, "answers": answers, "lines": lines, "how": how, "swap": bool(swap),
@@ -338,6 +379,7 @@ def apply(sections, tl):
             l["voice_seconds"] = m["seconds"] if m else {"her": 0.0, "him": 0.0}
             l["voice_unsure"] = bool(m["unsure"]) if m else True
             l["voice_answers"] = m.get("answers") or [] if m else []
+            l["voice_switch"] = m.get("switch") if m else None
         cuts = []
         for a, b in zip(tl["runs"], tl["runs"][1:]):
             # a change straight from one voice to the other (a change across a silence is

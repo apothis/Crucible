@@ -1313,7 +1313,10 @@ def move_cut(script, index, to, first=None, second=None):
     Both scenes lose their clips (run write_scene_clips on each). Returns (first, second)."""
     sections = script["facts"]["sections"]
     to = float(to)
-    near = snap_scene_cut(to, sections, cut_points(sections))   # free inside a lineless section
+    # two singers: a shared line's measured hand-over is also a cut point here (the user's edit
+    # "he finishes the line", 2026-11-08); the writer itself keeps shared lines on her
+    handovers = [l["voice_switch"] for s in sections for l in s.get("lines") or [] if l.get("voice_switch")]
+    near = snap_scene_cut(to, sections, sorted(cut_points(sections) + handovers))   # free inside a lineless section
     if abs(near - to) > SPLIT_SNAP_TOL:
         raise ValueError(f"{to}s is not within {SPLIT_SNAP_TOL}s of a cut point (nearest {near}s)")
     to = near
