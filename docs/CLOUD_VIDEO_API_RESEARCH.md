@@ -20,8 +20,9 @@ exact price and parameter before writing code or budgeting.
 
 ## 0. The five findings that shape the plan
 
-1. **OpenRouter DOES route video now** (launched 2026-04-15), Seedance 2.0 and 2.5 included, with
-   one normalised schema across vendors. [V]
+1. **OpenRouter DOES route video now** (launched 2026-04-15), with one normalised schema across
+   vendors. It carries Seedance 2.0/2.5/Fast/Mini/1.5, Kling 3.0, MiniMax H3 (as "hailuo-3"), Wan
+   and Veo. It bills Seedance at BytePlus list price, **about half what fal charges** (section 1a). [V]
 2. **Seedance 2.x blocks photoreal human faces in uploaded images, upstream, on every route.**
    - ByteDance's rule: 2.0/2.5 "do not support directly uploading reference images or videos that
      contain real human faces". Error: HTTP 400 `InputImageSensitiveContentDetected.PrivacyInformation`. [V BytePlus]
@@ -66,20 +67,76 @@ Yes, OpenRouter routes video generation. [V] https://openrouter.ai/blog/announce
   - `callback_url` (HTTPS webhook, HMAC-signed)
   - `provider` (routing preferences)
 - `frame_images` wins if both it and `input_references` are sent.
-- The examples pass images as URLs only; base64 was not found.
+- Frame image shape: `{type: "image_url", image_url: {url}, frame_type: "first_frame" | "last_frame"}`.
+  The Seedance 2.0 page says the url "is an https URL or a base64 data URL" [V]. **So the Mac can
+  send library stills inline, with no public host.** Base64 for `input_references` was not stated.
 - Signed output URLs expire at `expires_at`; the window was not stated.
+- Video is "not eligible" for Zero Data Retention [V].
 
-**Seedance on OpenRouter**
-- `bytedance/seedance-2.0`: "from $0.06726/second", 4-15 s, 480p to 4K, 16:9, first/last frame,
-  image/video/audio references. [V] https://openrouter.ai/bytedance/seedance-2.0
-- `bytedance/seedance-2.5`: "from $0.1028/second", 4-30 s, 480p/720p, up to 50 references. [V]
-  https://openrouter.ai/bytedance/seedance-2.5
-- These "from" prices match BytePlus's 480p rates, so expect about $0.15/s and $0.23/s at 720p.
-  The per-resolution table on OpenRouter was not found.
-- Seedance 1.x and 2.0 Fast listings: not found.
+**Billing** [V] https://openrouter.ai/pricing (FAQ "Do you mark up provider pricing?")
+- "No. Inference is billed at the provider's list price on every plan."
+- OpenRouter's fee is charged when you buy credits: **5.5% on Standard**, 8% on Business.
 
-**Other video models named** [V]: `google/veo-3.1`, `alibaba/wan-2.7` (and 2.6), `minimax/hailuo-3`,
-Sora 2 Pro at launch (now dead upstream). Kling: not found.
+**The full video catalogue**: 33 models in the public listing `GET /api/v1/videos/models` (no key
+needed), read 2026-11-08 [V]. The ones that matter for us, with OpenRouter's own price fields:
+
+| OpenRouter id | Resolutions | Durations | Frames | Price field (silent) |
+|---|---|---|---|---|
+| `bytedance/seedance-2.0` | 480p-4K | 4-15 | first, last | $7.00 per 1M tokens; 1080p $7.70 |
+| `bytedance/seedance-2.5` | 480p, 720p | 4-30 | first, last | $10.70 per 1M tokens |
+| `bytedance/seedance-2.0-fast` | 480p, 720p | 4-15 | first, last | $4.20 per 1M tokens |
+| `bytedance/seedance-2.0-mini` | 480p, 720p | 4-15 | first, last | $3.50 per 1M tokens |
+| `bytedance/seedance-1-5-pro` | 480p-1080p | 4-12 | first, last | $1.20 per 1M tokens (silent) |
+| `kwaivgi/kling-v3.0-pro` | 720p | 3-15 | first, last | $0.112/s ($0.168 with audio) |
+| `kwaivgi/kling-v3.0-std` | 720p | 3-15 | first, last | $0.084/s |
+| `kwaivgi/kling-video-o1` | 720p | 5, 10 | first, last | $0.112/s |
+| `minimax/hailuo-3-max` | 480p, 768p | 5-15 | first, last | $0.08/s at 768p |
+| `minimax/hailuo-3` | 2K | 5-15 | first, last | $0.13/s, + $0.04 per reference image |
+| `alibaba/wan-3.0` / `-prime` | 480p-1080p | 2-30 | first, last | $0.10 / $0.14 at 720p; $0.20 / $0.28 at 1080p |
+| `alibaba/wan-2.7` | 720p, 1080p | 2-10 | first, last | $0.10/s |
+| `google/veo-3.1` / `-fast` / `-lite` | 720p-4K | 4, 6, 8 | first, last | $0.20 / $0.08-0.10 / $0.03-0.05 |
+
+- **Kling is on OpenRouter** (v3.0 pro, v3.0 std, O1). The first research pass missed it.
+  Kling 4.0 is not listed.
+- `hailuo-3` / `hailuo-3-max` have exactly MiniMax's own H3 prices ($0.13 at 2K, $0.08 at 768P),
+  so they are probably the H3 cloud model under OpenRouter's name. Inferred from the prices, not
+  stated.
+- Seedance 1.5 Pro retires upstream on 2026-11-11 (BytePlus), so expect it to leave here too.
+- Seedance 1.0 is not listed.
+
+## 1a. Price check: fal vs OpenRouter for the same model (read 2026-11-08)
+
+Done because the user's reading says fal charges much more than other routes.
+
+Sources:
+- fal: each model's own `llms.txt` page ("## Pricing" section), e.g.
+  https://fal.ai/models/bytedance/seedance-2.0/image-to-video/llms.txt [V]
+- OpenRouter: `pricing_skus` in `GET https://openrouter.ai/api/v1/videos/models` [V]
+
+Per second of silent 16:9 output. Token-billed models are converted at 24 fps (21,600 tokens/s at
+1280x720, 48,600 at 1920x1080) [calc]; fal states the same formula on its pages.
+
+| Model | fal | OpenRouter | fal / OpenRouter |
+|---|---|---|---|
+| Seedance 2.0, 720p | $0.3034 | $0.151 | **2.0x** |
+| Seedance 2.0, 1080p | $0.682 | $0.374 | **1.8x** |
+| Seedance 2.5, 720p | $0.473 | $0.231 | **2.0x** |
+| Seedance 2.5, 1080p | $1.164 | - (OpenRouter offers 480p/720p only) | - |
+| Seedance 2.0 Fast, 720p | $0.2419 | $0.091 | **2.7x** |
+| Seedance 1.5 Pro, silent | $1.20 per 1M tokens | $1.20 per 1M tokens | 1.0x |
+| Kling 3.0 pro, silent | $0.112 | $0.112 | 1.0x |
+| Kling 3.0 std, silent | $0.084 | $0.084 | 1.0x |
+| Veo 3.1, silent, 720p/1080p | $0.20 | $0.20 | 1.0x |
+
+Reading:
+- **The user is right for Seedance 2.x.** fal charges about 2x (1.8-2.7x) what OpenRouter and
+  BytePlus charge, on every 2.x tier. OpenRouter's 2.0 rate equals BytePlus's list price
+  ($7.00 per 1M tokens). The 5.5% credit fee makes the gap about 1.9x, not 2x.
+- **For Kling, Veo and Seedance 1.5, fal and OpenRouter charge the same.** The markup is
+  Seedance-2.x specific.
+- Not compared: MiniMax H3 and Wan 3.0 on fal (the endpoint names tried returned 404, so their
+  fal prices were not read).
+- Seedance 2.0 is the engine we would use most, so the gap matters.
 
 ---
 
@@ -198,7 +255,7 @@ Sources [V]:
 **Prices** (about 2x BytePlus on 2.x)
 - 2.0: $0.3024/s at 720p, about $0.68/s at 1080p [V/calc, $0.014 per 1k tokens at 24 fps].
 - 2.0 Fast: $0.2419/s at 720p [V].
-- 2.5: about $0.47/s at 720p [V]; 1080p not found.
+- 2.5: about $0.473/s at 720p, about $1.164/s at 1080p [V, llms.txt].
 - 1.5 Pro: $1.20 per 1M tokens silent, so about $0.13 for 5 s at 720p [V].
 - 1.0 Pro: about $0.62 per 5 s at 1080p [V; the page also says $0.74].
 
@@ -386,8 +443,8 @@ catalogue but its model page was not confirmed.
 | Family | fal | Replicate | WaveSpeed | Kie.ai | AIMLAPI | Runware | OpenRouter | Runway API |
 |---|---|---|---|---|---|---|---|---|
 | Seedance 2.x | Y | Y | Y | Y | Y | Y | Y | Y |
-| Seedance 1.x | Y | Y | Y | Y | Y | - | - | - |
-| Kling (to 4.0) | Y | Y | Y | Y | Y | Y | - | Y |
+| Seedance 1.x | Y | Y | Y | Y | Y | - | 1.5 Pro | - |
+| Kling (to 4.0) | Y | Y | Y | Y | Y | Y | 3.0, O1 | Y |
 | Veo 3.1 | Y | Y | Y | Y | Y | Y | Y | Y |
 | Gemini Omni | Y | - | - | - | - | - | - | Y |
 | MiniMax H3 / Hailuo | H3 | Hailuo 2.3 | Y | H3 | Hailuo 2.3 | Y | hailuo-3 | Y |
@@ -408,8 +465,9 @@ Prices are per second of output; "-" = not offered; "?" = not found.
 | BytePlus Seedance 2.0 Fast / Mini | $0.12 / $0.08 | - | 15 | Y | Y | 9 | Y | Blocked |
 | BytePlus Seedance 1.0 Pro / Pro Fast | ~$0.05 / ~$0.02 | ~$0.12 / ~$0.05 | 12 | Y | Pro only | - | silent model | ? (no rule documented for 1.x) |
 | BytePlus Seedance 1.5 Pro | ~$0.03 silent | ? | 12 | Y | Y | - | Y | ? (**retires 2026-11-11**) |
-| OpenRouter Seedance 2.0 / 2.5 | ~$0.15 / ~$0.23 (from 480p list) | ? | 15 / 30 | Y | Y | Y | Y | Blocked (upstream) |
-| fal Seedance 2.0 / 2.5 | $0.30 / $0.47 | $0.68 / ? | 15 / 30 | Y | Y | 9 / 30 | Y | Blocked (upstream) |
+| OpenRouter Seedance 2.0 / 2.5 (+5.5% credit fee) | $0.151 / $0.231 | $0.374 / - | 15 / 30 | Y | Y | Y | Y | Blocked (upstream) |
+| OpenRouter Kling 3.0 pro / std | $0.112 / $0.084 | - (720p only) | 15 | Y | Y | ? | Y | ? |
+| fal Seedance 2.0 / 2.5 | $0.303 / $0.473 | $0.682 / $1.164 | 15 / 30 | Y | Y | 9 / 30 | Y | Blocked (upstream) |
 | fal Seedance 1.0 Pro | ? | ~$0.12 | 12 | Y | Y | - | Y | safety checker on; ? |
 | WaveSpeed Seedance 2.0 / 2.5 | $0.24 / $0.36 | $0.60 / $0.90 | 15 / 30 | Y | Y | 9 / 30 | Y | Blocked (upstream) |
 | Kie.ai Seedance 2.0 | $0.124 | ? | 15 | Y | Y | 9 | Y | Blocked (upstream) |
@@ -430,18 +488,20 @@ Prices are per second of output; "-" = not offered; "?" = not found.
 ## 5. Verified vs not verified, per provider
 
 - **OpenRouter**
-  - Verified: video endpoint, schema, Seedance 2.0/2.5 listings and "from" prices.
-  - Not verified: per-resolution prices, base64 input, URL lifetime, whether Seedance 1.x is
-    routed, Kling.
+  - Verified: video endpoint, schema, base64 first/last frames, the full 33-model catalogue with
+    price fields (Kling 3.0 included), list-price billing plus the 5.5% credit fee.
+  - Not verified: base64 for `input_references`, output URL lifetime, refusal billing, which
+    upstream provider serves each request, the face policy.
 - **BytePlus ModelArk**
   - Verified: models, token prices, durations, fps, inputs, API shape, 24 h URLs, USD 30
     activation, no US availability, the 2.x face block and the trusted-output rule.
   - Not verified: whether first frames are face-checked (resellers say yes), whether 1.x checks
     faces, KYC steps, treatment of mythological violence.
 - **fal.ai**
-  - Verified: endpoints, parameters, 2.0 prices, queue and webhook, concurrency.
-  - Not verified: 2.5 at 1080p, default output lifetime, account and region rules, any face
-    statement.
+  - Verified: endpoints, parameters, Seedance 2.0/2.5/1.5, Kling 3.0 and Veo 3.1 prices on its
+    own pages (section 1a), queue and webhook, concurrency.
+  - Not verified: H3 and Wan 3.0 prices, default output lifetime, account and region rules, any
+    face statement.
 - **Replicate**
   - Verified: models, parameters, 1 h output deletion, webhooks.
   - Not verified: every Seedance price.
@@ -481,29 +541,38 @@ passes the 2.x API today.
 
 ## 6. Recommendation (question 4)
 
-**Wire an engine-agnostic adapter first, with fal.ai as the first backend and OpenRouter as the
-second.** Then run one gated, paid probe (needs the user's go-ahead) to learn which engines accept
-our GPT stills before picking a default.
+(Revised 2026-11-08 after the price check in section 1a. The first draft put fal first; the
+numbers say otherwise.)
 
-Why fal first:
-- One key reaches every engine that matters for our shots:
-  - Seedance 1.0 Pro, 1.5 Pro, 2.0 and 2.5
-  - Kling to 4.0 (the likeliest engine to accept synthetic photoreal faces)
-  - MiniMax H3 cloud
-  - Wan 3.0
+**Wire an engine-agnostic adapter with OpenRouter as the first backend.** Then run one gated, paid
+probe (needs the user's go-ahead) to learn which engines accept our GPT stills before picking a
+default.
+
+Why OpenRouter first:
+- **Seedance 2.x at BytePlus list price**, about half of fal's:
+  - $0.151/s against $0.303/s at 720p.
+  - Plus the 5.5% credit fee, nothing per request.
+- One key reaches the engines that matter for our shots:
+  - Seedance 2.0, 2.5, Fast, Mini and 1.5 Pro
+  - Kling 3.0 pro/std and O1
+  - MiniMax H3 (as "hailuo-3")
+  - Wan 3.0 and 2.7
   - Veo 3.1
-- It has its own upload storage, so the Mac (which has no public URL) can send library stills.
-- It has a queue with a webhook or plain polling, and a maintained Python client.
-- No US region exclusion was found.
-- The cost is about 2x BytePlus on Seedance 2.x ($0.30/s against $0.15/s at 720p). At our volume,
-  a handful of 5-10 s hard shots per video, that is a few dollars per video.
-
-Why OpenRouter second:
-- Its request is already the normalised shape our adapter wants (`frame_images`,
+- Its request is already the engine-neutral shape our adapter wants (`frame_images`,
   `input_references`, `generate_audio`, `callback_url`).
-- Its Seedance prices sit at BytePlus parity.
-- But it routes fewer families (no Kling found) and its input is URLs only, so it is a cheap-Seedance
-  lane, not the primary.
+- It takes base64 first/last frames, so the Mac needs no public host.
+- The model list is a public endpoint, so the adapter can read durations, resolutions and prices
+  at run time instead of hard-coding them.
+
+What it lacks:
+- Kling 4.0, Seedance 1.0, Luma and Runway's own models.
+- Kling only at 720p.
+
+Second backend, only when a shot needs one of those: **Runware** or **fal**.
+- Runware lists Seedance 2.0 near parity ($0.16/s at 720p) and has Kling 4.0, Luma Ray 3.2, Runway
+  Gen-4.5 and base64 or upload input.
+- fal matches OpenRouter on Kling and Veo but costs about 2x on Seedance 2.x, so it should never
+  be the Seedance route.
 
 BytePlus direct is the third adapter, and only if the probe shows Seedance 2.x is the winner:
 - It is the cheapest Seedance route.
@@ -516,30 +585,34 @@ Skip:
 - Veo (8 s, no pay-as-you-go)
 - Sora (dead)
 - PiAPI (unofficial, faces still blocked, hours-long queues)
-- Runway as a primary (its own model is 720p first-frame-only). Keep it in mind as a
-  Kling-plus-Veo-plus-Seedance single key if fal lacks something.
+- Runway as a primary (its own model is 720p first-frame-only; it resells Seedance at $0.30/s).
+- fal for Seedance (about 2x, section 1a).
 
 **Probe to propose (paid, needs the go-ahead; nothing fired):**
 - One Vanadis hard shot (Odin hanging from the ash, his GPT opening still as first frame, silent,
-  5 s, 720p) on four engines through fal:
+  5 s, 720p) on three engines through OpenRouter:
   1. Seedance 2.0
-  2. Seedance 1.0 Pro (1.5 Pro retires 2026-11-11)
-  3. Kling 3.0 pro
-  4. MiniMax H3
+  2. Kling 3.0 pro
+  3. MiniMax H3 (`hailuo-3-max`, 768p)
+  4. Optionally Seedance 1.5 Pro, only if it runs before its 2026-11-11 retirement (the one 1.x
+     model still routed, and 1.x documents no face rule).
 - Outcomes: accepted or refused (the face rule, measured), then picture quality judged by the user.
-- Estimated cost for 5 s each, roughly $3-4 in all:
-  - Seedance 2.0: about $1.51 ($0.3024/s).
-  - Seedance 1.0 Pro: about $0.62 (fal's 1080p figure; no 720p price found).
-  - Kling 3.0 pro: about $0.60 (Runway's resale rate; fal's own price was not read).
-  - MiniMax H3: about $0.40 (MiniMax's own rate; fal's price was not read).
-- Refusals are free on BytePlus; fal's refusal billing was not found.
+- Estimated cost for 5 s each, from OpenRouter's own price fields:
+  - Seedance 2.0: about $0.76.
+  - Kling 3.0 pro: about $0.56.
+  - H3: about $0.40.
+  - Seedance 1.5 Pro: about $0.13.
+  - In all about $1.85, or about $1.95 with the 5.5% credit fee.
+  - The same set on fal would be about $2.60, assuming fal charges MiniMax's own H3 rate (its H3
+    price was not read). Nearly all of the difference is the Seedance clip.
+- Refusals are free on BytePlus. OpenRouter's refusal billing was not found.
 
 ### Route sketch (no implementation)
 
 New module `backend/cloud_video.py` holds one adapter per provider behind a common interface:
 
 ```
-class CloudVideo:          # one subclass per provider: Fal, OpenRouter, BytePlus, ...
+class CloudVideo:          # one subclass per provider: OpenRouter first; Runware, fal, BytePlus later
     models() -> [{id, max_s, durations, res, first_last, max_refs, audio_off, price_per_s}]
     submit(model, prompt, seconds, res, first=path|None, last=path|None, refs=[paths],
            audio=False, seed=None) -> task_id     # uploads library stills as the provider wants
