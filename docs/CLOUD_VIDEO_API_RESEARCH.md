@@ -30,6 +30,11 @@ exact price and parameter before writing code or budgeting.
    - A third party reports fully synthetic ChatGPT characters getting the same 400. [U]
    - **Our GPT stills of Freyja/Odin are therefore likely to be refused by Seedance 2.x.** Not
      verified by a call.
+   - **Against that, measured by the user (2026-11-08):** Seedance through Yapper has accepted our
+     generated characters and stills as references without rejecting them. The Seedance version
+     Yapper used was not recorded. So the block is not universal in practice: at least one route
+     takes our pictures. The probe below should include the Yapper route's model where an API
+     offers it, and treat "refused" as something to measure, not assume.
    - The way through is ByteDance's "trusted output" rule (section 2.1), which ties the stills to
      Seedream inside the same BytePlus account.
 3. **OpenAI's Sora API is shut down** (2026-09-24) [V]. **Veo 3.1 Preview has left the Gemini API**
