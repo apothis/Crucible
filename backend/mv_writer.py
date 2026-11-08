@@ -240,7 +240,7 @@ Fixed facts about this production:
 - Settings must be concrete and filmable in one place, described without people. If sky, clouds or stars are visible, say so (the renderer must pin them).
 - Environment-only B-roll (no person in frame) moves ONE element only (the sea, a curtain, the rain, a flame), slowly, with everything else still. A second moving element, or any rhythm ("every few seconds", "with each gust"), makes the model run the shot as a timelapse (measured). Sounds belong to the soundscape, not to the picture.
 - LOCATIONS: every scene happens in one named location, and the video uses FEW locations (typically 3-6), each returned to by several scenes. For each location you write a person-free still prompt for an image model; that still is given to the video model as a reference picture of the place, so every scene set there renders the same room or landscape. A location is one physical place at one camera distance class (a room; a detail of that room counts as its own location). Weather and time of day may change between scenes in the same location; walls, furniture, window placement and materials may not. The parlour the reference photographs show is a location. When the brief lists KNOWN LOCATIONS (places already photographed for earlier scripts or other videos, their stills on file), prefer them wherever one serves THIS video and refer to each by its exact id; invent a new location only where no known one fits the song. Never redecorate a known place: its fixed elements are what its description says, and your scene settings there must match that description.
-- THE SAME PEOPLE ACROSS A CUT IN ONE PLACE (user, 2026-11-07): two scenes cut back to back in the same location show the same people. The location still fixes the camera position, so cutting from an empty plate to her in the same place makes her appear out of nowhere, and cutting from her to an empty plate there makes her vanish. When the next scene adds or removes a person, set it in another location (a second angle or a detail of a place counts as its own location: add one rather than break this rule). Setups of her in one place cut together freely; an environment plate between them belongs to another place.
+- NOBODY POPS IN OR OUT AT A SAME-ANGLE CUT (user, 2026-11-08): two scenes in a row in the same location are fine. What is wrong is a cut that keeps the SAME ANGLE (the same camera position and nearly the same framing) while a person appears or vanishes: an empty plate, then her on the same view, makes her appear out of nowhere; her, then the same view empty, makes her vanish. Every scene names its "angle", the camera position in that location ("the location view" for the still's own position; otherwise a short name such as "reverse from the far bank", "low beside the hearth"). When the people in frame change between two scenes in a row in one location, the second changes the angle: another camera position, or a clearly different framing (wide to medium close-up, not wide to extreme wide).
 - Timing is NOT yours beyond choosing cut points: the system computes clip windows and which words fall where.
 
 Write for the song's genre: its pace, weight and mood should be visible in the choice of places, light, weather, movement and the proportion of performance to B-roll."""
@@ -454,10 +454,34 @@ def solo_mute_ranges(script, scene, a, b):
     return sorted(out)
 
 
+FRAMING_LADDER = (("extreme wide", 0), ("very wide", 0), ("establishing", 0), ("medium wide", 2), ("medium close", 4),
+                  ("extreme close", 6), ("close", 5), ("medium", 3), ("wide", 1), ("full", 2), ("detail", 6), ("insert", 6))
+
+
+def framing_step(framing):
+    """A framing's place on the ladder extreme wide (0) .. extreme close-up / detail (6); None if unknown."""
+    fr = str(framing or "").strip().lower().replace("-", " ")
+    for k, v in FRAMING_LADDER:
+        if fr.startswith(k.replace("-", " ")):
+            return v
+    return None
+
+
+def same_angle(a, b):
+    """Two scenes in one location shot from the same angle: the same named camera position (scenes
+    with no angle field, from before 2026-11-08, count as one position) and framings at most one
+    step apart (wide and extreme wide: the same view; wide and medium close-up: a different shot)."""
+    na = str(a.get("angle") or "").strip().lower()
+    nb = str(b.get("angle") or "").strip().lower()
+    if na and nb and na != nb:
+        return False
+    fa, fb = framing_step(a.get("framing")), framing_step(b.get("framing"))
+    return fa is None or fb is None or abs(fa - fb) <= 1
+
+
 def continuity_problems(script):
-    """Cuts between two back-to-back scenes in the SAME location that change who is in frame
-    (user, 2026-11-07: an empty plate, then her on the same background, makes her appear out of
-    nowhere; the location still fixes the camera, so the cut reads as a pop). Who is in frame =
+    """Same-angle cuts where a person appears or vanishes (user, 2026-11-08: the same place twice in
+    a row is fine; the same ANGLE with someone popping in or out is not). Who is in frame =
     singer_of (her / him / none). Returns [(index of the later scene, problem)]."""
     out = []
     sc = script.get("scenes") or []
@@ -465,12 +489,12 @@ def continuity_problems(script):
         if not a.get("location") or a.get("location") != b.get("location"):
             continue
         wa, wb = singer_of(script, a), singer_of(script, b)
-        if wa == wb:
+        if wa == wb or not same_angle(a, b):
             continue
         who = {"none": "nobody"}
-        what = f"{who.get(wa, wa)} -> {who.get(wb, wb)}"
-        out.append((b["index"], f"cut from scene {a['index'] + 1} in the same location `{b['location']}` changes who is in frame "
-                                f"({what}): move one of the two scenes to another location or angle, or keep the same people in both"))
+        out.append((b["index"], f"cut from scene {a['index']} keeps the same angle in `{b['location']}` "
+                                f"({a.get('framing')} -> {b.get('framing')}) while who is in frame changes "
+                                f"({who.get(wa, wa)} -> {who.get(wb, wb)}): change the angle or framing of one of the two"))
     return out
 
 
@@ -503,7 +527,7 @@ TWO SINGERS. This song is a duet, and this block overrides "the singer is the on
 - A line marked UNSURE is one the measurement cannot place: cover it with B-roll (an environment plate, or a silent shot of either singer at medium or wider), never a lip-sync scene. If in doubt about who sings, B-roll.
 - A line ANSWERED by the other singer (a short call and answer, measured: "[HIM, answered by HER at 91.10s]") belongs to the line's singer: one lip-sync scene of that singer holds it, and the answer is heard off screen (the render mutes the answer from what the singer on screen lip-syncs). Never cut to the other singer for an answer this short.
 - Either singer may appear silent (no_singing_her, written with singer him for his silent shots) under the other's voice at medium or wider.
-- A change of singer at a cut is the same jump as a person appearing: when the next scene shows the other singer, set it in another location (or another angle of the place, its own location), never the same location as the scene before.
+- A change of singer at a cut is the same jump as a person appearing when the angle stays: when the next scene in the same location shows the other singer, change the angle (another camera position, or a clearly different framing).
 - He has one outfit for the whole video (wardrobe2), as his references show; his opening_still describes him in the setting, hers describes her.
 - His vocal delivery: {voice}. Write his performance for it."""
 
@@ -535,6 +559,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "performance": "one of: sing_to_camera | sing_away | no_singing_her | no_singing_environment",
             **({"singer": "her | him | none: the one singer this scene shows (none for no_singing_environment); a lip-sync scene shows the measured voice"} if duet else {}),
             "framing": "e.g. medium close-up, medium, wide, extreme wide, detail",
+            "angle": "the camera position in this location: 'the location view' (the location still's own position) or a short name of another position, e.g. 'reverse from the far bank'; reuse the same name for the same position",
             "camera": "'static', or ONE move in the model's grammar: '<verb> with small amplitude at slow speed toward X throughout the take' (one framing only, never a second framing to reach, no distances)",
             "keep_in_frame": "one or two fixed things that must stay in frame until the end of the take, e.g. 'the oil lamp and the window' (string)",
             "lighting": "one sentence",
