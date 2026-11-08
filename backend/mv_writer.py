@@ -402,6 +402,12 @@ def check_duet(sc, sections):
         sc["singer"] = "none"
         return problems
     who = str(sc.get("singer") or "").strip().lower()
+    if who == "both" and perf.startswith("sing"):
+        problems.append("both singers in a lip-sync scene (untested): set to her")
+        who = "her"
+    if who == "both":                  # a silent two-shot (opt-in, 2026-11-08 test): her and him in frame
+        sc["singer"] = who
+        return problems
     if who not in ("her", "him"):
         problems.append(f"names no singer ('{sc.get('singer')}'): set to her")
         who = "her"
@@ -936,7 +942,15 @@ def clip_prompt(script, scene, clips):
         "return": {"clips": [{"index": 0, "summary": "...", "detailed_description": "[Shot 1] ...",
                               "overall_soundscape": "...", "non_diegetic_music": "..."}]},
     }
-    if script.get("duet") and who != "none":
+    if script.get("duet") and who == "both":
+        user["wardrobe"] = {"her (Subject 1)": script["wardrobe"], "him (Subject 2)": script.get("wardrobe2")}
+        user["subjects"] = (
+            "BOTH singers are in this shot, silent: <Subject 1> is the female lead (she, her), written <Subject 1> (S1); "
+            "<Subject 2> is the male singer (he, him), written <Subject 2> (S2). Name each by subject every time "
+            "they act. No <d> for either. Every rule about the singer (fixed scale, no walking toward the lens, "
+            "one main motion) applies to each of them; their motions are staggered in time, never in unison. "
+            "Say where each stands in frame and what each does at the start of the clip (it must match the opening still)")
+    elif script.get("duet") and who != "none":
         voice = (script["duet"].get("voice") or "").strip()
         user["subject_1"] = (
             "THE MALE SINGER (he, him), not the female lead: every rule written about her applies to him in "
@@ -978,13 +992,36 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant
     is not readable at this distance."""
     refs = script["refs"]
     env_only = scene.get("performance") == "no_singing_environment"
-    him = singer_of(script, scene) == "him"
-    if him:
-        refs = script["duet"]["refs2"]
-        wardrobe = script.get("wardrobe2") or ""
+    who = singer_of(script, scene)
+    him = who == "him"
+    if who == "both" and not env_only:
+        # a silent two-shot (opt-in): her two pictures, his two, then the place; the route uploads
+        # them in this order (face, body, his face, his body, location)
+        r2 = script["duet"]["refs2"]
+        singer_def = ("<Subject 1> is the female singer: her facial identity comes from <Picture 1>; her full-body "
+                      f"appearance, body proportions and wardrobe come from <Picture 2>. {refs['shared']} "
+                      f"Wardrobe: {script['wardrobe']}\n"
+                      "<Subject 2> is the male singer: his facial identity comes from <Picture 3>; his full-body "
+                      f"appearance, body proportions and wardrobe come from <Picture 4>. {r2['shared']} "
+                      f"Wardrobe: {script.get('wardrobe2') or ''}\n")
+        singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain her referenced face, eyes, "
+                      "hair, skin, body proportions and wardrobe exactly, while pose, expression, framing, lighting and "
+                      "movement follow the description below.\n"
+                      "<Subject 2> (appears throughout [Shot 1]): fully_preserved - retain his referenced face, eyes, "
+                      "hair, beard, skin, body proportions and wardrobe exactly, while pose, expression, framing, "
+                      "lighting and movement follow the description below. The two are different people and keep "
+                      "their own faces and clothes.\n")
+        loc_pic, n_loc = 5, 3
     else:
-        wardrobe = script["wardrobe"]
-    if distant and him:
+        n_loc = 2
+        if him:
+            refs = script["duet"]["refs2"]
+            wardrobe = script.get("wardrobe2") or ""
+        else:
+            wardrobe = script["wardrobe"]
+    if who == "both" and not env_only:
+        pass                                   # defined above
+    elif distant and him:
         singer_def = ("<Subject 1> is the male singer, seen at a distance: his full-body appearance, build, hair and "
                       f"wardrobe come from <Picture 1>. Wardrobe: {wardrobe}\n")
         singer_ret = ("<Subject 1> (appears throughout [Shot 1], a small figure in a wide frame): partially_preserved - "
@@ -1039,8 +1076,8 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant
         subject = "subject_definitions:\nNo referenced subjects: this clip is environment only, with no people on screen.\n"
         retention = "retention_analysis:\nNothing to retain from references; the setting, style and palette follow the description below.\n"
     elif env:
-        subject = "subject_definitions:\n" + singer_def + env_def(2, loc_pic)
-        retention = "retention_analysis:\n" + singer_ret + env_ret(2, loc_pic)
+        subject = "subject_definitions:\n" + singer_def + env_def(n_loc, loc_pic)
+        retention = "retention_analysis:\n" + singer_ret + env_ret(n_loc, loc_pic)
     else:
         subject = "subject_definitions:\n" + singer_def
         retention = "retention_analysis:\n" + singer_ret

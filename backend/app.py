@@ -1257,6 +1257,17 @@ def mv_render_scene(p: dict):
         singer_refs = [r for r in (p.get("ref_ids2") or [rs.get("him_face"), rs.get("him_body")]) if r]
         if len(singer_refs) < 2:
             raise HTTPException(400, "this is one of his scenes: set his face and body pictures for the script first")
+    both = (not env_only) and mv_writer_mod.singer_of(script, scene) == "both"
+    if both:
+        # a silent two-shot (opt-in, 2026-11-08 test): her face + body, then his face + body; the
+        # prompt numbers them <Picture 1..4> in this order and the place is <Picture 5>
+        rs = script.get("ref_stills") or {}
+        his = [r for r in (p.get("ref_ids2") or [rs.get("him_face"), rs.get("him_body")]) if r]
+        if len(singer_refs) < 2 or len(his) < 2:
+            raise HTTPException(400, "a two-singer shot needs her face and body pictures (ref_ids) and his (set for the script)")
+        if str(scene.get("performance") or "").startswith("sing"):
+            raise HTTPException(400, "a two-singer shot is silent only (lip-sync with both in frame is untested)")
+        singer_refs = singer_refs[:2] + his[:2]
     if not env_only and not singer_refs:
         raise HTTPException(400, "ref_ids (the singer's face + body stills) are required for a scene she appears in")
     # solo lock (opt-in, two singers): a lip-sync scene's lock loses the other singer's measured
@@ -1265,7 +1276,7 @@ def mv_render_scene(p: dict):
     if p.get("solo_lock") and script.get("duet") and str(scene.get("performance") or "").startswith("sing"):
         span = float(scene["plan"]["span_seconds"]) + 1.0
         mute = mv_writer_mod.solo_mute_ranges(script, scene, float(scene["start"]), float(scene["start"]) + span) or None
-    distant = (not env_only) and mv_writer_mod.is_distant(scene)
+    distant = (not env_only) and (not both) and mv_writer_mod.is_distant(scene)
     if distant and len(singer_refs) >= 2:
         singer_refs = [singer_refs[1]]          # body picture only (ref_ids order is face, body); s.20.31 H1
     keyframes = (p.get("keyframes") or "").strip() or None
@@ -2894,10 +2905,18 @@ def mv_rewrite_scene(p: dict):
         raise HTTPException(400, "scene must be a valid 0-based scene index of the script")
     changes = p.get("set") or {}
     allowed = ("action", "camera", "keep_in_frame", "framing", "lighting", "mood", "setting", "anchor_figure", "others",
-               "performance", "title", "location", "opening_still")
+               "performance", "title", "location", "opening_still", "singer", "angle", "matches_location_still")
     bad = [k for k in changes if k not in allowed]
     if bad:
         raise HTTPException(400, f"set: unknown scene fields {bad}; allowed {list(allowed)}")
+    if "singer" in changes:
+        if not script.get("duet"):
+            raise HTTPException(400, "set.singer is for two-singer scripts")
+        if changes["singer"] not in ("her", "him", "none", "both"):
+            raise HTTPException(400, "set.singer must be her, him, none or both")
+        perf = changes.get("performance", sc.get("performance"))
+        if changes["singer"] == "both" and str(perf or "").startswith("sing"):
+            raise HTTPException(400, "singer both is a silent two-shot: performance no_singing_her (lip-sync with both is untested)")
     loc_ids = [l.get("id") for l in script.get("locations") or []]
     if "location" in changes and changes["location"] not in loc_ids:
         raise HTTPException(400, f"set.location must be one of the script's locations {loc_ids}")
@@ -2937,6 +2956,37 @@ def mv_rewrite_scene(p: dict):
     return {"files": {"json": jpath, "md": mpath}, "scene": idx, "title": sc.get("title"), "set": changes,
             "problems": [c["problems"] for c in sc["clips"]], "text": [c["text"] for c in sc["clips"]],
             "prompts": [c["prompt"] for c in sc["clips"]], "log": log_lines}
+
+
+@app.post("/api/mv/add_location")
+def mv_add_location(p: dict):
+    """Add a NEW place to a saved script (so its scenes can be moved there with rewrite_scene) and
+    save the result as a NEW script; no scene changes. The place's picture is made from
+    still_prompt and filed as usual (/api/mv/locations/import_still). No GPU.
+    p: {script, id, name, description (the fixed elements, no people), still_prompt}."""
+    script, name = _mv_load_script(p.get("script"))
+    lid = mv_locations_mod.slug(p.get("id") or p.get("name") or "")
+    if not lid:
+        raise HTTPException(400, "id (or name) is required")
+    if any(L.get("id") == lid for L in script.get("locations") or []):
+        raise HTTPException(400, f"the script already has a location '{lid}'")
+    missing = [k for k in ("name", "description", "still_prompt") if not str(p.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(400, f"required: {missing}")
+    script.setdefault("locations", []).append({"id": lid, "name": str(p["name"]).strip(),
+                                               "description": str(p["description"]).strip(),
+                                               "still_prompt": str(p["still_prompt"]).strip()})
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    script.setdefault("rewrites", []).append({"add_location": lid, "from": os.path.basename(str(name)), "at": stamp})
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    out_dir = os.path.join(work, "mv_scripts")
+    child = mv_takes_mod.child_name(name, "loc", stamp, script)
+    jpath = os.path.join(out_dir, f"{child}.json")
+    with open(jpath, "w") as f:
+        json.dump(script, f, indent=1)
+    with open(os.path.join(out_dir, f"{child}.md"), "w") as f:
+        f.write(mv_writer_mod.script_markdown(script))
+    return {"files": {"json": jpath}, "location": lid, "locations": [L["id"] for L in script["locations"]]}
 
 
 @app.post("/api/mv/mark_rerender")
