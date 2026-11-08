@@ -3284,10 +3284,19 @@ def mv_takes(script: str, scene: Optional[int] = None):
                               "AND params LIKE ? ORDER BY created DESC", (f"%{mv_takes_mod.lineage_base(name)}%",)):
             rows.append({"id": r["id"], "created": r["created"], "status": r["status"], "params": r["params"]})
     with LOCK:
+        live = set()
         for pid, j in JOBS.items():
             if j.get("mode") == "videoclip" and j.get("status") in ("pending", "running", "finalizing"):
+                live.add(pid)
                 rows.append({"id": pid, "created": j.get("created"), "status": j["status"], "progress": j.get("progress", 0),
                              "max": j.get("max", 0), "params": j.get("params") or {}})
+    # renders still on the box that this backend process did not start (sent before a restart):
+    # listed from the database so the tab does not count their scenes as unrendered
+    with db() as conn:
+        for r in conn.execute("SELECT id, created, status, params FROM jobs WHERE mode='videoclip' "
+                              "AND status NOT IN ('done','error') AND params LIKE ?", (f"%{mv_takes_mod.lineage_base(name)}%",)):
+            if r["id"] not in live:
+                rows.append({"id": r["id"], "created": r["created"], "status": r["status"], "params": r["params"]})
     script_obj, _ = _mv_load_script(name)
     takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene, scenes=script_obj["scenes"],
                                           ancestors=script_obj.get("ancestors"))
