@@ -180,6 +180,7 @@ def align_song(audio_path, blocks, size="small", cache_dir=None):
 
     for ln in lines:
         ln["echo"] = _echo_spans(ln, at, next_start)
+        ln["word_starts"] = [round(at[k][0], 3) for k, _, e in ln["_toks"] if not e and k in at]
         ln.pop("_toks", None)
         idx = [i for i, o in enumerate(owner) if o == ln["index"]]
         hit = [at[i] for i in idx if i in at]

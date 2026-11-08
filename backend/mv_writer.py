@@ -80,7 +80,8 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
         if sec.get("start") is None:
             continue
         lines = [{"start": l["start"], "end": l["end"], "text": l["text"], "cover": l["cover"],
-                  **({"echo": l["echo"]} if l.get("echo") else {})}
+                  **({"echo": l["echo"]} if l.get("echo") else {}),
+                  **({"word_starts": l["word_starts"]} if l.get("word_starts") else {})}
                  for l in sec["lines"] if l.get("start") is not None]
         if align_path and sec["lines"]:
             # the aligner drops unmatched lines from its sections; the block's own lines before

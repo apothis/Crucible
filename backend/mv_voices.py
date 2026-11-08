@@ -266,6 +266,28 @@ def _refine(runs, labels):
     return runs
 
 
+def _switch_word(switch, v, l, labels, runs):
+    """A shared line's hand-over moved onto a word: the start of the line's word nearest the centre
+    of the first fine window that clearly hears the second voice after the last one that clearly
+    hears the first (the band often hides the voices in between). Measured 2026-11-08 on Vanadis:
+    the user heard the 1:27 hand-over at 'pay' (87.88 s), where this lands; the window boundary sat a
+    word early. The runs' boundary moves with it. Unchanged without word times or clear windows."""
+    first, second = v.split(">")
+    ws = [w for w in l.get("word_starts") or [] if l["start"] < w < l["end"]]
+    near = [(t, x) for t, x in labels if abs(t - switch) <= HANDOVER_SEARCH + 1.0 and l["start"] <= t <= l["end"] + 0.3]
+    last1 = max((t for t, x in near if x == first), default=None)
+    if not ws or last1 is None:
+        return switch
+    clear2 = [t for t, x in near if x == second and t > last1]
+    if not clear2:
+        return switch
+    w = min(ws, key=lambda s: abs(s - clear2[0]))
+    for a, b in zip(runs, runs[1:]):
+        if a["end"] == switch and b["start"] == switch:
+            a["end"] = b["start"] = round(w, 2)
+    return round(w, 2)
+
+
 def voice_seconds(runs, a, b):
     """Seconds of each voice inside [a, b)."""
     out = {"her": 0.0, "him": 0.0}
@@ -317,7 +339,8 @@ def timeline(fp, sections, lyrics_raw, swap=False):
     if swap:
         him, her = her, him
         how += "; swapped by the user"
-    runs = _refine(_runs(wins, lab, him, her), _fine_labels(fp, C, her, him, bleed))
+    flab = _fine_labels(fp, C, her, him, bleed)
+    runs = _refine(_runs(wins, lab, him, her), flab)
     answers = _answers(fp, C, her, him, bleed, runs)
     L = {(round(a, 2), round(b, 2)): np.array(e, float) for (a, b), e in zip(fp["lines"], fp["line_emb"]) if e}
     lines = []
@@ -350,6 +373,8 @@ def timeline(fp, sections, lyrics_raw, swap=False):
         # a shared line's hand-over time: where its second voice takes over (a cut point the user
         # may move a scene boundary to, so the second singer finishes the line on screen)
         switch = next((round(r["start"], 2) for r in runs[1:] if ">" in v and l["start"] < r["start"] < l["end"]), None)
+        if switch is not None:
+            switch = _switch_word(switch, v, l, flab, runs)
         lines.append({"start": l["start"], "end": l["end"], "text": l["text"], "voice": v, "unsure": bool(unsure),
                       "answers": ans, "switch": switch,
                       "cos": {k: round(x, 3) for k, x in cos.items()} if cos else None,
