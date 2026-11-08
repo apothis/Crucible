@@ -1961,6 +1961,8 @@ def _mv_render_script_run(p: dict, rows_out=None):
     out_dir = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_batches")
     os.makedirs(out_dir, exist_ok=True)
     base = re.sub(r"\.json$", "", name) if name != "(inline)" else "inline"
+    if len(base) > mv_takes_mod.MAX_NAME:
+        base = mv_takes_mod.child_name(base, "b", "", None).rstrip("_")
     mpath = os.path.join(out_dir, f"{base}_{'dry' if dry else 'batch'}_{time.strftime('%Y%m%d_%H%M%S')}.json")
     with open(mpath, "w") as f:
         json.dump(manifest, f, indent=1)
@@ -2575,7 +2577,8 @@ def _mv_take_of_scene(p):
     except Exception:
         sp = {}
     rows = [{"id": jid, "params": sp, "status": "done"}]
-    if not mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene=scene["index"], scenes=script["scenes"]):
+    if not mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene=scene["index"], scenes=script["scenes"],
+                                         ancestors=script.get("ancestors")):
         raise HTTPException(400, "that take is not a take of this scene")
     return script, name, scene, jid, src_path, sp
 
@@ -2923,9 +2926,9 @@ def mv_rewrite_scene(p: dict):
     script.setdefault("rewrites", []).append({"scene": idx, "from": os.path.basename(str(name)), "at": stamp, "set": changes})
     out_dir = os.path.join(work, "mv_scripts")
     os.makedirs(out_dir, exist_ok=True)
-    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
-    jpath = os.path.join(out_dir, f"{base}_rw{idx}_{stamp}.json")
-    mpath = os.path.join(out_dir, f"{base}_rw{idx}_{stamp}.md")
+    child = mv_takes_mod.child_name(name, f"rw{idx}", stamp, script)
+    jpath = os.path.join(out_dir, f"{child}.json")
+    mpath = os.path.join(out_dir, f"{child}.md")
     mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
@@ -3033,9 +3036,9 @@ def mv_refresh_facts(p: dict):
     stamp = time.strftime("%Y%m%d_%H%M%S")
     script.setdefault("rewrites", []).append({"refresh_facts": True, "from": os.path.basename(str(name)), "stamp": stamp})
     out_dir = os.path.join(work, "mv_scripts")
-    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
-    jpath = os.path.join(out_dir, f"{base}_facts_{stamp}.json")
-    mpath = os.path.join(out_dir, f"{base}_facts_{stamp}.md")
+    child = mv_takes_mod.child_name(name, f"facts", stamp, script)
+    jpath = os.path.join(out_dir, f"{child}.json")
+    mpath = os.path.join(out_dir, f"{child}.md")
     mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
@@ -3103,9 +3106,9 @@ def mv_split_scene(p: dict):
                                               "first": second.get("first")})
     out_dir = os.path.join(work, "mv_scripts")
     os.makedirs(out_dir, exist_ok=True)
-    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
-    jpath = os.path.join(out_dir, f"{base}_sp{idx}_{stamp}.json")
-    mpath = os.path.join(out_dir, f"{base}_sp{idx}_{stamp}.md")
+    child = mv_takes_mod.child_name(name, f"sp{idx}", stamp, script)
+    jpath = os.path.join(out_dir, f"{child}.json")
+    mpath = os.path.join(out_dir, f"{child}.md")
     mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
@@ -3177,9 +3180,9 @@ def mv_move_cut(p: dict):
                                               "stamp": stamp, "first": first, "second": second})
     out_dir = os.path.join(work, "mv_scripts")
     os.makedirs(out_dir, exist_ok=True)
-    base = re.sub(r"\.json$", "", os.path.basename(str(name)))
-    jpath = os.path.join(out_dir, f"{base}_mc{idx}_{stamp}.json")
-    mpath = os.path.join(out_dir, f"{base}_mc{idx}_{stamp}.md")
+    child = mv_takes_mod.child_name(name, f"mc{idx}", stamp, script)
+    jpath = os.path.join(out_dir, f"{child}.json")
+    mpath = os.path.join(out_dir, f"{child}.md")
     mv_writer_mod.mark_continuity(script)
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
@@ -3286,7 +3289,8 @@ def mv_takes(script: str, scene: Optional[int] = None):
                 rows.append({"id": pid, "created": j.get("created"), "status": j["status"], "progress": j.get("progress", 0),
                              "max": j.get("max", 0), "params": j.get("params") or {}})
     script_obj, _ = _mv_load_script(name)
-    takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene, scenes=script_obj["scenes"])
+    takes = mv_takes_mod.takes_for_script(rows, name, LIBRARY, scene, scenes=script_obj["scenes"],
+                                          ancestors=script_obj.get("ancestors"))
     mv_takes_mod.attach_upscales(takes, _mv_upscale_rows(), LIBRARY)
     locks = {str(sc["index"]): sc["locked"] for sc in script_obj["scenes"] if sc.get("locked")}
     return {"script": name, "takes": {str(k): v for k, v in takes.items()}, "locks": locks}

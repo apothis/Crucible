@@ -105,12 +105,36 @@ def lineage_base(script_name):
     return re.split(r"_\d{8}_\d{6}", script_name, 1)[0]
 
 
-def is_ancestor(name, current):
-    a, c = name[:-5] if name.endswith(".json") else name, current[:-5] if current.endswith(".json") else current
-    return a == c or c.startswith(a + "_")
+def is_ancestor(name, current, ancestors=None):
+    """`name` is `current` or one of its ancestors: by the suffix chain, or (once a long chain was
+    shortened, see child_name) by the script's own recorded ancestor list."""
+    strip = lambda x: x[:-5] if x.endswith(".json") else x
+    a, c = strip(name), strip(current)
+    return a == c or c.startswith(a + "_") or any(x == a or x.startswith(a + "_") for x in map(strip, ancestors or []))
 
 
-def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
+MAX_NAME = 160     # a child name longer than this restarts from the first script's name (255 is the FS limit)
+
+
+def child_name(parent, tag, stamp, script=None):
+    """The basename (no extension) of a script derived from `parent` by an edit `tag` (rw3, sp0,
+    mc1, facts): parent + _tag_stamp, so ancestors stay prefixes. A chain too long for the file
+    system restarts from the FIRST script's name (root + its timestamp) plus a short hash of the
+    parent, so that script's takes still match by prefix; `script` (the child) records every
+    ancestor in script['ancestors'] so the takes of the shortened-away ones still count."""
+    import hashlib
+    base = re.sub(r"\.json$", "", os.path.basename(str(parent)))
+    if script is not None:
+        script["ancestors"] = list(dict.fromkeys(list(script.get("ancestors") or []) + [base]))
+    name = f"{base}_{tag}_{stamp}"
+    if len(name) > MAX_NAME:
+        m = re.match(r"(.*?_\d{8}_\d{6})", base)
+        origin = m.group(1) if m else base[:60]
+        name = f"{origin}_x{hashlib.md5(base.encode()).hexdigest()[:6]}_{tag}_{stamp}"
+    return name
+
+
+def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None, ancestors=None):
     """Library rows (sqlite dicts with params JSON) -> {scene_index: [take...]} for one script.
     Running jobs are passed in the same shape with status != done. With `scenes` (the script's
     scene list) a take rendered under an ANCESTOR script counts too when its song window equals
@@ -141,7 +165,7 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None):
             idx = locked_ids[r["id"]]
             from_script = rendered_under if rendered_under != script_name else None
         elif rendered_under != script_name:
-            if not windows or not is_ancestor(rendered_under, script_name):
+            if not windows or not is_ancestor(rendered_under, script_name, ancestors):
                 continue
             # the ancestor's scene index may differ (splits renumber): match by the song window
             try:
