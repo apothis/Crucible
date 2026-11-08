@@ -855,8 +855,12 @@ def plan_scene_clips(scene, sections, fps=H3_FPS, frames=CHAIN_FRAMES, context=C
             for l in sec["lines"]:
                 if l["end"] <= c["song_start"] or l["start"] >= c["song_end"]:
                     continue
+                v = l.get("voice")
+                sw = l.get("voice_switch")
+                if v and is_shared(v) and sw and c["song_start"] >= float(sw) - 0.05:
+                    v = v.split(">")[-1]      # the clip starts after the hand-over: the rest is the second voice's
                 lines.append({"text": l["text"], "song_start": l["start"], "song_end": l["end"],
-                              **({"voice": l["voice"]} if l.get("voice") else {}),
+                              **({"voice": v} if v else {}),
                               "in_clip_start": round(max(0.0, l["start"] - c["song_start"]), 2),
                               "in_clip_end": round(min(plan["seconds"], l["end"] - c["song_start"]), 2),
                               "starts_before_clip": l["start"] < c["song_start"],
