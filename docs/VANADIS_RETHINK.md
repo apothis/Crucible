@@ -77,3 +77,14 @@ Each test started on a ChatGPT opening still. The two singer scenes used the ref
 | 4. The giant and the stallion at the wall (scene 26, static) | OK as rendered. He reads as a big man rather than three times a man's height, and a second block appears on the sledge after he lifts the first. |
 
 So two-shots of the singers (silent), held poses, an animal and a giant extra are all usable in the rewrite.
+
+## The rewrite (2026-11-08)
+
+The writer changes (commit 47f4c29) were checked on a second song first. She Never Leaves the Frame, rewritten with no concept given: empty places went from 40% to 15% of scenes, scenes with story characters from 5 to 11, and places from 7 to 9. Every place rule was met.
+
+Vanadis was then rewritten with this draft as its concept (`vanadis_20261108_143602`), and the two pre-chorus cuts were moved so he finishes "pay for what you took" at 87.88 s and 143.96 s. The result:
+- 39 scenes in 11 places: 6 new (the hook behind the wall, the falcon cliff, the seeress chamber, the hall of the chosen, the grey shore, the smithy) and 5 kept.
+- Empty places down to 10% of scenes; 12 scenes with story characters; 3 silent shots of both singers.
+- No writer flags and no pop cuts.
+
+Pictures needed: 6 new places and 8 scenes without singers that must start on their own picture (14 required). Opening pictures are recommended for the 29 singer scenes as well, because the place picture otherwise sets the camera angle.
