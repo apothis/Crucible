@@ -338,6 +338,14 @@ def timeline(fp, sections, lyrics_raw, swap=False):
         # not unsure (it shows her, user rule); B-roll covers an unsure line (user rule, 2026-11-07)
         unsure = v == "unknown" or (">" not in v and cos is not None and (
             abs(cos["him"] - cos["her"]) < UNSURE_MARGIN or max(cos.values()) < UNSURE_FLOOR))
+        # the lyric's bracketed answer ("Vanadis (Vanadis)"), timed by the aligner: in a duet it is
+        # the OTHER singer answering the line's singer. Used where the fingerprints hear no answer
+        # (measured 2026-11-08: they hear none on Vanadis, the user hears her on every one)
+        if v in ("her", "him"):
+            for a, b in l.get("echo") or []:
+                if not any(x["end"] > a and x["start"] < b for x in answers):
+                    answers.append({"start": round(a, 2), "end": round(b, 2),
+                                    "voice": "him" if v == "her" else "her", "from": "lyrics"})
         ans = [x for x in answers if x["end"] > l["start"] and x["start"] < l["end"] + FINE_PAD[1]]
         # a shared line's hand-over time: where its second voice takes over (a cut point the user
         # may move a scene boundary to, so the second singer finishes the line on screen)

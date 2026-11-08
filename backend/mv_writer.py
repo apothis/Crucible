@@ -79,7 +79,8 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
     for sec in align["sections"]:
         if sec.get("start") is None:
             continue
-        lines = [{"start": l["start"], "end": l["end"], "text": l["text"], "cover": l["cover"]}
+        lines = [{"start": l["start"], "end": l["end"], "text": l["text"], "cover": l["cover"],
+                  **({"echo": l["echo"]} if l.get("echo") else {})}
                  for l in sec["lines"] if l.get("start") is not None]
         if align_path and sec["lines"]:
             # the aligner drops unmatched lines from its sections; the block's own lines before
@@ -859,7 +860,16 @@ def plan_scene_clips(scene, sections, fps=H3_FPS, frames=CHAIN_FRAMES, context=C
                 sw = l.get("voice_switch")
                 if v and is_shared(v) and sw and c["song_start"] >= float(sw) - 0.05:
                     v = v.split(">")[-1]      # the clip starts after the hand-over: the rest is the second voice's
-                lines.append({"text": l["text"], "song_start": l["start"], "song_end": l["end"],
+                text, extra = l["text"], {}
+                ans = [x for x in l.get("voice_answers") or [] if v and x["voice"] != v.split(">")[-1]]
+                if ans:
+                    # the other singer's answer is heard, not sung on screen: out of the sung text
+                    text = re.sub(r"\s*\([^)]*\)", "", text).strip()
+                    extra = {"answered_off_screen": [{"text": " ".join(re.findall(r"\(([^)]*)\)", l["text"])),
+                                                      "by": x["voice"], "song_start": x["start"],
+                                                      "song_end": x["end"]} for x in ans]}
+                lines.append({"text": text, "song_start": l["start"], "song_end": l["end"],
+                              **extra,
                               **({"voice": v} if v else {}),
                               "in_clip_start": round(max(0.0, l["start"] - c["song_start"]), 2),
                               "in_clip_end": round(min(plan["seconds"], l["end"] - c["song_start"]), 2),
@@ -922,7 +932,9 @@ def clip_prompt(script, scene, clips):
             if who == "him" else "the female lead (she, her)")
         user["voices"] = ("each audible line carries its MEASURED voice; only lines in this scene's singer's "
                           "voice go inside <d>. A line in the other singer's voice is heard but not sung on screen: "
-                          "no <d> for it, and the singer's lips stay closed through it")
+                          "no <d> for it, and the singer's lips stay closed through it. A line's "
+                          "answered_off_screen words are the other singer answering from off screen: never inside <d>, "
+                          "lips closed through them")
     return CLIP_SYSTEM, json.dumps(user, indent=1)
 
 

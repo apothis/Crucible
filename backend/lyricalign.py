@@ -52,11 +52,73 @@ def _lyric_stream(blocks):
         for ln in (b.get("lyrics") or "").split("\n"):
             if not ln.strip():
                 continue
-            lines.append({"index": len(lines), "block": bi, "text": ln.strip()})
-            for tok in normalize(ln):
-                words.append(tok)
-                owner.append(len(lines) - 1)
+            lines.append({"index": len(lines), "block": bi, "text": ln.strip(), "_toks": []})
+            for part, echo in _bracket_parts(ln):
+                for tok in normalize(part):
+                    lines[-1]["_toks"].append((len(words), tok, echo))
+                    words.append(tok)
+                    owner.append(len(lines) - 1)
     return words, owner, lines
+
+
+def _bracket_parts(line):
+    """A lyric line split into (text, bracketed) parts: '(...)' marks an echo or an answer, the
+    lyric convention for a backing voice repeating the call ("Vanadis (Vanadis)")."""
+    out, pos = [], 0
+    for m in re.finditer(r"\(([^)]*)\)", line):
+        if m.start() > pos:
+            out.append((line[pos:m.start()], False))
+        out.append((m.group(1), True))
+        pos = m.end()
+    if pos < len(line):
+        out.append((line[pos:], False))
+    return out
+
+
+ECHO_MIN = 0.3     # an echo span shorter than this is not kept
+
+
+def _echo_spans(ln, at, next_start):
+    """Song-second spans of a line's bracketed words. Placed by the transcript when Whisper heard
+    them; otherwise (measured on Vanadis 2026-11-08: Whisper never transcribes the answer, it
+    leaves a gap or stretches the next word over it) timed from the call it repeats: the answer
+    starts where the call ends and lasts as long as the call, ending before the next sung word.
+    `next_start`/(start, end) of the first placed word after the bracket, or None."""
+    toks = ln["_toks"]
+    out = []
+    i = 0
+    while i < len(toks):
+        if not toks[i][2]:
+            i += 1
+            continue
+        j = i
+        while j < len(toks) and toks[j][2]:
+            j += 1
+        run = toks[i:j]
+        hit = [at[k] for k, _, _ in run if k in at]
+        before = toks[max(0, i - len(run)):i]
+        repeat = [t for _, t, e in before if not e] == [t for _, t, _ in run]
+        if hit and repeat and not any(k in at for k, _, _ in before):
+            # the matcher gave the one heard word to the repeat; Whisper hears the call, never
+            # the answer (measured), so the placed word is the call
+            for (kb, _, _), (kr, _, _) in zip(before, run):
+                if kr in at:
+                    at[kb] = at.pop(kr)
+            hit = []
+        if hit:
+            out.append([round(min(h[0] for h in hit), 3), round(max(h[1] for h in hit), 3)])
+        else:
+            call = [at[k] for k, _, e in before if not e and k in at]
+            if call:
+                a = max(h[1] for h in call)
+                b = a + (a - min(h[0] for h in call))
+                nxt = next((at[k] for k, _, _ in toks[j:] if k in at), None) or next_start(run[-1][0])
+                if nxt:
+                    b = min(b, nxt[0] if nxt[0] >= a + ECHO_MIN else nxt[1] - 0.15)
+                if b - a >= ECHO_MIN:
+                    out.append([round(a, 3), round(b, 3)])
+        i = j
+    return out
 
 
 def transcribe_words(audio_path, size="small", cache_dir=None):
@@ -110,7 +172,15 @@ def align_song(audio_path, blocks, size="small", cache_dir=None):
             for k in range(blk.size):
                 at[blk.a + k] = times[blk.b + k]
 
+    def next_start(k):
+        for m in range(k + 1, len(lyr)):
+            if m in at:
+                return at[m]
+        return None
+
     for ln in lines:
+        ln["echo"] = _echo_spans(ln, at, next_start)
+        ln.pop("_toks", None)
         idx = [i for i, o in enumerate(owner) if o == ln["index"]]
         hit = [at[i] for i in idx if i in at]
         ln["cover"] = round(len(hit) / len(idx), 3) if idx else 0.0
