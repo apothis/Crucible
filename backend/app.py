@@ -4270,8 +4270,10 @@ def youtube_metadata(body: dict):
         raise HTTPException(400, "title is required")
     artist = str(body.get("artist") or _yt_wordmark_cfg().get("text") or "").strip()
     tags = str(song.get("tags") or "").strip()
+    # the whole lyric (2026-11-09: a 1200-char cap gave the writer the first verse only, so the
+    # story lines were vague guesses)
     lyrics = "\n".join((s.get("lyrics") or "").strip()
-                       for s in (song.get("sections") or []) if (s.get("lyrics") or "").strip())[:1200]
+                       for s in (song.get("sections") or []) if (s.get("lyrics") or "").strip())[:5000]
     provider = body.get("provider") or llm_mod.best_provider()
     model = body.get("model") or ""
     if not model and provider in ("claude_sub", "claude_code", "claude"):
@@ -4296,10 +4298,25 @@ def youtube_metadata(body: dict):
               "real bands the song genuinely resembles; hashtags go at the END of the "
               "description (the first three show above the video title - lead with the "
               "genre ones); the separate tags field mainly catches misspellings. "
-              "The description is written FOR LISTENERS: it evokes the song's story, "
-              "characters, imagery and emotion as heard, drawn from the lyrics. NEVER mention "
-              "BPM, tempo, key, chords, instrument lists, arrangement, production, mixing or "
-              "any generation/prompt language - the genre/mood tags are hints, not copy.")
+              "The description is written FOR LISTENERS and its job is to make a stranger press play "
+              "and stay: it is specific to THIS song, never a description that would fit any song in "
+              "the genre. Read the whole lyric and find what only this song has - who is in it, what "
+              "happened, the one image or line that sticks, the turn at the end. "
+              "Search results and the watch page show only about the first 140 characters, so line "
+              "one is a HOOK: a concrete, intriguing sentence about the song's story (a character, a "
+              "stake, a strange image, a promise or a threat), with the genre word worked in "
+              "naturally if it fits. It is never a list of adjectives. "
+              "Write plainly, like a short liner note or a film's logline, in concrete nouns and "
+              "verbs taken from the lyric. Banned: stacked adjectives, and the words soaring, epic "
+              "journey, haunting, ethereal, sonic, tapestry, odyssey, delve, embark, unleash, "
+              "testament, masterpiece, 'a tale of', 'explores themes of'. "
+              "Stay faithful to the lyric: its own images and words, nothing it does not say. "
+              "Never guess the singer's gender: the lyric's 'I' is 'the singer' or is told in the "
+              "second person, unless the lyric itself says who they are. "
+              "Plain punctuation: commas, full stops and hyphens, never em dashes. "
+              "NEVER mention BPM, tempo, key, chords, singing technique (vibrato, belt, coloratura, "
+              "bel canto), instrument lists, arrangement, production, mixing or any generation/prompt "
+              "language - the genre/mood tags are hints, not copy.")
     prompt = f"""Song: "{title}" by {artist or "an independent band"}.
 Genre/mood tags: {tags or "(none given)"}
 Lyrics excerpt (may be empty):
@@ -4308,7 +4325,7 @@ Extra notes: {str(body.get("notes") or "").strip() or "(none)"}
 
 Return ONLY a JSON object:
 {{"video_title": "<{artist + ' - ' if artist else ''}{title} ({label})> or a better variant, under 100 chars",
-  "description": "<the full description: 2 strong opening lines with genre/mood keywords and a 'For fans of ...' line; a blank line; 1-2 short lines about the song's story drawn from the lyrics; a blank line; a credits line naming {artist or 'the band'}; then ONE final line of 4-6 hashtags, genre first (e.g. #symphonicmetal), no spaces inside a tag>",
+  "description": "<the full description, in this order: line 1 = the hook, one sentence under 140 characters about this song's story; line 2 = the genre in 2-4 words and a 'For fans of A, B and C.' naming real bands; a blank line; 2-4 sentences telling the story specifically - who, what happened, what turns{' (for this music video: what the video shows, from the video notes, in the same concrete way)' if mv else ''}; a blank line; the song's strongest line or couplet (two lines at most, joined with ' / '), copied EXACTLY from the lyrics (no section tags) in double quotes{' (skip this if there are no lyrics)' if not lyrics else ''}; a blank line; one short question to the listener about the song's story that someone would want to answer in the comments (not 'what do you think?'); a blank line; a credits line naming {artist or 'the band'}; then ONE final line of 4-6 hashtags, genre first (e.g. #symphonicmetal), no spaces inside a tag>",
   "tags": [<8-12 short strings for YouTube's tags field: the artist name, the song title, genre phrases, and 2-3 plausible misspellings of the artist name>]}}"""
     claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
     try:
