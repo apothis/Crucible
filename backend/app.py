@@ -4311,6 +4311,12 @@ def youtube_metadata(body: dict):
               "journey, haunting, ethereal, sonic, tapestry, odyssey, delve, embark, unleash, "
               "testament, masterpiece, 'a tale of', 'explores themes of'. "
               "Stay faithful to the lyric: its own images and words, nothing it does not say. "
+              "When the song is about named figures (gods, heroes, people from myth, history or a "
+              "known story, as the title, the lyric or the notes show), the hook NAMES them and states "
+              "plainly what one did to the other, from the side the song is told (who wronged whom, "
+              "how), and the story sentences "
+              "use their names; those names are what people search for, so a hashtag carries them "
+              "too. "
               "Never guess the singer's gender: the lyric's 'I' is 'the singer' or is told in the "
               "second person, unless the lyric itself says who they are. "
               "Plain punctuation: commas, full stops and hyphens, never em dashes. "
@@ -4325,7 +4331,7 @@ Extra notes: {str(body.get("notes") or "").strip() or "(none)"}
 
 Return ONLY a JSON object:
 {{"video_title": "<{artist + ' - ' if artist else ''}{title} ({label})> or a better variant, under 100 chars",
-  "description": "<the full description, in this order: line 1 = the hook, one sentence under 140 characters about this song's story; line 2 = the genre in 2-4 words and a 'For fans of A, B and C.' naming real bands; a blank line; 2-4 sentences telling the story specifically - who, what happened, what turns{' (for this music video: what the video shows, from the video notes, in the same concrete way)' if mv else ''}; a blank line; the song's strongest line or couplet (two lines at most, joined with ' / '), copied EXACTLY from the lyrics (no section tags) in double quotes{' (skip this if there are no lyrics)' if not lyrics else ''}; a blank line; one short question to the listener about the song's story that someone would want to answer in the comments (not 'what do you think?'); a blank line; a credits line naming {artist or 'the band'}; then ONE final line of 4-6 hashtags, genre first (e.g. #symphonicmetal), no spaces inside a tag>",
+  "description": "<the full description, in this order: line 1 = the hook, one sentence under 140 characters about this song's story; line 2 = the genre in 2-4 words and a 'For fans of A, B and C.' naming real bands; a blank line; 2-4 sentences telling the story specifically - who, what happened, what turns{' (for this music video: what the video shows, from the video notes, in the same concrete way)' if mv else ''}; a blank line; the song's strongest line or couplet (one line, or two consecutive lines joined with ' / '), copied EXACTLY from the lyrics (no section tags) in double quotes{' (skip this if there are no lyrics)' if not lyrics else ''}; a blank line; one short question to the listener about the song's story that someone would want to answer in the comments (not 'what do you think?'); a blank line; a credits line naming {artist or 'the band'}; then ONE final line of 4-6 hashtags, genre first (e.g. #symphonicmetal), no spaces inside a tag>",
   "tags": [<8-12 short strings for YouTube's tags field: the artist name, the song title, genre phrases, and 2-3 plausible misspellings of the artist name>]}}"""
     claude_model = CFG.get("claude_model", "claude-3-5-sonnet-latest")
     try:
