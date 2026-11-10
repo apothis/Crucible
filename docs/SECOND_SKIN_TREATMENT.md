@@ -114,3 +114,26 @@ animal plates, the moon and sky plates.
    rules (places, empty plates, story people, pop cuts) and fixes through the writer, not by hand.
 5. Claude gives the opening picture prompts, in chat. The user makes them.
 6. The tests, then the full render.
+
+## The script (2026-11-10)
+
+Written by the writer with this treatment as its concept, on the vocal stem made the same day.
+The first run gave 45 scenes but only 16 of them singing, and its outfit sentence predated the
+real pictures. The second run, with the descriptions rewritten from the pictures and a firmer
+singing count in the concept, is the one in the project:
+`second_skin_20261110_102315_rw9_..._rw34_20261110_102510`. Scenes 9, 28 and 34 were re-run
+through `rewrite_scene` for sky flags. 9 and 34 cleared. 28 is a false positive: its prose says the
+sky is not visible, and only the place description mentions it.
+
+- 46 scenes, 13 places. The biggest place share is 17%, and the longest run in one place is 2 scenes.
+- 19 scenes of her singing (at least 3 in every chorus, 2 in each verse) and 8 silent shots of her.
+- 13 scenes with story people or animals. Empty places are 20% of scenes.
+- No pop cuts and no framing flags.
+- The writer dropped her running through the pines: its rules never write her travelling. The
+  hunt shows her crouched behind the fallen pine instead.
+- After the bridge, she is framed bare-shouldered from the collarbones up, or from behind. The
+  nightdress is on the stone. This is a seventh test: her reference pictures show the nightdress.
+
+Tests (scene numbers as the tab shows them): 8 the dog backing away near her, 12 the wolf
+running, 16 the doctor beside her, 27 the torch party moving, 33 bare shoulders after the bridge,
+40 gold in her eyes.
