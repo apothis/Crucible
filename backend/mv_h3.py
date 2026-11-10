@@ -69,6 +69,15 @@ PROVEN = {"turbo": True, "width": 1344, "height": 768}
 UPSCALE_MODEL = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
 UPSCALE_SIGMAS = "0.9035, 0.6316, 0.3158, 0.0000"
 UPSCALE_SAMPLER = "euler"
+# Refiner on that second pass (opt-in, upscale_refiner): NVIDIA's Open-H3-Regenerate-2K refiner
+# LoRA as Kijai's rank-384 bf16 extraction (the refiner ranks only, ComfyUI keys, standard loader),
+# on top of whatever the first pass ran (turbo LoRA or base). Sigmas = rdh9616's
+# ComfyUI-Open-H3-Regenerate default, regen_core.shifted_grid(0.8, 3) on the refiner's shift 6:
+# it starts below NVIDIA's release 0.909375 because 0.909 redrew a face in that author's test.
+# Euler, CFG 1 (BasicGuider), as NVIDIA's reference. NVIDIA trained it on FL2VA; on the ref2va lane
+# it is untested.
+REFINER_LORA = "minimax_h3_open_regenerate_2k_refiner_rank_384_bf16.safetensors"
+REFINER_SIGMAS = "0.8, 0.685714, 0.48, 0.0"
 
 
 def chain_settings(p, lane="ref2va"):
@@ -82,7 +91,21 @@ def chain_settings(p, lane="ref2va"):
            "shift_video": rec["shift_video"], "lora": rec["lora"], "width": w, "height": h, "seed": _seed(p)}
     if p.get("upscale_width") or p.get("upscale_height"):
         out["upscale"] = [int(p.get("upscale_width") or 0), int(p.get("upscale_height") or 0)]
+        out["upscale_refiner"] = _refiner_strength(p)
     return out
+
+
+def _refiner_strength(p):
+    """upscale_refiner: None/false/0 = off (default); true = strength 1.0; a number = that strength."""
+    v = p.get("upscale_refiner")
+    if v in (None, False, "", 0):
+        return None
+    if v is True:
+        return 1.0
+    s = float(v)
+    if not 0 < s <= 2:
+        raise ValueError("upscale_refiner strength must be in (0, 2]")
+    return s
 
 
 def scene_default_turbo(scene):
@@ -193,7 +216,9 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
         node's first_frame (the place arrives as pixels to continue, not as a subject to retain),
         NO reference pictures, prompts in the three-section FL2VA format; s.20.18),
         upscale_width? / upscale_height? (None [default] = off; both set = the latent upscale second
-        pass at that size, multiples of 32, see UPSCALE_MODEL; single-clip chains only, s.20.50)}
+        pass at that size, multiples of 32, see UPSCALE_MODEL; single-clip chains only, s.20.50),
+        upscale_refiner? (None [default] = off; true or a strength = the Open-H3-Regenerate-2K
+        refiner LoRA on that second pass with its own sigmas, see REFINER_LORA; needs the upscale)}
     first_frame_name: upload name of the first-frame still for lane "i2v" (the location still).
     anchor_name: optional upload of the scene's OPENING still (her already in place) anchored at
         frame 0 of the FIRST clip only, through MiniMaxH3AddGuide, on the reference lane (opt-in,
@@ -292,6 +317,9 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
             raise ValueError("the latent upscale pass is for single-clip chains")
         if free_av or clock_fps is not None:
             raise ValueError("the latent upscale pass keeps the song locked; it does not take free_av or clock_fps")
+    refiner = _refiner_strength(p)
+    if refiner and not upscale:
+        raise ValueError("upscale_refiner works on the latent upscale pass: set upscale_width and upscale_height")
 
     g = {}
     # --- shared loaders and the patched model (ids follow the example's roles)
@@ -455,9 +483,15 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 g["84"] = {"class_type": "MiniMaxH3ImageToVideo",
                            "inputs": dict(g[r2v]["inputs"], width=up_w, height=up_h)}
                 up_positive = ["84", 0]
-            g["85"] = {"class_type": "BasicGuider", "inputs": {"model": clip_model, "conditioning": up_positive}}
+            up_model = clip_model
+            if refiner:
+                g["89"] = {"class_type": "LoraLoaderModelOnly",
+                           "inputs": {"model": clip_model, "lora_name": REFINER_LORA, "strength_model": refiner}}
+                up_model = ["89", 0]
+            g["85"] = {"class_type": "BasicGuider", "inputs": {"model": up_model, "conditioning": up_positive}}
             g["86"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": UPSCALE_SAMPLER}}
-            g["87"] = {"class_type": "ManualSigmas", "inputs": {"sigmas": UPSCALE_SIGMAS}}
+            g["87"] = {"class_type": "ManualSigmas",
+                       "inputs": {"sigmas": REFINER_SIGMAS if refiner else UPSCALE_SIGMAS}}
             g["88"] = {"class_type": "SamplerCustomAdvanced",
                        "inputs": {"noise": [noise, 0], "guider": ["85", 0], "sampler": ["86", 0],
                                   "sigmas": ["87", 0], "latent_image": ["83", 0]}}
@@ -493,7 +527,7 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "free_av": free_av, "clock_fps": clock_fps, "first_frame": bool(i2v),
                 "anchor_first": bool(anchor_name), "end_frame": bool(end_frame_name),
                 "rail_frames": [f for _, f in guide_frames] or None, "room_plate": bool(room_plate),
-                "upscale": [up_w, up_h] if upscale else None,
+                "upscale": [up_w, up_h] if upscale else None, "upscale_refiner": refiner,
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved

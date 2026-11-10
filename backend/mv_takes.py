@@ -93,7 +93,7 @@ def cached_check(library_dir, job_id):
 
 TAKE_PARAM_KEYS = ("seed", "width", "height", "turbo", "lane", "first_frame_id", "anchor_first", "distant",
                    "free_av", "scene_start", "scene_end", "scene_title", "scene_index", "frames",
-                   "context_frames", "location_ref_id", "upscale_width", "upscale_height",
+                   "context_frames", "location_ref_id", "upscale_width", "upscale_height", "upscale_refiner",
                    "end_still_id", "rail_frames", "variant", "engine", "meridian_of", "move2d_of", "move", "amount",
                    "steps", "sampler", "scheduler")
 

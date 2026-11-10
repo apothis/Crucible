@@ -2556,3 +2556,34 @@ already shows her, the building and her hands, which is the user's direction. No
 - **Verified:** tab defaults (scene 12 move = base, scene 04 static = turbo), per-scene change
   and reset, a single-scene dry check carrying the per-scene turbo; helpers tested offline.
   Not verified: a batch dry run with per_scene (needs the restart).
+
+### 20.64 Open-H3-Regenerate-2K refiner LoRA on the latent upscale pass (2026-11-10) [built; offline-checked; LoRA downloading; not rendered]
+
+- **Why:** NVIDIA's Open-H3-Regenerate-2K is a refiner LoRA for exactly our s.20.50 second pass:
+  H3 latent upscaler, then 3 Euler steps at CFG 1. Input 768P = 1344x768 = PROVEN; output 2K =
+  2560x1440. Our pass lost to FlashVSR+ Turbo on 2026-10-30, and it ran with no refiner, at
+  1920x1088. A video tester found Kijai's rank-384 extraction plus a plain two-stage graph beat the
+  full 12 GB custom-node pipeline [COMMUNITY].
+- **Upstream facts:** NVIDIA's merge = refiner r384 + LightX2V FL2VA Turbo v1.2 r128 + LMS Sharp r64,
+  base FL2VA. The release grid is 0.909375/0.857/0.667/0. The main model samples on SILENT audio
+  and "can drift on faces, mouths and lettering". The IC variant (Ref2VA, keeps the draft in
+  context, copies its audio) has no ComfyUI route yet. Details and URLs:
+  memory reference_open-h3-regenerate-2k.
+- **Built:** `upscale_refiner` (true = strength 1.0, or a number) on /api/mv/render_scene and the
+  chain builder. It needs upscale_width/height. A LoraLoaderModelOnly (id 89) puts
+  `REFINER_LORA` on the first pass's model (turbo LoRA or base). The pass then samples on
+  `REFINER_SIGMAS` 0.8/0.685714/0.48/0, which is rdh9616's default
+  (`shifted_grid(0.8, 3)`; 0.909 redrew a face in that author's test). The song lock stays, so
+  this is NOT NVIDIA's silent-audio setup. Off by default: graphs without it are unchanged
+  (checked offline). Takes record `upscale_refiner`.
+- **Box:** `ComfyUI_windows_portable\download_open_h3_refiner_lora.bat` (Kijai pinned 7afab6c,
+  5.87 GB, models\loras). No node pack needed.
+- **Open questions [H]:**
+  - Does 2560x1440 fit the 3090 in the refine pass and the decode? The 2026-10-30 run was 1088.
+  - Does a rank-384 LoRA patch fit the box's 32 GB RAM on top of the turbo LoRA?
+  - The refiner was trained on FL2VA; on the ref2va lane it is untested.
+  - rdh issue #5 reports clips of 8 s and longer degrading.
+- **A/B ready, not fired:** `.mvwork/regen2k/refiner_{s06,s13,s32}_body.json` = the 2026-10-30
+  bodies (same scripts, scenes 6/8/32, seeds, turbo 1344x768) with 2560x1440 and the refiner. Each
+  render is a new take, as before, and is compared against the FlashVSR+ Turbo arm in
+  `.mvwork/upscale_ab/ab/`. The user watches; s06 is the face scene.
