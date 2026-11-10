@@ -137,3 +137,16 @@ sky is not visible, and only the place description mentions it.
 Tests (scene numbers as the tab shows them): 8 the dog backing away near her, 12 the wolf
 running, 16 the doctor beside her, 27 the torch party moving, 33 bare shoulders after the bridge,
 40 gold in her eyes.
+
+## Audio source (2026-11-10)
+
+From the full render on, the song is the Mixea Medium Warm remaster of the naturalized take,
+imported as library 5cca34bc ("Second Skin (Mixea Medium Warm master)"). The project's Music Video
+and YouTube tabs and the script's audio_id point at it; the script keeps its name, so its takes
+stay attached. Measured against the old take (428eda78): the same length to the sample and a
+constant 5 ms later throughout, under a frame at 24 fps, so the script's timing holds unchanged.
+The seven test takes had their audio replaced with the new master at their song position (picture
+stream copied, verified bit-identical; audio verified at 0 ms against the new master); originals
+are in .mvwork/second_skin/master/orig_takes/. The vocal stem is still the old take's, under the old
+id: the render locks on the mix and uses no stem, but hand-set mute ranges or a writer re-run would
+need a stem made from the new master first.
