@@ -3430,6 +3430,8 @@ def mv_upscale_takes(p: dict):
             skipped.append({"scene": int(idx), "take": take, "why": "no file in the library"})
             continue
         sub = {"scale": p.get("scale") or 2.0} if engine == "flashvsr_plus" else {}
+        if engine == "flashvsr_plus":
+            sub.update({k: p[k] for k in ("mode", "temporal_compression") if p.get(k) is not None})
         if engine == "open_h3":
             sub.update({k: p[k] for k in ("upscale_width", "upscale_height", "upscale_refiner", "seed") if p.get(k) is not None})
         if scr:

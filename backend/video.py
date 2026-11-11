@@ -499,8 +499,15 @@ def build_flashvsr_plus_upscale(p, video_ref):
     Output sizes round up to multiples of 128 (1344x768 -> 2688x1536). The stock node encodes a
     24 fps input at 24.4167 fps (it reads the rate off a temp .mkv); the box copy is patched, and
     the caller re-checks the rate on the downloaded file anyway (mv_finish.fix_fps).
-    p: {mode? (turbo), scale? (2.0), seed? (1), crf? (18), color_fix? (false)}."""
+    p: {mode? (turbo | base | v1), scale? (2.0), seed? (1), crf? (18), color_fix? (false),
+        temporal_compression? (4 [default] | 2 | 1): the node README's lever for larger motion
+        ("try 2/1, slower"; same fps and frame count, not interpolation). Opt-in, 2026-11-11.}"""
     mode = p.get("mode") or "turbo"
+    if mode not in ("turbo", "base", "v1"):
+        raise ValueError("mode must be turbo, base or v1")
+    tc = int(p.get("temporal_compression") or 4)
+    if tc not in (4, 2, 1):
+        raise ValueError("temporal_compression must be 4, 2 or 1")
     scale = float(p.get("scale") or 2.0)
     seed = int(p.get("seed") if p.get("seed") is not None else 1)
     crf = int(p.get("crf") or 18)
@@ -511,7 +518,7 @@ def build_flashvsr_plus_upscale(p, video_ref):
                           "decoder": "tiny", "auto_download": False, "model_directory": "", "reload_token": 0}},
          "3": {"class_type": "FlashVSRPlusVideoUpscale",
                "inputs": {"pipe": ["2", 0], "video": ["1", 0], "scale": scale, "height": 0, "width": 0,
-                          "temporal_compression": 4, "tiled": "auto", "tile_size": 512, "tile_overlap": 128,
+                          "temporal_compression": tc, "tiled": "auto", "tile_size": 512, "tile_overlap": 128,
                           "color_fix": color_fix, "color_correction_levels": 5, "seed": seed,
                           "cache_offload": "auto", "decode_every": 4, "vae_tiled": True, "vae_tile_size": 256,
                           "vae_tile_overlap": 64, "oom_retry": True, "crf": crf, "keep_audio": True}},
@@ -519,7 +526,7 @@ def build_flashvsr_plus_upscale(p, video_ref):
                "inputs": {"video": ["3", 0], "filename_prefix": "videogen/flashvsr_plus",
                           "format": "auto", "codec": "auto"}}}
     return g, {"engine": "flashvsr_plus", "mode": mode, "scale": scale, "seed": seed, "crf": crf,
-               "color_fix": color_fix, "kind": "video"}
+               "color_fix": color_fix, "temporal_compression": tc, "kind": "video"}
 
 
 # SeedVR2 (numz ComfyUI-SeedVR2_VideoUpscaler v2.5.24 on the box), the second Music Video upscaler.
