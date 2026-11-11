@@ -3404,7 +3404,7 @@ def mv_upscale_takes(p: dict):
     open_h3 = the Open-H3-Regenerate-2K refiner as its own job, mv_h3.build_h3_regen; upscale_width /
     upscale_height / upscale_refiner pass through, default 1920x1088 at strength 1.0 | rtx_vsr = NVIDIA
     RTX Video Super Resolution, video.build_rtx_vsr_upscale; scale / quality / strength pass through,
-    default 2x ULTRA at 1.0),
+    default 2x HIGHBITRATE_ULTRA at 1.0),
     scale? (2.0, FlashVSR+ only), script?}: one take = the per-take button, the
     Assemble plan's map = "upscale all". A take that already has a finished or queued upscale is
     skipped (force: true queues it again). ComfyUI runs the queued jobs one after another. With

@@ -534,8 +534,9 @@ def build_flashvsr_plus_upscale(p, video_ref):
 # cleans but adds no invented texture, so nothing can crawl on large moving areas. Graph = the pack's
 # example_workflows/rtx_video_upscale.json (LoadVideo -> GetVideoComponents -> RTXVideoSuperResolution
 # -> CreateVideo -> SaveVideo), with the take's own fps and audio wired into CreateVideo (the example
-# hard-codes 30 fps and drops the audio). Quality modes per the pack README: ULTRA (default) for
-# typical compressed sources, HIGHBITRATE_* for clean ones. The node holds every frame in system RAM
+# hard-codes 30 fps and drops the audio). Quality modes per the pack README: ULTRA for typical
+# compressed sources, HIGHBITRATE_* for clean ones. Default HIGHBITRATE_ULTRA: the user's pick after the
+# SSBS scenes 8/32 motion comparison, 2026-11-11 (FlashVSR+ stays the default upscaler). The node holds every frame in system RAM
 # as float32 (2688x1536 = 49.5 MB a frame, so a 15 s take is ~18 GB of output): long takes may not fit.
 RTX_VSR_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA", "HIGHBITRATE_LOW", "HIGHBITRATE_MEDIUM",
                      "HIGHBITRATE_HIGH", "HIGHBITRATE_ULTRA", "STREAMING_MEDIUM", "STREAMING_ULTRA", "BICUBIC")
@@ -543,12 +544,12 @@ RTX_VSR_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA", "HIGHBITRATE_LOW", "HIGHB
 
 def build_rtx_vsr_upscale(p, video_ref, fps):
     """Upscale a finished clip with RTX Video Super Resolution. p: {scale? (2.0, 1-4: a 1344x768 take
-    -> 2688x1536, the FlashVSR+ size), quality? (ULTRA | HIGHBITRATE_ULTRA | ... RTX_VSR_QUALITIES),
+    -> 2688x1536, the FlashVSR+ size), quality? (HIGHBITRATE_ULTRA [default] | ULTRA | ... RTX_VSR_QUALITIES),
     strength? (1.0, 0-1)}. fps = the source rate (CreateVideo writes it)."""
     scale = float(p.get("scale") or 2.0)
     if not 1.0 <= scale <= 4.0:
         raise ValueError("scale must be 1 to 4")
-    quality = str(p.get("quality") or "ULTRA").upper()
+    quality = str(p.get("quality") or "HIGHBITRATE_ULTRA").upper()
     if quality not in RTX_VSR_QUALITIES:
         raise ValueError(f"quality must be one of {', '.join(RTX_VSR_QUALITIES)}")
     strength = float(p.get("strength") if p.get("strength") is not None else 1.0)
