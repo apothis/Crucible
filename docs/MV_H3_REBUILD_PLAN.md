@@ -2624,3 +2624,13 @@ already shows her, the building and her hands, which is the user's direction. No
   9.417 s, and 7.274 s against 7.292 s). Fix: the song lock and the mux now use the take's song
   window cut from the SONG (`song_window_wav` from params.song_start, frames / fps + 1 s), as the
   render path does. A take locked to a stem or with muted ranges is refused for now.
+- **Re-fire 2026-11-11, both finished [measured, box log]:**
+  - Scene 8 (226 f): 3 refine steps at 208 s each, 15:00 in all.
+  - Scene 32 (175 f): 3 refine steps at 132 s each, 10:05 in all.
+  - Both outputs are 1920x1088, the same frame count, 24 fps, with the take's own audio swapped
+    back in. The song lock reported "fully preserved". No memory errors with /free +
+    `easy cleanGpuUsed`.
+  - Cost against FlashVSR+ (~37 s per second of video): about 96 s and 83 s per second of video.
+  - The labelled A/B is `.mvwork/regen2k/ab/`: 4 arms per scene (768p, FlashVSR+ Turbo, Oct 30
+    latent 1088 no refiner, open_h3 refiner on the same take), plus 2x2 moving detail crops.
+  - Not judged yet: the user watches.
