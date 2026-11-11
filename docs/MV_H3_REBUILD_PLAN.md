@@ -2587,3 +2587,9 @@ already shows her, the building and her hands, which is the user's direction. No
   bodies (same scripts, scenes 6/8/32, seeds, turbo 1344x768) with 2560x1440 and the refiner. Each
   render is a new take, as before, and is compared against the FlashVSR+ Turbo arm in
   `.mvwork/upscale_ab/ab/`. The user watches; s06 is the face scene.
+- **Fired 2026-11-11, OOM [measured]:** scene 6 (362 frames = 15 s, ref2va, turbo) ran its first
+  pass and the latent upscale, then ran out of memory in the 2K refine sampler (node 88) after
+  1321 s. It had 12.33 GiB allocated and asked for 15.76 GiB more on the 24 GB card. Scenes 8
+  (226 f) and 32 (175 f) were stopped by hand before they reached the refine, as agreed up front.
+  2560x1440 x 15 s does not fit this pass on the 3090. Shorter clips and 1920x1088 are untested
+  with the refiner.
