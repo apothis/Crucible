@@ -290,6 +290,19 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
     const h = window.setInterval(refreshTakes, 5000);
     return () => window.clearInterval(h);
   }, [rendering, refreshTakes]);
+  // takes sent from outside this tab (another window, the API) only appear on a re-read: re-read
+  // the list whenever the window comes back into focus, and every 30 s while it is visible
+  useEffect(() => {
+    const onBack = () => { if (document.visibilityState === "visible") refreshTakes(); };
+    window.addEventListener("focus", onBack);
+    document.addEventListener("visibilitychange", onBack);
+    const h = window.setInterval(onBack, 30000);
+    return () => {
+      window.removeEventListener("focus", onBack);
+      document.removeEventListener("visibilitychange", onBack);
+      window.clearInterval(h);
+    };
+  }, [refreshTakes]);
 
   const sceneTakes = (idx: number) => takes[String(idx)] || [];
   const doneTakes = (idx: number) => sceneTakes(idx).filter((t) => t.status === "done");
