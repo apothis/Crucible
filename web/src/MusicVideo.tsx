@@ -32,7 +32,7 @@ type Voices = { how: string; swap: boolean; separation: number; sung_seconds: { 
   sections: { type: string; start: number; end: number; lines: VoiceLine[] }[]; for?: string };
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
-type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; resolution?: number | null; fps?: number | null; fps_fixed?: boolean | null };
+type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; resolution?: number | null; fps?: number | null; fps_fixed?: boolean | null; temporal_compression?: number | null; newer?: Upscale | null };
 type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; stale?: boolean; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; anchor_first?: boolean; anchor_from?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
@@ -42,6 +42,11 @@ const ATTENTION = "comfy kitchen attention";   // the proven chain setting (ever
 // FlashVSR+ Turbo 2x: 554 s for the 15 s scene 6 take, 2026-10-30 (the whole SSBS batch ran at
 // about that rate); only a rough guide for the time shown before a fire
 const UPSCALE_SECS_PER_SEC = 37;
+// FlashVSR+ "fast motion" = temporal_compression 1 (the node README's setting for larger motion): the
+// user judged it better on fast-moving scenes, 4 fine on still ones (SSBS scenes 8/32, 2026-11-11).
+// Measured 1791 s for a 9.4 s take and 1356 s for 7.3 s, about 190 s a second
+const FAST_SECS_PER_SEC = 190;
+const isFast = (u?: Upscale | null) => u?.temporal_compression === 1;
 // the two upscalers (backend mv_upscale_takes): FlashVSR+ Turbo 2x, and SeedVR2 7B fp8 to a 1440
 // short side (brought back 2026-11-05 to compare again; no timing measured on the 7B yet)
 type UpEngine = "flashvsr_plus" | "seedvr2" | "rtx_vsr";
@@ -1253,12 +1258,15 @@ function TakesStep(p: {
     try { await api.mvLockTake({ script: scriptName, scene: idx, job_id: jid }); p.reloadScript(); }
     catch (e) { setErr(String((e as Error).message || e)); }
   };
-  const doUpscale = async (idx: number, t: Take, eng: UpEngine = "flashvsr_plus") => {
+  const doUpscale = async (idx: number, t: Take, eng: UpEngine = "flashvsr_plus", fast = false) => {
     const prev = upsOf(t)[eng];
-    if (!window.confirm(`Upscale this take ${upAsk(eng)} on the box now? (${upMins(eng, t.seconds || 6)})`)) return;
+    const ask = fast
+      ? `Upscale this take 2x with FlashVSR+ for fast motion (temporal compression 1, about 5x slower than plain 2x) on the box now? (roughly ${Math.max(1, Math.round(((t.seconds || 6) * FAST_SECS_PER_SEC) / 60))} min)${prev?.status === "done" ? " It replaces the current FlashVSR+ upscale in the 1440p cut." : ""}`
+      : `Upscale this take ${upAsk(eng)} on the box now? (${upMins(eng, t.seconds || 6)})`;
+    if (!window.confirm(ask)) return;
     setErr(""); setBusyMsg("sending the take to the box...");
     try {
-      const r = await api.mvUpscaleTakes({ jobs: { [String(idx)]: t.id }, script: scriptName, engine: eng, force: prev?.status === "error" || prev?.status === "done" });
+      const r = await api.mvUpscaleTakes({ jobs: { [String(idx)]: t.id }, script: scriptName, engine: eng, force: prev?.status === "error" || prev?.status === "done", ...(fast ? { temporal_compression: 1 } : {}) });
       if (!r.queued?.length && r.skipped?.length) setErr(`not queued: ${r.skipped[0].why}`);
       await p.refreshTakes();
     } catch (e) { setErr(String((e as Error).message || e)); }
@@ -1652,9 +1660,14 @@ function TakesStep(p: {
                             return (
                               <Fragment key={eng}>
                                 {u?.status === "done" && u.media_url
-                                  ? <><Pill tone="ok">{E.done}</Pill><GhostButton onClick={() => openLightbox(u.media_url!)}>play {E.name}</GhostButton></>
-                                  : upscaleBusy(u) ? <Pill tone="warn">{E.name} {pct(u!.progress, u!.max) || u!.status}</Pill>
+                                  ? <><Pill tone="ok">{E.done}{isFast(u) ? ", fast motion" : ""}</Pill><GhostButton onClick={() => openLightbox(u.media_url!)}>play {E.name}</GhostButton></>
+                                  : upscaleBusy(u) ? <Pill tone="warn">{E.name}{isFast(u) ? " fast motion" : ""} {pct(u!.progress, u!.max) || u!.status}</Pill>
                                   : <GhostButton onClick={() => doUpscale(scene.index, t, eng)} disabled={!!busyMsg} title={E.tip}>{E.button}</GhostButton>}
+                                {upscaleBusy(u?.newer) && <Pill tone="warn">{E.name}{isFast(u!.newer) ? " fast motion" : ""} {pct(u!.newer!.progress, u!.newer!.max) || u!.newer!.status}</Pill>}
+                                {eng === "flashvsr_plus" && !upscaleBusy(u) && !upscaleBusy(u?.newer) && !(u?.status === "done" && isFast(u)) && (
+                                  <GhostButton onClick={() => doUpscale(scene.index, t, eng, true)} disabled={!!busyMsg}
+                                    title="FlashVSR+ Turbo 2x with temporal compression 1: better on fast camera moves and large moving areas, about 5x slower than plain 2x; still scenes are fine with plain 2x">upscale 2x, fast motion</GhostButton>
+                                )}
                                 {u?.status === "error" && <span className="text-red-400" title={u.error || ""}>{E.name} failed</span>}
                               </Fragment>
                             );

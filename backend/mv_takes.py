@@ -209,7 +209,9 @@ def attach_upscales(takes, rows, library_dir):
     """Link each take to its upscales (library or running jobs whose params carry upscale_of =
     the take id), per engine: take["upscales"] = {engine: the newest finished one, else the
     running or failed one}, so the tab can show progress or the error; take["upscaled"] = the
-    FlashVSR+ one (what the tab showed before SeedVR2). Mutates and returns takes."""
+    FlashVSR+ one (what the tab showed before SeedVR2). Each upscale carries its settings
+    (temporal_compression 1 = the FlashVSR+ "fast motion" run) and, when a newer job of the same
+    engine is still queued or running behind a finished one, that job as newer. Mutates and returns takes."""
     by_take = {}
     for r in rows:
         try:
@@ -228,6 +230,8 @@ def attach_upscales(takes, rows, library_dir):
             "progress": r.get("progress", 0), "max": r.get("max", 0), "error": r.get("error"),
             "media_url": f"/api/media/{r['id']}" if done else None,
             "engine": _engine(prm), "scale": prm.get("scale"), "resolution": prm.get("resolution"),
+            "temporal_compression": prm.get("temporal_compression"), "mode": prm.get("mode"),
+            "quality": prm.get("quality"),
             "fps": prm.get("fps_out"), "fps_fixed": prm.get("fps_fixed")})
     for lst in takes.values():
         for t in lst:
@@ -237,7 +241,10 @@ def attach_upscales(takes, rows, library_dir):
                 mine = [u for u in ups if u["engine"] == eng]
                 pick = next((u for u in mine if u["status"] == "done"), None) or (mine[0] if mine else None)
                 if pick:
-                    t["upscales"][eng] = pick
+                    # a newer job of the same engine still queued or running behind a finished one (a
+                    # re-run, e.g. FlashVSR+ fast motion over a plain 2x): the tab shows its progress
+                    newer = mine[0] if mine and mine[0] is not pick and mine[0]["status"] not in ("done", "error") else None
+                    t["upscales"][eng] = dict(pick, newer=newer) if newer else pick
             t["upscaled"] = t["upscales"].get("flashvsr_plus")
     return takes
 
