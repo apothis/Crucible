@@ -3605,7 +3605,16 @@ def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
             prompts = sp.get("prompts") or []
             if len(prompts) != 1:
                 raise ValueError("the Open-H3 refiner needs a single-clip take that recorded its prompt")
-            graph, resolved = mv_h3_mod.build_h3_regen(p, ref, prompts[0], _probe_frames(vid) or 0, _probe_fps(vid))
+            if sp.get("lock_separate") or sp.get("mute"):
+                raise ValueError("this take was locked to a stem or muted ranges; the refine locks the plain song only")
+            song = _lib_source_path(sp["audio_id"]) if sp.get("audio_id") else None
+            if not song or sp.get("song_start") is None:
+                raise ValueError("the take does not record its song and song_start")
+            frames, fps = _probe_frames(vid) or 0, _probe_fps(vid)
+            wav = mv_h3_mod.song_window_wav(song, float(sp["song_start"]), frames / fps + 1.0)
+            master = C.upload_audio(wav, _audio_name("mvsong", wav))
+            graph, resolved = mv_h3_mod.build_h3_regen(p, ref, prompts[0], frames, fps, master_name=master)
+            resolved.update(audio_id=sp.get("audio_id"), song_start=sp.get("song_start"))
             label = f"Open-H3 refiner {resolved['upscale'][0]}x{resolved['upscale'][1]}"
             # a clean card before the refine: unload models and free VRAM (applied before the next
             # prompt when the box is busy); the graph also clears memory right before its sampler

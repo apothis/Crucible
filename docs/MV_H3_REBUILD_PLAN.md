@@ -2618,3 +2618,9 @@ already shows her, the building and her hands, which is the user's direction. No
 - **A/B sources:** the 2026-10-30 source clips are library takes 854d6031 (scene 6, ref2va, 362 f),
   def43910 (scene 8, i2v, 226 f) and 5e8cfd09 (scene 32, i2v, 175 f), matched by md5. Next:
   scenes 8 and 32 through this engine. They are on the FL2VA lane, the refiner's own base.
+- **First fire of the engine, 2026-11-11 [measured]:** both jobs (scenes 8 and 32) failed in
+  seconds at MiniMaxH3SongMaskedAVContext: "master audio is 544 / 810 samples short of the target
+  H3 audio grid". The takes' AAC tracks are 9-18 ms shorter than their picture (9.408 s against
+  9.417 s, and 7.274 s against 7.292 s). Fix: the song lock and the mux now use the take's song
+  window cut from the SONG (`song_window_wav` from params.song_start, frames / fps + 1 s), as the
+  render path does. A take locked to a stem or with muted ranges is refused for now.

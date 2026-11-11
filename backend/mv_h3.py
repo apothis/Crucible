@@ -540,18 +540,22 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
 # Substitutions, because the box does not have that pack: Kijai's rank-384 refiner LoRA plus our
 # FL2VA turbo v1.1 in place of NVIDIA's merge (refiner + Turbo v1.2 + LMS Sharp, its curve branches
 # not ported); the installed LBH 3D upscaler; ComfyUI attention instead of Sol-Attn; our streaming
-# decoder instead of the fast decoder. Ours, as in s.20.50: the take's own soundtrack (the song
-# window it was rendered on) is written into the audio latent (MiniMaxH3SongMaskedAVContext) where
-# the example holds silence. Memory: the caller frees ComfyUI first, and `easy cleanGpuUsed` sits on
+# decoder instead of the fast decoder. Ours, as in s.20.50: the song window the take was rendered
+# on is written into the audio latent (MiniMaxH3SongMaskedAVContext) where the example holds
+# silence. It is cut from the SONG (song_window_wav, +1 s tail, as the render path does), not taken
+# from the take's mp4: a take's AAC track runs 9-18 ms short of its picture and the node refuses
+# audio that ends before the grid (measured 2026-11-11; both first fires failed on it). Memory: the caller frees ComfyUI first, and `easy cleanGpuUsed` sits on
 # both inputs of the refine, so whichever branch finishes last frees the text encoder and VAE.
 REGEN_SEED = 1766580932             # the example's fixed refine seed
 
 
-def build_h3_regen(p, video_name, prompt, frames, fps=24.0):
+def build_h3_regen(p, video_name, prompt, frames, fps=24.0, master_name=None):
     """One take refined at a larger size. p: {upscale_width/height (multiples of 32, default
     1920x1088), upscale_refiner? (strength, default 1.0), seed?, prefix?, crf?}. video_name: the
     take uploaded to the ComfyUI input folder. prompt: the prompt the take was rendered with.
-    frames: the take's frame count (must sit on the 17k+5 grid, as every H3 render does)."""
+    frames: the take's frame count (must sit on the 17k+5 grid, as every H3 render does).
+    master_name: the uploaded song window the take was rendered on (song_window_wav from its
+    song_start, frames / fps + 1 s); it is the song lock and the muxed audio."""
     up_w, up_h = int(p.get("upscale_width") or 1920), int(p.get("upscale_height") or 1088)
     if up_w % 32 or up_h % 32:
         raise ValueError("upscale_width and upscale_height must be multiples of 32")
@@ -560,6 +564,8 @@ def build_h3_regen(p, video_name, prompt, frames, fps=24.0):
         raise ValueError(f"{frames} frames is not on the H3 17k+5 grid")
     if not (prompt or "").strip():
         raise ValueError("the take carries no prompt to refine with")
+    if not master_name:
+        raise ValueError("the refine needs the take's song window (master_name)")
     strength = _refiner_strength(dict(p, upscale_refiner=p.get("upscale_refiner", True))) or 1.0
     seed = int(p.get("seed") if p.get("seed") not in (None, "") else REGEN_SEED)
     rec = CHAIN_TURBO_FL2VA
@@ -575,6 +581,7 @@ def build_h3_regen(p, video_name, prompt, frames, fps=24.0):
         "7": {"class_type": "VAELoader", "inputs": {"vae_name": H3_AUDIO_VAE}},
         "9": {"class_type": "MiniMaxH3AudioVAECompatibility", "inputs": {"audio_vae": ["7", 0]}},
         "20": {"class_type": "LoadVideo", "inputs": {"file": video_name}},
+        "40": {"class_type": "LoadAudio", "inputs": {"audio": master_name}},
         "21": {"class_type": "GetVideoComponents", "inputs": {"video": ["20", 0]}},
         "22": {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["6", 0]}},
         "81": {"class_type": "MinimaxH3LatentUpscaler3D",
@@ -587,7 +594,7 @@ def build_h3_regen(p, video_name, prompt, frames, fps=24.0):
         "24": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["23", 0]}},
         "82": {"class_type": "LTXVConcatAVLatent", "inputs": {"video_latent": ["81", 0], "audio_latent": ["24", 1]}},
         "83": {"class_type": "MiniMaxH3SongMaskedAVContext",
-               "inputs": {"latent": ["82", 0], "audio_vae": ["9", 0], "master_audio": ["21", 1],
+               "inputs": {"latent": ["82", 0], "audio_vae": ["9", 0], "master_audio": ["40", 0],
                           "clip_start_seconds": 0.0, "context_length": CHAIN_CONTEXT, "source_fps": float(fps),
                           "crop": "disabled"}},
         "90": {"class_type": "easy cleanGpuUsed", "inputs": {"anything": ["83", 0]}},
@@ -601,7 +608,7 @@ def build_h3_regen(p, video_name, prompt, frames, fps=24.0):
                "inputs": {"noise": ["92", 0], "guider": ["85", 0], "sampler": ["86", 0],
                           "sigmas": ["87", 0], "latent_image": ["90", 0]}},
         "50": {"class_type": "MiniMaxH3StreamLiveMusicVideoToVHS",
-               "inputs": {"video_vae": ["6", 0], "master_audio": ["21", 1], "input_count": 1, "active_clips": 1,
+               "inputs": {"video_vae": ["6", 0], "master_audio": ["40", 0], "input_count": 1, "active_clips": 1,
                           "context_frames": CHAIN_CONTEXT, "video_overlap_frames": CHAIN_CONTEXT,
                           "filename_prefix": p.get("prefix") or "videogen/h3regen", "pix_fmt": "yuv420p",
                           "crf": int(p.get("crf") or CHAIN_CRF), "save_metadata": False, "trim_to_audio": False,
