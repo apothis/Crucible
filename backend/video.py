@@ -529,6 +529,45 @@ def build_flashvsr_plus_upscale(p, video_ref):
                "color_fix": color_fix, "temporal_compression": tc, "kind": "video"}
 
 
+# NVIDIA RTX Video Super Resolution (Comfy-Org/ComfyUI_Nvidia_VFX_Nodes @ 38d790d + the nvidia-vfx
+# 0.2.0.0 SDK wheel), opt-in third upscaler, 2026-11-11. Non-generative and per frame: it sharpens and
+# cleans but adds no invented texture, so nothing can crawl on large moving areas. Graph = the pack's
+# example_workflows/rtx_video_upscale.json (LoadVideo -> GetVideoComponents -> RTXVideoSuperResolution
+# -> CreateVideo -> SaveVideo), with the take's own fps and audio wired into CreateVideo (the example
+# hard-codes 30 fps and drops the audio). Quality modes per the pack README: ULTRA (default) for
+# typical compressed sources, HIGHBITRATE_* for clean ones. The node holds every frame in system RAM
+# as float32 (2688x1536 = 49.5 MB a frame, so a 15 s take is ~18 GB of output): long takes may not fit.
+RTX_VSR_QUALITIES = ("LOW", "MEDIUM", "HIGH", "ULTRA", "HIGHBITRATE_LOW", "HIGHBITRATE_MEDIUM",
+                     "HIGHBITRATE_HIGH", "HIGHBITRATE_ULTRA", "STREAMING_MEDIUM", "STREAMING_ULTRA", "BICUBIC")
+
+
+def build_rtx_vsr_upscale(p, video_ref, fps):
+    """Upscale a finished clip with RTX Video Super Resolution. p: {scale? (2.0, 1-4: a 1344x768 take
+    -> 2688x1536, the FlashVSR+ size), quality? (ULTRA | HIGHBITRATE_ULTRA | ... RTX_VSR_QUALITIES),
+    strength? (1.0, 0-1)}. fps = the source rate (CreateVideo writes it)."""
+    scale = float(p.get("scale") or 2.0)
+    if not 1.0 <= scale <= 4.0:
+        raise ValueError("scale must be 1 to 4")
+    quality = str(p.get("quality") or "ULTRA").upper()
+    if quality not in RTX_VSR_QUALITIES:
+        raise ValueError(f"quality must be one of {', '.join(RTX_VSR_QUALITIES)}")
+    strength = float(p.get("strength") if p.get("strength") is not None else 1.0)
+    if not 0.0 <= strength <= 1.0:
+        raise ValueError("strength must be 0 to 1")
+    g = {"1": {"class_type": "LoadVideo", "inputs": {"file": video_ref}},
+         # GetVideoComponents outputs: images [2,0], audio [2,1], fps [2,2]
+         "2": {"class_type": "GetVideoComponents", "inputs": {"video": ["1", 0]}},
+         # resize_type is a DynamicCombo: API format = {"resize_type": option, "resize_type.<input>": value}
+         "3": {"class_type": "RTXVideoSuperResolution",
+               "inputs": {"images": ["2", 0], "resize_type": "scale by multiplier", "resize_type.scale": scale,
+                          "quality": quality, "strength": strength, "image_encoding": "8-bit RGB"}},
+         "4": {"class_type": "CreateVideo", "inputs": {"images": ["3", 0], "fps": float(fps), "audio": ["2", 1]}},
+         "5": {"class_type": "SaveVideo",
+               "inputs": {"video": ["4", 0], "filename_prefix": "videogen/rtx_vsr", "format": "auto", "codec": "auto"}}}
+    return g, {"engine": "rtx_vsr", "scale": scale, "quality": quality, "strength": strength, "fps": fps,
+               "kind": "video"}
+
+
 # SeedVR2 (numz ComfyUI-SeedVR2_VideoUpscaler v2.5.24 on the box), the second Music Video upscaler.
 # Settings = the node author's own video example, example_workflows/SeedVR2_HD_video_upscale.json
 # (read off the box 2026-11-05): 3B fp16 with 32 DiT blocks swapped to the cpu, batch 33 padded

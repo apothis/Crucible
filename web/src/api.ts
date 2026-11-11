@@ -142,7 +142,7 @@ export const api = {
   mvStems: (p: { audio_id: string; force?: boolean }) => jpost("/api/mv/stems", p),   // vocal stem on the box
   mvWrite: (p: unknown) => jpost("/api/mv/write", p),                 // async: true -> {job_id}
   mvWriteJob: (id: string) => jget(`/api/mv/write_job/${id}`),
-  mvUpscaleTakes: (p: { jobs: Record<string, string>; engine?: "flashvsr_plus" | "seedvr2"; scale?: number; force?: boolean; script?: string }) => jpost("/api/mv/upscale_takes", p),   // FlashVSR+ or SeedVR2 on the box
+  mvUpscaleTakes: (p: { jobs: Record<string, string>; engine?: "flashvsr_plus" | "seedvr2" | "rtx_vsr"; scale?: number; force?: boolean; script?: string }) => jpost("/api/mv/upscale_takes", p),   // FlashVSR+ or SeedVR2 on the box
   mvAssemblies: (script: string) => jget(`/api/mv/assemblies?script=${encodeURIComponent(script)}`),   // earlier cuts + their take maps       // diffusion upscale of a library clip
   ytWordmarkOptions: () => jget("/api/youtube/wordmark_options"),  // fonts/treatments + saved global choice
   ytWordmarkSave: (p: unknown) => jmethod("PUT", "/api/youtube/wordmark", p),

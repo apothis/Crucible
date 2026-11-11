@@ -44,11 +44,14 @@ const ATTENTION = "comfy kitchen attention";   // the proven chain setting (ever
 const UPSCALE_SECS_PER_SEC = 37;
 // the two upscalers (backend mv_upscale_takes): FlashVSR+ Turbo 2x, and SeedVR2 7B fp8 to a 1440
 // short side (brought back 2026-11-05 to compare again; no timing measured on the 7B yet)
-type UpEngine = "flashvsr_plus" | "seedvr2";
+type UpEngine = "flashvsr_plus" | "seedvr2" | "rtx_vsr";
 const UP_ENGINES: Record<UpEngine, { name: string; button: string; done: string; tip: string; secsPerSec: number | null }> = {
   flashvsr_plus: { name: "FlashVSR+", button: "upscale 2x", done: "upscaled 2x", tip: "FlashVSR+ Turbo 2x on the box (GPU); step 5 can upscale every chosen take at once", secsPerSec: UPSCALE_SECS_PER_SEC },
   seedvr2: { name: "SeedVR2", button: "SeedVR2 1440p", done: "SeedVR2 1440p", tip: "SeedVR2 3B (fp16, the node author's video settings) to 1440p on the box (GPU), to compare with FlashVSR+; no timing measured yet", secsPerSec: null },
+  // NVIDIA RTX Video Super Resolution (added 2026-11-11): non-generative, so no invented texture to crawl on moving areas
+  rtx_vsr: { name: "RTX VSR", button: "RTX VSR 2x", done: "RTX VSR 2x", tip: "NVIDIA RTX Video Super Resolution 2x (ULTRA) on the box (GPU): sharpens without inventing detail, to compare with FlashVSR+ on moving areas; no timing measured yet", secsPerSec: null },
 };
+const upAsk = (eng: UpEngine) => eng === "seedvr2" ? "to 1440p with SeedVR2" : eng === "rtx_vsr" ? "2x with RTX Video Super Resolution" : "2x with FlashVSR+";
 const upMins = (eng: UpEngine, secs: number) => { const r = UP_ENGINES[eng].secsPerSec; return r ? `roughly ${Math.max(1, Math.round((secs * r) / 60))} min` : "time not measured yet"; };
 const upscaleBusy = (u?: Upscale | null) => !!u && u.status !== "done" && u.status !== "error";
 // a backend from before SeedVR2 sends only upscaled (the FlashVSR+ one)
@@ -1252,7 +1255,7 @@ function TakesStep(p: {
   };
   const doUpscale = async (idx: number, t: Take, eng: UpEngine = "flashvsr_plus") => {
     const prev = upsOf(t)[eng];
-    if (!window.confirm(`Upscale this take ${eng === "seedvr2" ? "to 1440p with SeedVR2" : "2x with FlashVSR+"} on the box now? (${upMins(eng, t.seconds || 6)})`)) return;
+    if (!window.confirm(`Upscale this take ${upAsk(eng)} on the box now? (${upMins(eng, t.seconds || 6)})`)) return;
     setErr(""); setBusyMsg("sending the take to the box...");
     try {
       const r = await api.mvUpscaleTakes({ jobs: { [String(idx)]: t.id }, script: scriptName, engine: eng, force: prev?.status === "error" || prev?.status === "done" });
@@ -1690,6 +1693,7 @@ const QUALITY: { key: string; label: string; sub: string; size: string; up: bool
   { key: "draft", label: "Draft", sub: "the renders as they are (1344x768): a quick check of the edit", size: "1344x768", up: false },
   { key: "hd", label: "1080p from the renders", sub: "the renders resized to 1920x1080, no upscale", size: "1920x1080", up: false },
   { key: "up1440", label: "1440p, upscaled", sub: "every take upscaled 2x with FlashVSR+, cut at 2560x1440: the YouTube master", size: "2560x1440", up: true, engine: "flashvsr_plus" },
+  { key: "up1440r", label: "1440p, upscaled with RTX VSR", sub: "every take upscaled 2x with NVIDIA RTX Video Super Resolution, cut at 2560x1440: to compare with FlashVSR+", size: "2560x1440", up: true, engine: "rtx_vsr" },
   { key: "up1440s", label: "1440p, upscaled with SeedVR2", sub: "every take upscaled to 1440p with SeedVR2 (the node author's video settings), cut at 2560x1440: to compare with FlashVSR+", size: "2560x1440", up: true, engine: "seedvr2" },
   { key: "up4k", label: "4K, upscaled", sub: "the FlashVSR+ 2x upscales stretched to 3840x2160", size: "3840x2160", up: true, engine: "flashvsr_plus" },
 ];

@@ -2016,7 +2016,7 @@ def mv_assemble(p: dict):
     async: true runs the whole cut as a background job -> {job_id} (poll /api/job/{id}, then
     GET /api/mv/assemble_result/{id}). A partial cut ignores intro and end_card. use_upscaled: true
     cuts each take's newest upscale where one exists (POST /api/mv/upscale_takes), from
-    upscale_engine (flashvsr_plus, the default | seedvr2); the result lists which scenes had one."""
+    upscale_engine (flashvsr_plus, the default | seedvr2 | rtx_vsr); the result lists which scenes had one."""
     if p.get("async"):
         jid = uuid.uuid4().hex
         script_obj, sname = _mv_load_script(p.get("script")) if p.get("script") else (None, None)
@@ -3402,7 +3402,9 @@ def mv_upscale_takes(p: dict):
     """Upscale takes (GPU on the box; the tab fires it only on a click). p: {jobs: {scene_index:
     take_id}, engine? (flashvsr_plus = FlashVSR+ 2x, the default | seedvr2 = SeedVR2 to 1440p |
     open_h3 = the Open-H3-Regenerate-2K refiner as its own job, mv_h3.build_h3_regen; upscale_width /
-    upscale_height / upscale_refiner pass through, default 1920x1088 at strength 1.0),
+    upscale_height / upscale_refiner pass through, default 1920x1088 at strength 1.0 | rtx_vsr = NVIDIA
+    RTX Video Super Resolution, video.build_rtx_vsr_upscale; scale / quality / strength pass through,
+    default 2x ULTRA at 1.0),
     scale? (2.0, FlashVSR+ only), script?}: one take = the per-take button, the
     Assemble plan's map = "upscale all". A take that already has a finished or queued upscale is
     skipped (force: true queues it again). ComfyUI runs the queued jobs one after another. With
@@ -3434,6 +3436,8 @@ def mv_upscale_takes(p: dict):
             sub.update({k: p[k] for k in ("mode", "temporal_compression") if p.get(k) is not None})
         if engine == "open_h3":
             sub.update({k: p[k] for k in ("upscale_width", "upscale_height", "upscale_refiner", "seed") if p.get(k) is not None})
+        if engine == "rtx_vsr":
+            sub.update({k: p[k] for k in ("scale", "quality", "strength") if p.get(k) is not None})
         if scr:
             try:
                 sub["title"] = f"{scr.get('title') or ''} / {int(idx):02d} {scr['scenes'][int(idx)].get('title') or ''}".strip(" /")
@@ -3562,14 +3566,14 @@ def video_flashvsr(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
-UPSCALE_ENGINES = ("flashvsr_plus", "seedvr2", "open_h3")
+UPSCALE_ENGINES = ("flashvsr_plus", "seedvr2", "open_h3", "rtx_vsr")
 
 
 def _upscale_engine(prm):
     """The engine of an upscale job's params; upscales queued before SeedVR2 came back carry
     flashvsr_plus or nothing (all of those were FlashVSR+)."""
     e = (prm or {}).get("engine")
-    return e if e in ("seedvr2", "open_h3") else "flashvsr_plus"
+    return e if e in ("seedvr2", "open_h3", "rtx_vsr") else "flashvsr_plus"
 
 
 def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
@@ -3603,6 +3607,11 @@ def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
         if engine == "seedvr2":
             graph, resolved = video_mod.build_seedvr2_upscale(p, ref, _probe_fps(vid))
             label = f"SeedVR2 {resolved['resolution']}p"
+        elif engine == "rtx_vsr":
+            graph, resolved = video_mod.build_rtx_vsr_upscale(p, ref, _probe_fps(vid))
+            label = f"RTX VSR {resolved['scale']:g}x {resolved['quality']}"
+            # every frame sits in the box's system RAM as float32: unload models first
+            C.free()
         elif engine == "open_h3":
             prompts = sp.get("prompts") or []
             if len(prompts) != 1:
