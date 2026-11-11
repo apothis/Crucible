@@ -298,10 +298,10 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
     const h = window.setInterval(refreshTakes, 5000);
     return () => window.clearInterval(h);
   }, [rendering, refreshTakes]);
-  // takes sent from outside this tab (another window, the API) only appear on a re-read: re-read
-  // the list whenever the window comes back into focus, and every 30 s while it is visible
+  // takes and scripts made outside this tab (another window, the API, a scene rewrite) only appear
+  // on a re-read: re-read both whenever the window comes back into focus, and every 30 s while visible
   useEffect(() => {
-    const onBack = () => { if (document.visibilityState === "visible") refreshTakes(); };
+    const onBack = () => { if (document.visibilityState === "visible") { refreshTakes(); loadScripts(); } };
     window.addEventListener("focus", onBack);
     document.addEventListener("visibilitychange", onBack);
     const h = window.setInterval(onBack, 30000);
@@ -310,7 +310,7 @@ export function MusicVideoForm({ library, onDone, projectName }: { cfg: Config; 
       document.removeEventListener("visibilitychange", onBack);
       window.clearInterval(h);
     };
-  }, [refreshTakes]);
+  }, [refreshTakes, loadScripts]);
 
   const sceneTakes = (idx: number) => takes[String(idx)] || [];
   const doneTakes = (idx: number) => sceneTakes(idx).filter((t) => t.status === "done");
