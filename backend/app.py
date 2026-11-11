@@ -1284,6 +1284,12 @@ def mv_render_scene(p: dict):
     distant = (not env_only) and (not both) and mv_writer_mod.is_distant(scene)
     if distant and len(singer_refs) >= 2:
         singer_refs = [singer_refs[1]]          # body picture only (ref_ids order is face, body); s.20.31 H1
+    # outfit override (opt-in scene field, mv_writer.outfit_of): she wears something other than her
+    # reference pictures show, so only the FACE picture goes up and the prompt takes the clothing
+    # from the scene's sentence (compile_scene numbers the location <Picture 2> to match)
+    outfit = None if (env_only or both) else mv_writer_mod.outfit_of(script, scene)
+    if outfit and len(singer_refs) >= 2:
+        singer_refs = [singer_refs[0]]
     keyframes = (p.get("keyframes") or "").strip() or None
     lane = (p.get("lane") or "").strip() or None
     if lane not in (None, "i2v", "ref2va"):
@@ -1408,7 +1414,7 @@ def mv_render_scene(p: dict):
                 "ref_ids": [] if lane == "i2v" else singer_refs + ([os.path.basename(str(loc_ref))] if loc_ref else []),
                 "frames": scene["plan"]["frames"], "context_frames": scene["plan"]["context_frames"],
                 "clips": len(prompts), "keyframes": keyframes, "free_av": free_av, "clock_fps": clock_fps,
-                "distant": distant,
+                "distant": distant, "outfit": outfit,
                 "lane": lane, "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                 "first_frame_from": first_frame_from,
                 "anchor_first": anchor_first, "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
@@ -1431,7 +1437,7 @@ def mv_render_scene(p: dict):
                               "location": loc["id"] if loc else None,
                               "location_ref_id": os.path.basename(str(loc_ref)) if loc_ref else None,
                               "location_ref_from": ref_from, "keyframes": keyframes,
-                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane, "distant": distant,
+                              "free_av": free_av, "clock_fps": clock_fps, "lane": lane, "distant": distant, "outfit": outfit,
                               "first_frame_id": os.path.basename(str(first_frame)) if first_frame else None,
                               "anchor_first": anchor_first, "anchor_from": anchor_from,
                               "anchor_still_id": os.path.basename(str(anchor_still)) if anchor_still else None,
@@ -1979,7 +1985,9 @@ def _mv_render_script_run(p: dict, rows_out=None):
     base = re.sub(r"\.json$", "", name) if name != "(inline)" else "inline"
     if len(base) > mv_takes_mod.MAX_NAME:
         base = mv_takes_mod.child_name(base, "b", "", None).rstrip("_")
-    mpath = os.path.join(out_dir, f"{base}_{'dry' if dry else 'batch'}_{time.strftime('%Y%m%d_%H%M%S')}.json")
+    # a short random suffix: two dry runs in the same second (one scene, several seeds or settings)
+    # shared one file, the last overwrote the others, and every fire from them rendered the last one
+    mpath = os.path.join(out_dir, f"{base}_{'dry' if dry else 'batch'}_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.json")
     with open(mpath, "w") as f:
         json.dump(manifest, f, indent=1)
     manifest["manifest"] = mpath

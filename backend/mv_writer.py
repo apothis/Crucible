@@ -978,7 +978,23 @@ def is_distant(scene):
     return fr.startswith("extreme wide") or (fr.startswith("wide") and perf != "sing_to_camera")
 
 
-def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant=False):
+def outfit_of(script, scene):
+    """Opt-in per-scene outfit override (scene field `outfit`, empty = off): one sentence for what
+    she wears in THIS scene when it differs from her reference pictures (Second Skin 2026-11-11:
+    after the bridge she has taken the nightdress off, and two medium close-ups rendered it back on
+    because every prompt said her wardrobe comes from the full-length picture and to retain it
+    exactly). When set, the route uploads her FACE picture only and the prompt takes face, hair and
+    skin from it and the clothing from this sentence. Her scenes only: not environment shots, not a
+    distant figure (body picture only), not a two-shot, not the male singer."""
+    o = (scene.get("outfit") or "").strip()
+    if not o or scene.get("performance") == "no_singing_environment":
+        return None
+    if singer_of(script, scene) != "her" or is_distant(scene):
+        return None
+    return o
+
+
+def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant=False, outfit=None):
     """The six-section Ref2VA prompt for one clip: fixed boilerplate from the script's references
     and wardrobe + Claude's four fields. The style opening is the script's look sentence.
 
@@ -1038,6 +1054,16 @@ def compile_prompt(script, scene, clip, text, env=None, cam_video=False, distant
                       "retain her silhouette, long dark hair, build and the wardrobe; her face is not readable at this "
                       "distance and is never shown closer; the framing stays as described below and no close view of "
                       "her is inserted.\n")
+        loc_pic = 2
+    elif outfit and not him:
+        # outfit override (outfit_of): the route uploads her FACE picture only, so the location is
+        # <Picture 2>; the clothing comes from the scene's sentence, never from the picture
+        singer_def = ("<Subject 1> is the singer: her facial identity, eyes, hair and skin come from <Picture 1>. "
+                      f"Her clothing does not come from <Picture 1>. In this scene: {outfit}\n")
+        singer_ret = ("<Subject 1> (appears throughout [Shot 1]): fully_preserved - retain the referenced face, eyes, "
+                      "hair and skin exactly; the clothing seen in <Picture 1> is not retained and she does not wear "
+                      "it in this scene, while pose, expression, framing, lighting and movement follow the performance "
+                      "described below.\n")
         loc_pic = 2
     elif him:
         singer_def = ("<Subject 1> is the male singer: his facial identity comes from <Picture 1>; "
@@ -1181,12 +1207,14 @@ def compile_scene(script, scene, with_location=True, cam_video=False, lane=None)
     lane="i2v": the image-to-video prompt instead (first-frame lane, no references)."""
     env = location_of(script, scene) if with_location else None
     distant = is_distant(scene)
+    outfit = outfit_of(script, scene)
     out = []
     for c in scene["clips"]:
         if c.get("text") and lane == "i2v":
             out.append(compile_prompt_i2v(script, scene, c, c["text"]))
         elif c.get("text"):
-            out.append(compile_prompt(script, scene, c, c["text"], env=env, cam_video=cam_video, distant=distant))
+            out.append(compile_prompt(script, scene, c, c["text"], env=env, cam_video=cam_video, distant=distant,
+                                      outfit=outfit))
         else:
             out.append(c["prompt"])
     return out
