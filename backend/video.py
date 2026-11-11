@@ -501,10 +501,18 @@ def build_flashvsr_plus_upscale(p, video_ref):
     the caller re-checks the rate on the downloaded file anyway (mv_finish.fix_fps).
     p: {mode? (turbo | base | v1), scale? (2.0), seed? (1), crf? (18), color_fix? (false),
         temporal_compression? (4 [default] | 2 | 1): the node README's lever for larger motion
-        ("try 2/1, slower"; same fps and frame count, not interpolation). Opt-in, 2026-11-11.}"""
+        ("try 2/1, slower"; same fps and frame count, not interpolation). Opt-in, 2026-11-11.
+        profile? (auto [default] | balanced | low_vram | official): the Loader's VRAM policy. auto runs
+        untiled ("official") on a 24 GB card with >= 18 GiB free; Base mode then OOMed at 2688x1536 on the
+        3090 (the node's own estimate 27225 MiB peak vs 22118 MiB free, 2026-11-11) and the node's
+        oom_retry did not fire. balanced = the author's streaming_video_balanced workflow (768/128 tiles,
+        weights resident, with >= 16 GiB free); tiles limit cross-tile context (README).}"""
     mode = p.get("mode") or "turbo"
     if mode not in ("turbo", "base", "v1"):
         raise ValueError("mode must be turbo, base or v1")
+    profile = p.get("profile") or "auto"
+    if profile not in ("auto", "balanced", "low_vram", "official"):
+        raise ValueError("profile must be auto, balanced, low_vram or official")
     tc = int(p.get("temporal_compression") or 4)
     if tc not in (4, 2, 1):
         raise ValueError("temporal_compression must be 4, 2 or 1")
@@ -514,7 +522,7 @@ def build_flashvsr_plus_upscale(p, video_ref):
     color_fix = bool(p.get("color_fix", False))
     g = {"1": {"class_type": "LoadVideo", "inputs": {"file": video_ref}},
          "2": {"class_type": "FlashVSRPlusLoader",
-               "inputs": {"mode": mode, "profile": "auto", "attn_backend": "auto", "offload": "auto",
+               "inputs": {"mode": mode, "profile": profile, "attn_backend": "auto", "offload": "auto",
                           "decoder": "tiny", "auto_download": False, "model_directory": "", "reload_token": 0}},
          "3": {"class_type": "FlashVSRPlusVideoUpscale",
                "inputs": {"pipe": ["2", 0], "video": ["1", 0], "scale": scale, "height": 0, "width": 0,
@@ -526,7 +534,7 @@ def build_flashvsr_plus_upscale(p, video_ref):
                "inputs": {"video": ["3", 0], "filename_prefix": "videogen/flashvsr_plus",
                           "format": "auto", "codec": "auto"}}}
     return g, {"engine": "flashvsr_plus", "mode": mode, "scale": scale, "seed": seed, "crf": crf,
-               "color_fix": color_fix, "temporal_compression": tc, "kind": "video"}
+               "color_fix": color_fix, "temporal_compression": tc, "profile": profile, "kind": "video"}
 
 
 # NVIDIA RTX Video Super Resolution (Comfy-Org/ComfyUI_Nvidia_VFX_Nodes @ 38d790d + the nvidia-vfx
