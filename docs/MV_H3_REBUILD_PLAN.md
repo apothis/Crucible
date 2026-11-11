@@ -2602,3 +2602,19 @@ already shows her, the building and her hands, which is the user's direction. No
   - [H] The rank-384 LoRA, applied as runtime patches on the dynamically loaded model, is the extra
     memory that tips a 15 s clip over. Not proven.
   - Scenes 8 (226 f) and 32 (175 f) are untested.
+- **Split into its own job 2026-11-11 [built; graph checked against the box's /object_info; not
+  fired]:** new upscale engine `open_h3` on /api/mv/upscale_takes. It refines a FINISHED take, like
+  FlashVSR+ and SeedVR2, built by `mv_h3.build_h3_regen`. It is a port of rdh9616's
+  "Open-H3 Regenerate 2K - Draft Video" example:
+  - The chain: LoadVideo -> GetVideoComponents -> VAEEncode -> LBH 3D upscaler (1920x1088 default)
+    -> refine on FL2VA + fl2v turbo v1.1 + the refiner, CLIPTextEncode of the take's own prompt
+    (text only, as the example), euler, CFG 1, sigmas 0.8/0.685714/0.48/0, the example's seed
+    1766580932.
+  - Memory: ComfyUI /free before it is queued (applied before the next prompt when the box is
+    busy), plus `easy cleanGpuUsed` on both inputs of the refine sampler.
+  - Ours: the take's own soundtrack is written into the audio latent (the example holds silence),
+    and the streaming decoder handles the decode.
+  - Not ported: LMS Sharp and its curve branches, Sol-Attn, the fast VAE decoder.
+- **A/B sources:** the 2026-10-30 source clips are library takes 854d6031 (scene 6, ref2va, 362 f),
+  def43910 (scene 8, i2v, 226 f) and 5e8cfd09 (scene 32, i2v, 175 f), matched by md5. Next:
+  scenes 8 and 32 through this engine. They are on the FL2VA lane, the refiner's own base.

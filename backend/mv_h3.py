@@ -531,3 +531,85 @@ def build_h3_chain(p, ref_names, master_name, lock_name=None, ref_video_names=No
                 "turbo": bool(p.get("turbo")), "prompts": [c["prompt"].strip() for c in clips],
                 "engine": "minimax_h3", "lane": "chain_i2v" if i2v else f"chain_{lane}", "model": unet, "kind": "video"}
     return g, resolved
+
+
+# Refine a FINISHED take as its own job (opt-in upscale engine "open_h3", s.20.64). A port of
+# rdh9616's "Open-H3 Regenerate 2K - Draft Video" example (ComfyUI-Open-H3-Regenerate): LoadVideo ->
+# GetVideoComponents -> VAEEncode (video VAE) -> latent upscaler -> refine on the FL2VA model with the
+# prompt as TEXT ONLY (CLIPTextEncode), euler, CFG 1, the 0.8 shift-6 sigmas, its fixed seed.
+# Substitutions, because the box does not have that pack: Kijai's rank-384 refiner LoRA plus our
+# FL2VA turbo v1.1 in place of NVIDIA's merge (refiner + Turbo v1.2 + LMS Sharp, its curve branches
+# not ported); the installed LBH 3D upscaler; ComfyUI attention instead of Sol-Attn; our streaming
+# decoder instead of the fast decoder. Ours, as in s.20.50: the take's own soundtrack (the song
+# window it was rendered on) is written into the audio latent (MiniMaxH3SongMaskedAVContext) where
+# the example holds silence. Memory: the caller frees ComfyUI first, and `easy cleanGpuUsed` sits on
+# both inputs of the refine, so whichever branch finishes last frees the text encoder and VAE.
+REGEN_SEED = 1766580932             # the example's fixed refine seed
+
+
+def build_h3_regen(p, video_name, prompt, frames, fps=24.0):
+    """One take refined at a larger size. p: {upscale_width/height (multiples of 32, default
+    1920x1088), upscale_refiner? (strength, default 1.0), seed?, prefix?, crf?}. video_name: the
+    take uploaded to the ComfyUI input folder. prompt: the prompt the take was rendered with.
+    frames: the take's frame count (must sit on the 17k+5 grid, as every H3 render does)."""
+    up_w, up_h = int(p.get("upscale_width") or 1920), int(p.get("upscale_height") or 1088)
+    if up_w % 32 or up_h % 32:
+        raise ValueError("upscale_width and upscale_height must be multiples of 32")
+    frames = int(frames)
+    if frames < 5 or (frames - 5) % 17:
+        raise ValueError(f"{frames} frames is not on the H3 17k+5 grid")
+    if not (prompt or "").strip():
+        raise ValueError("the take carries no prompt to refine with")
+    strength = _refiner_strength(dict(p, upscale_refiner=p.get("upscale_refiner", True))) or 1.0
+    seed = int(p.get("seed") if p.get("seed") not in (None, "") else REGEN_SEED)
+    rec = CHAIN_TURBO_FL2VA
+    g = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": H3_FL2VA, "weight_dtype": "default"}},
+        "2": {"class_type": "ModelAttentionBackend", "inputs": {"model": ["1", 0], "attention": CHAIN_ATTENTION}},
+        "4": {"class_type": "LoraLoaderModelOnly",
+              "inputs": {"model": ["2", 0], "lora_name": rec["lora"], "strength_model": rec["lora_strength"]}},
+        "89": {"class_type": "LoraLoaderModelOnly",
+               "inputs": {"model": ["4", 0], "lora_name": REFINER_LORA, "strength_model": strength}},
+        "5": {"class_type": "CLIPLoader", "inputs": {"clip_name": H3_CLIP, "type": "minimax", "device": "default"}},
+        "6": {"class_type": "VAELoader", "inputs": {"vae_name": H3_VIDEO_VAE}},
+        "7": {"class_type": "VAELoader", "inputs": {"vae_name": H3_AUDIO_VAE}},
+        "9": {"class_type": "MiniMaxH3AudioVAECompatibility", "inputs": {"audio_vae": ["7", 0]}},
+        "20": {"class_type": "LoadVideo", "inputs": {"file": video_name}},
+        "21": {"class_type": "GetVideoComponents", "inputs": {"video": ["20", 0]}},
+        "22": {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["6", 0]}},
+        "81": {"class_type": "MinimaxH3LatentUpscaler3D",
+               "inputs": {"latent": ["22", 0], "model_name": UPSCALE_MODEL, "mode": "target dimensions",
+                          "mode.width": up_w, "mode.height": up_h, "align": 32,
+                          "enable_temporal_chunking": True, "force_unload": True, "device": "cuda",
+                          "precision": "fp16"}},
+        # an empty AV latent of the take's length supplies the audio half (the song is written into it)
+        "23": {"class_type": "EmptyMiniMaxH3LatentAV", "inputs": {"width": up_w, "height": up_h, "length": frames}},
+        "24": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["23", 0]}},
+        "82": {"class_type": "LTXVConcatAVLatent", "inputs": {"video_latent": ["81", 0], "audio_latent": ["24", 1]}},
+        "83": {"class_type": "MiniMaxH3SongMaskedAVContext",
+               "inputs": {"latent": ["82", 0], "audio_vae": ["9", 0], "master_audio": ["21", 1],
+                          "clip_start_seconds": 0.0, "context_length": CHAIN_CONTEXT, "source_fps": float(fps),
+                          "crop": "disabled"}},
+        "90": {"class_type": "easy cleanGpuUsed", "inputs": {"anything": ["83", 0]}},
+        "16": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt.strip(), "clip": ["5", 0]}},
+        "91": {"class_type": "easy cleanGpuUsed", "inputs": {"anything": ["16", 0]}},
+        "85": {"class_type": "BasicGuider", "inputs": {"model": ["89", 0], "conditioning": ["91", 0]}},
+        "86": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": UPSCALE_SAMPLER}},
+        "87": {"class_type": "ManualSigmas", "inputs": {"sigmas": REFINER_SIGMAS}},
+        "92": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "88": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["92", 0], "guider": ["85", 0], "sampler": ["86", 0],
+                          "sigmas": ["87", 0], "latent_image": ["90", 0]}},
+        "50": {"class_type": "MiniMaxH3StreamLiveMusicVideoToVHS",
+               "inputs": {"video_vae": ["6", 0], "master_audio": ["21", 1], "input_count": 1, "active_clips": 1,
+                          "context_frames": CHAIN_CONTEXT, "video_overlap_frames": CHAIN_CONTEXT,
+                          "filename_prefix": p.get("prefix") or "videogen/h3regen", "pix_fmt": "yuv420p",
+                          "crf": int(p.get("crf") or CHAIN_CRF), "save_metadata": False, "trim_to_audio": False,
+                          "save_output": True, "clip_1": ["88", 0]}},
+        "51": {"class_type": "MiniMaxH3FinalizeVHSOutput", "inputs": {"filenames": ["50", 0]}},
+    }
+    resolved = {"engine": "open_h3", "upscale": [up_w, up_h], "upscale_refiner": strength, "seed": seed,
+                "frames": frames, "fps": float(fps), "model": H3_FL2VA, "lora": rec["lora"],
+                "refiner_lora": REFINER_LORA, "sigmas": REFINER_SIGMAS, "sampler": UPSCALE_SAMPLER,
+                "upscale_model": UPSCALE_MODEL, "kind": "video"}
+    return g, resolved

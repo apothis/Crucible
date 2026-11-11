@@ -3269,6 +3269,18 @@ def _lib_video_path(vid):
     return path if vid and os.path.exists(path) else None
 
 
+def _probe_frames(path):
+    """Decoded video frame count (ffprobe -count_frames), or None."""
+    import subprocess
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                              "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+        return int(out)
+    except Exception:
+        return None
+
+
 def _probe_fps(path, default=24.0):
     """Source video fps (so the upscaled output keeps the same timing)."""
     import subprocess
@@ -3388,7 +3400,9 @@ def _mv_upscale_rows():
 @app.post("/api/mv/upscale_takes")
 def mv_upscale_takes(p: dict):
     """Upscale takes (GPU on the box; the tab fires it only on a click). p: {jobs: {scene_index:
-    take_id}, engine? (flashvsr_plus = FlashVSR+ 2x, the default | seedvr2 = SeedVR2 to 1440p),
+    take_id}, engine? (flashvsr_plus = FlashVSR+ 2x, the default | seedvr2 = SeedVR2 to 1440p |
+    open_h3 = the Open-H3-Regenerate-2K refiner as its own job, mv_h3.build_h3_regen; upscale_width /
+    upscale_height / upscale_refiner pass through, default 1920x1088 at strength 1.0),
     scale? (2.0, FlashVSR+ only), script?}: one take = the per-take button, the
     Assemble plan's map = "upscale all". A take that already has a finished or queued upscale is
     skipped (force: true queues it again). ComfyUI runs the queued jobs one after another. With
@@ -3416,6 +3430,8 @@ def mv_upscale_takes(p: dict):
             skipped.append({"scene": int(idx), "take": take, "why": "no file in the library"})
             continue
         sub = {"scale": p.get("scale") or 2.0} if engine == "flashvsr_plus" else {}
+        if engine == "open_h3":
+            sub.update({k: p[k] for k in ("upscale_width", "upscale_height", "upscale_refiner", "seed") if p.get(k) is not None})
         if scr:
             try:
                 sub["title"] = f"{scr.get('title') or ''} / {int(idx):02d} {scr['scenes'][int(idx)].get('title') or ''}".strip(" /")
@@ -3544,13 +3560,14 @@ def video_flashvsr(p: dict):
     return _submit_video(graph, resolved, "videoclip")
 
 
-UPSCALE_ENGINES = ("flashvsr_plus", "seedvr2")
+UPSCALE_ENGINES = ("flashvsr_plus", "seedvr2", "open_h3")
 
 
 def _upscale_engine(prm):
     """The engine of an upscale job's params; upscales queued before SeedVR2 came back carry
     flashvsr_plus or nothing (all of those were FlashVSR+)."""
-    return "seedvr2" if (prm or {}).get("engine") == "seedvr2" else "flashvsr_plus"
+    e = (prm or {}).get("engine")
+    return e if e in ("seedvr2", "open_h3") else "flashvsr_plus"
 
 
 def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
@@ -3565,11 +3582,11 @@ def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
     src_title = str(p.pop("title", "") or "")
     with db() as conn:
         r = conn.execute("SELECT params FROM jobs WHERE id=?", (video_id,)).fetchone()
+    try:
+        sp = json.loads(r["params"] or "{}") if r else {}
+    except Exception:
+        sp = {}
     if r and not src_title:
-        try:
-            sp = json.loads(r["params"] or "{}")
-        except Exception:
-            sp = {}
         src_title = str(sp.get("title") or "")
         if not src_title and sp.get("scene_index") is not None:
             # takes rendered before takes carried a title: name it the way render_scene does now
@@ -3584,6 +3601,15 @@ def _flashvsr_plus_submit(video_id, p=None, engine="flashvsr_plus"):
         if engine == "seedvr2":
             graph, resolved = video_mod.build_seedvr2_upscale(p, ref, _probe_fps(vid))
             label = f"SeedVR2 {resolved['resolution']}p"
+        elif engine == "open_h3":
+            prompts = sp.get("prompts") or []
+            if len(prompts) != 1:
+                raise ValueError("the Open-H3 refiner needs a single-clip take that recorded its prompt")
+            graph, resolved = mv_h3_mod.build_h3_regen(p, ref, prompts[0], _probe_frames(vid) or 0, _probe_fps(vid))
+            label = f"Open-H3 refiner {resolved['upscale'][0]}x{resolved['upscale'][1]}"
+            # a clean card before the refine: unload models and free VRAM (applied before the next
+            # prompt when the box is busy); the graph also clears memory right before its sampler
+            C.free()
         else:
             graph, resolved = video_mod.build_flashvsr_plus_upscale(p, ref)
             label = f"FlashVSR+ {resolved['scale']:g}x"

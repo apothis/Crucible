@@ -198,8 +198,10 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None, an
 
 
 def _engine(prm):
-    """Upscales queued before SeedVR2 came back carry flashvsr_plus or no engine: all FlashVSR+."""
-    return "seedvr2" if prm.get("engine") == "seedvr2" else "flashvsr_plus"
+    """Upscales queued before SeedVR2 came back carry flashvsr_plus or no engine: all FlashVSR+.
+    open_h3 = the Open-H3-Regenerate-2K refiner run on a finished take (mv_h3.build_h3_regen)."""
+    e = prm.get("engine")
+    return e if e in ("seedvr2", "open_h3") else "flashvsr_plus"
 
 
 def attach_upscales(takes, rows, library_dir):
@@ -230,7 +232,7 @@ def attach_upscales(takes, rows, library_dir):
         for t in lst:
             ups = sorted(by_take.get(t["id"], []), key=lambda u: -u["created"])
             t["upscales"] = {}
-            for eng in ("flashvsr_plus", "seedvr2"):
+            for eng in ("flashvsr_plus", "seedvr2", "open_h3"):
                 mine = [u for u in ups if u["engine"] == eng]
                 pick = next((u for u in mine if u["status"] == "done"), None) or (mine[0] if mine else None)
                 if pick:
