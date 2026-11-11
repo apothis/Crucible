@@ -2142,7 +2142,7 @@ def _mv_assemble_run(p: dict, progress=None):
         L = sc.get("locked") or {}
         if L.get("head_skip") and jobs.get(sc["index"]) == L.get("job_id"):
             length = musicvideo_mod.audio_duration(path) or 0.0
-            skip = float(L["head_skip"])
+            skip = round(float(L["head_skip"]) * 24) / 24      # whole frames: an off-grid seek repeats frame 1
             if length and inpt + skip + dur > length + 0.05:
                 raise HTTPException(400, f"scene {sc['index']}: head_skip {skip}s leaves {length - inpt - skip:.2f}s "
                                          f"of the take for a {dur:.2f}s scene")
