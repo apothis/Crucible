@@ -2593,3 +2593,12 @@ already shows her, the building and her hands, which is the user's direction. No
   (226 f) and 32 (175 f) were stopped by hand before they reached the refine, as agreed up front.
   2560x1440 x 15 s does not fit this pass on the 3090. Shorter clips and 1920x1088 are untested
   with the refiner.
+- **1088 retry 2026-11-11, crashed ComfyUI [measured, box log]:** scene 6 (362 f) at 1920x1088
+  with the refiner finished its first pass (8 turbo steps in 20:25, 153 s per step) and the latent
+  upscale (T=107, 4 temporal chunks). After 9 min in the refine sampler it ran out of memory in
+  `pack_latents` (40 MiB request, CUDA reporting 0 bytes free). The cleanup then hit "CUDA error:
+  an illegal memory access" and ComfyUI went down. Scenes 8 and 32 were lost from the queue before
+  they started. The same scene at 1088 WITHOUT the refiner finished on 2026-10-30.
+  - [H] The rank-384 LoRA, applied as runtime patches on the dynamically loaded model, is the extra
+    memory that tips a 15 s clip over. Not proven.
+  - Scenes 8 (226 f) and 32 (175 f) are untested.
