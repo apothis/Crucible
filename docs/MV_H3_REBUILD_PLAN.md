@@ -2634,3 +2634,18 @@ already shows her, the building and her hands, which is the user's direction. No
   - The labelled A/B is `.mvwork/regen2k/ab/`: 4 arms per scene (768p, FlashVSR+ Turbo, Oct 30
     latent 1088 no refiner, open_h3 refiner on the same take), plus 2x2 moving detail crops.
   - Not judged yet: the user watches.
+- **User 2026-11-11 on the A/B:** the refiner "seems to be making it much worse ... just adding a
+  huge amount of noise" against the no-refiner take.
+  - **Checked [measured, safetensors headers]:** LoRA scaling matches NVIDIA's merge. Turbo v1.1
+    stores alpha 8 / rank 128 (training_scale 0.0625), the same as the merge's turbo 128/8.
+    Kijai's refiner has alpha == rank with its scale folded in at 1.0, the same as the refiner's
+    384/384. Over-strong LoRAs are ruled out.
+  - **Remaining differences from the reference [H, untested]:**
+    (1) Audio: NVIDIA refines on encoded SILENCE. We lock the real song, which the refiner may
+    never have seen in training.
+    (2) LMS Sharp and its curve branches are missing.
+    (3) Turbo v1.1, not v1.2.
+    (4) The prompt is our six-section text with <Picture N> mentions, not a plain description.
+    (5) fp16 VAE, not NVIDIA's FP32 encode.
+  - The Oct 30 no-refiner arm is a different take on a different recipe, so it is not a clean
+    control.
