@@ -1472,7 +1472,8 @@ def _mv_resolve_locks(raw):
                                      f"({take_start}-{take_start + length:.2f}s)")
         out.append({"start": a, "end": b, "scene": sc,
                     "locked": {"job_id": hits[0][:-4], "take_start": take_start,
-                               "script": os.path.basename(str(L.get("script")))}})
+                               "script": os.path.basename(str(L.get("script"))),
+                               **({"head_skip": float(L["head_skip"])} if L.get("head_skip") else {})}})
     out.sort(key=lambda x: x["start"])
     for x, y in zip(out, out[1:]):
         if y["start"] < x["end"] - 1e-3:
@@ -2136,6 +2137,16 @@ def _mv_assemble_run(p: dict, progress=None):
         dur = float(sc["end"]) - float(sc["start"])
         # a locked take may be trimmed: its render starts at take_start, the scene later
         inpt = max(0.0, float(sc["start"]) - float(sc["locked"].get("take_start", sc["start"]))) if sc.get("locked") else 0.0
+        # optional locked.head_skip (s, default 0): drop a take's opening frames, e.g. an I2V take that sits
+        # frozen on its still before the motion starts; only for the locked take itself, and it must fit
+        L = sc.get("locked") or {}
+        if L.get("head_skip") and jobs.get(sc["index"]) == L.get("job_id"):
+            length = musicvideo_mod.audio_duration(path) or 0.0
+            skip = float(L["head_skip"])
+            if length and inpt + skip + dur > length + 0.05:
+                raise HTTPException(400, f"scene {sc['index']}: head_skip {skip}s leaves {length - inpt - skip:.2f}s "
+                                         f"of the take for a {dur:.2f}s scene")
+            inpt += skip
         seg = os.path.join(out_dir, f"scene_{sc['index']:02d}.mp4")
         audio = ["-c:a", "aac", "-b:a", "320k"] if partial else ["-an"]
         cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{inpt:.3f}", "-i", path, "-t", f"{dur:.3f}", *audio,
@@ -2421,7 +2432,8 @@ def _mv_locks_from_script(name):
             hit = next((x for x in cand["scenes"] if abs(float(x["start"]) - float(L.get("take_start", sc["start"]))) < 0.01), None)
             if hit:
                 out.append({"job_id": L["job_id"], "script": cname, "scene": hit["index"],
-                            "start": float(sc["start"]), "end": float(sc["end"])})
+                            "start": float(sc["start"]), "end": float(sc["end"]),
+                            **({"head_skip": L["head_skip"]} if L.get("head_skip") else {})})
                 break
         if not hit:
             skipped.append(sc["index"])
