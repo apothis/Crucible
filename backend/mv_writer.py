@@ -228,8 +228,9 @@ Fixed facts about this production:
 - She lip-syncs where it serves the video, not in every scene. A good music video for this kind of song mixes performance with cinematic B-roll: environment, symbolic imagery, her moving through a place without singing, details, wide shots. You decide the mix from the song's content and its genre.
 - Each scene is ONE continuous take (no cuts inside a scene). Scene changes are hard cuts. Any take SHE is in (singing or not) runs at most 15 seconds, one rendered clip (measured: 4 of 5 scenes of hers that chained a second clip re-invented the shot inside it: a second copy of her, a dissolve to a close-up, a ghost building, a jump to a run; her one-clip scenes held); an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than 5 seconds. A long passage she is in is therefore two or more scenes, cut between them.
 - SHOT PALETTE, by what has rendered reliably (measured over two songs); build the video from the reliable types:
-  (a) RELIABLE: her singing to camera at medium close-up or close-up (lip-sync and identity hold); her standing at medium or medium wide while wind, hair, a head turn or a small camera move carries the motion; her small in a wide or extreme wide shot ONLY if she stays in place (stands, turns, lifts her arms) for one clip; environment-only plates of a place, where LARGE camera moves are safe (push, truck, crane along the still's own lines); townspeople and extras in their places doing ordinary things; story characters and creatures (a kneeling figure before her, a giant lifting a stone beside a harnessed horse, a huge wolf in smoke, a man lashed by his forearms to a tree) in a scene that starts on its own opening still with them already in place, each with one action (measured usable 2026-11-08).
+  (a) RELIABLE: her singing to camera at medium close-up or close-up (lip-sync and identity hold); her standing at medium or medium wide while wind, hair, a head turn or a small camera move carries the motion; her small in a wide or extreme wide shot ONLY if she stays in place (stands, turns, lifts her arms) for one clip; environment-only plates of a place, where LARGE camera moves are safe (push, truck, crane along the still's own lines); townspeople and extras in their places doing ordinary things; story characters and creatures (a kneeling figure before her, a giant lifting a stone beside a harnessed horse, a huge wolf in smoke, a man lashed by his forearms to a tree) in a scene that starts on its own opening still with them already in place, each with one action (measured usable 2026-11-08); her dancing in place at medium while she sings to camera (hands on hips, rolling her hips and shoulders: the user judged it good, 2026-11-13).
   (b) UNRELIABLE, never write: her walking any distance along a path or road (she approaches the lens or doubles), her travelling between places inside a scene, a scene of hers longer than one clip.
+- HER DANCE MOVES ARE NEVER REPEATED (user, 2026-11-13): when she dances in more than one scene, every one of those scenes gives her a DIFFERENT pose and move (hands on hips with a hip roll, arms overhead, a hair whip, a shoulder shimmy, a turn in place, a slow body roll, ...). Name it in the scene's dance_move field, write it into the action, and never reuse one.
 - MOTION comes from the camera on the B-roll plates, from the cutting, from weather and light, and from wind, hair and small gestures on her; not from her travelling. A static camera is a choice for a held moment, never the default: a video of locked-off shots is dull.
 - PACE FOLLOWS THE MEASURED LEVEL of each section (listed with the sections; it is measured from the audio, so trust it over the style text): a loud section is cut faster, with shorter scenes (5-9 seconds) and more setups, and its B-roll uses large camera moves; a quiet section or quiet span holds longer scenes with small moves. A loud intro is not a slow establishing shot: it is several plates cut to the music.
 - SECTION ROLES (adapt to the song, do not force): intro = plates of the world cut to its energy, one shot revealing her, ending on the first-line setup; verse = her performance with cutaways to what the lyric names; pre-chorus = the world reacting (people, places); chorus = performance-heavy, the fastest cutting, two or three setups; a long instrumental or solo = a montage of plates and people that carries a story beat, never one long take of her; bridge = a contrast in time, place or light; outro = aftermath plates and a last shot of her or a return to the opening image.
@@ -586,11 +587,52 @@ def continuity_problems(script):
     return out
 
 
-def mark_continuity(script):
-    """Refresh the continuity problems on every scene (drops old ones first, so it can rerun after edits)."""
+DANCE_STOP = {"a", "an", "the", "and", "with", "her", "she", "in", "on", "of", "to", "at", "slow", "slowly", "small",
+              "big", "while", "then", "place", "into", "up", "down", "over", "both"}
+DANCE_SAME = 0.6          # share of shared words above which two dance moves count as the same move
+
+
+def _dance_words(move):
+    """Content words of a dance move, crudely stemmed (rolling/roll, hips/hip) so a reworded
+    repeat still matches."""
+    out = set()
+    for w in re.findall(r"[a-z]+", str(move or "").lower()):
+        if w in DANCE_STOP:
+            continue
+        if w.endswith("ing") and len(w) > 5:
+            w = w[:-3]
+        if w.endswith("s") and len(w) > 3:
+            w = w[:-1]
+        out.add(w)
+    return out
+
+
+def dance_problems(script):
+    """Her dance moves repeated across scenes (user, 2026-11-13: if she dances more than once she
+    needs different poses). Compares each scene's dance_move with every earlier one (word overlap,
+    filler words ignored). Returns [(index of the later scene, problem)]."""
+    out, seen = [], []
     for sc in script.get("scenes") or []:
-        sc["scene_problems"] = [p for p in (sc.get("scene_problems") or []) if not p.startswith("cut from scene ")]
-    for i, msg in continuity_problems(script):
+        mv = sc.get("dance_move")
+        if not mv or str(mv).strip().lower() in ("null", "none", "-"):
+            continue
+        w = _dance_words(mv)
+        for idx, prev, pw in seen:
+            if w and pw and len(w & pw) / min(len(w), len(pw)) >= DANCE_SAME:
+                out.append((sc["index"], f"same dance move as scene {idx}: '{mv}' repeats '{prev}'; "
+                                         f"give her a different pose and move"))
+                break
+        seen.append((sc["index"], mv, w))
+    return out
+
+
+def mark_continuity(script):
+    """Refresh the continuity and dance-move problems on every scene (drops old ones first, so it
+    can rerun after edits)."""
+    for sc in script.get("scenes") or []:
+        sc["scene_problems"] = [p for p in (sc.get("scene_problems") or [])
+                                if not p.startswith("cut from scene ") and not p.startswith("same dance move ")]
+    for i, msg in continuity_problems(script) + dance_problems(script):
         script["scenes"][i]["scene_problems"].append(msg)
     return script
 
@@ -656,6 +698,7 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "lighting": "one sentence",
             "mood": "three words",
             "action": "what she does, 1-3 sentences, one main motion; for environment B-roll exactly ONE moving element, slow, and what stays still",
+            "dance_move": "null, or when she dances in this scene: its one pose and move in a few words (e.g. 'arms overhead, slow hip sway'), different from every other scene's",
             "others": "null, or one sentence: the other people or creatures this scene needs (who, how many, where in frame, what each does), anonymous; background extras are few and small, a story character the lyric names may be central; no band",
             "opening_still": "a prompt for a photoreal 16:9 still of the FIRST FRAME of this scene, one paragraph: the location still's camera position, framing, fixed elements and light, with she in the setting where the scene has her, and with every person or creature listed in others ALREADY IN PLACE in their opening pose (background extras each caught mid-activity, each different, faces turned away or softened by shadow, small in frame; a story character as large and central as the scene needs). On the image-to-video lane this still IS frame 0, so anyone missing from it has to fade in (measured)",
             "matches_location_still": "true when this scene's light, weather, time of day and people are what the location's still shows (that still can be frame 0); false when the scene needs its own opening still (boolean)",
@@ -1610,7 +1653,8 @@ def script_markdown(script):
                 + (f" | keep in frame: {sc.get('keep_in_frame')}" if sc.get("keep_in_frame") else "")
                 + (f" | location: `{sc.get('location')}`" if sc.get("location") else ""),
                 f"- setting: {sc.get('setting')}", f"- lighting: {sc.get('lighting')} | mood: {sc.get('mood')}",
-                f"- action: {sc.get('action')}", f"- why: {sc.get('why')}",
+                f"- action: {sc.get('action')}"
+                + (f" | dance move: {sc.get('dance_move')}" if sc.get("dance_move") else ""), f"- why: {sc.get('why')}",
                 f"- opening still prompt: {sc.get('opening_still')}", ""]
         if sc.get("scene_problems"):
             out += ["SCENE PROBLEMS: " + "; ".join(sc["scene_problems"]), ""]
