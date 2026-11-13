@@ -34,10 +34,15 @@ Status: PLANNING (started 2026-11-13). Nothing rendered.
 - Section and line timings: NOT measured yet (the writer's alignment step does it on the vocal
   stem when the script is started in the tab).
 - Structure (from the lyrics): Intro (Hey x4) / Verse 1 / Pre / Chorus / Verse 2 / Pre /
-  Chorus / Guitar solo / Bridge (Hey living people) / Final chorus (key change) / Outro (Hey x4)
+  Chorus / Guitar solo / Bridge (Hey living people) / Final chorus / Outro (Hey x4)
   / instrumental outro, hard stop.
 
 ## 3. Story outline (DRAFT, for the user to change)
+
+User 2026-11-13: recurring characters are fine where they work better (the terrified guy in verse
+2, the pizza-box man returning in the bridge stay). Section times below are the measured ones
+after the bridge fix (s.7). "Key change" in the final chorus was an assumption, never measured:
+removed.
 
 | Section | Beat of the story | Comedy / action / sexy |
 |---|---|---|
@@ -50,7 +55,7 @@ Status: PLANNING (started 2026-11-13). Nothing rendered.
 | Chorus 2 | The party grows: a hearse with its back open as a sound system, car headlights and phone torches as stage lights. | Zombies crowd-surf a coffin. |
 | Guitar solo | Montage: the horde spills into the street, police lights, dancing between parked cars. | A zombie stuck in a cat flap; a zombie air-guitars a shovel. |
 | Bridge | "Hey living people ... come and join the crowd": the living come out in pyjamas and join. | The pizza-box man joins the conga line. |
-| Final chorus | Everyone, living and dead, dancing in the cemetery; she on a mausoleum roof belting, key change. | Biggest shot of the video. |
+| Final chorus | Everyone, living and dead, dancing in the cemetery; she on a mausoleum roof belting. | Biggest shot of the video. |
 | Outro | Dawn: the dead flop back into their graves. | She winks and pulls the dirt over herself like a duvet; hard stop on a slammed coffin lid. |
 
 ## 4. Look and wardrobe (DRAFT)
@@ -212,3 +217,7 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   last line moved 133.90 -> 134.66 (chorus 1's same line sits 14.90 s after its first: 134.60).
   Dry run over the six other songs with saved scripts: none triggers a second pass (unchanged).
   The backend needs a restart before the app's writer uses it.
+- 2026-11-13 user verdicts: T4 her dancing [U] "actually good" (my sheet-based "small sway" read
+  was wrong; the user's watch is ground truth). Rule [U]: when she dances in more than one scene,
+  each scene gives her a DIFFERENT pose and move, never the same dance twice. Recurring
+  characters OK [U]. Outline otherwise not yet approved.
