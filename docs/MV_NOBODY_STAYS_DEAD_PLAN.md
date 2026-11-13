@@ -231,3 +231,7 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   (doorbell cam, bride) is a close-up under a sung line. Every outline beat is present. Noted: the
   jaw-drop gag is written at ~1.5 s of a 1.55 s shot; T3's arm gag landed ~4.5 s into its render.
   "Key change" in scene 68's title comes from the project's Suno style text (not measured).
+- 2026-11-13 23:50 scene 20 (doorbell cam, bride) rewritten through /api/mv/rewrite_scene at
+  MEDIUM (knees up, a step back from the lens), action / others / opening still prompt to match:
+  `nobody_stays_dead_20261113_225747_rw19_20261113_235035` = the CURRENT script. 0 scene problems,
+  0 clip problems. The 8 new location still prompts given to the user in chat.
