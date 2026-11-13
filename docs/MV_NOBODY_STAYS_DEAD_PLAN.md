@@ -221,3 +221,13 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   was wrong; the user's watch is ground truth). Rule [U]: when she dances in more than one scene,
   each scene gives her a DIFFERENT pose and move, never the same dance twice. Recurring
   characters OK [U]. Outline APPROVED [U] (s.3 as it stands).
+- 2026-11-13 22:58 REAL SCRIPT written through the app (/api/mv/write, same request as the tab:
+  project Suno style + lyrics, approved outline as concept, this song's places, bar grid 1 bar
+  min): `nobody_stays_dead_20261113_225747` (.json + .md), 34 min on the subscription. Log confirms
+  cover 0.866 (bridge fix) and the 155 bpm grid. 78 scenes / 78 clips; lengths 27x1, 34x2, 14x3,
+  3x4 bars (nothing over 4 bars = 6.2 s). 23 sing_to_camera, 2 sing_away, 11 her silent, 42 plates.
+  Seven dance moves, all different (no repeat flagged). 9 locations (cemetery path known with its
+  still; 8 new need stills); 41 plates need their own opening still. One scene problem: scene 20
+  (doorbell cam, bride) is a close-up under a sung line. Every outline beat is present. Noted: the
+  jaw-drop gag is written at ~1.5 s of a 1.55 s shot; T3's arm gag landed ~4.5 s into its render.
+  "Key change" in scene 68's title comes from the project's Suno style text (not measured).
