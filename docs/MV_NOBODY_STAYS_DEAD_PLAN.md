@@ -37,7 +37,7 @@ Status: PLANNING (started 2026-11-13). Nothing rendered.
   Chorus / Guitar solo / Bridge (Hey living people) / Final chorus / Outro (Hey x4)
   / instrumental outro, hard stop.
 
-## 3. Story outline (DRAFT, for the user to change)
+## 3. Story outline (APPROVED by the user 2026-11-13)
 
 User 2026-11-13: recurring characters are fine where they work better (the terrified guy in verse
 2, the pizza-box man returning in the bridge stay). Section times below are the measured ones
@@ -220,4 +220,4 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
 - 2026-11-13 user verdicts: T4 her dancing [U] "actually good" (my sheet-based "small sway" read
   was wrong; the user's watch is ground truth). Rule [U]: when she dances in more than one scene,
   each scene gives her a DIFFERENT pose and move, never the same dance twice. Recurring
-  characters OK [U]. Outline otherwise not yet approved.
+  characters OK [U]. Outline APPROVED [U] (s.3 as it stands).
