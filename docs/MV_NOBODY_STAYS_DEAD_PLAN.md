@@ -186,3 +186,16 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   129-132 bpm, curve fit 13 ms. Downbeats are measured, NOT verified by ear. Offline tests pass
   (brief, snapping, minimum, split, move, markdown; the off-grid brief is byte-identical). NOT yet
   run end to end: the backend restart that loads the endpoint waits for the test renders.
+- 2026-11-13 21:15 all 10 test renders done. Take check [M]: every take holds the song (floor
+  0.99-1.00, lag 0), no opening jump flagged. Copied as "Downloads/Nobody Stays Dead tests/NSD
+  <test> seed <n>.mp4". From the contact sheets only (motion NOT judged; the user watches):
+  - T1 crowd (3 seeds): the room and all eight undead hold; the bride spins in every seed and the
+    old man bobs, but the other six mostly hold their opening poses with small sway, so on stills
+    it reads as posing more than dancing. 1102/1103 grow fog on the left late in the take.
+  - T3 arm gag (4 takes): the arm comes off and is waved in ALL FOUR, text only included, so the
+    after picture is not needed for the gag to happen. In every take the gag starts late (about
+    4.5 s into the 6.6 s take) and the frame where the arm leaves looks smeared (motion blur or a
+    ghosted arm; to judge by watching).
+  - T4 she sings (3 seeds): face, crown, slipped strap, satin dress and fishnets hold in all three;
+    she sings with her hands on her hips in every seed; the written hip and shoulder roll shows only
+    as a small sway on the sheets.
