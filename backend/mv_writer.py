@@ -118,7 +118,8 @@ def song_facts(audio_path, lyrics_raw, duration, cache_dir=None, align_path=None
     song_levels(audio_path, table)
     return {"duration": duration, "cover": align.get("cover"), "words_matched": align.get("words_matched"),
             "words_total": align.get("words_total"), "sections": table, "blocks": blocks,
-            "aligned_on": "vocals" if align_path else "mix"}
+            "aligned_on": "vocals" if align_path else "mix",
+            **({"repass": align["repass"]} if align.get("repass") else {})}
 
 
 STEM_HOP = 0.25          # seconds per vocal-stem frame

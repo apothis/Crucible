@@ -140,6 +140,78 @@ def transcribe_words(audio_path, size="small", cache_dir=None):
     return r
 
 
+REPASS_MIN = 2.0     # seconds: a window shorter than this is not re-transcribed
+
+
+def transcribe_window(audio_path, a, b, size="small", cache_dir=None):
+    """Whisper words for one window of the track on its own, earlier text NOT carried forward
+    (cached per file + window). Returns [(word, start, end)] in song seconds."""
+    from . import asr
+    cache = None
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        key = os.path.splitext(os.path.basename(audio_path))[0]
+        cache = os.path.join(cache_dir, f"{key}.whisper-{size}.window_{a:.2f}_{b:.2f}.json")
+        if os.path.exists(cache):
+            with open(cache) as f:
+                return [tuple(x) for x in json.load(f)]
+    r = asr.transcribe(audio_path, size=size, language="en", with_words=True, vad=False,
+                       clip=(a, b), condition_on_previous_text=False)
+    out = [(w["word"], float(w["start"]), float(w["end"]))
+           for seg in (r.get("segments") or []) for w in (seg.get("words") or [])
+           if a - 0.05 <= float(w["start"]) < b]
+    if cache:
+        with open(cache, "w") as f:
+            json.dump(out, f)
+    return out
+
+
+def _empty_block_windows(lines, at, duration):
+    """Song windows of runs of lyric blocks that have sung (non-bracketed) words and fewer than
+    LINE_MIN_COVER of them placed (a skipped passage still picks up stray matches: the bridge's
+    'the', 'and', 'you' landed on the repeated verse): [(a, b, [block indices])]. A window runs
+    from the last placed word before the run to the first placed word after it; wordless blocks
+    (a solo) inside it do not break the run."""
+    by_block = {}
+    for ln in lines:
+        by_block.setdefault(ln["block"], []).extend(ln["_toks"])
+    runs, cur = [], []
+    for bi in sorted(by_block):
+        toks = by_block[bi]
+        sung = [k for k, _, e in toks if not e]
+        if sung and sum(1 for k in sung if k in at) < LINE_MIN_COVER * len(sung):
+            cur.append(bi)
+        elif sung:
+            if cur:
+                runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    line_of = {k: ln["index"] for ln in lines for k, _, _ in ln["_toks"]}
+    out = []
+    for run in runs:
+        first = min(k for bi in run for k, _, _ in by_block[bi])
+        last = max(k for bi in run for k, _, _ in by_block[bi])
+        before = [k for k in at if k < first]
+        after = [k for k in at if k > last]
+        # the window takes in the whole placed line on each side: the first pass's stamps next
+        # to a skipped passage are damaged too (the bridge's next line had three words on one
+        # instant, 1.3 s late), so those lines are heard again with it
+        if before:
+            ln = line_of[max(before)]
+            a = min(at[k][0] for k in before if line_of[k] == ln)
+        else:
+            a = 0.0
+        if after:
+            ln = line_of[min(after)]
+            b = max(at[k][1] for k in after if line_of[k] == ln) + 0.1
+        else:
+            b = float(duration or 0.0)
+        if b - a >= REPASS_MIN:
+            out.append((round(a, 3), round(b, 3), run))
+    return out
+
+
 def align_song(audio_path, blocks, size="small", cache_dir=None):
     """Measure where every lyric line and section actually lands.
 
@@ -166,11 +238,34 @@ def align_song(audio_path, blocks, size="small", cache_dir=None):
 
     # longest-common-subsequence style match of the two word streams. Whisper mishearing a word
     # just leaves that word unplaced; the surrounding matches still carry the timing.
-    at = {}
+    def _match(heard, times):
+        at = {}
+        if heard:
+            for blk in difflib.SequenceMatcher(a=lyr, b=heard, autojunk=False).get_matching_blocks():
+                for k in range(blk.size):
+                    at[blk.a + k] = times[blk.b + k]
+        return at
+
+    at = _match(heard, times)
+
+    # SECOND PASS: a block of sung lines with under half its words placed is a passage Whisper skipped
+    # (measured, Nobody Stays Dead 2026-11-13: it heard nothing over the bridge, then repeated
+    # verse 2 with every word stamped on one instant). That window alone, transcribed again
+    # without earlier text carried forward, heard all four bridge lines; its words replace the
+    # first pass's inside the window and the whole song is matched again (one monotonic match).
+    # Blocks that are only bracketed chants are left out: they were never placed before either.
+    repass = []
     if heard:
-        for blk in difflib.SequenceMatcher(a=lyr, b=heard, autojunk=False).get_matching_blocks():
-            for k in range(blk.size):
-                at[blk.a + k] = times[blk.b + k]
+        for a, b, run in _empty_block_windows(lines, at, tr.get("duration")):
+            got = transcribe_window(audio_path, a, b, size=size, cache_dir=cache_dir)
+            words = [(tok, (s0, e0)) for w, s0, e0 in got for tok in normalize(w)]
+            keep = [(h, t) for h, t in zip(heard, times) if not a <= t[0] < b]
+            merged = sorted(keep + words, key=lambda x: x[1][0])
+            heard, times = [h for h, _ in merged], [t for _, t in merged]
+            repass.append({"window": [a, b], "blocks": [blocks[bi].get("type") for bi in run],
+                           "words_heard": len(words)})
+        if repass:
+            at = _match(heard, times)
 
     def next_start(k):
         for m in range(k + 1, len(lyr)):
@@ -211,4 +306,4 @@ def align_song(audio_path, blocks, size="small", cache_dir=None):
     matched = len(at)
     return {"lines": lines, "sections": sections,
             "cover": round(matched / len(lyr), 3), "words_matched": matched,
-            "words_total": len(lyr), "duration": tr.get("duration")}
+            "words_total": len(lyr), "duration": tr.get("duration"), "repass": repass}

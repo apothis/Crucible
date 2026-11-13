@@ -199,3 +199,16 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   - T4 she sings (3 seeds): face, crown, slipped strap, satin dress and fishnets hold in all three;
     she sings with her hands on her hips in every seed; the written hip and shoulder roll shows only
     as a small sway on the sheets.
+- 2026-11-13 bridge alignment FIXED (general, backend/lyricalign.py). Cause [M]: Whisper heard
+  nothing over 136-169 s, then repeated verse 2 ("I don't need sleep...") with every word stamped
+  at 174.9 s, so the bridge had nothing to match and the next line's stamps were 1.3 s late. Fix:
+  a second pass for any lyric block with under half its sung words placed: that window alone
+  (from the last placed line before it to the first placed line after it) is transcribed again
+  with earlier text not carried forward, its words replace the first pass's in the window, and
+  the song is matched again. Bracketed-only blocks (the intro "Hey!"s) are left out as before.
+  Result on the stem [M]: cover 0.77 -> 0.87. Solo = instrumental 136.60-157.06; BRIDGE 157.06-
+  170.58 (lines 157.56 / 160.44 / 163.48 / 166.58); a short instrumental 170.58-173.20 (the
+  "Hey!" chant, unplaced); Final Chorus from 173.20 (first line 173.70, was 174.94). Chorus 2's
+  last line moved 133.90 -> 134.66 (chorus 1's same line sits 14.90 s after its first: 134.60).
+  Dry run over the six other songs with saved scripts: none triggers a second pass (unchanged).
+  The backend needs a restart before the app's writer uses it.

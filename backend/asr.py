@@ -24,17 +24,23 @@ def _get_model(size="small"):
 
 
 def transcribe(audio_path, size="small", language=None, with_segments=False, with_words=False,
-               vad=True):
+               vad=True, clip=None, condition_on_previous_text=True):
     """Transcribe an audio file to text. Returns {text, language, duration}, plus
     {segments:[{start,end,text}]} when `with_segments` (for timestamp→section mapping) and
     per-word times inside each segment when `with_words` (for lining KNOWN lyrics up against the
     real timeline). `size`: tiny/base/small/medium/large-v3 (small = good speed/quality on CPU).
 
     `vad=False` matters for SINGING: the voice-activity filter is tuned for speech and drops
-    sustained sung vowels and quiet phrase tails, which is exactly the material we need timed."""
+    sustained sung vowels and quiet phrase tails, which is exactly the material we need timed.
+
+    `clip` = (start, end) seconds: transcribe only that window (times stay song seconds).
+    `condition_on_previous_text=False` stops Whisper carrying earlier text forward, the cause of a
+    skipped passage replaced by a repeat of an earlier verse (Nobody Stays Dead bridge, 2026-11-13)."""
     model = _get_model(size)
+    kw = {"clip_timestamps": [float(clip[0]), float(clip[1])]} if clip else {}
     segments, info = model.transcribe(audio_path, language=language, vad_filter=vad,
-                                      word_timestamps=with_words)
+                                      word_timestamps=with_words,
+                                      condition_on_previous_text=condition_on_previous_text, **kw)
     lines = []
     segs = []
     for s in segments:
