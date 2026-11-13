@@ -249,13 +249,85 @@ Fixed facts about this production:
 Write for the song's genre: its pace, weight and mood should be visible in the choice of places, light, weather, movement and the proportion of performance to B-roll."""
 
 
+# Opt-in bar-grid cutting (user, 2026-11-13: "1 bar, but we shouldnt always cut at that, thats
+# just the shorter end"). These replace three sentences of SCENE_SYSTEM when the brief carries a
+# measured bar grid; each must be found verbatim (scene_prompt raises otherwise, so an edit to
+# SCENE_SYSTEM cannot silently drop the grid rules).
+GRID_SWAPS = [
+    ("an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than 5 seconds.",
+     "an environment-only B-roll take (no person) may run up to 45 seconds; nothing shorter than {min_bars_text} "
+     "({min_s:.2f} s at this song's tempo)."),
+    ("a loud section is cut faster, with shorter scenes (5-9 seconds) and more setups,",
+     "a loud section is cut faster, with shorter scenes and more setups (see CUTTING ON THE BAR GRID),"),
+    ("- Scene boundaries fall on CUT POINTS: a section edge, or one of the listed line cut points (half a second "
+     "before a sung line begins), or the listed FIRST-LINE SETUP point (two seconds before the song's first sung "
+     "line: the lip-sync scene for the first word starts there). Choose cuts where the words break.",
+     "- CUTTING ON THE BAR GRID (this video): every scene boundary falls on a BAR LINE, listed under each section "
+     "(measured from the recording: {how}; one bar = {bar:.2f} s), so every scene is a whole number of bars. "
+     "{min_bars_cap} is the SHORTEST shot, not the standard length (user rule): vary the lengths with the music, "
+     "mixing 1-, 2-, 3- and 4-bar shots with longer holds, and never cut off the bar lines (no half-bar cuts). Runs "
+     "of 1- and 2-bar shots belong to the loudest, busiest passages (a chorus hit, a fill, a solo, a gag's payoff); "
+     "longer holds to quiet spans, reveals and her lip-sync setups where the words matter. A run of equal lengths "
+     "reads as a metronome: avoid more than three in a row. A cut may fall inside a sung line: cut between two "
+     "setups of her singing it, or to a shot of what the line names. The FIRST-LINE SETUP is the bar line listed as "
+     "such (two or more seconds before the first sung word; the lip-sync scene for the first word starts there). "
+     "Each scene still renders at least about 5 seconds and is trimmed to its bars at assembly, so a short scene's "
+     "one action must READ inside its bars: put the action's main beat in the first bar of the scene."),
+]
+
+
+def grid_rules(system, grid):
+    """SCENE_SYSTEM with the bar-grid sentences swapped in (see GRID_SWAPS)."""
+    mb = int(grid.get("min_bars") or 1)
+    fill = {"how": grid["how"], "bar": float(grid["bar"]), "min_s": grid_min_len(grid),
+            "min_bars_text": "one bar" if mb == 1 else f"{mb} bars",
+            "min_bars_cap": "One bar" if mb == 1 else f"{mb} bars"}
+    for old, new in GRID_SWAPS:
+        if old not in system:
+            raise ValueError(f"bar grid: SCENE_SYSTEM no longer has the sentence to replace: {old[:70]}...")
+        system = system.replace(old, new.format(**fill))
+    return system
+
+
 LINE_LEAD = 0.5          # a line's cut point sits this far before the line begins
 FIRST_LINE_LEAD = 2.0    # the lip-sync setup for the song's FIRST sung line starts this far ahead of it (user rule, 2026-10-29)
 
 
-def cut_points(sections):
+def first_line_setup(sections, grid=None):
+    """Where the lip-sync scene for the song's first word starts: FIRST_LINE_LEAD before it, or
+    on the bar grid the last bar line at least that far ahead. None for an instrumental."""
+    first = first_sung_line(sections)
+    if not first or first["start"] - FIRST_LINE_LEAD <= 0:
+        return None
+    t = first["start"] - FIRST_LINE_LEAD
+    if grid:
+        bars = [b for b in grid["bar_lines"] if 0 < b <= t + 1e-3]
+        return round(bars[-1], 3) if bars else None
+    return round(t, 3)
+
+
+def grid_min_len(grid):
+    """The shortest scene on the bar grid, seconds (min_bars whole bars; user: one bar)."""
+    return float(grid.get("min_bars") or 1) * float(grid["bar"])
+
+
+def cut_points(sections, grid=None):
     """Every allowed scene boundary, in order: section edges and, inside sung sections, a point
-    LINE_LEAD before each line (never before the previous line ends). Returns sorted floats."""
+    LINE_LEAD before each line (never before the previous line ends). Returns sorted floats.
+    grid (opt-in bar-grid cutting, mv_beats.measure_grid): the boundaries are the song's bar lines
+    instead (none within half a bar of its start or end, which are always boundaries), the
+    first-line setup bar and any measured voice hand-over."""
+    if grid:
+        end = sections[-1]["end"]
+        half = float(grid["bar"]) / 2
+        pts = {0.0, round(end, 3)} | {round(b, 3) for b in grid["bar_lines"] if half <= b <= end - half}
+        for s in sections:
+            for c in s.get("voice_cuts") or []:
+                pts.add(round(c, 3))
+        setup = first_line_setup(sections, grid)
+        if setup is not None:
+            pts.add(setup)
+        return sorted(pts)
     pts = set()
     for s in sections:
         pts.add(round(s["start"], 3))
@@ -320,10 +392,12 @@ def snap_cut(t, points):
     return min(points, key=lambda x: abs(x - t))
 
 
-def _section_text(sections):
+def _section_text(sections, grid=None):
     out = []
-    first = first_sung_line(sections)
-    setup = round(first["start"] - FIRST_LINE_LEAD, 3) if first and first["start"] - FIRST_LINE_LEAD > 0 else None
+    setup = first_line_setup(sections, grid)
+    if grid:
+        half = float(grid["bar"]) / 2
+        bars = [round(b, 2) for b in grid["bar_lines"] if half <= b <= sections[-1]["end"] - half]
     for s in sections:
         head = f"[{s['index']}] {s['type']}  {s['start']:.2f}-{s['end']:.2f}s  ({s['end'] - s['start']:.1f}s)"
         if s.get("level"):
@@ -331,8 +405,12 @@ def _section_text(sections):
             if s.get("quiet_spans"):
                 head += ", quiet " + ", ".join(f"{a:.1f}-{b:.1f}s" for a, b in s["quiet_spans"])
         out.append(head if s["vocal"] else head + "  instrumental, no vocal")
+        if grid:
+            inside = [b for b in bars if s["start"] <= b < s["end"]]
+            out.append("      bar lines: " + (" ".join(f"{b:.2f}" for b in inside) or "(none inside)"))
         if setup is not None and s["start"] <= setup < s["end"]:
-            out.append(f"      cut {setup:6.2f} | FIRST-LINE SETUP: the lip-sync scene for the first word starts here")
+            out.append(f"      cut {setup:6.2f} | FIRST-LINE SETUP: the lip-sync scene for the first word starts here"
+                       + (" (a bar line)" if grid else ""))
         if s["vocal"]:
             prev_end = s["start"]
             vcuts = sorted(s.get("voice_cuts") or [])
@@ -340,7 +418,7 @@ def _section_text(sections):
                 c = max(l["start"] - LINE_LEAD, prev_end)
                 while vcuts and vcuts[0] < l["start"]:
                     out.append(f"      cut {vcuts.pop(0):6.2f} | VOICE CHANGE (measured)")
-                tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] else "            |"
+                tag = f"cut {c:6.2f} |" if s["start"] < c < s["end"] and not grid else "            |"
                 ans = "".join(f", answered by {VOICE_LABEL.get(x['voice'], x['voice'])} at {x['start']:.2f}s"
                               for x in l.get("voice_answers") or [])
                 who = (f"[{VOICE_LABEL.get(l['voice'], l['voice'])}{ans}{', UNSURE: B-roll, no lip-sync' if l.get('voice_unsure') else ''}] "
@@ -542,11 +620,12 @@ TWO SINGERS. This song is a duet, and this block overrides "the singer is the on
 - His vocal delivery: {voice}. Write his performance for it."""
 
 
-def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None, locks=None, duet=None):
+def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None, locks=None, duet=None, grid=None):
     """known: library rows (mv_locations) the model may reuse by id; None/[] = none offered.
     locks: takes already shot and passed ({start, end, scene}); the model writes only the gaps.
     duet: {"voice": how he sings} when the song has a second (male) singer: the duet rules join
-    the system prompt and every scene names its singer (refs then describes all four pictures)."""
+    the system prompt and every scene names its singer (refs then describes all four pictures).
+    grid: a measured bar grid (opt-in): boundaries on bar lines, one bar minimum (GRID_SWAPS)."""
     schema = {
         "concept": "2-3 sentences: what the video is about and how it moves (string)",
         "look": "one sentence of visual style for every prompt: film stock feel, light QUALITY, contrast, colour grade, camera weight ONLY. When the arc moves through different colours (a grey dawn, a gold hall, fire, ash), the look names only the film stock, grain, contrast and camera weight, and each scene's lighting field carries its colour, so the grade follows the story instead of flattening it to one palette. Never name an object or a light source in it (no candles, lamps, fires, torches, windows): the sentence rides on every exterior prompt too, and a prop named here gets hallucinated into shots that cannot hold it (measured: 'candle and lamp interiors' put lit candles over a cliff road). Interior warmth belongs in that scene's lighting field (string)",
@@ -561,7 +640,8 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
             "still_prompt": "a prompt for a photoreal 16:9 still of this place with NO people, one paragraph: camera position and height, every fixed element and where it sits in frame, materials, the light and weather of its first scene, the video's look; the elements must match this location's scene settings word for word"
         }],
         "scenes": [{
-            "from": "seconds where the scene starts: a section edge or a listed cut point (number)",
+            "from": ("seconds where the scene starts: a listed bar line, or 0 (number)" if grid else
+                     "seconds where the scene starts: a section edge or a listed cut point (number)"),
             "to": "seconds where it ends: the next scene's from (number)",
             "title": "short label",
             "location": "id of one of the locations",
@@ -589,21 +669,26 @@ def scene_prompt(title, style, lyrics_raw, facts, refs, concept=None, known=None
                 "with {\"id\": ..., \"reuse\": true}; a new place needs a full entry with a still prompt:\n"
                 + known_text(known) + "\n\n") if known else "")
             + "MEASURED SECTIONS (real seconds on this recording; use these indices):\n"
-            + _section_text(facts["sections"]) + "\n\nLYRICS:\n" + (lyrics_raw or "").strip()
+            + _section_text(facts["sections"], grid) + "\n\nLYRICS:\n" + (lyrics_raw or "").strip()
             + ("\n\nALREADY SHOT (the user has passed these takes; they are fixed, with their places, framings and "
                "light. Do NOT write scenes for these windows. Write scenes only for the GAPS between them, and plan "
                "the gaps so the cut flows into and out of each one; the arc must fit them):\n" + locks_text(locks)
                if locks else "")
             + ("\n\nYour scenes tile every gap in order: within a gap the first scene starts at the gap's start, "
-               "each `to` is the next scene's `from`, the last ends at the gap's end. Every from/to is a section "
-               "edge, a listed cut point or a locked take's edge; inside a lineless span (intro, solo, outro) any "
-               "second is allowed. List only your own scenes, in song order. "
+               "each `to` is the next scene's `from`, the last ends at the gap's end. "
+               + ("Every from/to is a listed bar line or a locked take's edge. " if grid else
+                  "Every from/to is a section edge, a listed cut point or a locked take's edge; inside a lineless "
+                  "span (intro, solo, outro) any second is allowed. ")
+               + "List only your own scenes, in song order. "
                if locks else
                "\n\nThe scenes tile the whole song in order with no gaps: the first starts at 0, each `to` is the "
-               "next scene's `from`, the last ends at the song's end. Every from/to is a section edge or a listed "
-               "cut point; inside a lineless span (intro, solo, outro) any second is allowed. ")
+               "next scene's `from`, the last ends at the song's end. "
+               + ("Every other from/to is a listed bar line. " if grid else
+                  "Every from/to is a section edge or a listed cut point; inside a lineless span (intro, solo, "
+                  "outro) any second is allowed. "))
             + "Return JSON with exactly this shape:\n" + json.dumps(schema, indent=1))
-    system = SCENE_SYSTEM + (DUET_RULES.replace("{voice}", duet.get("voice") or "as heard on the recording") if duet else "")
+    system = (grid_rules(SCENE_SYSTEM, grid) if grid else SCENE_SYSTEM) + \
+        (DUET_RULES.replace("{voice}", duet.get("voice") or "as heard on the recording") if duet else "")
     return system, user
 
 
@@ -644,28 +729,45 @@ def _finish_scene(sc, sections):
 FREE_CUT_MARGIN = 2.5    # inside a lineless section a cut may fall anywhere this far from its edges
 
 
-def snap_scene_cut(t, sections, points):
+def snap_scene_cut(t, sections, points, grid=None):
     """A scene boundary: anywhere inside a lineless (instrumental) section, at least
     FREE_CUT_MARGIN from its edges (a solo or an intro is cut to its music, not to words);
-    elsewhere the nearest cut point."""
+    elsewhere the nearest cut point. On the bar grid every boundary is a cut point (bar line)."""
+    if grid:
+        return snap_cut(t, points)
     for s in sections:
         if not s["vocal"] and s["start"] + FREE_CUT_MARGIN <= t <= s["end"] - FREE_CUT_MARGIN:
             return round(t, 2)
     return snap_cut(t, points)
 
 
-def normalize_scenes(plan, sections, locks=None):
+def _min_end(a, b, points, limit, grid):
+    """On the bar grid a scene from `a` is at least grid_min_len long: an end `b` short of that
+    moves to the first cut point that is not (or to `limit`, the gap's or song's end, when the
+    rest is too short for two scenes). Off the grid `b` is returned as is."""
+    if not grid:
+        return b
+    need = a + grid_min_len(grid) - 0.02
+    if b < need:
+        b = next((x for x in points if x >= need), limit)
+    if limit - b < grid_min_len(grid) - 0.02:
+        b = limit
+    return min(b, limit)
+
+
+def normalize_scenes(plan, sections, locks=None, grid=None):
     """Make the scene list tile the song in order. Scenes given as from/to seconds are snapped to
     cut points (section edges and line cut points; any second inside a lineless section) and
     forced contiguous; scenes given as a `sections` range (older answers) take those sections'
     edges. Empty scenes are dropped. `locks` ({start, end, scene, locked}) are takes already shot:
     they are placed at their windows as given and the model's scenes fill the gaps between them
     (a model scene reaching into a lock is cut at the lock's start; a gap the model left empty
-    becomes a flagged placeholder). Returns the scenes with index/start/end/sections/
+    becomes a flagged placeholder). `grid` (opt-in bar-grid cutting): every boundary snaps to a
+    bar line and no scene is shorter than grid_min_len. Returns the scenes with index/start/end/sections/
     section_types/lipsync filled in."""
     n = len(sections)
     locks = sorted(locks or [], key=lambda L: L["start"])
-    pts = sorted(set(cut_points(sections)) | {round(x, 3) for L in locks for x in (L["start"], L["end"])})
+    pts = sorted(set(cut_points(sections, grid)) | {round(x, 3) for L in locks for x in (L["start"], L["end"])})
     song_end = sections[-1]["end"]
     raw = plan.get("scenes") or []
     scenes, cursor, li = [], 0.0, 0
@@ -690,10 +792,10 @@ def normalize_scenes(plan, sections, locks=None):
             if not isinstance(sc, dict) or cursor >= song_end:
                 continue
             try:
-                b = snap_scene_cut(float(sc["to"]), sections, pts)
+                b = snap_scene_cut(float(sc["to"]), sections, pts, grid)
             except (KeyError, TypeError, ValueError):
                 continue
-            b = min(b, _gap_end())
+            b = _min_end(cursor, min(b, _gap_end()), pts, _gap_end(), grid)
             if b <= cursor + 1e-3:
                 continue
             sc = {k: v for k, v in sc.items() if k not in ("from", "to")}
@@ -738,7 +840,7 @@ def normalize_scenes(plan, sections, locks=None):
             i0, i1 = max(0, min(i0, n - 1)), max(0, min(max(i1, i0), n - 1))
             a, b = sections[i0]["start"], sections[i1]["end"]
         a = cursor                                    # contiguity: every scene starts where the last ended
-        b = snap_scene_cut(b, sections, pts)
+        b = _min_end(a, snap_scene_cut(b, sections, pts, grid), pts, song_end, grid)
         if b <= a:
             continue
         sc = dict(sc)
@@ -1287,7 +1389,8 @@ def pace_problems(prompt, performance=None):
 
 def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs, concept=None,
                  provider="claude_sub", model=WRITER_MODEL, effort=WRITER_EFFORT, claude_model="",
-                 cache_dir=None, log=print, align_path=None, known_locations=None, locks=None, duet=None):
+                 cache_dir=None, log=print, align_path=None, known_locations=None, locks=None, duet=None,
+                 bar_grid=None):
     """Song -> full script JSON (scenes with chain plans and compiled per-clip prompts).
     `locks` = takes the user passed, kept as they are ({start, end, scene: the source scene with
     its clips, locked: {job_id, take_start, script}}): the writer fills only the gaps and pass 2
@@ -1299,7 +1402,11 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
     `duet` (optional, two-singer songs) = {"refs2": {face, body, shared}: his two pictures, described
     like `refs`; "voice": how he sings; "measure": sections -> the measured voice timeline
     (mv_voices.timeline)}. The timeline tags every aligned line with its voice; each scene then
-    names its singer and the checker holds lip-sync scenes to the voice that is heard."""
+    names its singer and the checker holds lip-sync scenes to the voice that is heard.
+    `bar_grid` (optional, user rule 2026-11-13) = a measured grid (mv_beats.measure_grid, plus
+    min_bars, default 1): scene boundaries fall on its bar lines, no scene is shorter than
+    min_bars, and the brief asks for varied whole-bar lengths. Saved on the script, so a later
+    split or moved cut stays on the grid. None = the usual section-edge and line cut points."""
     facts = song_facts(audio_path, lyrics_raw, duration, cache_dir=cache_dir, align_path=align_path)
     log(f"[mvw] facts: {len(facts['sections'])} sections, cover {facts.get('cover')}, aligned on {facts['aligned_on']}")
     duet_rec = None
@@ -1317,12 +1424,14 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
         r2 = duet["refs2"]
         refs_text = ("SHE, the female lead:\n" + refs_text + "\n\nHE, the male singer (his own two pictures):\n"
                      f"face / identity: {r2['face']}\nfull body / wardrobe: {r2['body']}\nBoth show: {r2['shared']}")
+    if bar_grid:
+        log(f"[mvw] bar grid: {bar_grid['how']}; scenes of {int(bar_grid.get('min_bars') or 1)}+ bars")
     system, user = scene_prompt(title, style, lyrics_raw, facts, refs_text, concept, known=known_locations, locks=locks,
-                                duet=duet_rec)
+                                duet=duet_rec, grid=bar_grid)
     raw = llm_mod.complete(provider, model, system, user, claude_model, timeout=WRITER_TIMEOUT, effort=effort)
     _keep_raw(cache_dir, f"{audio_id}_pass1.txt", raw)
     plan = _extract_json(raw)
-    scenes = normalize_scenes(plan, facts["sections"], locks=locks)
+    scenes = normalize_scenes(plan, facts["sections"], locks=locks, grid=bar_grid)
     locations = normalize_locations(plan, scenes, known=known_locations)
     log(f"[mvw] pass 1: {len(scenes)} scenes, {len(locations)} locations "
         f"({sum(1 for L in locations if L.get('known'))} known, {len(known_locations or [])} offered)")
@@ -1330,6 +1439,7 @@ def write_script(audio_path, audio_id, title, style, lyrics_raw, duration, refs,
               "concept": plan.get("concept", ""), "look": plan.get("look", ""),
               "wardrobe": plan.get("wardrobe", ""), "arc": plan.get("arc", ""), "refs": refs, "facts": facts,
               **({"duet": duet_rec, "wardrobe2": plan.get("wardrobe2", "")} if duet_rec else {}),
+              **({"bar_grid": bar_grid} if bar_grid else {}),
               "locations": locations, "known_offered": [r["id"] for r in (known_locations or [])],
               "writer": {"provider": provider, "model": model, "effort": effort}, "scenes": []}
     for sc in scenes:
@@ -1374,13 +1484,16 @@ def split_scene(script, index, at, second):
     an opening still (it is a new setup, so it needs its own). Both halves lose their clips (run
     write_scene_clips on each). Scenes are renumbered. Returns (first, second)."""
     sections = script["facts"]["sections"]
+    grid = script.get("bar_grid")
     at = float(at)
-    near = snap_cut(at, cut_points(sections))
-    if abs(near - at) <= SPLIT_SNAP_TOL:
+    near = snap_cut(at, cut_points(sections, grid))
+    if grid or abs(near - at) <= SPLIT_SNAP_TOL:      # on the bar grid a split always lands on a bar line
         at = near
     sc = script["scenes"][index]
     if not sc["start"] < at < sc["end"]:
         raise ValueError(f"cut {at}s is not inside scene {index} ({sc['start']}-{sc['end']}s)")
+    if grid and min(at - sc["start"], sc["end"] - at) < grid_min_len(grid) - 0.02:
+        raise ValueError(f"cut {at}s leaves a scene shorter than {grid_min_len(grid):.2f}s (the bar grid's minimum)")
     keep = {k: v for k, v in sc.items() if k not in ("plan", "clips", "index", "sections", "section_types", "lipsync")}
     a = dict(keep, **(second.get("first") or {}))
     b = dict({k: v for k, v in keep.items() if k not in ("opening_still_id", "locked")},
@@ -1411,7 +1524,8 @@ def move_cut(script, index, to, first=None, second=None):
     # two singers: a shared line's measured hand-over is also a cut point here (the user's edit
     # "he finishes the line", 2026-11-08); the writer itself keeps shared lines on her
     handovers = [l["voice_switch"] for s in sections for l in s.get("lines") or [] if l.get("voice_switch")]
-    near = snap_scene_cut(to, sections, sorted(cut_points(sections) + handovers))   # free inside a lineless section
+    grid = script.get("bar_grid")
+    near = snap_scene_cut(to, sections, sorted(cut_points(sections, grid) + handovers), grid)   # free inside a lineless section
     if abs(near - to) > SPLIT_SNAP_TOL:
         raise ValueError(f"{to}s is not within {SPLIT_SNAP_TOL}s of a cut point (nearest {near}s)")
     to = near
@@ -1420,6 +1534,8 @@ def move_cut(script, index, to, first=None, second=None):
     a, b = script["scenes"][index], script["scenes"][index + 1]
     if not a["start"] < to < b["end"]:
         raise ValueError(f"cut {to}s must fall inside {a['start']}-{b['end']}s (scenes {index} and {index + 1})")
+    if grid and min(to - a["start"], b["end"] - to) < grid_min_len(grid) - 0.02:
+        raise ValueError(f"cut {to}s leaves a scene shorter than {grid_min_len(grid):.2f}s (the bar grid's minimum)")
     # a passed take keeps its lock only when its scene merely shrinks inside it, unchanged;
     # otherwise the scene is a new shot and re-renders
     a_keeps = bool(a.get("locked")) and not first and to < a["end"]
@@ -1440,6 +1556,12 @@ def move_cut(script, index, to, first=None, second=None):
     return a, b
 
 
+def scene_bars(sc, grid):
+    """A scene's length in bars: the bar lines it starts (the first scene counts the song's
+    first bar line; the last one ignores the part bar after the final bar line)."""
+    return sum(1 for x in grid["bar_lines"] if sc["start"] - 0.02 <= x < sc["end"] - 0.02)
+
+
 def script_markdown(script):
     """A readable rendering of a script for review (the user reads this, not the JSON)."""
     out = [f"# {script['title']} - music video script", "",
@@ -1454,6 +1576,10 @@ def script_markdown(script):
                 f"**Voices (measured).** her {d['sung_seconds']['her']}s, him {d['sung_seconds']['him']}s; {d['how']}.", ""]
     if script.get("arc"):
         out += [f"**Arc.** {script['arc']}", ""]
+    grid = script.get("bar_grid")
+    if grid:
+        out += [f"**Bar grid (opt-in, measured).** {grid['how']}; one bar {grid['bar']:.2f} s, scenes of "
+                f"{int(grid.get('min_bars') or 1)}+ bars.", ""]
     # only plates: her scenes render on the reference lane, where a still is not frame 0
     need = [sc for sc in script["scenes"] if not sc.get("locked") and sc.get("matches_location_still") is False
             and sc.get("performance") == "no_singing_environment" and not sc.get("opening_still_id")]
@@ -1474,7 +1600,8 @@ def script_markdown(script):
                 out += ["Still prompt:", "", "```", (L.get("still_prompt") or "").strip(), "```", ""]
     for sc in script["scenes"]:
         out += [f"## Scene {sc['index'] + 1}: {sc.get('title', '')}  ({sc['start']:.1f}-{sc['end']:.1f}s, "
-                f"{', '.join(sc['section_types'])})"
+                + (f"{scene_bars(sc, grid)} bar{'' if scene_bars(sc, grid) == 1 else 's'}, " if grid else "")
+                + f"{', '.join(sc['section_types'])})"
                 + (f"  LOCKED: passed take, from {sc['locked'].get('take_start', sc['start']):.2f}s of its render"
                    if sc.get("locked") else ""), "",
                 f"- performance: {sc.get('performance')}" + (f" | singer: {sc.get('singer')}" if script.get("duet") else "")

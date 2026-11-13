@@ -2043,6 +2043,20 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
   const [shared, setShared] = d.use("wShared", "");
   const [locations, setLocations] = d.use("wLocations", "auto");
   const [keepLocks, setKeepLocks] = d.use("wKeepLocks", true);
+  // opt-in bar-grid cutting (user 2026-11-13): cuts on the song's measured bar lines, one bar minimum, varied lengths
+  const [barGrid, setBarGrid] = d.use("wBarGrid", false);
+  const [minBars, setMinBars] = d.use("wMinBars", 1);
+  const [bpmHint, setBpmHint] = d.use("wBpmHint", "");
+  const [gridInfo, setGridInfo] = useState<{ for: string; how?: string; bar?: number; error?: string } | null>(null);
+  useEffect(() => {
+    if (!barGrid || !audioId) return;
+    const key = `${audioId}|${bpmHint}`;
+    if (gridInfo?.for === key) return;
+    setGridInfo({ for: key, how: "measuring the tempo..." });
+    api.mvBarGrid({ audio_id: audioId, bpm: Number(bpmHint) || undefined })
+      .then((r) => setGridInfo({ for: key, how: (r as { how: string }).how, bar: (r as { bar: number }).bar }))
+      .catch((e) => setGridInfo({ for: key, error: String((e as Error).message || e) }));
+  }, [barGrid, audioId, bpmHint]);   // eslint-disable-line react-hooks/exhaustive-deps
   // the optional second (male) singer: off by default; who sings when is measured, not read from tags
   const [duet, setDuet] = d.use("wDuet", false);
   const [face2, setFace2] = d.use("wFace2", "");
@@ -2135,6 +2149,7 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
         refs: { face: face.trim(), body: body.trim(), shared: shared.trim() }, locations,
         keep_locks_from: keepLocks && nLocks && loaded ? loaded.name : undefined,
         duet: duet ? { refs2: { face: face2.trim(), body: body2.trim(), shared: shared2.trim() }, voice: voice2.trim() || undefined, swap } : undefined,
+        bar_grid: barGrid ? { min_bars: minBars, bpm: Number(bpmHint) || undefined } : undefined,
       });
       setJob({ id: r.job_id, status: "writing", log: [], seconds: 0 }); setJobId(r.job_id);
     } catch (e) { setErr("The writer did not start: " + String((e as Error).message || e)); }
@@ -2237,8 +2252,22 @@ function WriterPanel({ audioId, loaded, onWritten, startOpen, projectName, track
               </select>
             </Field>
             {nLocks > 0 && <label className="flex items-center gap-2 pb-2 text-xs"><input type="checkbox" checked={keepLocks} onChange={(e) => setKeepLocks(e.target.checked)} /> keep the open script's {nLocks} chosen takes</label>}
+            <label className="flex items-center gap-2 pb-2 text-xs" title="Scene cuts fall on the song's measured bar lines; the writer varies the lengths in whole bars, never shorter than the minimum. Off: cuts at section edges and before sung lines."><input type="checkbox" checked={barGrid} onChange={(e) => setBarGrid(e.target.checked)} /> cut on the bar grid</label>
+            {barGrid && <>
+              <Field label="shortest shot">
+                <select className={inp} value={minBars} onChange={(e) => setMinBars(Number(e.target.value))}>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n} bar{n > 1 ? "s" : ""}</option>)}
+                </select>
+              </Field>
+              <Field label="tempo hint (bpm, optional)">
+                <input className={inp + " w-24"} value={bpmHint} placeholder="measured" onChange={(e) => setBpmHint(e.target.value.replace(/[^0-9.]/g, ""))} />
+              </Field>
+            </>}
             <Action onClick={write} disabled={sending || job?.status === "writing"}>{sending ? "starting..." : job?.status === "writing" ? "writing..." : "Write the script"}</Action>
           </div>
+          {barGrid && gridInfo && <div className={`text-[11px] ${gridInfo.error ? "text-red-400" : "text-[var(--color-muted)]"}`}>
+            {gridInfo.error ? `bar grid: ${gridInfo.error}` : `bar grid: ${gridInfo.how}${gridInfo.bar ? `; one bar = ${gridInfo.bar.toFixed(2)} s` : ""}`}
+          </div>}
           {!ready && !job && <div className="text-[11px] text-amber-400">Still needed: {missing.join(", ")}.</div>}
           {job && (
             <div className={`rounded border p-2 text-[11px] ${job.status === "error" ? "border-red-800" : job.status === "done" ? "border-emerald-800" : "border-[var(--color-line)]"}`}>

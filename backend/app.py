@@ -38,6 +38,7 @@ from . import mv_finish as mv_finish_mod
 from . import mv_meridian as mv_meridian_mod
 from . import mv_move2d as mv_move2d_mod
 from . import mv_roomplate as mv_roomplate_mod
+from . import mv_beats as mv_beats_mod
 from . import rvc as rvc_mod
 from . import rvc_py
 from . import roformer_py
@@ -2367,7 +2368,11 @@ def mv_write(p: dict):
         locks? ([{job_id, script, scene, start?, end?}]: takes the user passed; kept as they are at
         their windows, the writer fills only the gaps; see _mv_resolve_locks),
         keep_locks_from? (a saved script name: its locked takes become `locks`, see
-        _mv_locks_from_script), async? (true: run in the background -> {job_id}; poll
+        _mv_locks_from_script),
+        bar_grid? (opt-in, default off: true or {min_bars? (1), beats_per_bar? (4), bpm? (a tempo
+        hint when the measured one is half or double)}: scene cuts on the song's measured bar
+        lines, at least min_bars long, varied lengths; see mv_beats / mv_writer.GRID_SWAPS),
+        async? (true: run in the background -> {job_id}; poll
         GET /api/mv/write_job/{id}, the Music Video tab's writer)}.
     Returns the script JSON and writes it + a readable .md under .mvwork/mv_scripts/."""
     if p.get("async"):
@@ -2503,7 +2508,48 @@ def mv_voices(p: dict):
             "duration": dur}
 
 
+def _mv_grid_opts(p):
+    """p["bar_grid"] -> None (off, the default) or {min_bars, beats_per_bar, bpm}; 400 on bad values."""
+    g = p.get("bar_grid")
+    if not g:
+        return None
+    g = {} if g is True else dict(g) if isinstance(g, dict) else None
+    if g is None:
+        raise HTTPException(400, "bar_grid must be true or {min_bars?, beats_per_bar?, bpm?}")
+    try:
+        out = {"min_bars": int(g.get("min_bars") or 1), "beats_per_bar": int(g.get("beats_per_bar") or 4),
+               "bpm": float(g["bpm"]) if g.get("bpm") else None}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "bar_grid: min_bars and beats_per_bar are whole numbers, bpm a number")
+    if not 1 <= out["min_bars"] <= 8 or not 2 <= out["beats_per_bar"] <= 7 or (out["bpm"] and not 40 <= out["bpm"] <= 260):
+        raise HTTPException(400, "bar_grid: min_bars 1-8, beats_per_bar 2-7, bpm 40-260")
+    return out
+
+
+def _mv_measure_grid(src, opts):
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    try:
+        g = mv_beats_mod.measure_grid(src, beats_per_bar=opts["beats_per_bar"], bpm_hint=opts["bpm"],
+                                      cache_dir=os.path.join(work, "bargrid"))
+    except ValueError as e:
+        raise HTTPException(400, f"bar grid: {e}")
+    return dict(g, min_bars=opts["min_bars"])
+
+
+@app.post("/api/mv/bar_grid")
+def mv_bar_grid(p: dict):
+    """The song's measured bar grid, for the writer's opt-in bar-grid cutting: p {audio_id,
+    beats_per_bar?, bpm?, min_bars?} -> the grid (bpm, bar seconds, downbeat, how it was found,
+    bar count) without the bar-line list. Cached per file; the first run takes a few seconds."""
+    src = _lib_source_path(os.path.basename(str(p.get("audio_id") or "")))
+    if not src:
+        raise HTTPException(400, "audio_id must reference a library track")
+    g = _mv_measure_grid(src, _mv_grid_opts({"bar_grid": {k: p.get(k) for k in ("min_bars", "beats_per_bar", "bpm")}}))
+    return {**{k: v for k, v in g.items() if k != "bar_lines"}, "bars": len(g["bar_lines"])}
+
+
 def _mv_write_check(p):
+    _mv_grid_opts(p)
     for k in ("audio_id", "title", "lyrics", "refs"):
         if not p.get(k):
             raise HTTPException(400, f"{k} is required")
@@ -2536,6 +2582,7 @@ def _mv_write_run(p, on_log=None):
         raise HTTPException(400, "align_on=vocals but no vocal stem is cached; POST /api/mv/stems first")
     align_path = stem if align_on in ("auto", "vocals") else None
     duet_in = _mv_duet_check(p)
+    grid_opts = _mv_grid_opts(p)
     if duet_in and align_on == "mix":
         raise HTTPException(400, "two singers are measured on the vocal stem: align_on mix cannot be used with them")
     try:
@@ -2571,7 +2618,8 @@ def _mv_write_run(p, on_log=None):
             model=p.get("model") or mv_writer_mod.WRITER_MODEL,
             effort=p.get("effort") or mv_writer_mod.WRITER_EFFORT,
             claude_model=CFG.get("claude_model", ""), cache_dir=os.path.join(work, "lyricalign"), log=_log,
-            align_path=align_path, known_locations=known, locks=locks, duet=duet)
+            align_path=align_path, known_locations=known, locks=locks, duet=duet,
+            bar_grid=_mv_measure_grid(src, grid_opts) if grid_opts else None)
     except HTTPException:
         raise
     except Exception as e:

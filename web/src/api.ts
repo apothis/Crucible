@@ -142,6 +142,7 @@ export const api = {
   mvStems: (p: { audio_id: string; force?: boolean }) => jpost("/api/mv/stems", p),   // vocal stem on the box
   mvWrite: (p: unknown) => jpost("/api/mv/write", p),                 // async: true -> {job_id}
   mvWriteJob: (id: string) => jget(`/api/mv/write_job/${id}`),
+  mvBarGrid: (p: { audio_id: string; min_bars?: number; beats_per_bar?: number; bpm?: number }) => jpost("/api/mv/bar_grid", p),   // measured tempo + downbeat (opt-in bar-grid cutting)
   mvUpscaleTakes: (p: { jobs: Record<string, string>; engine?: "flashvsr_plus" | "seedvr2" | "rtx_vsr"; scale?: number; temporal_compression?: 4 | 2 | 1; force?: boolean; script?: string }) => jpost("/api/mv/upscale_takes", p),   // FlashVSR+ or SeedVR2 on the box
   mvAssemblies: (script: string) => jget(`/api/mv/assemblies?script=${encodeURIComponent(script)}`),   // earlier cuts + their take maps       // diffusion upscale of a library clip
   ytWordmarkOptions: () => jget("/api/youtube/wordmark_options"),  // fonts/treatments + saved global choice
