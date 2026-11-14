@@ -240,3 +240,7 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   script; library rows source "Nobody Stays Dead". Dry runs (no GPU) of one scene of hers per place
   with her two references: every place's picture is in the request (7 places; the living room and
   hallway hold only plates). Plates refuse to dry-run until their own opening stills are filed (41).
+- 2026-11-14 the 41 plate opening stills given to the user as 5 GPT batch prompts grouped by place
+  (gate+porch 8, fresh grave 7, path+street 9, front room+hallway 7, lawn 10), each with a fixed
+  recurring-cast list (couple's look = my assumption: blonde ponytail / pink hoodie, dark hair /
+  navy bomber); record in `.mvwork/nsd_stills/opening_still_batches.md`. Files named s<scene>_*.png.
