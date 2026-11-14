@@ -2631,6 +2631,13 @@ def _mv_write_run(p, on_log=None):
     jpath = os.path.join(out_dir, f"{slug}_{stamp}.json")
     mpath = os.path.join(out_dir, f"{slug}_{stamp}.md")
     mv_writer_mod.mark_continuity(script)
+    # the song's own singer pictures carry over from its newest earlier script (same track, else
+    # same title); without them the tab shows its built-in default pictures from another song
+    rs, rs_from = mv_takes_mod.song_ref_stills(LIBRARY, os.path.basename(p["audio_id"]), p["title"],
+                                               exists=lambda i: bool(_lib_image_path(i)))
+    if rs and not script.get("ref_stills"):
+        script["ref_stills"], script["ref_stills_from"] = rs, rs_from
+        _log(f"singer pictures carried over from {rs_from}")
     with open(jpath, "w") as f:
         json.dump(script, f, indent=1)
     with open(mpath, "w") as f:

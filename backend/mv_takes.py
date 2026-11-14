@@ -20,6 +20,44 @@ def scripts_dir(library_dir):
     return os.path.join(os.path.dirname(library_dir), ".mvwork", "mv_scripts")
 
 
+def song_ref_stills(library_dir, audio_id, title, exists=None):
+    """The singer's pictures a NEW script of a song starts with: ref_stills of the newest saved
+    script of the same track, else of the newest one with the same title (another master of the
+    song). `exists(id)` filters out pictures no longer in the library. Returns (ref_stills, name)
+    or ({}, None). A fresh write used to start with none, so the tab fell back to its built-in
+    default pictures from another song (user caught it, 2026-11-14)."""
+    d = scripts_dir(library_dir)
+    if not os.path.isdir(d):
+        return {}, None
+    key = re.sub(r"[^a-z0-9]+", " ", str(title or "").lower()).strip()
+    by_track, by_title = [], []
+    for fn in os.listdir(d):
+        if not fn.endswith(".json"):
+            continue
+        path = os.path.join(d, fn)
+        try:
+            with open(path) as fh:
+                s = json.load(fh)
+        except Exception:
+            continue
+        rs = s.get("ref_stills") if isinstance(s, dict) else None
+        if not isinstance(rs, dict):
+            continue
+        rs = {k: v for k, v in rs.items() if v and (exists is None or exists(v))}
+        if not rs:
+            continue
+        row = (os.path.getmtime(path), fn, rs)
+        if audio_id and s.get("audio_id") == audio_id:
+            by_track.append(row)
+        elif key and re.sub(r"[^a-z0-9]+", " ", str(s.get("title") or "").lower()).strip() == key:
+            by_title.append(row)
+    for rows in (by_track, by_title):
+        if rows:
+            _, fn, rs = max(rows)
+            return dict(rs), fn
+    return {}, None
+
+
 def checks_dir(library_dir):
     return os.path.join(os.path.dirname(library_dir), ".mvwork", "mv_take_checks")
 
