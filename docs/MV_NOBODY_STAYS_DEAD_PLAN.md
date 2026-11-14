@@ -235,3 +235,8 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   MEDIUM (knees up, a step back from the lens), action / others / opening still prompt to match:
   `nobody_stays_dead_20261113_225747_rw19_20261113_235035` = the CURRENT script. 0 scene problems,
   0 clip problems. The 8 new location still prompts given to the user in chat.
+- 2026-11-14 the 8 location stills (GPT batch, "NSD locations.zip") checked against their prompts
+  (all match, no people) and filed through /api/mv/locations/import_still against the current
+  script; library rows source "Nobody Stays Dead". Dry runs (no GPU) of one scene of hers per place
+  with her two references: every place's picture is in the request (7 places; the living room and
+  hallway hold only plates). Plates refuse to dry-run until their own opening stills are filed (41).
