@@ -555,9 +555,37 @@ def reconcile_loop():
 app = FastAPI(title="MusicGen")
 
 
+def _adopt_unfinished_video_jobs():
+    """Video jobs still on the box from before a restart go back into JOBS (status pending), so
+    the box's websocket messages (same CLIENT_ID) update their status and progress again and
+    they finish through the normal on_complete path. Before this they rendered with no progress
+    and were only picked up at the end by reconcile_loop (user, NSD batch 2026-11-14)."""
+    try:
+        with db() as conn:
+            rows = conn.execute("SELECT id, created, mode, params FROM jobs WHERE mode IN "
+                                "('videostill','videoclip','videolipsync') AND status IN ('pending','running')").fetchall()
+    except Exception:
+        return 0
+    n = 0
+    with LOCK:
+        for r in rows:
+            if r["id"] in JOBS:
+                continue
+            try:
+                params = json.loads(r["params"] or "{}")
+            except Exception:
+                params = {}
+            JOBS[r["id"]] = {"created": r["created"] or time.time(), "mode": r["mode"], "status": "pending",
+                             "progress": 0, "max": 0, "params": params, "adopted": True}
+            n += 1
+    print(f"adopted {n} unfinished video jobs from the library")
+    return n
+
+
 @app.on_event("startup")
 def startup():
     init_db()
+    _adopt_unfinished_video_jobs()
     threading.Thread(target=ws_loop, daemon=True).start()
     threading.Thread(target=reconcile_loop, daemon=True).start()
 
