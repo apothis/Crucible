@@ -1859,16 +1859,63 @@ def mv_render_script_job(jid: str):
         return _mv_batch_view(jid, j)
 
 
+def _mv_open_renders(rows) -> int:
+    """How many of a batch's queued renders are not finished yet (library status pending/running)."""
+    ids = [r.get("job_id") for r in rows if r.get("status") == "queued" and r.get("job_id")]
+    if not ids:
+        return 0
+    with db() as conn:
+        qs = ",".join("?" * len(ids))
+        return conn.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({qs}) AND status IN ('pending','running')",
+                            ids).fetchone()[0]
+
+
+def _mv_disk_batch(script: str):
+    """The newest LIVE batch manifest of a script on disk (written when its sending ended), as a
+    batch view: the in-memory record is gone after a backend restart, and a long render outlives it."""
+    d = os.path.join(os.path.dirname(LIBRARY), ".mvwork", "mv_batches")
+    best = None
+    for fn in (os.listdir(d) if os.path.isdir(d) else []):
+        if "_batch_" not in fn or not fn.endswith(".json"):
+            continue
+        path = os.path.join(d, fn)
+        try:
+            with open(path) as f:
+                man = json.load(f)
+        except Exception:
+            continue
+        if man.get("dry_run") or os.path.basename(str(man.get("script") or "")) != os.path.basename(script):
+            continue
+        if not best or man.get("created", 0) > best[1].get("created", 0):
+            best = (path, man)
+    if not best:
+        return None
+    path, man = best
+    rows = [{k: r.get(k) for k in ("index", "title", "status", "error", "job_id")} for r in man.get("scenes", [])]
+    created = man.get("created") or os.path.getmtime(path)
+    return {"id": "disk:" + os.path.basename(path), "status": "error" if man.get("stopped") else "done",
+            "error": man.get("stopped"), "manifest": path, "script": man.get("script"),
+            "counts": {k: sum(1 for r in rows if r["status"] == k) for k in ("queued", "existing", "skipped", "error", "blocked")},
+            "total": sum(1 for r in rows if r["status"] not in ("existing", "skipped")),
+            "seconds": round(time.time() - created, 1), "ended_ago": round(time.time() - os.path.getmtime(path), 1),
+            "rows": rows}
+
+
 @app.get("/api/mv/render_script_latest")
 def mv_render_script_latest(script: str):
-    """The newest background batch for a script (since the backend started), so the tab picks its
-    progress back up after leaving the step or reloading. {job: null} when there is none."""
+    """The newest background batch for a script, so the tab picks its progress back up after
+    leaving the step or reloading. {job: null} when there is none. `open` = its queued renders
+    not finished yet: the tab keeps the batch's bars up while any are (a whole song renders for
+    many hours; user 2026-11-14). After a backend restart the newest batch manifest on disk stands in."""
     with LOCK:
         mine = [(jid, j) for jid, j in MV_BATCHES.items() if j.get("script") == script]
-        if not mine:
-            return {"job": None}
-        jid, j = max(mine, key=lambda x: x[1]["created"])
-        return {"job": _mv_batch_view(jid, j)}
+        view = _mv_batch_view(*max(mine, key=lambda x: x[1]["created"])) if mine else None
+    if view is None:
+        view = _mv_disk_batch(script)
+    if view is None:
+        return {"job": None}
+    view["open"] = _mv_open_renders(view["rows"])
+    return {"job": view}
 
 
 SCENE_RECIPE_KEYS = ("turbo", "steps", "sampler", "scheduler", "anchor_first")
