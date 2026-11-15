@@ -57,6 +57,13 @@ function; a rule only in prose is for the writer's system prompt or the person r
   are switches for dense songs, not a new default.** [U: the whole song in the latents may put
   the rest of the imagery on the beat; untested either way] The muxed master is always the mix
   window. Code: `mv_stems.lock_source`, chain `lock` option, node 41.
+- **A silent scene with an open mouth in shot (an extra cheering, a creature roaring) lip-syncs
+  the vocal under it unless the vocal is muted from the lock.** [U 2026-11-15, NSD scene 21 "Jaw
+  drop": the cheering zombie mouthed her lines on the full-mix lock; same seed with `mute` over
+  the scene's whole render window: "It doesnt lipsync in the 2nd run"] The removed audio equals
+  the vocal stem inside the window and nothing outside it [M: -18.8 dB both, residual -91 dB
+  outside]. Per-scene recipe `mute: [[start, end]]` (song seconds); the mux keeps the mix.
+  Not yet a default; ~30 of NSD's silent scenes play over the vocal.
 - **The window gets one extra second of real audio for the node's lookahead, and a final scene
   that overshoots the song is padded with silence and trimmed at assembly.** [M: G2 overshoot
   refusal, fixed] Code: `_h3_chain` in `app.py`.

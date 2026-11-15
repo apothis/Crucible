@@ -244,3 +244,10 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   (gate+porch 8, fresh grave 7, path+street 9, front room+hallway 7, lawn 10), each with a fixed
   recurring-cast list (couple's look = my assumption: blonde ponytail / pink hoodie, dark hair /
   navy bomber); record in `.mvwork/nsd_stills/opening_still_batches.md`. Files named s<scene>_*.png.
+- 2026-11-15 scene 21 "Jaw drop": the zombie lip-synced her vocal (full-mix lock). Re-rendered on
+  the same seed with the vocal muted over 65.0-70.5 s: no lip-sync [U]. Both takes add a SECOND jaw
+  in his hand while his face keeps its own (frames 1.8-4.8 s) [M]. Proposed: an end picture with the
+  jaw off, pinned as the last frame; the user is trying the GPT still first (filter risk). User:
+  the shot needs to be a little longer, and across the batch actions land late in the render and
+  get cut. Measured: renders total 407 s for 230 s on screen (1.8x); 27 one-bar scenes (1.55 s)
+  render 5.17 s (MIN_SINGLE_FRAMES = 124), showing 30%; median scene shows 60% of its render.
