@@ -267,3 +267,7 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   all 11 on the box). 4 have their own opening picture made from the old path picture (05, 41, 58,
   69; files s06, s42, s59, s70): flagged for the user to re-make; their renders wait for the new
   pictures. Locks are untouched: the old takes stay chosen until the user picks the new ones.
+- 2026-11-15 the four path opening pictures re-made by the user on the new path picture, filed and
+  rendered on the original seeds (locked takes; 58 Hey! fists has no lock, so its batch take's seed
+  420372130). s70 Dawn shuffle home: nobody carries his own arm in the picture though the text has
+  one (watch for an arm appearing from nowhere, as the jaw did in scene 21).
