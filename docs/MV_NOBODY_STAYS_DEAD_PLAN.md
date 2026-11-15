@@ -259,3 +259,11 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   over the next one; keeps its plan, clips and lock while its render covers the new end). CURRENT
   script: `nobody_stays_dead_20261113_225747_rw19_20261113_235035_mg21_20261115_113912` (77 scenes,
   70 locked); the project points at it.
+- 2026-11-15 the cemetery path location replaced by the user's new picture (library still 7d6967c9,
+  was bc0b8ac0; it adds a headstone with an engraved grinning face). Set on the library row and on
+  the current script's location (old id kept as still_id_before). 15 scenes are on the path: 11 use
+  the location picture directly (00 as frame 0 on i2v; 10, 13, 14, 20, 22, 25, 26, 42, 57, 60 as a
+  reference on ref2va) and were re-rendered on their locked takes' seeds, 20 steps (dry runs clean,
+  all 11 on the box). 4 have their own opening picture made from the old path picture (05, 41, 58,
+  69; files s06, s42, s59, s70): flagged for the user to re-make; their renders wait for the new
+  pictures. Locks are untouched: the old takes stay chosen until the user picks the new ones.
