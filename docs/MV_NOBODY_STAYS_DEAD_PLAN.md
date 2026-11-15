@@ -284,3 +284,10 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   bride's face": the new text describes the bride only. CURRENT script:
   `..._mg21_20261115_113912_rw70_20261115_125351` (only scene 70 differs); project points at it.
   Re-rendered on seed 1065630093, 20 steps.
+- 2026-11-15 full cut lip sync off, worse after 1:30, single scenes fine [U]. Measured: all 25
+  lip-sync takes match their song windows at 0 ms (envelope xcorr); the ASSEMBLY drifted. Each
+  scene was trimmed with its own -t length, rounded to whole frames, so the fractions added up:
+  picture 229.33 s vs song 229.93 s, 0.33 s early at 1:30, 0.6 s at the end. Fix in
+  _mv_assemble_run: every scene cut on one 24 fps grid from the song start (frames = round(end) -
+  round(start)), frames picked by index after fps=24, short takes hold their last frame and are
+  listed as short_takes. Re-assembled with the same settings.

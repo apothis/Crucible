@@ -2205,29 +2205,40 @@ def _mv_assemble_run(p: dict, progress=None):
     os.makedirs(out_dir, exist_ok=True)
     crf = int(p.get("crf") or 18)
     w, h = int(p.get("width") or 1344), int(p.get("height") or 768)
-    listing = []
+    listing, short_takes = [], []
     n_steps = len(parts) + 3
+    # every scene is cut on ONE 24 fps grid laid from the song start: scene frames = round(end) - round(start)
+    # on that grid, so rounding never adds up along the cut (trimming each scene to its own -t length lost a
+    # fraction of a frame per scene: NSD 2026-11-15 drifted 0.33 s early by 1:30, 0.6 s by the end)
+    origin = float(script["scenes"][0]["start"])
     for k, (sc, path) in enumerate(parts):
         if progress:
             progress(k, n_steps)
-        dur = float(sc["end"]) - float(sc["start"])
+        f0 = round((float(sc["start"]) - origin) * 24)
+        n = max(1, round((float(sc["end"]) - origin) * 24) - f0)
         # a locked take may be trimmed: its render starts at take_start, the scene later
-        inpt = max(0.0, float(sc["start"]) - float(sc["locked"].get("take_start", sc["start"]))) if sc.get("locked") else 0.0
+        take_origin = float(sc["locked"].get("take_start", sc["start"])) if sc.get("locked") else float(sc["start"])
+        first = max(0, round((origin + f0 / 24 - take_origin) * 24))     # the take's frame shown on grid frame f0
         # optional locked.head_skip (s, default 0): drop a take's opening frames, e.g. an I2V take that sits
         # frozen on its still before the motion starts; only for the locked take itself, and it must fit
         L = sc.get("locked") or {}
+        length = musicvideo_mod.audio_duration(path) or 0.0
         if L.get("head_skip") and jobs.get(sc["index"]) == L.get("job_id"):
-            length = musicvideo_mod.audio_duration(path) or 0.0
-            skip = round(float(L["head_skip"]) * 24) / 24      # whole frames: an off-grid seek repeats frame 1
-            if length and inpt + skip + dur > length + 0.05:
-                raise HTTPException(400, f"scene {sc['index']}: head_skip {skip}s leaves {length - inpt - skip:.2f}s "
-                                         f"of the take for a {dur:.2f}s scene")
-            inpt += skip
+            skip = round(float(L["head_skip"]) * 24)
+            if length and (first + skip + n) / 24 > length + 0.05:
+                raise HTTPException(400, f"scene {sc['index']}: head_skip {skip / 24:.3f}s leaves "
+                                         f"{length - (first + skip) / 24:.2f}s of the take for a {n / 24:.2f}s scene")
+            first += skip
+        if length and int(length * 24 + 0.01) < first + n:          # take runs out: its last frame is held
+            short_takes.append({"index": sc["index"], "frames_short": first + n - int(length * 24 + 0.01)})
         seg = os.path.join(out_dir, f"scene_{sc['index']:02d}.mp4")
-        audio = ["-c:a", "aac", "-b:a", "320k"] if partial else ["-an"]
-        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{inpt:.3f}", "-i", path, "-t", f"{dur:.3f}", *audio,
-               "-vf", f"scale={w}:{h}:flags=lanczos,fps=24,format=yuv420p", "-c:v", "libx264", "-preset", "medium",
-               "-crf", str(crf), seg]
+        # frames are picked by index after fps=24 (no float seek, which could drop or repeat a frame)
+        audio = (["-af", f"atrim=start={first / 24:.6f}:duration={n / 24:.6f},asetpts=PTS-STARTPTS",
+                  "-c:a", "aac", "-b:a", "320k"] if partial else ["-an"])
+        vf = (f"fps=24,trim=start_frame={first},setpts=PTS-STARTPTS,tpad=stop={n}:stop_mode=clone,"
+              f"scale={w}:{h}:flags=lanczos,format=yuv420p")
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, *audio, "-vf", vf, "-frames:v", str(n),
+               "-c:v", "libx264", "-preset", "medium", "-crf", str(crf), seg]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             raise HTTPException(500, f"trim failed on scene {sc['index']}: {r.stderr[-400:]}")
@@ -2251,6 +2262,8 @@ def _mv_assemble_run(p: dict, progress=None):
                "missing": [m["index"] for m in missing], "dir": out_dir, "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
         if p.get("use_upscaled"):
             res.update(upscaled=upscaled, not_upscaled=not_upscaled)
+        if short_takes:
+            res["short_takes"] = short_takes
         mv_takes_mod.record_assembly(out_dir, p, res)
         return res
     fade = float(p.get("fade") if p.get("fade") is not None else 1.5)
@@ -2267,6 +2280,8 @@ def _mv_assemble_run(p: dict, progress=None):
            "jobs": {sc["index"]: jobs[sc["index"]] for sc, _ in parts}}
     if p.get("use_upscaled"):
         res.update(upscaled=upscaled, not_upscaled=not_upscaled)
+    if short_takes:
+        res["short_takes"] = short_takes
     intro, end_card = p.get("intro"), p.get("end_card")
     if intro or end_card:
         if progress:
