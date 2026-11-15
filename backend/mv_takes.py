@@ -228,7 +228,10 @@ def takes_for_script(rows, script_name, library_dir, scene=None, scenes=None, an
                 # rendered before the scene was rewritten or marked for a re-render: an old shot
                 # (still listed, but the scene counts as unrendered for a batch)
                 "stale": bool(after.get(int(idx)) and float(r.get("created") or 0) < after[int(idx)]),
-                "check": cached_check(library_dir, jid) if done else None}
+                "check": cached_check(library_dir, jid) if done else None,
+                # when the render landed (the file time): a take that lands after the scene's
+                # choice is a new take to review (locked.chosen_at)
+                "finished": os.path.getmtime(path) if done else None}
         out.setdefault(int(idx), []).append(take)
     for k in out:
         out[k].sort(key=lambda t: -(t.get("created") or 0))

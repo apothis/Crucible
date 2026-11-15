@@ -12,7 +12,7 @@ import { openLightbox } from "./Lightbox";
 // is its lock in the script (so a choice survives reloads and rewrites).
 
 type Clip = { index: number; song_start: number; song_end: number; seconds: number; frames: number; lines?: string[]; vocal?: boolean; prompt?: string; problems?: string[] };
-type Locked = { job_id: string; take_start: number; script: string };
+type Locked = { job_id: string; take_start: number; script: string; chosen_at?: number };
 type Scene = {
   takes_after?: number;
   index: number; title: string; start: number; end: number; location?: string; setting?: string; performance?: string; singer?: string;
@@ -33,7 +33,7 @@ type Voices = { how: string; swap: boolean; separation: number; sung_seconds: { 
 type ScriptRow = { name: string; title: string; audio_id: string; mtime: number; duration: number; scenes: number; clips: number; stills: number; locks: number; problems: number; videos?: number; last_video?: string | null };
 type Check = { floor_r: number | null; floor_lag: number | null; floor_ok: boolean; opening_jump: number | null; opening_flag: boolean; sheet_url: string; seconds: number | null; planned_seconds: number | null };
 type Upscale = { id: string; status: string; progress: number; max: number; error?: string | null; media_url: string | null; engine?: string; scale?: number; resolution?: number | null; fps?: number | null; fps_fixed?: boolean | null; temporal_compression?: number | null; newer?: Upscale | null };
-type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; stale?: boolean; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
+type Take = { id: string; created: number; status: string; progress: number; max: number; media_url: string | null; seconds: number | null; params: Record<string, any>; check: Check | null; from_script?: string | null; stale?: boolean; finished?: number | null; upscaled?: Upscale | null; upscales?: Partial<Record<UpEngine, Upscale>> };
 type Cut = { stamp: string; file: string; path: string; seconds: number | null; scenes: number | null; partial: boolean; script: string | null; jobs: Record<string, string>; intro: boolean; end_card: { secs: number; text: string } | null; library_id?: string | null; media_url?: string | null; mtime: number };
 type Dry = { settings: Record<string, any>; flags: string[]; prompt_hash: string; prompts: string[]; clips: number; lane: string; ref_ids: string[]; first_frame_id?: string | null; anchor_first?: boolean; anchor_from?: string | null; end_still_id?: string | null; rail_frames?: number[] | null; variant?: string | null; sig: string };
 type Target = { kind: RefKind } | { kind: "scene"; idx: number } | { kind: "after"; idx: number } | { kind: "empty"; idx: number; take: string } | { kind: "place"; id: string } | null;
@@ -1273,6 +1273,15 @@ function TakesStep(p: {
     finally { setBusyMsg(""); }
   };
 
+  // finished takes that landed after the scene's take was chosen: to review. The choice's moment is
+  // locked.chosen_at (choosing again, or "keep this one", moves it); an older lock without it counts
+  // from when its own take landed
+  const newSinceChoice = (sc: Scene) => {
+    if (!sc.locked) return [] as Take[];
+    const l = list(sc.index);
+    const base = sc.locked.chosen_at ?? l.find((t) => t.id === sc.locked!.job_id)?.finished ?? 0;
+    return l.filter((t) => t.id !== sc.locked!.job_id && t.status === "done" && !t.stale && (t.finished ?? 0) > base);
+  };
   const stateOf = (sc: Scene) => {
     const l = list(sc.index);
     const run = l.find((t) => t.status !== "done");
@@ -1283,6 +1292,8 @@ function TakesStep(p: {
       const what = run.status === "running" ? `rendering ${pct(run.progress, run.max)}`.trim() : "queued on the box";
       return { tone: "accent" as const, text: sc.locked ? `${what} · take chosen` : what, todo: false };
     }
+    const fresh = newSinceChoice(sc).length;
+    if (sc.locked && fresh) return { tone: "warn" as const, text: `${fresh} new take${fresh === 1 ? "" : "s"} to review · take chosen`, todo: true };
     if (sc.locked) return { tone: "ok" as const, text: "take chosen", todo: false };
     if (!n && (old || run)) return { tone: "warn" as const, text: "needs a new render (old shots only)", todo: true };
     if (n) return { tone: "warn" as const, text: `${n} take${n === 1 ? "" : "s"}, none chosen`, todo: true };
@@ -1413,6 +1424,7 @@ function TakesStep(p: {
 
   const shown = script.scenes.filter((s) => filter === "all" || stateOf(s).todo);
   const tl = list(scene.index);
+  const freshHere = newSinceChoice(scene);
   const lockedElsewhere = scene.locked && !tl.some((t) => t.id === scene.locked!.job_id);
   const dr = dry[scene.index];
 
@@ -1675,8 +1687,10 @@ function TakesStep(p: {
                         : <div className="rounded bg-black/40 p-4"><Bar label={`${t.status} on the box`} frac={t.max ? (t.progress || 0) / t.max : 0} /></div>}
                       <div className="flex flex-wrap items-center gap-2">
                         {t.status === "done" && (chosen
-                          ? <><Pill tone="ok">in the video</Pill><GhostButton onClick={() => choose(scene.index, null)}>remove</GhostButton></>
+                          ? <><Pill tone="ok">in the video</Pill><GhostButton onClick={() => choose(scene.index, null)}>remove</GhostButton>
+                            {freshHere.length > 0 && <Action onClick={() => choose(scene.index, t.id)} title="you have looked at the new takes and this one stays: the scene stops asking for a review">keep this one</Action>}</>
                           : <Action onClick={() => choose(scene.index, t.id)} title="this take plays in the scene; it replaces the scene's current choice">Use in the video</Action>)}
+                        {freshHere.some((x) => x.id === t.id) && <Pill tone="warn" title="finished after this scene's take was chosen">new, to review</Pill>}
                         <span className="text-[11px] text-[var(--color-muted)]">{when(t.created)} · seed {t.params.seed} · {t.params.turbo ? "turbo" : "base"}{t.params.steps ? ` ${t.params.steps} steps` : ""}{t.params.sampler && t.params.sampler !== DEFAULT_SAMPLER ? ` ${t.params.sampler}` : ""}{t.params.scheduler && t.params.scheduler !== DEFAULT_SCHEDULER ? `/${t.params.scheduler}` : ""}{t.seconds !== null ? ` · ${t.seconds.toFixed(1)} s` : ""}{t.from_script ? " · earlier script" : ""}</span>
                         {t.stale && <Pill tone="warn" title="rendered before this scene was rewritten or marked for a new render">old shot</Pill>}
                         {t.params.variant === "still" && <Pill tone="muted" title="rendered with a still camera: add the camera move on this take">still version</Pill>}

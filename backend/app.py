@@ -3715,6 +3715,9 @@ def mv_lock_take(p: dict):
             if p.get(k) is not None:
                 L[k] = float(p[k])
         sc["locked"] = _mv_resolve_locks([L])[0]["locked"]
+        # the moment of the choice: takes that land after it are flagged for review in the tab;
+        # choosing the same take again ("keep this one") clears the flag
+        sc["locked"]["chosen_at"] = time.time()
     else:
         sc.pop("locked", None)
     with open(os.path.join(mv_takes_mod.scripts_dir(LIBRARY), name), "w") as f:
