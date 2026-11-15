@@ -277,3 +277,10 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   has no door. Both phrases removed from the porch text (script + library; old text kept as
   description_before). Scene 35 re-rendered on seed 337577248, 20 steps; prompt checked door-free.
   46 Cat flap keeps its door through its own text and opening picture.
+- 2026-11-15 scene 70 "Bride lies down": the bride turned into the singer within the clip [U]. The
+  writer's clip pass had written her as "<Subject 1> (S1), the zombie bride" wearing the singer's
+  dress, fishnets, crown and make-up (scene camera line said "toward her face"); no other
+  singer-free scene had it (scanned). Rewritten via rewrite_scene with the camera line "toward the
+  bride's face": the new text describes the bride only. CURRENT script:
+  `..._mg21_20261115_113912_rw70_20261115_125351` (only scene 70 differs); project points at it.
+  Re-rendered on seed 1065630093, 20 steps.
