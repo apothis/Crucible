@@ -271,3 +271,9 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   rendered on the original seeds (locked takes; 58 Hey! fists has no lock, so its batch take's seed
   420372130). s70 Dawn shuffle home: nobody carries his own arm in the picture though the text has
   one (watch for an arm appearing from nowhere, as the jaw did in scene 21).
+- 2026-11-15 scene 35 "Doorbell cam: her": both takes drew a blue front door at the left edge [U];
+  the porch picture has none. Source: the porch location text ("mounted beside the door ... a dark
+  blue front door with a cat flap at its foot"), sent with every porch render; scene 35's own text
+  has no door. Both phrases removed from the porch text (script + library; old text kept as
+  description_before). Scene 35 re-rendered on seed 337577248, 20 steps; prompt checked door-free.
+  46 Cat flap keeps its door through its own text and opening picture.
