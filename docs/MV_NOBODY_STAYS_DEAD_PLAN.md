@@ -251,3 +251,11 @@ One variable each; a moving shot that fails gets 3 seeds before it is judged.
   the shot needs to be a little longer, and across the batch actions land late in the render and
   get cut. Measured: renders total 407 s for 230 s on screen (1.8x); 27 one-bar scenes (1.55 s)
   render 5.17 s (MIN_SINGLE_FRAMES = 124), showing 30%; median scene shows 60% of its render.
+- 2026-11-15 take 3 of scene 21 (end picture = jaw off, pinned last frame): the jaw comes off [U],
+  late, then he freezes on the end picture. Measured frame-to-frame motion: dancing 10-23 until
+  3.0 s, falling 3.04-3.21 s, under 1 from 3.25 s (frame 78 of 124), fully still from 4.71 s. User:
+  the clip ends where he stops. Scene 21 now runs two bars, 65.12-68.22 s (ends 0.15 s before the
+  freeze), take 3 locked; "Arm wave" removed. New edit POST /api/mv/merge_scenes (a scene takes
+  over the next one; keeps its plan, clips and lock while its render covers the new end). CURRENT
+  script: `nobody_stays_dead_20261113_225747_rw19_20261113_235035_mg21_20261115_113912` (77 scenes,
+  70 locked); the project points at it.

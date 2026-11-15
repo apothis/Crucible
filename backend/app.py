@@ -3404,6 +3404,59 @@ def mv_move_cut(p: dict):
     return {"files": {"json": jpath, "md": mpath}, "scenes": out, "log": log_lines}
 
 
+@app.post("/api/mv/merge_scenes")
+def mv_merge_scenes(p: dict):
+    """Scene `scene` takes over the scene after it: the next scene is removed and later scenes are
+    renumbered (their song windows, stills, locks and takes are unchanged). The longer scene keeps
+    its plan, clips and passed take while its render still covers the new end; otherwise the
+    writer's clip pass rewrites it under the CURRENT rules. Saved as a NEW script next to the
+    original (untouched). p: {script, scene (0-based, the scene that grows), provider?, model?,
+    effort?}. Returns {files, scene: {index, title, start, end, locked, clips}, removed: {title,
+    start, end}, log}."""
+    script, name = _mv_load_script(p.get("script"))
+    if name == "(inline)":
+        raise HTTPException(400, "merging needs a saved script")
+    try:
+        idx = int(p.get("scene", -1))
+        a, b = mv_writer_mod.merge_next(script, idx)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    work = os.path.join(os.path.dirname(LIBRARY), ".mvwork")
+    log_lines = []
+
+    def _log(s):
+        print(s)
+        log_lines.append(s)
+
+    if not a.get("clips"):
+        try:
+            mv_writer_mod.write_scene_clips(
+                script, a, p.get("provider") or "claude_sub", p.get("model") or mv_writer_mod.WRITER_MODEL,
+                p.get("effort") or mv_writer_mod.WRITER_EFFORT, CFG.get("claude_model", ""),
+                os.path.join(work, "lyricalign"), _log)
+        except Exception as e:
+            raise HTTPException(500, f"writer failed: {e}")
+    script["clip_count"] = sum(len(s["clips"]) for s in script["scenes"])
+    script["scene_count"] = len(script["scenes"])
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    script.setdefault("rewrites", []).append({"merge": idx, "removed": b.get("title"), "to": a["end"],
+                                              "from": os.path.basename(str(name)), "stamp": stamp})
+    out_dir = os.path.join(work, "mv_scripts")
+    os.makedirs(out_dir, exist_ok=True)
+    child = mv_takes_mod.child_name(name, f"mg{idx}", stamp, script)
+    jpath = os.path.join(out_dir, f"{child}.json")
+    mpath = os.path.join(out_dir, f"{child}.md")
+    mv_writer_mod.mark_continuity(script)
+    with open(jpath, "w") as f:
+        json.dump(script, f, indent=1)
+    with open(mpath, "w") as f:
+        f.write(mv_writer_mod.script_markdown(script))
+    return {"files": {"json": jpath, "md": mpath},
+            "scene": {"index": a["index"], "title": a.get("title"), "start": a["start"], "end": a["end"],
+                      "locked": a.get("locked"), "clips": len(a.get("clips") or [])},
+            "removed": {"title": b.get("title"), "start": b["start"], "end": b["end"]}, "log": log_lines}
+
+
 def _lib_video_path(vid):
     """Absolute path to a library video (clip or assembled music video) by id."""
     vid = os.path.basename(vid or "")

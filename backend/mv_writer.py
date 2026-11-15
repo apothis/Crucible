@@ -1600,6 +1600,33 @@ def move_cut(script, index, to, first=None, second=None):
     return a, b
 
 
+def merge_next(script, index):
+    """Scene `index` takes over the scene after it (user, 2026-11-15: a gag shot needed the next
+    shot's bar). The next scene is removed and every later scene renumbered; their song windows
+    are unchanged, so their takes still match by window. The longer scene keeps its plan, clips
+    and passed take when its render still covers the new end (a one-clip scene renders past its
+    end); otherwise it loses them (run write_scene_clips on it). Returns (scene, removed)."""
+    if not 0 <= index < len(script["scenes"]) - 1:
+        raise ValueError(f"scene {index} has no scene after it")
+    a, b = script["scenes"][index], script["scenes"][index + 1]
+    new_end = float(b["end"])
+    plan = a.get("plan") or {}
+    covered = bool(plan) and float(plan.get("song_end", 0)) >= new_end - 0.01
+    L = a.get("locked") or {}
+    lock_ok = bool(L) and covered and new_end - float(L.get("take_start", a["start"])) <= float(plan.get("span_seconds", 0)) + 0.01
+    a["end"] = new_end
+    if not lock_ok:
+        a.pop("locked", None)
+    if not covered:
+        a.pop("plan", None)
+        a.pop("clips", None)
+    del script["scenes"][index + 1]
+    for k, sc in enumerate(script["scenes"]):
+        sc["index"] = k
+    _finish_scene(a, script["facts"]["sections"])
+    return a, b
+
+
 def scene_bars(sc, grid):
     """A scene's length in bars: the bar lines it starts (the first scene counts the song's
     first bar line; the last one ignores the part bar after the final bar line)."""
