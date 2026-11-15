@@ -1278,8 +1278,12 @@ function TakesStep(p: {
     const run = l.find((t) => t.status !== "done");
     const n = l.filter((t) => t.status === "done" && !t.stale).length;
     const old = l.filter((t) => t.status === "done" && t.stale).length;
+    // an open render shows first, also on a scene whose take is already chosen (a new take on its way)
+    if (run && !run.stale && run.status !== "error") {
+      const what = run.status === "running" ? `rendering ${pct(run.progress, run.max)}`.trim() : "queued on the box";
+      return { tone: "accent" as const, text: sc.locked ? `${what} · take chosen` : what, todo: false };
+    }
     if (sc.locked) return { tone: "ok" as const, text: "take chosen", todo: false };
-    if (run && !run.stale) return { tone: "accent" as const, text: `rendering ${pct(run.progress, run.max)}`, todo: false };
     if (!n && (old || run)) return { tone: "warn" as const, text: "needs a new render (old shots only)", todo: true };
     if (n) return { tone: "warn" as const, text: `${n} take${n === 1 ? "" : "s"}, none chosen`, todo: true };
     return { tone: "muted" as const, text: "not rendered", todo: true };
@@ -1384,6 +1388,28 @@ function TakesStep(p: {
   const renderFrac = bQueued.length ? bQueued.reduce((a, r) => a + takeFrac(r), 0) / bQueued.length : 0;
   const renderNow = bQueued.find((r) => { const f = takeFrac(r); return f > 0 && f < 1; });
   const errText = (e: unknown) => (typeof e === "string" ? e : JSON.stringify(e));
+  // every open render of this script that the batch bar does not cover (single takes, re-renders):
+  // one bar for them, counted from when this page saw them open
+  const inBatch = new Set((bJob?.rows || []).map((r) => r.job_id).filter(Boolean) as string[]);
+  const openLoose = script.scenes.flatMap((sc) => list(sc.index).filter((t) => t.status !== "done" && t.status !== "error" && !t.stale && !inBatch.has(t.id)).map((t) => ({ sc, t })));
+  const [looseSeen, setLooseSeen] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!openLoose.length) return;
+    setLooseSeen((m) => {
+      const add = openLoose.filter(({ t }) => !(t.id in m));
+      if (!add.length) return m;
+      const n = { ...m }; add.forEach(({ sc, t }) => { n[t.id] = sc.index; }); return n;
+    });
+  }, [openLoose.map(({ t }) => t.id).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setLooseSeen({}); }, [scriptName]);
+  const looseFrac = (id: string, idx: number) => {
+    const t = list(idx).find((x) => x.id === id);
+    if (!t || t.status === "done" || t.status === "error") return 1;
+    return t.status === "running" && t.max ? Math.min(0.99, (t.progress || 0) / t.max) : 0;
+  };
+  const looseIds = Object.entries(looseSeen);
+  const looseDone = looseIds.filter(([id, idx]) => looseFrac(id, idx) === 1).length;
+  const looseNow = openLoose.find(({ t }) => t.status === "running");
 
   const shown = script.scenes.filter((s) => filter === "all" || stateOf(s).todo);
   const tl = list(scene.index);
@@ -1423,6 +1449,16 @@ function TakesStep(p: {
                 : `stopped: ${bJob.error || "error"}`}
             </div>
             {bJob.rows.filter((r) => r.status === "blocked" || r.status === "error").map((r) => <div key={r.index} className="mt-1 text-amber-300">scene {r.index} {r.title}: {errText(r.error)}</div>)}
+          </div>
+        )}
+        {looseIds.length > 0 && (
+          <div className="space-y-2 rounded border border-[var(--color-line)] p-2 text-[11px]">
+            <Bar label={`single renders on the box: ${looseDone} of ${looseIds.length} done${looseNow ? ` · now scene ${String(looseNow.sc.index).padStart(2, "0")} ${looseNow.sc.title || ""} ${pct(looseNow.t.progress || 0, looseNow.t.max || 0)}` : ""}`}
+              frac={looseIds.reduce((a, [id, idx]) => a + looseFrac(id, idx), 0) / looseIds.length} />
+            <div className="text-[var(--color-muted)]">
+              {openLoose.length ? `${openLoose.length} to go: ${openLoose.map(({ sc }) => String(sc.index).padStart(2, "0")).join(", ")} (the box renders them in the order sent; each scene on the left shows its own state)`
+                : "all done: the new takes are on their scenes below"}
+            </div>
           </div>
         )}
       </Card>
